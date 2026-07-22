@@ -1,0 +1,70 @@
+{
+    "responses":[
+       {
+          "agentId":1,
+          "type":"PLACE_ORDER_LIMIT",
+          "payload":{
+             "direction":0,
+             "volume":1.0,
+             "price":98,
+             "bookId":0,
+             "clientOrderId": null
+          }
+       },
+       {
+          "agentId":1,
+          "type":"PLACE_ORDER_LIMIT",
+          "payload":{
+             "direction":1,
+             "volume":1.0,
+             "price":102,
+             "bookId":0,
+             "clientOrderId": null
+          }
+       },
+       {
+          "agentId":1,
+          "type":"PLACE_ORDER_LIMIT",
+          "payload":{
+             "direction":0,
+             "volume":1.0,
+             "price":98,
+             "bookId":1,
+             "clientOrderId": null
+          }
+       },
+       {
+          "agentId":1,
+          "type":"PLACE_ORDER_LIMIT",
+          "payload":{
+             "direction":1,
+             "volume":1.0,
+             "price":102,
+             "bookId":1,
+             "clientOrderId": null
+          }
+       },
+       {
+          "agentId":1,
+          "type":"PLACE_ORDER_LIMIT",
+          "payload":{
+             "direction":0,
+             "volume":1.0,
+             "price":98,
+             "bookId":2,
+             "clientOrderId": null
+          }
+       },
+       {
+          "agentId":1,
+          "type":"PLACE_ORDER_LIMIT",
+          "payload":{
+             "direction":1,
+             "volume":1.0,
+             "price":102,
+             "bookId":2,
+             "clientOrderId": null
+          }
+       }
+    ]
+ }

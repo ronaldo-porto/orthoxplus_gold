@@ -1,0 +1,1144 @@
+{
+    "responses": [
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 32.82084831661584,
+                "price": 1.1703259422900247,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 28.67423660130476,
+                "price": 11.773959329288672,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 11.61772512279483,
+                "price": 1.4756193793329084,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 80.21841468508562,
+                "price": 10.098528791451116,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 27.955879297209705,
+                "price": 1.8261711116990313,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 40.90208808702393,
+                "price": 11.374978205879485,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 5.626506041893897,
+                "price": 1.1301317836984954,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 47.26207015112455,
+                "price": 11.098454797421521,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 69.8914959183836,
+                "price": 2.301221182265034,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 13.208587045000398,
+                "price": 11.461958427477578,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 53.22917206298881,
+                "price": 2.536563372027964,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 1.982035867108689,
+                "price": 11.667363612806575,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 86.73192212699624,
+                "price": 3.1372928869364483,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 80.18732188684581,
+                "price": 13.692371734499767,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 36.575569270286934,
+                "price": 2.718313769420763,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 46.12802449748622,
+                "price": 13.836612747994847,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 93.96053416939542,
+                "price": 3.821274388378114,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 88.77995165471228,
+                "price": 12.981691707516989,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 92.08305204566423,
+                "price": 3.5866636088879322,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 42.517057816918566,
+                "price": 13.28108843617243,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 27.93783945455398,
+                "price": 3.083667355019133,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 5.254659053044541,
+                "price": 14.091808018438376,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 65.30535729058099,
+                "price": 3.4987037149131166,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 94.43959981935505,
+                "price": 13.108129224701758,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 94.0513596427478,
+                "price": 4.881388071713993,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 12.08754613942129,
+                "price": 15.253805115361278,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 63.7633440033848,
+                "price": 5.882514208142957,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 50.057245285019455,
+                "price": 15.499198724390899,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 28.72816008505722,
+                "price": 4.87787595256006,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 34.125157145212185,
+                "price": 14.398100381637674,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 71.89370159268937,
+                "price": 6.685791623980215,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 82.9648877107932,
+                "price": 16.7634849246125,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 29.657218574937303,
+                "price": 5.302277391726054,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 78.7451127270053,
+                "price": 15.722936130337239,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 22.014644201153843,
+                "price": 6.567308293403865,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 55.41774220515033,
+                "price": 15.719249927030903,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 21.742172105486326,
+                "price": 6.422707285470725,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 99.74254898208831,
+                "price": 17.92509621756483,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 40.72243755696115,
+                "price": 7.7293728747888,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 13.62067633681059,
+                "price": 17.383577502548423,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 73.85486634822674,
+                "price": 6.762538852762309,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 89.1698258221794,
+                "price": 17.584019664600614,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 24.533161520597712,
+                "price": 7.802719104890547,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 36.773489998875334,
+                "price": 17.14595928999918,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 20.6964719407008,
+                "price": 7.343921020523675,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 68.98467896103493,
+                "price": 17.080361190811892,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 58.72587917660472,
+                "price": 8.530461921382894,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 37.040492065732145,
+                "price": 18.62833704239113,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 18.331981171166756,
+                "price": 9.923957666588,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 76.06613507738761,
+                "price": 19.157017051272412,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 6.569251388117747,
+                "price": 8.219206360001362,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 50.142133829380484,
+                "price": 19.144030066412668,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 52.632360076103566,
+                "price": 9.9097584805467,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 41.95504261489621,
+                "price": 18.842015692792877,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 26.30179212744448,
+                "price": 10.018663693940336,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 77.49066316403936,
+                "price": 20.586135377824828,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 38.90611418860651,
+                "price": 9.693721139804554,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 17.55944962663295,
+                "price": 19.552932441265195,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 85.26130081936994,
+                "price": 10.777749966297666,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 10.68465113331467,
+                "price": 20.77581473475223,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 27.494161859393408,
+                "price": 10.176526592597146,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 76.3111194469366,
+                "price": 21.57676566368028,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 24.310072144069018,
+                "price": 11.84362904815864,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 11.317922780549273,
+                "price": 21.788733785811974,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 5.288229564692415,
+                "price": 10.518671873060073,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 41.547034215278615,
+                "price": 21.03483836837211,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 11.808419226361533,
+                "price": 11.51335953325216,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 33.506039944418966,
+                "price": 22.070791226771476,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 35.82355508578162,
+                "price": 12.611928242900012,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 23.048084036129946,
+                "price": 21.34977476311612,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 40.89379531270011,
+                "price": 11.292065708672153,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 62.34402943184054,
+                "price": 21.395057526594332,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 27.73074067895728,
+                "price": 12.329954455911405,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 16.041007582492284,
+                "price": 23.935961465033582,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 25.519648565688602,
+                "price": 12.517498223315185,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 50.81715382789969,
+                "price": 22.1427807150992,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 84.4205857418443,
+                "price": 13.04777369314695,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 38.244436384713,
+                "price": 22.162785277701335,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 52.02823200982706,
+                "price": 13.698261430403363,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 99.38244275442865,
+                "price": 23.80474475427903,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 91.09190366492741,
+                "price": 14.081254313719505,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 25.73525835961754,
+                "price": 23.88744703706963,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 86.60225871807447,
+                "price": 13.613435322308257,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 69.93956334424611,
+                "price": 23.46869483390173,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 85.22184850675461,
+                "price": 14.399376931673942,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 55.76011515560219,
+                "price": 24.928275831572055,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 50.73657496126346,
+                "price": 15.444091944803892,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 83.97524551076842,
+                "price": 24.51858285814502,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 76.97557322417764,
+                "price": 14.536459853181903,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 10.264212748773694,
+                "price": 24.69620269652058,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 78.0915953822605,
+                "price": 15.09608376860065,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 53.46155489285878,
+                "price": 25.862783835536813,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 44.030738170257585,
+                "price": 16.89846541870466,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 22.96715268577062,
+                "price": 25.718320989639068,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 34.90856609046359,
+                "price": 16.324181707028803,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 83.31874439845602,
+                "price": 26.049095205192536,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 14.519610159210817,
+                "price": 17.729026601991517,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 96.73333456004039,
+                "price": 26.920825917001878,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 25.700833198364347,
+                "price": 17.9176378289138,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 17.651840010601394,
+                "price": 26.132856878172454,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 18.76864154205552,
+                "price": 16.304815809553986,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 16.58518457744398,
+                "price": 26.632480623080262,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 85.2727237504787,
+                "price": 17.764680417801276,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 59.47716832475645,
+                "price": 27.92945680056462,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 5.4520661138722115,
+                "price": 18.176575514830226,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 26.40753846954337,
+                "price": 28.354363555684944,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 57.05286972607102,
+                "price": 17.280702551104582,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 0,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 43.57321481863222,
+                "price": 27.84624429827211,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 1,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 0.2571368108184433,
+                "price": 101,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 1,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 0.43324063676908975,
+                "price": 99,
+                "bookId": 0
+            }
+        },
+        {
+            "agentId": 1,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 0.8051880896597047,
+                "price": 101,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 1,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 0.5185453188467045,
+                "price": 99,
+                "bookId": 1
+            }
+        },
+        {
+            "agentId": 1,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 0,
+                "volume": 0.00010411651075026285,
+                "price": 101,
+                "bookId": 2
+            }
+        },
+        {
+            "agentId": 1,
+            "type": "PLACE_ORDER_LIMIT",
+            "payload": {
+                "direction": 1,
+                "volume": 0.508306600996027,
+                "price": 99,
+                "bookId": 2
+            }
+        }
+    ]
+}

@@ -1,0 +1,13 @@
+<Simulation start="0" duration="1001" step="10" mode="test">
+    <Agents>
+        <MultiBookExchangeAgent name="EXCHANGE" remoteAgentCount="2">
+            <Books instanceCount="3" algorithm="PriceTime"/>
+            <Balances>
+                <Base total="10000.0"/>
+                <Quote total="10000.0"/>
+            </Balances>
+        </MultiBookExchangeAgent>
+        <DistributedProxyAgent host="127.0.0.1" port="8192" batchSize="5"
+            bookStateEndpoint="/book-state" generalMsgEndpoint="/general-msg"/>
+    </Agents>
+</Simulation>
