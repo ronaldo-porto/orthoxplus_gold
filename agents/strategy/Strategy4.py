@@ -31,7 +31,8 @@ Launch example:
       --agent.path agents \
       --agent.name Strategy4 \
       --agent.params enable_mm_strategy=1 alpha_policy_mode=deterministic \
-          max_inventory_base=1.2 mm_base_size=0.20 verbose_log=0
+          enable_phase_mining=0 max_mm_books_per_tick=8 \
+          max_inventory_base=1.4 mm_base_size=0.25 verbose_log=0
 
 For online contextual learning after offline/local validation:
 
@@ -234,9 +235,27 @@ class Strategy4(Strategy1):
         self.min_half_spread_bps = float(getattr(cfg, "min_half_spread_bps", 0.15))
         self.max_half_spread_bps = float(getattr(cfg, "max_half_spread_bps", 25.0))
 
+        # Activity / coverage overrides (S1 defaults are too selective for live
+        # volume bootstrap — Strategy4 re-homes these after super().initialize).
+        self.max_mm_books_per_tick = max(
+            1, int(getattr(cfg, "max_mm_books_per_tick", 8))
+        )
+        self.max_managed_books_per_tick = max(
+            1,
+            int(
+                getattr(
+                    cfg,
+                    "max_managed_books_per_tick",
+                    max(self.max_mm_books_per_tick, 8),
+                )
+            ),
+        )
+        self.min_expected_alpha = float(getattr(cfg, "min_expected_alpha", 0.12))
+        self.min_economic_signal = float(getattr(cfg, "min_economic_signal", 0.05))
+
         # Side-specific EV and markout controls.
-        self.fee_buffer_bps = float(getattr(cfg, "fee_buffer_bps", 0.15))
-        self.min_side_edge_bps = float(getattr(cfg, "min_side_edge_bps", 0.05))
+        self.fee_buffer_bps = float(getattr(cfg, "fee_buffer_bps", 0.10))
+        self.min_side_edge_bps = float(getattr(cfg, "min_side_edge_bps", 0.03))
         self.adverse_selection_weight = float(
             getattr(cfg, "adverse_selection_weight", 1.00)
         )
@@ -253,36 +272,36 @@ class Strategy4(Strategy1):
 
         # Inventory and hard survival controls.
         self.cautious_inventory_util = float(
-            getattr(cfg, "cautious_inventory_util", 0.45)
+            getattr(cfg, "cautious_inventory_util", 0.55)
         )
         self.reduce_only_inventory_util = float(
-            getattr(cfg, "reduce_only_inventory_util", 0.72)
+            getattr(cfg, "reduce_only_inventory_util", 0.80)
         )
         self.liquidate_inventory_util = float(
             getattr(cfg, "liquidate_inventory_util", 0.98)
         )
         self.hard_stop_loss_bps = float(getattr(cfg, "hard_stop_loss_bps", 55.0))
         self.cautious_loss_streak = max(
-            1, int(getattr(cfg, "cautious_loss_streak", 2))
+            1, int(getattr(cfg, "cautious_loss_streak", 3))
         )
         self.reduce_only_loss_streak = max(
             self.cautious_loss_streak,
-            int(getattr(cfg, "reduce_only_loss_streak", 4)),
+            int(getattr(cfg, "reduce_only_loss_streak", 5)),
         )
         self.size_inventory_skew = float(getattr(cfg, "size_inventory_skew", 1.35))
         self.max_side_size_mult = float(getattr(cfg, "max_side_size_mult", 1.50))
         self.min_side_size_mult = float(getattr(cfg, "min_side_size_mult", 0.10))
-        self.cautious_size_mult = float(getattr(cfg, "cautious_size_mult", 0.50))
+        self.cautious_size_mult = float(getattr(cfg, "cautious_size_mult", 0.70))
 
         # Toxicity / latency controls.
         self.toxicity_cautious_threshold = float(
-            getattr(cfg, "toxicity_cautious_threshold", 0.55)
+            getattr(cfg, "toxicity_cautious_threshold", 0.65)
         )
         self.toxicity_reduce_threshold = float(
-            getattr(cfg, "toxicity_reduce_threshold", 0.78)
+            getattr(cfg, "toxicity_reduce_threshold", 0.85)
         )
-        self.latency_cautious_ms = float(getattr(cfg, "latency_cautious_ms", 180.0))
-        self.latency_disable_ms = float(getattr(cfg, "latency_disable_ms", 650.0))
+        self.latency_cautious_ms = float(getattr(cfg, "latency_cautious_ms", 250.0))
+        self.latency_disable_ms = float(getattr(cfg, "latency_disable_ms", 800.0))
         self._last_response_latency_ms = 0.0
 
         # Alpha-AS constrained adaptive policy.
@@ -327,18 +346,20 @@ class Strategy4(Strategy1):
         self.rolling_min_observations = max(
             1, int(getattr(cfg, "rolling_min_observations", 3))
         )
-        self.score_floor_guard_ratio = float(getattr(cfg, "score_floor_guard_ratio", 1.05))
+        # Soft floor guard: only tighten once we have a real relative-rank
+        # history. 1.02 keeps a small buffer without starving early volume.
+        self.score_floor_guard_ratio = float(getattr(cfg, "score_floor_guard_ratio", 1.02))
         self.weak_book_score_quantile = float(
-            getattr(cfg, "weak_book_score_quantile", 0.35)
+            getattr(cfg, "weak_book_score_quantile", 0.25)
         )
         self.weak_book_score_quantile = max(0.05, min(0.95, self.weak_book_score_quantile))
         self.left_tail_score_quantile = float(
-            getattr(cfg, "left_tail_score_quantile", 0.20)
+            getattr(cfg, "left_tail_score_quantile", 0.12)
         )
         self.left_tail_score_quantile = max(
             0.01, min(self.weak_book_score_quantile, self.left_tail_score_quantile)
         )
-        self.weak_book_size_mult = float(getattr(cfg, "weak_book_size_mult", 0.50))
+        self.weak_book_size_mult = float(getattr(cfg, "weak_book_size_mult", 0.75))
         self.weak_book_size_mult = max(0.05, min(1.0, self.weak_book_size_mult))
         self.left_tail_new_risk_enabled = bool(
             getattr(cfg, "left_tail_new_risk_enabled", False)
@@ -407,27 +428,28 @@ class Strategy4(Strategy1):
         )
 
         # Simulation-time phased mining (local FSM; no Strategy3 dependency,
-        # no wall-clock delays).
-        self.enable_phase_mining = bool(getattr(cfg, "enable_phase_mining", True))
+        # no wall-clock delays). OFF by default — OBSERVE/COOLDOWN cancel all
+        # quotes and starve volume/Kappa bootstrap on live validators.
+        self.enable_phase_mining = bool(getattr(cfg, "enable_phase_mining", False))
         self.startup_observe_ns = max(
-            0, int(getattr(cfg, "startup_observe_ns", 600_000_000_000))
+            0, int(getattr(cfg, "startup_observe_ns", 60_000_000_000))
         )
         self.calibration_max_ns = max(
-            1, int(getattr(cfg, "calibration_max_ns", 1_800_000_000_000))
+            1, int(getattr(cfg, "calibration_max_ns", 300_000_000_000))
         )
         self.min_calibration_books = max(
-            1, int(getattr(cfg, "min_calibration_books", 8))
+            1, int(getattr(cfg, "min_calibration_books", 3))
         )
         self.phase_score_guard_ratio = max(
-            0.0, float(getattr(cfg, "phase_score_guard_ratio", 1.05))
+            0.0, float(getattr(cfg, "phase_score_guard_ratio", 1.00))
         )
-        self.cooldown_ns = max(1, int(getattr(cfg, "cooldown_ns", 600_000_000_000)))
+        self.cooldown_ns = max(1, int(getattr(cfg, "cooldown_ns", 120_000_000_000)))
         self.resume_score_guard_ratio = max(
             self.phase_score_guard_ratio,
-            float(getattr(cfg, "resume_score_guard_ratio", 1.08)),
+            float(getattr(cfg, "resume_score_guard_ratio", 1.02)),
         )
         self.phase_min_expected_pnl = max(
-            0.0, float(getattr(cfg, "phase_min_expected_pnl", 0.0001))
+            0.0, float(getattr(cfg, "phase_min_expected_pnl", 0.0))
         )
         self._mining_phase: MiningPhase = (
             "OBSERVE" if self.enable_phase_mining else "ACTIVE"
@@ -966,8 +988,10 @@ class Strategy4(Strategy1):
     def _phase_score_is_healthy(self, ratio: float) -> bool:
         score_ratio = self._last_score_to_internal_median
         median = self._last_floor_threshold
+        # No relative-rank history yet — allow bootstrap rather than deadlock
+        # (CALIBRATE never finishes when score_ratio stays 0 with no trades).
         if median <= 0.0 or score_ratio <= 0.0:
-            return self._last_trading_proxy > 0.0
+            return True
         return score_ratio >= ratio
 
     def _phase_book_is_clean(
@@ -1122,11 +1146,17 @@ class Strategy4(Strategy1):
             and self._last_floor_threshold > 0.0
             and book_score < self._last_floor_threshold
         )
+        # Require a real score history. score_ratio==0 used to always trip
+        # CAUTIOUS and starve early quoting.
+        score_ratio = self._last_score_to_internal_median
+        has_score_history = (
+            self._last_floor_threshold > 0.0 and score_ratio > 0.0
+        )
         near_floor = (
             floor_on
-            and self._last_floor_threshold > 0.0
+            and has_score_history
             and (
-                self._last_score_to_internal_median < self.score_floor_guard_ratio
+                score_ratio < self.score_floor_guard_ratio
                 or self._top_rank_pressure
             )
         )
@@ -1219,11 +1249,10 @@ class Strategy4(Strategy1):
         ):
             return "CAUTIOUS", toxicity
 
-        # NORMAL only when score/risk is healthy.
-        if floor_on and (
-            self._last_score_to_internal_median < self.score_floor_guard_ratio
-            or is_weak
-            or is_left
+        # Soft-floor caution only when we have real relative-rank history.
+        # Weak books still quote in NORMAL with a size haircut at placement.
+        if floor_on and has_score_history and (
+            score_ratio < self.score_floor_guard_ratio or is_left
         ):
             return "CAUTIOUS", toxicity
 
@@ -2538,7 +2567,10 @@ class Strategy4(Strategy1):
             economic_signal = 0.55 * min(1.0, abs(prediction.score)) + 0.45 * (
                 0.5 * (fill_est.buy + fill_est.sell)
             )
-            if expected_alpha < self.min_expected_alpha or economic_signal < 0.10:
+            if (
+                expected_alpha < self.min_expected_alpha
+                or economic_signal < self.min_economic_signal
+            ):
                 stats["skipped_low_alpha"] += 1
                 continue
             rank = self._global_book_rank(expected_alpha, mem) + 0.20 * economic_signal

@@ -30,16 +30,19 @@ while getopts w:h:u:a:e:p: flag; do
   esac
 done
 
+# Trade-activity first: phase mining OFF (OBSERVE/COOLDOWN cancel quotes),
+# more books per tick, softer EV/floor gates. Hard inventory/stop-loss kept.
 PARAMS="enable_mm_strategy=1 lazy_load=1 alpha_policy_mode=deterministic \
 enable_separate_alpha=0 allow_legacy_auto_tuning=0 \
-enable_floor_awareness=1 score_floor_guard_ratio=1.05 \
-weak_book_score_quantile=0.35 weak_book_size_mult=0.50 \
-mm_base_size=0.20 max_inventory_base=1.20 inventory_close_threshold=0.25 \
-max_mm_books_per_tick=4 max_managed_books_per_tick=4 \
-cautious_inventory_util=0.45 reduce_only_inventory_util=0.72 \
+enable_phase_mining=0 enable_floor_awareness=1 score_floor_guard_ratio=1.02 \
+weak_book_score_quantile=0.25 weak_book_size_mult=0.75 \
+mm_base_size=0.25 max_inventory_base=1.40 inventory_close_threshold=0.30 \
+max_mm_books_per_tick=8 max_managed_books_per_tick=8 \
+min_expected_alpha=0.12 min_economic_signal=0.05 \
+cautious_inventory_util=0.55 reduce_only_inventory_util=0.80 \
 liquidate_inventory_util=0.98 hard_stop_loss_bps=55 \
-min_side_edge_bps=0.08 fee_buffer_bps=0.20 \
-base_risk_aversion=0.85 alpha_shift_spreads=0.32 inventory_shift_spreads=0.55 \
+min_side_edge_bps=0.03 fee_buffer_bps=0.10 \
+base_risk_aversion=0.75 alpha_shift_spreads=0.28 inventory_shift_spreads=0.50 \
 markout_horizon_ns=2000000000 \
 verbose_log=0 log_every_n=100"
 
