@@ -1,13 +1,21 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Launch Strategy3 (survival-first inventory-aware MM) via run_miner.sh.
 #
-# Usage:
-#   ./agents/strategy/run_strategy3.sh -w <coldkey> -h <hotkey> -u 79 -a 8091
-#   ./agents/strategy/run_strategy3.sh -w taos -h miner   # uses defaults below
+# Ubuntu usage (from repo root, same directory as run_miner.sh):
+#   chmod +x run_strategy3.sh run_miner.sh
+#   ./run_strategy3.sh -w <coldkey> -h <hotkey> -u 79 -a 8091
+#   ./run_strategy3.sh -w taos -h miner
 
-set -e
+set -euo pipefail
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
+
+if [[ ! -x "$REPO_ROOT/run_miner.sh" && ! -f "$REPO_ROOT/run_miner.sh" ]]; then
+  echo "error: run_miner.sh not found next to $0" >&2
+  exit 1
+fi
+chmod +x "$REPO_ROOT/run_miner.sh" 2>/dev/null || true
 
 WALLET_NAME="${WALLET_NAME:-taos}"
 HOTKEY_NAME="${HOTKEY_NAME:-miner}"
@@ -15,7 +23,6 @@ NETUID="${NETUID:-79}"
 AXON_PORT="${AXON_PORT:-8091}"
 AGENT_PATH="${AGENT_PATH:-$REPO_ROOT/agents/strategy}"
 
-# Optional CLI passthrough: -w -h -u -a -e -p
 EXTRA=()
 while getopts w:h:u:a:e:p: flag; do
   case "${flag}" in
@@ -37,7 +44,7 @@ weak_book_score_quantile=0.35 weak_book_size_mult=0.5 \
 min_floor_expected_pnl=0.0001 \
 verbose_log=0 log_every_n=100 log_mm_strategy=1"
 
-exec ./run_miner.sh \
+exec "$REPO_ROOT/run_miner.sh" \
   -w "$WALLET_NAME" \
   -h "$HOTKEY_NAME" \
   -u "$NETUID" \

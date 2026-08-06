@@ -8,7 +8,6 @@ Extends Strategy3 so all survival controls stay intact:
   - cancel-on-risk / avoid-book repair
   - fill learning, FIFO PnL gate, ranked book caps
   - grace period, weak/left-tail defense, floor telemetry
-  - simulation-time OBSERVE/CALIBRATE/ACTIVE/COOLDOWN/RESUME mining phases
   - separate directional alpha off by default (alpha via fair-value shift)
 
 Quote core is a practical AS/HJB reservation + intensity half-spread in
@@ -96,15 +95,6 @@ class Strategy5(Strategy3):
         # Keep Strategy3 guard in sync when HJB floor_guard_ratio is set.
         self.score_floor_guard_ratio = self.floor_guard_ratio
         self.hjb_floor_edge_boost = float(getattr(cfg, "hjb_floor_edge_boost", 0.15))
-        self.hjb_phase_edge_boost = max(
-            0.0, float(getattr(cfg, "hjb_phase_edge_boost", 0.15))
-        )
-        self.hjb_calibration_size_mult = self._clip(
-            float(getattr(cfg, "hjb_calibration_size_mult", 0.5)), 0.05, 1.0
-        )
-        self.hjb_cooldown_quote_enabled = bool(
-            getattr(cfg, "hjb_cooldown_quote_enabled", False)
-        )
         self.hjb_weak_book_size_mult = float(getattr(cfg, "hjb_weak_book_size_mult", 0.5))
         self.hjb_weak_book_size_mult = max(0.05, min(1.0, self.hjb_weak_book_size_mult))
         self.hjb_left_tail_quote_enabled = bool(
@@ -132,8 +122,6 @@ class Strategy5(Strategy3):
         self._hjb_ctx_inventory_util = 0.0
         self._hjb_last_reservation = 0.0
         self._hjb_last_used_fallback = False
-        self._hjb_weak_book_skips = 0
-        self._hjb_left_tail_skips = 0
 
         bt.logging.info(
             "Strategy5: floor-aware HJB/AS on Strategy3 "
@@ -142,9 +130,6 @@ class Strategy5(Strategy3):
             f"floor_aware={self.enable_floor_awareness} "
             f"floor_guard={self.floor_guard_ratio} "
             f"edge_boost={self.hjb_floor_edge_boost} "
-            f"phase_edge_boost={self.hjb_phase_edge_boost} "
-            f"calibration_size={self.hjb_calibration_size_mult} "
-            f"cooldown_quote={self.hjb_cooldown_quote_enabled} "
             f"weak_size={self.hjb_weak_book_size_mult} "
             f"left_tail_quote={self.hjb_left_tail_quote_enabled} "
             f"max_inv={self.max_inventory_base} mm_size={self.mm_base_size} "
@@ -164,31 +149,21 @@ class Strategy5(Strategy3):
         weak = book_id in getattr(self, "_last_weak_books", set())
         left_tail = book_id in getattr(self, "_last_left_tail_books", set())
         mem = self._mem(book_id)
-        snap = getattr(self, "_last_rolling_snap", None)
-        diag = snap.books.get(book_id) if snap is not None else None
-        rolling_pnl = diag.rolling_pnl if diag is not None else float(profile.realized_pnl)
         is_strong = (
-            rolling_pnl > 0.0
+            float(profile.realized_pnl) > 0.0
             and mem.fill_rate >= 0.20
             and mem.win_rate >= 0.50
             and mem.loss_streak < max(1, self.toxic_loss_streak - 1)
             and not weak
             and not left_tail
-            and (
-                diag.is_strong
-                if diag is not None
-                else True
-            )
         )
-        score_ratio = float(getattr(self, "_last_score_to_internal_median", 0.0))
         thr = 0.0
-        if snap is not None:
-            thr = float(snap.floor_threshold)
-            score_ratio = float(snap.score_to_internal_median)
-        below_floor = thr > 0.0 and (
-            score_ratio < self.floor_guard_ratio
-            or bool(getattr(self, "_top_rank_pressure", False))
-        )
+        trading = float(getattr(self, "_floor_score_ema", 0.0))
+        scores = getattr(self, "_last_book_scores", {}) or {}
+        if scores:
+            thr = self._soft_floor_threshold(scores)
+            trading = self._estimate_agent_trading_score(scores)
+        below_floor = thr > 0.0 and trading < self.floor_guard_ratio * thr
         return weak, left_tail, is_strong, below_floor
 
     def _hjb_spread_pressure(
@@ -200,52 +175,23 @@ class Strategy5(Strategy3):
     ) -> float:
         """Widen weak/below-floor books; tighten only strong profitable books."""
         pressure = 1.0
+        # Inventory-improving quotes may stay closer; otherwise widen weak books.
         improving = abs(signed_inv) >= 0.15
         if is_weak and not improving:
             pressure *= self.hjb_weak_widen_mult
         if below_floor and not is_strong:
             pressure *= self.hjb_below_floor_widen_mult
-        # Top-rank pressure: wider quotes when score_to_internal_median < 1.05.
-        score_ratio = float(getattr(self, "_last_score_to_internal_median", 0.0))
-        if (
-            self.enable_floor_awareness
-            and score_ratio > 0.0
-            and score_ratio < self.floor_guard_ratio
-        ):
-            pressure *= 1.0 + self.hjb_floor_edge_boost
-        phase = getattr(self, "_mining_phase", "ACTIVE")
-        if phase == "CALIBRATE":
-            pressure *= 1.0 + self.hjb_phase_edge_boost
-        elif phase == "RESUME":
-            pressure *= 1.0 + 0.5 * self.hjb_phase_edge_boost
         if is_strong and not below_floor:
             pressure *= self.hjb_strong_tighten_mult
         return self._clip(pressure, 0.70, 2.25)
 
     def _hjb_min_expected_pnl(self, below_floor: bool) -> float:
-        threshold = float(self._effective_min_expected_pnl())
+        threshold = float(self.min_expected_realized_pnl)
         if below_floor and self.enable_floor_awareness:
-            base = max(
-                threshold,
-                float(getattr(self, "phase_min_expected_pnl", 0.0001)),
+            boost = self.hjb_floor_edge_boost * max(
+                float(getattr(self, "_floor_pnl_scale", 0.02)), 1e-4
             )
-            threshold = base * (1.0 + self.hjb_floor_edge_boost)
-        score_ratio = float(getattr(self, "_last_score_to_internal_median", 0.0))
-        if (
-            self.enable_floor_awareness
-            and score_ratio > 0.0
-            and score_ratio < self.floor_guard_ratio
-        ):
-            threshold = max(
-                threshold,
-                float(self.min_expected_realized_pnl)
-                * (1.0 + self.hjb_floor_edge_boost),
-            )
-        if getattr(self, "_mining_phase", "ACTIVE") in ("CALIBRATE", "RESUME"):
-            threshold = max(
-                threshold,
-                float(getattr(self, "phase_min_expected_pnl", 0.0001)),
-            )
+            threshold = max(threshold, 0.0) + boost
         return threshold
 
     def get_hjb_optimal_quotes(
@@ -430,23 +376,6 @@ class Strategy5(Strategy3):
         if inventory.band in ("MAX_LONG", "MAX_SHORT"):
             return 0
 
-        # Strategy3 owns phase transitions and cancel/repair orchestration.
-        # This overlay only decides whether/how an HJB quote may be emitted.
-        phase = getattr(self, "_mining_phase", "ACTIVE")
-        if phase == "OBSERVE":
-            return 0
-        if phase == "COOLDOWN" and (
-            not self.hjb_cooldown_quote_enabled or inventory.band == "FLAT"
-        ):
-            return 0
-        if phase in ("CALIBRATE", "RESUME") and not self._phase_allows_new_risk(
-            book_id,
-            profile,
-            inventory,
-            self._mem(book_id).last_expected_alpha,
-        ):
-            return 0
-
         self._quote_vol = max(float(profile.volatility or 0.0), self.hjb_vol_floor)
         self._quote_trade_rate = max(float(profile.trade_rate or 0.0), 1e-9)
 
@@ -462,45 +391,18 @@ class Strategy5(Strategy3):
 
         # Left-tail: repair inventory only unless explicitly enabled.
         if (
-            is_left_tail
+            self.enable_floor_awareness
+            and is_left_tail
             and not self.hjb_left_tail_quote_enabled
             and inventory.band == "FLAT"
         ):
-            self._hjb_left_tail_skips += 1
             if stats is not None:
                 stats["skipped_left_tail"] = stats.get("skipped_left_tail", 0) + 1
             return 0
 
-        # Expiring strong observations: refresh only on clean positive-EV books.
-        expiring = getattr(self, "_last_expiring_strong_books", set())
-        if (
-            self.enable_floor_awareness
-            and expiring
-            and book_id not in expiring
-            and book_id not in getattr(self, "_last_eligible_books", set())
-            and getattr(self, "_top_rank_pressure", False)
-            and inventory.band == "FLAT"
-        ):
-            if stats is not None:
-                stats["skipped_low_alpha"] = stats.get("skipped_low_alpha", 0) + 1
-            return 0
-
         quote_size = size
-        if phase in ("CALIBRATE", "RESUME"):
-            # Strategy3 has already reduced phase size. Treat the HJB setting
-            # as a ceiling instead of compounding another multiplier, which
-            # could round calibration quotes to zero.
-            quote_size = min(
-                quote_size,
-                self.mm_base_size * self.hjb_calibration_size_mult,
-            )
-        if is_weak:
-            # Strategy3 also applies weak_book_size_mult before calling this
-            # overlay; use the HJB value as a cap, not a second size cut.
-            quote_size = min(
-                quote_size,
-                self.mm_base_size * self.hjb_weak_book_size_mult,
-            )
+        if self.enable_floor_awareness and is_weak:
+            quote_size = size * self.hjb_weak_book_size_mult
             if stats is not None:
                 stats["weak_size_reduced"] = stats.get("weak_size_reduced", 0) + 1
 
@@ -577,42 +479,23 @@ class Strategy5(Strategy3):
 
         buy_edge = self._side_edge_bps("buy", bid_px, ask_px, fair, mid)
         sell_edge = self._side_edge_bps("sell", bid_px, ask_px, fair, mid)
-        side_edge_floor = self.hjb_min_side_edge_bps
-        score_ratio = float(getattr(self, "_last_score_to_internal_median", 0.0))
-        if (
-            self.enable_floor_awareness
-            and score_ratio > 0.0
-            and score_ratio < self.floor_guard_ratio
-        ):
-            side_edge_floor += self.hjb_floor_edge_boost * 2.0
-        if phase == "CALIBRATE":
-            side_edge_floor += self.hjb_phase_edge_boost
-        elif phase == "RESUME":
-            side_edge_floor += 0.5 * self.hjb_phase_edge_boost
 
         allow_buy = True
         allow_sell = True
-        if is_left_tail and not self.hjb_left_tail_quote_enabled:
+        if self.enable_floor_awareness and is_left_tail and not self.hjb_left_tail_quote_enabled:
             # Inventory repair only: quote the reducing side.
             allow_buy = self._side_improves_inventory("buy", inventory)
             allow_sell = self._side_improves_inventory("sell", inventory)
-        elif is_weak:
-            # Weak books: positive-EV sides only; raw inventory improvement
-            # cannot rescue a negative-edge quote.
-            allow_buy = buy_edge >= side_edge_floor
-            allow_sell = sell_edge >= side_edge_floor
-
-        if phase in ("CALIBRATE", "RESUME"):
-            allow_buy = allow_buy and buy_edge >= side_edge_floor
-            allow_sell = allow_sell and sell_edge >= side_edge_floor
-        elif phase == "COOLDOWN":
-            # Optional cooldown HJB quoting is strictly inventory-reducing.
-            allow_buy = allow_buy and self._side_improves_inventory("buy", inventory)
-            allow_sell = allow_sell and self._side_improves_inventory("sell", inventory)
-
-        if is_weak and not allow_buy and not allow_sell:
-            self._hjb_weak_book_skips += 1
-            return 0
+        elif self.enable_floor_awareness and is_weak:
+            # Weak books: only positive-EV sides (or inventory-improving).
+            allow_buy = (
+                buy_edge >= self.hjb_min_side_edge_bps
+                or self._side_improves_inventory("buy", inventory)
+            )
+            allow_sell = (
+                sell_edge >= self.hjb_min_side_edge_bps
+                or self._side_improves_inventory("sell", inventory)
+            )
 
         placed = 0
         acct = self.accounts[book_id]
@@ -674,6 +557,8 @@ class Strategy5(Strategy3):
 
         if stats is not None and placed:
             stats["hjb_quotes"] = stats.get("hjb_quotes", 0) + placed
+            if self._hjb_last_used_fallback:
+                stats["hjb_fallback_count"] = stats.get("hjb_fallback_count", 0) + 1
         return placed
 
     def build_mm_strategy_instructions(
@@ -686,8 +571,6 @@ class Strategy5(Strategy3):
         collect_archetypes: bool = True,
     ) -> dict:
         pre_fallback = self._hjb_fallback_count
-        pre_weak_skips = self._hjb_weak_book_skips
-        pre_left_skips = self._hjb_left_tail_skips
         stats = super().build_mm_strategy_instructions(
             response,
             state,
@@ -700,40 +583,19 @@ class Strategy5(Strategy3):
         stats["hjb_fallback_count"] = int(
             stats.get("hjb_fallback_count", 0)
         ) + tick_fallbacks
-        stats["weak_book_hjb_skips"] = max(
-            0, self._hjb_weak_book_skips - pre_weak_skips
-        )
-        overlay_left_skips = max(
-            0, self._hjb_left_tail_skips - pre_left_skips
-        )
-        stats["left_tail_hjb_skips"] = max(
-            overlay_left_skips,
-            int(stats.get("skipped_left_tail", 0)),
-        )
-        stats["hjb_phase_edge_boost"] = self.hjb_phase_edge_boost
 
-        trading = float(stats.get("trading_score_proxy", stats.get("estimated_trading_score", 0.0)))
-        soft_floor = float(
-            stats.get("soft_floor_score_proxy", stats.get("estimated_soft_floor_score", 0.0))
-        )
-        to_median = float(stats.get("score_to_internal_median", stats.get("estimated_score_to_median", 0.0)))
+        trading = float(stats.get("estimated_trading_score", 0.0))
+        soft_floor = float(stats.get("estimated_soft_floor_score", 0.0))
+        to_median = float(stats.get("estimated_score_to_median", 0.0))
         weak_n = int(stats.get("weak_books_count", 0))
         left_n = int(stats.get("left_tail_books_count", 0))
         bt.logging.info(
             "[HJB_FLOOR] "
-            f"rolling_kappa_proxy={stats.get('rolling_kappa_proxy', 0.0)} "
-            f"rolling_pnl_proxy={stats.get('rolling_pnl_proxy', 0.0)} "
-            f"trading_score_proxy={trading:.6f} "
-            f"soft_floor_score_proxy={soft_floor:.6f} "
-            f"score_to_internal_median={to_median:.6f} "
-            f"eligible_books={stats.get('eligible_books', 0)} "
+            f"estimated_trading_score={trading:.6f} "
+            f"estimated_soft_floor_score={soft_floor:.6f} "
+            f"score_to_median={to_median:.6f} "
             f"weak_books={weak_n} left_tail_books={left_n} "
-            f"expiring_strong_books={stats.get('expiring_strong_books', 0)} "
-            f"mining_phase={stats.get('mining_phase', self._mining_phase)} "
-            f"hjb_phase_edge_boost={self.hjb_phase_edge_boost:.3f} "
             f"hjb_fallback_count={stats.get('hjb_fallback_count', 0)} "
-            f"weak_book_hjb_skips={stats.get('weak_book_hjb_skips', 0)} "
-            f"left_tail_hjb_skips={stats.get('left_tail_hjb_skips', 0)} "
             f"quoted={stats.get('quoted', 0)} managed={stats.get('managed', 0)}"
         )
         return stats
