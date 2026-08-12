@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Ubuntu launcher for the SN79 Strategy1_Debug local test.
+# Final Ubuntu launcher for Strategy1_Debug.
 #
-# Supported repository layouts:
-#   <repo>/agents/strategy/Strategy1_Debug.py
-#   <repo>/agents/Strategy1_Debug.py
+# Exact local agent layout:
+#   agents/strategy/Strategy1.py
+#   agents/strategy/Strategy1_Debug.py
 #
-# The script may be stored in the repository root or in a subdirectory.
-# It searches upward to locate the repository automatically.
+# Windows created:
+#   0 proxy
+#   1 agent
+#   2 simulator
+#   3 monitor     (JSONL + process health)
+#   4 simtrace    (simulator + proxy + strategy events + status)
 #
-# Examples:
+# Typical:
 #   bash run_strategy1_debug_tmux.sh --check
-#   bash run_strategy1_debug_tmux.sh
 #   bash run_strategy1_debug_tmux.sh --reset
 #   bash run_strategy1_debug_tmux.sh --reset --book 3 --every 10
+#
+# Env:
+#   EXTRA_AGENT_PARAMS="key=value key=value"
 
 SESSION="${SESSION:-sn79_s1_debug}"
 AGENT_ID="${AGENT_ID:-0}"
@@ -26,646 +32,471 @@ DEBUG_EVERY_N="${DEBUG_EVERY_N:-1}"
 DEBUG_SUMMARY_N="${DEBUG_SUMMARY_N:-100}"
 DEBUG_JSONL="${DEBUG_JSONL:-1}"
 NO_ATTACH=0
-RESET_SESSION=0
+RESET=0
 CHECK_ONLY=0
 ROOT_OVERRIDE="${SN79_ROOT:-}"
 PYTHON_OVERRIDE="${PYTHON_BIN:-}"
 SIM_XML_OVERRIDE="${SIM_XML:-}"
 TAOSIM_OVERRIDE="${TAOSIM_BIN:-}"
 
+die() { printf '\nERROR: %s\n\n' "$*" >&2; exit 1; }
+info() { printf '[launcher] %s\n' "$*"; }
+
 usage() {
-    cat <<'EOF'
+cat <<'EOF'
 Usage:
   bash run_strategy1_debug_tmux.sh [options]
 
 Options:
-  --root PATH          SN79 repository root
-  --session NAME       tmux session name (default: sn79_s1_debug)
-  --agent-id N         local simulator agent ID (default: 0)
-  --agent-port PORT    Strategy1_Debug listener port (default: 8888)
-  --proxy-port PORT    proxy listener port (default: 8000)
-  --book ID            debug one book; -1 means all books
-  --every N            detailed debug interval in ticks
-  --summary N          summary interval in ticks
-  --python PATH        Python interpreter; active venv is used by default
-  --sim-xml PATH       simulation XML path
-  --taosim PATH        taosim executable path
-  --reset              stop an existing tmux session before starting
-  --no-attach          start in the background without attaching
-  --check              validate paths and dependencies only
-  -h, --help           show this help
-
-Environment:
-  EXTRA_AGENT_PARAMS="key=value key=value"
-  DEBUG_JSONL=0|1
-  SN79_ROOT=/path/to/repository
+  --root PATH          repository root
+  --session NAME       tmux session name
+  --agent-id N         local agent UID (default 0)
+  --agent-port PORT    agent Uvicorn port (default 8888)
+  --proxy-port PORT    proxy Uvicorn port (default 8000)
+  --book ID            debug one book; -1 = all books
+  --every N            detailed debug every N ticks
+  --summary N          summary every N ticks
+  --python PATH        Python interpreter
+  --sim-xml PATH       simulation XML
+  --taosim PATH        simulator binary
+  --reset              replace existing tmux session
+  --no-attach          launch in background
+  --check              validate only
+  -h, --help           help
 EOF
 }
 
-die() {
-    printf '\nERROR: %s\n\n' "$*" >&2
-    exit 1
-}
-
-info() {
-    printf '[INFO] %s\n' "$*"
-}
-
-shell_quote() {
-    printf '%q' "$1"
-}
-
-is_integer() {
-    [[ "$1" =~ ^-?[0-9]+$ ]]
-}
-
-is_port() {
-    [[ "$1" =~ ^[0-9]+$ ]] && (( "$1" >= 1 && "$1" <= 65535 ))
-}
-
-while (( $# > 0 )); do
-    case "$1" in
-        --root)
-            [[ $# -ge 2 ]] || die "--root requires a path"
-            ROOT_OVERRIDE="$2"
-            shift 2
-            ;;
-        --session)
-            [[ $# -ge 2 ]] || die "--session requires a name"
-            SESSION="$2"
-            shift 2
-            ;;
-        --agent-id)
-            [[ $# -ge 2 ]] || die "--agent-id requires an integer"
-            AGENT_ID="$2"
-            shift 2
-            ;;
-        --agent-port)
-            [[ $# -ge 2 ]] || die "--agent-port requires a port"
-            AGENT_PORT="$2"
-            shift 2
-            ;;
-        --proxy-port)
-            [[ $# -ge 2 ]] || die "--proxy-port requires a port"
-            PROXY_PORT="$2"
-            shift 2
-            ;;
-        --book)
-            [[ $# -ge 2 ]] || die "--book requires an integer"
-            DEBUG_BOOK="$2"
-            shift 2
-            ;;
-        --every)
-            [[ $# -ge 2 ]] || die "--every requires an integer"
-            DEBUG_EVERY_N="$2"
-            shift 2
-            ;;
-        --summary)
-            [[ $# -ge 2 ]] || die "--summary requires an integer"
-            DEBUG_SUMMARY_N="$2"
-            shift 2
-            ;;
-        --python)
-            [[ $# -ge 2 ]] || die "--python requires a path"
-            PYTHON_OVERRIDE="$2"
-            shift 2
-            ;;
-        --sim-xml)
-            [[ $# -ge 2 ]] || die "--sim-xml requires a path"
-            SIM_XML_OVERRIDE="$2"
-            shift 2
-            ;;
-        --taosim)
-            [[ $# -ge 2 ]] || die "--taosim requires a path"
-            TAOSIM_OVERRIDE="$2"
-            shift 2
-            ;;
-        --reset)
-            RESET_SESSION=1
-            shift
-            ;;
-        --no-attach)
-            NO_ATTACH=1
-            shift
-            ;;
-        --check)
-            CHECK_ONLY=1
-            shift
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            die "Unknown option: $1"
-            ;;
-    esac
+while (( $# )); do
+  case "$1" in
+    --root)       ROOT_OVERRIDE="${2:?}"; shift 2 ;;
+    --session)    SESSION="${2:?}"; shift 2 ;;
+    --agent-id)   AGENT_ID="${2:?}"; shift 2 ;;
+    --agent-port) AGENT_PORT="${2:?}"; shift 2 ;;
+    --proxy-port) PROXY_PORT="${2:?}"; shift 2 ;;
+    --book)       DEBUG_BOOK="${2:?}"; shift 2 ;;
+    --every)      DEBUG_EVERY_N="${2:?}"; shift 2 ;;
+    --summary)    DEBUG_SUMMARY_N="${2:?}"; shift 2 ;;
+    --python)     PYTHON_OVERRIDE="${2:?}"; shift 2 ;;
+    --sim-xml)    SIM_XML_OVERRIDE="${2:?}"; shift 2 ;;
+    --taosim)     TAOSIM_OVERRIDE="${2:?}"; shift 2 ;;
+    --reset)      RESET=1; shift ;;
+    --no-attach)  NO_ATTACH=1; shift ;;
+    --check)      CHECK_ONLY=1; shift ;;
+    -h|--help)    usage; exit 0 ;;
+    *) die "Unknown option: $1" ;;
+  esac
 done
 
-is_integer "$AGENT_ID" || die "Invalid agent ID: $AGENT_ID"
-is_integer "$DEBUG_BOOK" || die "Invalid book ID: $DEBUG_BOOK"
-is_integer "$DEBUG_EVERY_N" && (( DEBUG_EVERY_N >= 1 )) \
-    || die "--every must be at least 1"
-is_integer "$DEBUG_SUMMARY_N" && (( DEBUG_SUMMARY_N >= 1 )) \
-    || die "--summary must be at least 1"
-is_port "$AGENT_PORT" || die "Invalid agent port: $AGENT_PORT"
-is_port "$PROXY_PORT" || die "Invalid proxy port: $PROXY_PORT"
-[[ "$AGENT_PORT" != "$PROXY_PORT" ]] || die "Agent and proxy ports must differ"
-
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-CURRENT_DIR="$(pwd -P)"
+REPO_ROOT="${ROOT_OVERRIDE:-$SCRIPT_DIR}"
+REPO_ROOT="$(cd -- "$REPO_ROOT" 2>/dev/null && pwd -P)" || die "Invalid repo root: $REPO_ROOT"
 
-looks_like_repo_root() {
-    local candidate="$1"
-
-    [[ -f "$candidate/agents/proxy/proxy.py" ]] || return 1
-
-    if [[ -f "$candidate/agents/strategy/Strategy1.py" ]] \
-        || [[ -f "$candidate/agents/Strategy1.py" ]]; then
-        return 0
-    fi
-
-    return 1
-}
-
-search_upward_for_root() {
-    local start="$1"
-    local current
-
-    current="$(cd -- "$start" 2>/dev/null && pwd -P)" || return 1
-
-    while :; do
-        if looks_like_repo_root "$current"; then
-            printf '%s\n' "$current"
-            return 0
-        fi
-
-        [[ "$current" != "/" ]] || break
-        current="$(dirname -- "$current")"
-    done
-
-    return 1
-}
-
-if [[ -n "$ROOT_OVERRIDE" ]]; then
-    [[ -d "$ROOT_OVERRIDE" ]] || die "Repository root does not exist: $ROOT_OVERRIDE"
-    REPO_ROOT="$(cd -- "$ROOT_OVERRIDE" && pwd -P)"
-else
-    REPO_ROOT="$(search_upward_for_root "$SCRIPT_DIR" || true)"
-
-    if [[ -z "$REPO_ROOT" ]]; then
-        REPO_ROOT="$(search_upward_for_root "$CURRENT_DIR" || true)"
-    fi
-
-    [[ -n "$REPO_ROOT" ]] || die \
-        "Could not locate the repository root. Use --root /path/to/orthoxplus_gold"
-fi
-
-# This repository stores trading agents under agents/strategy/.
 AGENTS_DIR="$REPO_ROOT/agents"
 AGENT_DIR="$AGENTS_DIR/strategy"
 AGENT_FILE="$AGENTS_DIR/strategy/Strategy1_Debug.py"
 STRATEGY_FILE="$AGENTS_DIR/strategy/Strategy1.py"
-
-[[ -f "$AGENT_FILE" ]] || die "Missing debug agent: $AGENT_FILE"
-[[ -f "$STRATEGY_FILE" ]] || die "Missing base strategy: $STRATEGY_FILE"
-PROXY_DIR="$REPO_ROOT/agents/proxy"
+PROXY_DIR="$AGENTS_DIR/proxy"
 PROXY_FILE="$PROXY_DIR/proxy.py"
 
-[[ -f "$PROXY_FILE" ]] || die "Missing proxy: $PROXY_FILE"
+[[ -f "$STRATEGY_FILE" ]] || die "Missing $STRATEGY_FILE"
+[[ -f "$AGENT_FILE" ]] || die "Missing $AGENT_FILE"
+[[ -f "$PROXY_FILE" ]] || die "Missing $PROXY_FILE"
 
+command -v tmux >/dev/null 2>&1 || die "tmux missing. Run setup_strategy1_local_test.sh"
+command -v jq   >/dev/null 2>&1 || die "jq missing. Run setup_strategy1_local_test.sh"
+
+# Deliberately prefer the repository .venv even when the caller forgot to activate it.
 if [[ -n "$PYTHON_OVERRIDE" ]]; then
-    if [[ "$PYTHON_OVERRIDE" == */* ]]; then
-        [[ -x "$PYTHON_OVERRIDE" ]] || die "Python is not executable: $PYTHON_OVERRIDE"
-        PYTHON_BIN="$(cd -- "$(dirname -- "$PYTHON_OVERRIDE")" && pwd -P)/$(basename -- "$PYTHON_OVERRIDE")"
-    else
-        PYTHON_BIN="$(command -v "$PYTHON_OVERRIDE" || true)"
-        [[ -n "$PYTHON_BIN" ]] || die "Python command not found: $PYTHON_OVERRIDE"
-    fi
-elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
-    PYTHON_BIN="${VIRTUAL_ENV}/bin/python"
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="$(command -v python3)"
+  PYTHON="$PYTHON_OVERRIDE"
+elif [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then
+  PYTHON="$REPO_ROOT/.venv/bin/python"
+elif [[ -n "${VIRTUAL_ENV:-}" && -x "$VIRTUAL_ENV/bin/python" ]]; then
+  PYTHON="$VIRTUAL_ENV/bin/python"
 else
-    die "python3 is not installed"
+  PYTHON="$(command -v python3 || true)"
 fi
+[[ -n "$PYTHON" && -x "$PYTHON" ]] || die "Python interpreter not found"
 
 if [[ -n "$SIM_XML_OVERRIDE" ]]; then
-    if [[ "$SIM_XML_OVERRIDE" = /* ]]; then
-        SIM_XML_SOURCE="$SIM_XML_OVERRIDE"
-    else
-        SIM_XML_SOURCE="$REPO_ROOT/$SIM_XML_OVERRIDE"
-    fi
+  [[ "$SIM_XML_OVERRIDE" = /* ]] && SIM_XML="$SIM_XML_OVERRIDE" || SIM_XML="$REPO_ROOT/$SIM_XML_OVERRIDE"
 else
-    SIM_XML_SOURCE="$REPO_ROOT/simulate/trading/run/config/simulation_0.xml"
-
-    if [[ ! -f "$SIM_XML_SOURCE" ]]; then
-        SIM_XML_SOURCE="$(
-            find "$REPO_ROOT/simulate" -maxdepth 6 -type f \
-                -name 'simulation_0.xml' -print -quit 2>/dev/null || true
-        )"
-    fi
+  SIM_XML="$REPO_ROOT/simulate/trading/run/config/simulation_0.xml"
 fi
-
-[[ -n "$SIM_XML_SOURCE" && -f "$SIM_XML_SOURCE" ]] \
-    || die "simulation_0.xml was not found. Use --sim-xml PATH"
-SIM_XML_SOURCE="$(cd -- "$(dirname -- "$SIM_XML_SOURCE")" && pwd -P)/$(basename -- "$SIM_XML_SOURCE")"
+[[ -f "$SIM_XML" ]] || die "Missing simulation XML: $SIM_XML"
+SIM_XML="$(cd -- "$(dirname -- "$SIM_XML")" && pwd -P)/$(basename -- "$SIM_XML")"
 
 if [[ -n "$TAOSIM_OVERRIDE" ]]; then
-    if [[ "$TAOSIM_OVERRIDE" = /* ]]; then
-        TAOSIM_BIN="$TAOSIM_OVERRIDE"
-    elif [[ "$TAOSIM_OVERRIDE" == */* ]]; then
-        TAOSIM_BIN="$REPO_ROOT/$TAOSIM_OVERRIDE"
-    else
-        TAOSIM_BIN="$(command -v "$TAOSIM_OVERRIDE" || true)"
-    fi
+  [[ "$TAOSIM_OVERRIDE" = /* ]] && TAOSIM="$TAOSIM_OVERRIDE" || TAOSIM="$REPO_ROOT/$TAOSIM_OVERRIDE"
 else
-    TAOSIM_BIN="$REPO_ROOT/simulate/trading/build/src/cpp/taosim"
-
-    if [[ ! -f "$TAOSIM_BIN" ]]; then
-        TAOSIM_BIN="$(command -v taosim || true)"
-    fi
-
-    if [[ -z "$TAOSIM_BIN" || ! -f "$TAOSIM_BIN" ]]; then
-        TAOSIM_BIN="$(
-            find "$REPO_ROOT/simulate" -maxdepth 8 -type f \
-                -name taosim -print -quit 2>/dev/null || true
-        )"
-    fi
+  TAOSIM="$REPO_ROOT/simulate/trading/build/src/cpp/taosim"
 fi
+[[ -f "$TAOSIM" ]] || die "Missing taosim: $TAOSIM"
+[[ -x "$TAOSIM" ]] || die "taosim is not executable: chmod +x '$TAOSIM'"
+TAOSIM="$(cd -- "$(dirname -- "$TAOSIM")" && pwd -P)/$(basename -- "$TAOSIM")"
 
-[[ -n "$TAOSIM_BIN" && -f "$TAOSIM_BIN" ]] \
-    || die "taosim was not found. Build the simulator or use --taosim PATH"
-[[ -x "$TAOSIM_BIN" ]] \
-    || die "taosim is not executable. Run: chmod +x $(shell_quote "$TAOSIM_BIN")"
-TAOSIM_BIN="$(cd -- "$(dirname -- "$TAOSIM_BIN")" && pwd -P)/$(basename -- "$TAOSIM_BIN")"
+[[ "$AGENT_PORT" =~ ^[0-9]+$ ]] || die "Invalid agent port"
+[[ "$PROXY_PORT" =~ ^[0-9]+$ ]] || die "Invalid proxy port"
+(( AGENT_PORT > 0 && AGENT_PORT < 65536 )) || die "Invalid agent port"
+(( PROXY_PORT > 0 && PROXY_PORT < 65536 )) || die "Invalid proxy port"
+[[ "$AGENT_PORT" != "$PROXY_PORT" ]] || die "Agent/proxy ports must differ"
+[[ "$AGENT_ID" =~ ^[0-9]+$ ]] || die "Invalid agent id"
+[[ "$DEBUG_BOOK" =~ ^-?[0-9]+$ ]] || die "Invalid book id"
+[[ "$DEBUG_EVERY_N" =~ ^[0-9]+$ ]] && (( DEBUG_EVERY_N >= 1 )) || die "--every must be >= 1"
+[[ "$DEBUG_SUMMARY_N" =~ ^[0-9]+$ ]] && (( DEBUG_SUMMARY_N >= 1 )) || die "--summary must be >= 1"
 
-# simulation_0.xml normally lives in simulate/trading/run/config.
-# Run taosim from the parent "run" directory so relative paths keep working.
-SIM_XML_DIR="$(dirname -- "$SIM_XML_SOURCE")"
-if [[ "$(basename -- "$SIM_XML_DIR")" == "config" ]]; then
-    SIM_RUN_DIR="$(dirname -- "$SIM_XML_DIR")"
-else
-    SIM_RUN_DIR="$SIM_XML_DIR"
+export PYTHONPATH="$REPO_ROOT:$AGENTS_DIR:$AGENT_DIR:${PYTHONPATH:-}"
+
+info "Python: $PYTHON"
+"$PYTHON" -m py_compile "$STRATEGY_FILE" "$AGENT_FILE"
+
+info "Checking required Python modules..."
+"$PYTHON" - <<'PY' || {
+import bittensor, taos, aiohttp, httpx, fastapi, uvicorn, posix_ipc, msgpack, msgspec
+print("basic imports OK")
+PY
+  echo
+  echo "Python dependency validation failed."
+  echo "Run: bash setup_strategy1_local_test.sh"
+  exit 1
+}
+
+info "Checking Strategy1_Debug import..."
+(
+  cd -- "$AGENT_DIR"
+  "$PYTHON" -c 'from Strategy1_Debug import Strategy1_Debug; print("Strategy1_Debug import OK")'
+)
+
+info "Checking Proxy import..."
+if ! (
+  cd -- "$REPO_ROOT"
+  "$PYTHON" -c 'from agents.proxy.proxy import Proxy; print("Proxy import OK")'
+); then
+  echo
+  echo "Proxy import failed. Do NOT start the simulator yet."
+  echo "Run: bash setup_strategy1_local_test.sh"
+  echo "If an optional dependency is still missing:"
+  echo "     bash setup_strategy1_local_test.sh --full"
+  exit 1
 fi
-
-command -v tmux >/dev/null 2>&1 \
-    || die "tmux is not installed. Run: sudo apt update && sudo apt install -y tmux"
-
-"$PYTHON_BIN" -m py_compile "$STRATEGY_FILE" "$AGENT_FILE" \
-    || die "Strategy1.py or Strategy1_Debug.py failed Python syntax validation"
 
 cat <<EOF
 
-SN79 Strategy1_Debug environment
---------------------------------
-Repository:       $REPO_ROOT
-Agent directory:  $AGENT_DIR
-Debug agent:      $AGENT_FILE
-Proxy:            $PROXY_FILE
-Simulation XML:   $SIM_XML_SOURCE
-taosim:           $TAOSIM_BIN
-Python:           $PYTHON_BIN
-tmux session:     $SESSION
-Proxy port:       $PROXY_PORT
-Agent port:       $AGENT_PORT
+Environment validated
+---------------------
+Repo:        $REPO_ROOT
+Python:      $PYTHON
+Agent:       $AGENT_FILE
+Proxy:       $PROXY_FILE
+taosim:      $TAOSIM
+XML:         $SIM_XML
+Session:     $SESSION
+Proxy port:  $PROXY_PORT
+Agent port:  $AGENT_PORT
+Debug book:  $DEBUG_BOOK
 
 EOF
 
-if (( CHECK_ONLY == 1 )); then
-    info "Path, dependency, and Python syntax checks passed."
-    exit 0
-fi
-
-# Import validation catches missing packages or imports before tmux starts.
-if ! (
-    cd -- "$AGENT_DIR"
-    export PYTHONPATH="$REPO_ROOT:$AGENT_DIR:${PYTHONPATH:-}"
-    "$PYTHON_BIN" -c \
-        'from Strategy1_Debug import Strategy1_Debug; print("Strategy1_Debug import OK")'
-); then
-    die "Strategy1_Debug import failed. Confirm the active virtual environment and pip install -e ."
-fi
+(( CHECK_ONLY == 0 )) || exit 0
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
-    if (( RESET_SESSION == 1 )); then
-        info "Stopping existing tmux session: $SESSION"
-        tmux kill-session -t "$SESSION"
-        sleep 1
-    else
-        die "tmux session '$SESSION' already exists. Use --reset or run: tmux attach -t $SESSION"
-    fi
+  if (( RESET == 1 )); then
+    info "Stopping existing session $SESSION"
+    tmux kill-session -t "$SESSION"
+    sleep 1
+  else
+    die "Session exists: $SESSION. Use --reset or: tmux attach -t $SESSION"
+  fi
 fi
 
-port_is_open() {
-    local port="$1"
-    (exec 3<>"/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1
-}
-
-if port_is_open "$PROXY_PORT"; then
-    die "Proxy port $PROXY_PORT is already in use"
+# Catch unrelated stale listeners before opening a new run.
+if (exec 3<>"/dev/tcp/127.0.0.1/$PROXY_PORT") >/dev/null 2>&1; then
+  die "Port $PROXY_PORT already in use"
 fi
-
-if port_is_open "$AGENT_PORT"; then
-    die "Agent port $AGENT_PORT is already in use"
+if (exec 3<>"/dev/tcp/127.0.0.1/$AGENT_PORT") >/dev/null 2>&1; then
+  die "Port $AGENT_PORT already in use"
 fi
 
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 LOG_BASE="$REPO_ROOT/logs/strategy1_debug"
 LOG_DIR="$LOG_BASE/$RUN_ID"
 DEBUG_DIR="$LOG_DIR/debug"
+JSONL="$DEBUG_DIR/strategy1_debug_agent_${AGENT_ID}.jsonl"
 RUNTIME_CONFIG="$LOG_DIR/proxy_config.runtime.json"
 RUNTIME_XML="$LOG_DIR/simulation_0.runtime.xml"
-JSONL_FILE="$DEBUG_DIR/strategy1_debug_agent_${AGENT_ID}.jsonl"
 
 mkdir -p "$DEBUG_DIR"
+touch "$JSONL"
 
-# Create a runtime XML copy with a proxy port matching this run.
-"$PYTHON_BIN" - "$SIM_XML_SOURCE" "$RUNTIME_XML" "$PROXY_PORT" <<'PY'
+# latest -> current run
+mkdir -p "$LOG_BASE"
+ln -sfn "$RUN_ID" "$LOG_BASE/latest"
+
+# Copy XML and force its Simulation port to the chosen proxy port.
+"$PYTHON" - "$SIM_XML" "$RUNTIME_XML" "$PROXY_PORT" <<'PY'
 from pathlib import Path
-import re
-import sys
+import re, sys
 
-source = Path(sys.argv[1])
-target = Path(sys.argv[2])
-port = sys.argv[3]
-
-text = source.read_text(encoding="utf-8")
-pattern = r'(<Simulation\b[^>]*\bport\s*=\s*["\'])\d+(["\'])'
-updated, count = re.subn(pattern, rf'\g<1>{port}\2', text, count=1)
-
-if count == 0:
-    updated, count = re.subn(
-        r'<Simulation\b',
-        f'<Simulation port="{port}"',
-        text,
-        count=1,
-    )
-
-if count == 0:
-    raise SystemExit("Could not find the <Simulation> element in the XML")
-
-target.write_text(updated, encoding="utf-8")
+src, dst, port = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+text = src.read_text(encoding="utf-8")
+updated, count = re.subn(
+    r'(<Simulation\b[^>]*\bport\s*=\s*["\'])\d+(["\'])',
+    rf'\g<1>{port}\2',
+    text,
+    count=1,
+)
+if not count:
+    updated, count = re.subn(r'<Simulation\b', f'<Simulation port="{port}"', text, count=1)
+if not count:
+    raise SystemExit("Could not locate <Simulation> in XML")
+dst.write_text(updated, encoding="utf-8")
 PY
 
-# Generate a config with the actual agents/strategy path used by this repository.
-"$PYTHON_BIN" - \
-    "$RUNTIME_CONFIG" \
-    "$RUNTIME_XML" \
-    "$AGENT_DIR" \
-    "$PROXY_PORT" \
-    "$AGENT_PORT" \
-    "$PROXY_TIMEOUT" \
-    "$DEBUG_BOOK" \
-    "$DEBUG_EVERY_N" \
-    "$DEBUG_SUMMARY_N" \
-    "$DEBUG_JSONL" <<'PY'
+# Generate the exact local proxy config.
+"$PYTHON" - "$RUNTIME_CONFIG" "$RUNTIME_XML" "$AGENT_DIR" \
+  "$PROXY_PORT" "$AGENT_PORT" "$PROXY_TIMEOUT" "$DEBUG_BOOK" \
+  "$DEBUG_EVERY_N" "$DEBUG_SUMMARY_N" "$DEBUG_JSONL" <<'PY'
 from pathlib import Path
-import json
-import sys
+import json, sys
 
-(
-    output,
-    simulation_xml,
-    agent_dir,
-    proxy_port,
-    agent_port,
-    timeout,
-    debug_book,
-    debug_every,
-    debug_summary,
-    debug_jsonl,
-) = sys.argv[1:]
+(out, xml, agent_dir, proxy_port, agent_port, timeout,
+ book, every, summary, jsonl) = sys.argv[1:]
 
-config = {
+cfg = {
     "proxy": {
         "port": int(proxy_port),
-        "simulation_xml": simulation_xml,
+        "simulation_xml": xml,
         "timeout": int(timeout),
     },
     "agents": {
-        "path": agent_dir,
         "start_port": int(agent_port),
-        "Strategy1_Debug": [
-            {
-                "params": {
-                    "enable_mm_strategy": True,
-                    "verbose_log": False,
-                    "log_every_n": 100,
-                    "debug_enabled": True,
-                    "debug_every_n": int(debug_every),
-                    "debug_summary_every_n": int(debug_summary),
-                    "debug_jsonl": bool(int(debug_jsonl)),
-                    "debug_book_id": int(debug_book),
-                },
-                "count": 1,
-            }
-        ],
+        "path": agent_dir,
+        "Strategy1_Debug": [{
+            "params": {
+                "enable_mm_strategy": True,
+                "verbose_log": False,
+                "log_every_n": 100,
+                "debug_enabled": True,
+                "debug_every_n": int(every),
+                "debug_summary_every_n": int(summary),
+                "debug_jsonl": bool(int(jsonl)),
+                "debug_book_id": int(book),
+            },
+            "count": 1,
+        }],
     },
 }
-
-Path(output).write_text(
-    json.dumps(config, indent=2) + "\n",
-    encoding="utf-8",
-)
+Path(out).write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
 PY
 
-cp -- "$SIM_XML_SOURCE" "$LOG_DIR/simulation_0.original.xml"
+SIM_XML_DIR="$(dirname -- "$RUNTIME_XML")"
+# taosim may resolve other files relative to simulate/trading/run, not log dir.
+SIM_RUN_DIR="$(dirname -- "$(dirname -- "$SIM_XML")")"
+[[ -d "$SIM_RUN_DIR" ]] || SIM_RUN_DIR="$REPO_ROOT/simulate/trading/run"
 
 RUN_PROXY="$LOG_DIR/run_proxy.sh"
 RUN_AGENT="$LOG_DIR/run_agent.sh"
-RUN_SIMULATOR="$LOG_DIR/run_simulator.sh"
-RUN_JSON_MONITOR="$LOG_DIR/run_json_monitor.sh"
-RUN_PROCESS_MONITOR="$LOG_DIR/run_process_monitor.sh"
-STOP_SCRIPT="$LOG_DIR/stop.sh"
+RUN_SIM="$LOG_DIR/run_simulator.sh"
+RUN_MONITOR="$LOG_DIR/run_monitor.sh"
+RUN_HEALTH="$LOG_DIR/run_health.sh"
 
-{
-    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
-    printf 'cd -- %q\n' "$PROXY_DIR"
-    printf 'export PYTHONPATH=%q:%q:${PYTHONPATH:-}\n' "$REPO_ROOT" "$AGENT_DIR"
-    printf 'exec > >(tee -a %q) 2>&1\n' "$LOG_DIR/proxy.log"
-    printf 'echo "[proxy] starting at $(date --iso-8601=seconds)"\n'
-    printf 'exec %q -u %q --config %q\n' "$PYTHON_BIN" "$PROXY_FILE" "$RUNTIME_CONFIG"
-} > "$RUN_PROXY"
-
-{
-    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
-    printf 'cd -- %q\n' "$AGENT_DIR"
-    printf 'export PYTHONPATH=%q:%q:${PYTHONPATH:-}\n' "$REPO_ROOT" "$AGENT_DIR"
-    printf 'export PYTHONUNBUFFERED=1\n'
-    printf 'export STRATEGY1_DEBUG=1\n'
-    printf 'export STRATEGY1_DEBUG_BOOK=%q\n' "$DEBUG_BOOK"
-    printf 'export STRATEGY1_DEBUG_EVERY_N=%q\n' "$DEBUG_EVERY_N"
-    printf 'export STRATEGY1_DEBUG_SUMMARY_N=%q\n' "$DEBUG_SUMMARY_N"
-    printf 'export STRATEGY1_DEBUG_JSONL=%q\n' "$DEBUG_JSONL"
-    printf 'export STRATEGY1_DEBUG_DIR=%q\n' "$DEBUG_DIR"
-    printf 'exec > >(tee -a %q) 2>&1\n' "$LOG_DIR/agent.log"
-    printf 'params=(\n'
-    printf '  enable_mm_strategy=1\n'
-    printf '  verbose_log=0\n'
-    printf '  log_every_n=100\n'
-    printf '  debug_enabled=1\n'
-    printf '  debug_every_n=%q\n' "$DEBUG_EVERY_N"
-    printf '  debug_summary_every_n=%q\n' "$DEBUG_SUMMARY_N"
-    printf '  debug_jsonl=%q\n' "$DEBUG_JSONL"
-    printf '  debug_book_id=%q\n' "$DEBUG_BOOK"
-    printf ')\n'
-    cat <<'EOF'
-if [[ -n "${EXTRA_AGENT_PARAMS:-}" ]]; then
-    read -r -a extra_params <<< "$EXTRA_AGENT_PARAMS"
-    params+=("${extra_params[@]}")
-fi
+cat >"$RUN_PROXY" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd -- $(printf '%q' "$PROXY_DIR")
+export PYTHONPATH=$(printf '%q' "$REPO_ROOT:$AGENTS_DIR:$AGENT_DIR"):\${PYTHONPATH:-}
+export PYTHONUNBUFFERED=1
+exec > >(tee -a $(printf '%q' "$LOG_DIR/proxy.log")) 2>&1
+echo "[proxy] starting at \$(date --iso-8601=seconds)"
+exec $(printf '%q' "$PYTHON") -u $(printf '%q' "$PROXY_FILE") --config $(printf '%q' "$RUNTIME_CONFIG")
 EOF
-    printf 'echo "[agent] starting at $(date --iso-8601=seconds)"\n'
-    printf 'exec %q -u %q --port %q --agent_id %q --params "${params[@]}"\n' \
-        "$PYTHON_BIN" "$AGENT_FILE" "$AGENT_PORT" "$AGENT_ID"
-} > "$RUN_AGENT"
 
-{
-    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
-    printf 'cd -- %q\n' "$SIM_RUN_DIR"
-    printf 'exec > >(tee -a %q) 2>&1\n' "$LOG_DIR/simulator.log"
-    printf 'PROXY_PORT=%q\n' "$PROXY_PORT"
-    printf 'AGENT_PORT=%q\n' "$AGENT_PORT"
-    cat <<'EOF'
-wait_for_port() {
-    local label="$1"
-    local port="$2"
-    local timeout_seconds="$3"
-    local elapsed=0
+cat >"$RUN_AGENT" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd -- $(printf '%q' "$AGENT_DIR")
+export PYTHONPATH=$(printf '%q' "$REPO_ROOT:$AGENTS_DIR:$AGENT_DIR"):\${PYTHONPATH:-}
+export PYTHONUNBUFFERED=1
+export STRATEGY1_DEBUG=1
+export STRATEGY1_DEBUG_BOOK=$(printf '%q' "$DEBUG_BOOK")
+export STRATEGY1_DEBUG_EVERY_N=$(printf '%q' "$DEBUG_EVERY_N")
+export STRATEGY1_DEBUG_SUMMARY_N=$(printf '%q' "$DEBUG_SUMMARY_N")
+export STRATEGY1_DEBUG_JSONL=$(printf '%q' "$DEBUG_JSONL")
+export STRATEGY1_DEBUG_DIR=$(printf '%q' "$DEBUG_DIR")
+exec > >(tee -a $(printf '%q' "$LOG_DIR/agent.log")) 2>&1
+params=(
+  enable_mm_strategy=1
+  verbose_log=0
+  log_every_n=100
+  debug_enabled=1
+  debug_every_n=$(printf '%q' "$DEBUG_EVERY_N")
+  debug_summary_every_n=$(printf '%q' "$DEBUG_SUMMARY_N")
+  debug_jsonl=$(printf '%q' "$DEBUG_JSONL")
+  debug_book_id=$(printf '%q' "$DEBUG_BOOK")
+)
+if [[ -n "\${EXTRA_AGENT_PARAMS:-}" ]]; then
+  read -r -a extra <<< "\$EXTRA_AGENT_PARAMS"
+  params+=("\${extra[@]}")
+fi
+echo "[agent] starting at \$(date --iso-8601=seconds)"
+exec $(printf '%q' "$PYTHON") -u $(printf '%q' "$AGENT_FILE") \
+  --port $(printf '%q' "$AGENT_PORT") \
+  --agent_id $(printf '%q' "$AGENT_ID") \
+  --params "\${params[@]}"
+EOF
 
-    while (( elapsed < timeout_seconds )); do
-        if (exec 3<>"/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1; then
-            echo "[$label] port $port is ready"
-            return 0
-        fi
+cat >"$RUN_SIM" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd -- $(printf '%q' "$SIM_RUN_DIR")
+exec > >(tee -a $(printf '%q' "$LOG_DIR/simulator.log")) 2>&1
 
-        sleep 1
-        ((elapsed += 1))
-    done
-
-    echo "ERROR: $label port $port did not become ready within ${timeout_seconds}s" >&2
-    return 1
+wait_port() {
+  local name="\$1" port="\$2" timeout="\$3" n=0
+  while (( n < timeout )); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/\$port") >/dev/null 2>&1; then
+      echo "[simulator] \$name port \$port ready"
+      return 0
+    fi
+    sleep 1
+    ((n+=1))
+  done
+  echo "ERROR: \$name port \$port did not become ready within \${timeout}s" >&2
+  return 1
 }
 
 echo "[simulator] waiting for proxy and agent"
-wait_for_port proxy "$PROXY_PORT" 60
-wait_for_port agent "$AGENT_PORT" 60
+if ! wait_port proxy $(printf '%q' "$PROXY_PORT") 60; then
+  echo
+  echo "---- proxy.log tail ----"
+  tail -80 $(printf '%q' "$LOG_DIR/proxy.log") 2>/dev/null || true
+  exit 1
+fi
+if ! wait_port agent $(printf '%q' "$AGENT_PORT") 60; then
+  echo
+  echo "---- agent.log tail ----"
+  tail -80 $(printf '%q' "$LOG_DIR/agent.log") 2>/dev/null || true
+  exit 1
+fi
+
+echo "[simulator] starting at \$(date --iso-8601=seconds)"
+exec $(printf '%q' "$TAOSIM") -f $(printf '%q' "$RUNTIME_XML")
 EOF
-    printf 'echo "[simulator] starting at $(date --iso-8601=seconds)"\n'
-    printf 'exec %q -f %q\n' "$TAOSIM_BIN" "$RUNTIME_XML"
-} > "$RUN_SIMULATOR"
 
-{
-    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
-    printf 'mkdir -p -- %q\n' "$DEBUG_DIR"
-    printf 'touch %q\n' "$JSONL_FILE"
-    printf 'echo "Watching: %s"\n' "$JSONL_FILE"
-    printf 'exec tail -n 80 -F %q\n' "$JSONL_FILE"
-} > "$RUN_JSON_MONITOR"
+cat >"$RUN_MONITOR" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+touch $(printf '%q' "$JSONL")
+tail -n 100 -F $(printf '%q' "$JSONL") | jq -C .
+EOF
 
-{
-    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
-    printf 'LOG_DIR=%q\n' "$LOG_DIR"
-    cat <<'EOF'
+cat >"$RUN_HEALTH" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
 while true; do
-    clear
-    date
-    echo
-    ps -eo pid,etime,%cpu,%mem,cmd \
-        | grep -E 'proxy\.py|Strategy1_Debug\.py|taosim' \
-        | grep -v grep || true
-    echo
-    echo "Logs: $LOG_DIR"
-    sleep 2
+  clear
+  echo "SN79 Strategy1 local health - \$(date)"
+  echo
+  echo "Processes"
+  ps -eo pid,etime,%cpu,%mem,cmd | grep -E 'proxy\\.py|Strategy1_Debug\\.py|taosim' | grep -v grep || true
+  echo
+  echo "Ports"
+  ss -ltnp 2>/dev/null | grep -E ':$(printf '%q' "$PROXY_PORT")|:$(printf '%q' "$AGENT_PORT")' || true
+  echo
+  echo "Run: $(printf '%q' "$LOG_DIR")"
+  sleep 2
 done
 EOF
-} > "$RUN_PROCESS_MONITOR"
 
-{
-    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
-    printf 'tmux kill-session -t %q 2>/dev/null || true\n' "$SESSION"
-} > "$STOP_SCRIPT"
+chmod 755 "$RUN_PROXY" "$RUN_AGENT" "$RUN_SIM" "$RUN_MONITOR" "$RUN_HEALTH"
 
-chmod 755 \
-    "$RUN_PROXY" \
-    "$RUN_AGENT" \
-    "$RUN_SIMULATOR" \
-    "$RUN_JSON_MONITOR" \
-    "$RUN_PROCESS_MONITOR" \
-    "$STOP_SCRIPT"
-
-cat > "$LOG_DIR/run_info.txt" <<EOF
-RUN_ID=$RUN_ID
+cat >"$LOG_DIR/run_info.txt" <<EOF
 SESSION=$SESSION
+RUN_ID=$RUN_ID
 REPO_ROOT=$REPO_ROOT
-AGENT_DIR=$AGENT_DIR
+PYTHON=$PYTHON
 AGENT_FILE=$AGENT_FILE
-AGENT_ID=$AGENT_ID
-AGENT_PORT=$AGENT_PORT
-PROXY_PORT=$PROXY_PORT
-PYTHON_BIN=$PYTHON_BIN
-SIM_XML_SOURCE=$SIM_XML_SOURCE
+PROXY_FILE=$PROXY_FILE
+TAOSIM=$TAOSIM
+SIM_XML=$SIM_XML
 RUNTIME_XML=$RUNTIME_XML
-TAOSIM_BIN=$TAOSIM_BIN
+PROXY_PORT=$PROXY_PORT
+AGENT_PORT=$AGENT_PORT
 DEBUG_BOOK=$DEBUG_BOOK
 DEBUG_EVERY_N=$DEBUG_EVERY_N
 DEBUG_SUMMARY_N=$DEBUG_SUMMARY_N
 EOF
 
-if [[ -L "$LOG_BASE/latest" || ! -e "$LOG_BASE/latest" ]]; then
-    ln -sfn "$RUN_ID" "$LOG_BASE/latest"
-fi
+# Window 0: proxy
+tmux new-session -d -s "$SESSION" -n proxy -c "$REPO_ROOT" \
+  "bash $(printf '%q' "$RUN_PROXY")"
 
-send_runner_to_tmux() {
-    local target="$1"
-    local runner="$2"
-    local command
+# Window 1: agent
+tmux new-window -d -t "$SESSION:1" -n agent -c "$AGENT_DIR" \
+  "bash $(printf '%q' "$RUN_AGENT")"
 
-    printf -v command 'bash %q' "$runner"
-    tmux send-keys -t "$target" "$command" C-m
-}
+# Window 2: simulator
+tmux new-window -d -t "$SESSION:2" -n simulator -c "$SIM_RUN_DIR" \
+  "bash $(printf '%q' "$RUN_SIM")"
 
-tmux new-session -d -s "$SESSION" -n proxy
-send_runner_to_tmux "$SESSION:proxy.0" "$RUN_PROXY"
+# Window 3: monitor (JSONL top, health bottom)
+tmux new-window -d -t "$SESSION:3" -n monitor -c "$REPO_ROOT" \
+  "bash $(printf '%q' "$RUN_MONITOR")"
+tmux split-window -v -t "$SESSION:3.0" -c "$REPO_ROOT" \
+  "bash $(printf '%q' "$RUN_HEALTH")"
+tmux select-layout -t "$SESSION:3" even-vertical
 
-tmux new-window -t "$SESSION" -n agent
-send_runner_to_tmux "$SESSION:agent.0" "$RUN_AGENT"
+# Window 4: simtrace. Direct commands avoid fragile send-keys/window-name timing.
+tmux new-window -d -t "$SESSION:4" -n simtrace -c "$REPO_ROOT" \
+  "tail -n 100 -F $(printf '%q' "$LOG_DIR/simulator.log")"
 
-tmux new-window -t "$SESSION" -n simulator
-send_runner_to_tmux "$SESSION:simulator.0" "$RUN_SIMULATOR"
+tmux split-window -h -t "$SESSION:4.0" -c "$REPO_ROOT" \
+  "tail -n 100 -F $(printf '%q' "$LOG_DIR/proxy.log") | grep --line-buffered -E 'Received state|Querying|Response|State update handled|NOTICE|Timed out|Failed|ERROR|WARNING|Uvicorn'"
 
-tmux new-window -t "$SESSION" -n monitor
-send_runner_to_tmux "$SESSION:monitor.0" "$RUN_JSON_MONITOR"
-tmux split-window -v -t "$SESSION:monitor.0"
-send_runner_to_tmux "$SESSION:monitor.1" "$RUN_PROCESS_MONITOR"
-tmux select-layout -t "$SESSION:monitor" even-vertical
+tmux split-window -v -t "$SESSION:4.1" -c "$REPO_ROOT" \
+  "tail -n 100 -F $(printf '%q' "$JSONL") | jq -C 'select(.type == \"DECISION\" or .type == \"ORDER_SUBMIT\" or .type == \"NOTICE\" or .type == \"TIMING\" or .type == \"SUMMARY\")'"
 
-tmux select-window -t "$SESSION:agent"
+tmux split-window -v -t "$SESSION:4.0" -c "$REPO_ROOT" \
+  "bash $(printf '%q' "$RUN_HEALTH")"
+
+tmux select-layout -t "$SESSION:4" tiled
+tmux select-window -t "$SESSION:1"
 
 cat <<EOF
 
-SN79 Strategy1_Debug local test started
---------------------------------------
-Session:   $SESSION
-Run ID:    $RUN_ID
-Agent dir: $AGENT_DIR
-Logs:      $LOG_DIR
-JSONL:     $JSONL_FILE
+========================================================
+ SN79 Strategy1_Debug local test started
+========================================================
+Session:  $SESSION
+Run:      $LOG_DIR
 
 Windows:
   0  proxy
   1  agent
   2  simulator
   3  monitor
+  4  simtrace
 
-Detach:    Ctrl-b, then d
-Reattach:  tmux attach -t $SESSION
-Stop:      bash $(shell_quote "$STOP_SCRIPT")
-Restart:   bash $(shell_quote "$0") --reset
+Navigation:
+  Ctrl+B, 0    proxy
+  Ctrl+B, 1    agent
+  Ctrl+B, 2    simulator
+  Ctrl+B, 3    JSONL + health
+  Ctrl+B, 4    full action trace
+
+Detach:
+  Ctrl+B, d
+
+Reattach:
+  tmux attach -t $SESSION
+
+Logs:
+  $LOG_BASE/latest/proxy.log
+  $LOG_BASE/latest/agent.log
+  $LOG_BASE/latest/simulator.log
+  $LOG_BASE/latest/debug/strategy1_debug_agent_${AGENT_ID}.jsonl
 
 EOF
 
 if (( NO_ATTACH == 0 )); then
-    exec tmux attach-session -t "$SESSION"
+  exec tmux attach -t "$SESSION"
 fi
