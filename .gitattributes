@@ -1,2 +1,0 @@
-# Shell scripts must use LF so Ubuntu shebang/exec works after clone.
-*.sh text eol=lf
