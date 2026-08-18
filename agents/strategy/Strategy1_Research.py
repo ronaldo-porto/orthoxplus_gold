@@ -148,6 +148,10 @@ class Strategy1_Research(Strategy1_Debug):
             "wall_time_ns": time.time_ns(),
             **safe,
         }
+        if event_type in {"RUN_SUMMARY", "ERROR"}:
+            record["research_queue_dropped"] = getattr(self, "_rdropped", 0)
+            if self._rq is not None:
+                record["research_queue_depth"] = self._rq.qsize()
         if not getattr(self, "_research_ready", False):
             self._research_early.append(record)
             return
@@ -161,6 +165,21 @@ class Strategy1_Research(Strategy1_Debug):
             self._rq.put_nowait(record)
         except queue.Full:
             self._rdropped += 1
+            if record.get("type") not in {
+                "ERROR",
+                "RUN_SUMMARY",
+                "RESEARCH_CONFIG",
+                "DEBUG_CONFIG",
+            }:
+                return
+            try:
+                self._rq.get_nowait()
+                self._rq.task_done()
+                self._rq.put_nowait(record)
+            except queue.Empty:
+                return
+            except queue.Full:
+                return
 
     def _writer_loop(self) -> None:
         assert self._rq is not None and self._rstop is not None

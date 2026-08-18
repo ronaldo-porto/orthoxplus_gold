@@ -358,6 +358,12 @@ class Strategy1(DetailedTemplateAgent):
         self.maintenance_passive_exit_only = bool(
             getattr(cfg, "maintenance_passive_exit_only", True)
         )
+        self.bootstrap_inactive_maintenance = bool(
+            getattr(cfg, "bootstrap_inactive_maintenance", True)
+        )
+        self.maintenance_candidate_pool_mult = max(
+            1, int(getattr(cfg, "maintenance_candidate_pool_mult", 8))
+        )
         self.log_mm_strategy = bool(getattr(cfg, "log_mm_strategy", True))
         self.log_book_memory = bool(getattr(cfg, "log_book_memory", False))
         self.mm_expiry_period = int(getattr(cfg, "mm_expiry_period_ns", 500_000_000))
@@ -852,10 +858,23 @@ class Strategy1(DetailedTemplateAgent):
         profile: BookProfile,
         archetype: BookArchetype,
     ) -> bool:
-        if archetype in ("WALL_BOOK", "TOXIC_BOOK", "TREND_BOOK", "STRESSED", "DEAD_BOOK"):
+        spread_bps = profile.spread_bps
+        if (
+            archetype == "STRESSED"
+            or (
+                spread_bps is not None
+                and spread_bps >= self.archetype_stressed_spread_bps
+            )
+        ):
+            return False
+        if self.bootstrap_inactive_maintenance and profile.tier == "INACTIVE":
+            return True
+        if archetype in ("WALL_BOOK", "TOXIC_BOOK", "TREND_BOOK"):
             return False
         if archetype == "MM_BOOK":
             return True
+        if archetype == "DEAD_BOOK":
+            return self.bootstrap_inactive_maintenance
         if profile.tier == "GREEN":
             return True
         return False
@@ -1094,13 +1113,34 @@ class Strategy1(DetailedTemplateAgent):
     ) -> list[int]:
         cap = limit if limit is not None else self.max_maintenance_books_per_tick
         candidates = list(selection.maintenance_books)
+        profile_by_id = {p.book_id: p for p in selection.profiles}
         inactive_ids = [
             p.book_id for p in selection.profiles if p.tier == "INACTIVE"
         ]
         for book_id in inactive_ids:
             if book_id not in candidates:
                 candidates.append(book_id)
-        candidates.sort(key=lambda b: self.coverage_priority(b, now), reverse=True)
+
+        def priority(book_id: int) -> tuple[float, float, int, float, float, float]:
+            profile = profile_by_id.get(book_id)
+            if profile is None:
+                return (1.0, float("inf"), 9999, float("inf"), float("inf"), 0.0)
+            spread_bps = (
+                profile.spread_bps
+                if profile.spread_bps is not None
+                else float("inf")
+            )
+            stressed = 1.0 if spread_bps >= self.archetype_stressed_spread_bps else 0.0
+            return (
+                stressed,
+                spread_bps,
+                profile.pnl_obs_count,
+                profile.traded_volume,
+                profile.volatility,
+                -self.coverage_priority(book_id, now),
+            )
+
+        candidates.sort(key=priority)
         return candidates[:cap]
 
     def get_regime_params(self, regime: MarketRegime) -> RegimeParamSet:
@@ -1159,7 +1199,7 @@ class Strategy1(DetailedTemplateAgent):
         regime: MarketRegime,
     ) -> BookArchetype:
         spread_bps = profile.spread_bps or 0.0
-        if spread_bps >= self.archetype_stressed_spread_bps or regime.mode == "STRESSED":
+        if spread_bps >= self.archetype_stressed_spread_bps:
             return "STRESSED"
         if profile.trade_rate < self.archetype_dead_trade_rate:
             return "DEAD_BOOK"
@@ -1837,9 +1877,15 @@ class Strategy1(DetailedTemplateAgent):
         avoid_set = set(selection.avoid_books)
         profile_by_id = {p.book_id: p for p in selection.profiles}
         maint_limit = self.max_maintenance_books_per_tick
+        maint_candidate_limit = maint_limit
+        if regime.scoring_overlay == "SCORING_PRESSURE":
+            maint_candidate_limit = min(
+                len(selection.maintenance_books) or len(selection.profiles),
+                max(maint_limit, maint_limit * self.maintenance_candidate_pool_mult),
+            )
         maintenance_set = set(
             self._schedule_maintenance_books(
-                selection, state.timestamp, limit=maint_limit,
+                selection, state.timestamp, limit=maint_candidate_limit,
             )
         )
 
@@ -1847,6 +1893,7 @@ class Strategy1(DetailedTemplateAgent):
         mm_candidates: list[tuple] = []
         alpha_candidates: list[tuple] = []
         manage_queue: list[tuple[float, int, Book, InventorySnapshot, RegimeParamSet, BookArchetype]] = []
+        maintenance_placed_books = 0
 
         for book_id, book in state.books.items():
             if not book.bids or not book.asks:
@@ -1896,6 +1943,9 @@ class Strategy1(DetailedTemplateAgent):
             toxic = self.is_toxic_book(book_id, profile, archetype)
 
             if book_id in maintenance_set:
+                if maintenance_placed_books >= maint_limit:
+                    stats["skipped_low_alpha"] += 1
+                    continue
                 if inventory.band != "FLAT":
                     stats["skipped_small_inv"] += 1
                     continue
@@ -1912,6 +1962,7 @@ class Strategy1(DetailedTemplateAgent):
                     client_id_base=MAINT_CLIENT_ID_BASE,
                 )
                 if n:
+                    maintenance_placed_books += 1
                     mem_m = self._mem(book_id)
                     mem_m.quote_count += n
                     if spread > 0:

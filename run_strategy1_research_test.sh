@@ -10,11 +10,11 @@ ENDPOINT="${ENDPOINT:-wss://test.finney.opentensor.ai:443}"
 NETUID="${NETUID:-366}"
 AXON_PORT="${AXON_PORT:-8090}"
 AGENT_PATH="${AGENT_PATH:-$REPO_ROOT/agents/strategy}"
-RESEARCH_EVERY_N="${RESEARCH_EVERY_N:-1}"
+RESEARCH_EVERY_N="${RESEARCH_EVERY_N:-50}"
 RESEARCH_BOOK="${RESEARCH_BOOK:--1}"
 RESEARCH_JSONL="${RESEARCH_JSONL:-1}"
-RESEARCH_CONSOLE="${RESEARCH_CONSOLE:-1}"
-RESEARCH_QUEUE="${RESEARCH_QUEUE:-8192}"
+RESEARCH_CONSOLE="${RESEARCH_CONSOLE:-0}"
+RESEARCH_QUEUE="${RESEARCH_QUEUE:-65536}"
 RESEARCH_DIR="${RESEARCH_DIR:-$REPO_ROOT/logs/strategy1_research}"
 
 EXTRA=()
@@ -49,13 +49,16 @@ export STRATEGY1_RESEARCH_QUEUE="$RESEARCH_QUEUE"
 export STRATEGY1_RESEARCH_DIR="$RESEARCH_DIR"
 mkdir -p "$RESEARCH_DIR"
 
-# Trading values intentionally match the Strategy1 test baseline.
+# Research defaults keep Strategy1 close to the test baseline while avoiding the
+# all-INACTIVE/all-STRESSED bootstrap deadlock seen in the research log.
 PARAMS="enable_mm_strategy=1 enable_kappa_strategy=0 lazy_load=1 \
 fast_update=1 sync_event_csv=0 history_len=0 \
 mm_base_size=0.25 max_inventory_base=1.20 inventory_close_threshold=0.25 \
 max_mm_books_per_tick=4 max_managed_books_per_tick=4 \
 min_expected_alpha=0.18 min_expected_realized_pnl=0.0 \
 mm_expiry_period_ns=500000000 maintenance_size_mult=0.25 \
+bootstrap_inactive_maintenance=1 maintenance_candidate_pool_mult=8 \
+regime_stressed_spread_bps=30 archetype_stressed_spread_bps=35 toxic_spread_bps=40 \
 passive_exit_only=1 aggressive_close_min_ticks=300 position_max_ticks=300 \
 mm_skip_inactive_tier=1 toxic_loss_streak=4 enable_auto_tuning=0 allow_tuning_config=0 \
 verbose_log=0 log_every_n=100 log_mm_strategy=0 log_direction=0 log_book_profile=0 \
