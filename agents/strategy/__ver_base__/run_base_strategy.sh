@@ -1,34 +1,21 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: MIT
-# BaseStrategy deploy launcher.
+# SN79 launcher for standalone BaseStrategy.
+# Same CLI style as run_strategy1_research_v4_strict_test.sh.
 #
-# Default:
-#   bash run_base_strategy.sh
+# Example:
+#   ./run_base_strategy.sh -w sw_ck_st4_m1 -h sw_hk_st4_m1 -u 366 -a 8092
 #
-# Enable V4.1 detailed telemetry:
-#   bash run_base_strategy.sh --log
-#
-# This launcher does NOT tune the V4.1 policy.  It preserves the exact fixed
-# economics/structural parameters and only controls observability.
+#   -w : wallet name / coldkey
+#   -h : wallet hotkey
+#   -u : netuid
+#   -a : axon port
+#   -e : subtensor endpoint (optional)
+#   -p : extra run_miner.sh parameter (optional, repeatable)
 
-set -Eeuo pipefail
+set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-REPO_ROOT="${SN79_ROOT:-$SCRIPT_DIR}"
-
-# Support placing this script either at repo root or in agents/strategy/.
-if [[ -f "$REPO_ROOT/run_miner.sh" ]]; then
-  :
-elif [[ -f "$SCRIPT_DIR/../../run_miner.sh" ]]; then
-  REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd -P)"
-elif [[ -f "$SCRIPT_DIR/../../../run_miner.sh" ]]; then
-  REPO_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd -P)"
-fi
-
-AGENT_PATH="${AGENT_PATH:-$REPO_ROOT/agents/strategy}"
-BUILDER="$AGENT_PATH/build_base_strategy.py"
-PUBLIC_AGENT="$AGENT_PATH/BaseStrategy.py"
-FLAT_AGENT="$AGENT_PATH/_BaseStrategy_flat.py"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_ROOT"
 
 WALLET_NAME="${WALLET_NAME:-taos}"
 HOTKEY_NAME="${HOTKEY_NAME:-miner}"
@@ -36,142 +23,55 @@ ENDPOINT="${ENDPOINT:-wss://test.finney.opentensor.ai:443}"
 NETUID="${NETUID:-366}"
 AXON_PORT="${AXON_PORT:-8090}"
 
-LOG_ENABLED=0
-LOG_EVERY_N="${LOG_EVERY_N:-10}"
-LOG_BOOK="${LOG_BOOK:--1}"
-LOG_JSONL="${LOG_JSONL:-1}"
-LOG_CONSOLE="${LOG_CONSOLE:-1}"
-LOG_QUEUE="${LOG_QUEUE:-65536}"
-LOG_DIR="${LOG_DIR:-$REPO_ROOT/logs/base_strategy}"
-FORCE_REBUILD=0
+AGENT_PATH="${AGENT_PATH:-$REPO_ROOT/agents/strategy}"
+
+RESEARCH_EVERY_N="${RESEARCH_EVERY_N:-10}"
+RESEARCH_BOOK="${RESEARCH_BOOK:--1}"
+RESEARCH_JSONL="${RESEARCH_JSONL:-1}"
+RESEARCH_CONSOLE="${RESEARCH_CONSOLE:-1}"
+RESEARCH_QUEUE="${RESEARCH_QUEUE:-65536}"
+RESEARCH_DIR="${RESEARCH_DIR:-$REPO_ROOT/logs/base_strategy}"
+
 EXTRA=()
-
-usage() {
-  cat <<'EOF'
-Usage: bash run_base_strategy.sh [options] [-- extra miner args]
-
-Options:
-  --log                 Enable V4.1 detailed [S1R_*] telemetry.
-  --every N             Detailed log sample cadence (default 10).
-  --book ID             Detailed log one book only; -1 means all (default -1).
-  --log-dir PATH        JSONL output directory.
-  --no-console          JSONL only when --log is enabled.
-  --no-jsonl            Console only when --log is enabled.
-  --rebuild             Force regeneration of _BaseStrategy_flat.py.
-  --wallet NAME         Wallet name (default: taos).
-  --hotkey NAME         Hotkey name (default: miner).
-  --endpoint URL        Subtensor endpoint.
-  --netuid N            Netuid (default: 366).
-  --axon-port N         Axon port (default: 8090).
-  -h, --help            Show this help.
-
-Environment equivalents:
-  WALLET_NAME HOTKEY_NAME ENDPOINT NETUID AXON_PORT AGENT_PATH
-  LOG_EVERY_N LOG_BOOK LOG_JSONL LOG_CONSOLE LOG_QUEUE LOG_DIR
-EOF
-}
-
-while (($#)); do
-  case "$1" in
-    --log)
-      LOG_ENABLED=1; shift ;;
-    --every)
-      [[ $# -ge 2 ]] || { echo "--every requires N" >&2; exit 2; }
-      LOG_EVERY_N="$2"; shift 2 ;;
-    --book)
-      [[ $# -ge 2 ]] || { echo "--book requires ID" >&2; exit 2; }
-      LOG_BOOK="$2"; shift 2 ;;
-    --log-dir)
-      [[ $# -ge 2 ]] || { echo "--log-dir requires PATH" >&2; exit 2; }
-      LOG_DIR="$2"; shift 2 ;;
-    --no-console)
-      LOG_CONSOLE=0; shift ;;
-    --no-jsonl)
-      LOG_JSONL=0; shift ;;
-    --rebuild)
-      FORCE_REBUILD=1; shift ;;
-    --wallet)
-      WALLET_NAME="$2"; shift 2 ;;
-    --hotkey)
-      HOTKEY_NAME="$2"; shift 2 ;;
-    --endpoint)
-      ENDPOINT="$2"; shift 2 ;;
-    --netuid)
-      NETUID="$2"; shift 2 ;;
-    --axon-port)
-      AXON_PORT="$2"; shift 2 ;;
-    -h|--help)
-      usage; exit 0 ;;
-    --)
-      shift
-      EXTRA+=("$@")
-      break ;;
-    *)
-      EXTRA+=("$1")
-      shift ;;
+while getopts "w:h:u:a:e:p:" flag; do
+  case "$flag" in
+    w) WALLET_NAME="$OPTARG" ;;
+    h) HOTKEY_NAME="$OPTARG" ;;
+    u) NETUID="$OPTARG" ;;
+    a) AXON_PORT="$OPTARG" ;;
+    e) ENDPOINT="$OPTARG" ;;
+    p) EXTRA+=(-p "$OPTARG") ;;
+    *) exit 2 ;;
   esac
 done
 
-[[ -f "$PUBLIC_AGENT" ]] || {
-  echo "ERROR: missing $PUBLIC_AGENT" >&2
-  exit 2
-}
-[[ -f "$BUILDER" ]] || {
-  echo "ERROR: missing $BUILDER" >&2
-  exit 2
-}
-[[ -f "$AGENT_PATH/Strategy1_Research_v4_1_strict.py" ]] || {
-  echo "ERROR: missing V4.1 research reference in $AGENT_PATH" >&2
-  exit 2
+[[ -f "$REPO_ROOT/run_miner.sh" ]] || {
+  echo "run_miner.sh missing: $REPO_ROOT/run_miner.sh" >&2
+  exit 1
 }
 
-PYTHON="${PYTHON:-$REPO_ROOT/.venv/bin/python}"
-if [[ ! -x "$PYTHON" ]]; then
-  PYTHON="${PYTHON_FALLBACK:-python3}"
-fi
+[[ -f "$AGENT_PATH/BaseStrategy.py" ]] || {
+  echo "BaseStrategy.py missing: $AGENT_PATH/BaseStrategy.py" >&2
+  exit 1
+}
 
-# Build only when needed. This happens before the miner starts and therefore
-# never contributes to validator-measured response latency.
-if (( FORCE_REBUILD == 1 )); then
-  "$PYTHON" "$BUILDER" --strategy-dir "$AGENT_PATH" --output "$FLAT_AGENT"
-else
-  if ! "$PYTHON" "$BUILDER" \
-      --strategy-dir "$AGENT_PATH" \
-      --output "$FLAT_AGENT" \
-      --check-current >/dev/null 2>&1; then
-    "$PYTHON" "$BUILDER" --strategy-dir "$AGENT_PATH" --output "$FLAT_AGENT"
-  fi
-fi
+# Detailed V4.1 telemetry is enabled, matching the research launcher behavior.
+export STRATEGY1_DEBUG=1
+export STRATEGY1_DEBUG_JSONL=0
+export STRATEGY1_DEBUG_EVERY_N="$RESEARCH_EVERY_N"
+export STRATEGY1_DEBUG_BOOK="$RESEARCH_BOOK"
 
-# ------------------------------------------------------------
-# Logging is a launcher concern.
-# ------------------------------------------------------------
-if (( LOG_ENABLED == 1 )); then
-  export STRATEGY1_DEBUG=1
-  export STRATEGY1_DEBUG_JSONL=0
-  export STRATEGY1_DEBUG_EVERY_N="$LOG_EVERY_N"
-  export STRATEGY1_DEBUG_BOOK="$LOG_BOOK"
+export STRATEGY1_RESEARCH=1
+export STRATEGY1_RESEARCH_EVERY_N="$RESEARCH_EVERY_N"
+export STRATEGY1_RESEARCH_BOOK="$RESEARCH_BOOK"
+export STRATEGY1_RESEARCH_JSONL="$RESEARCH_JSONL"
+export STRATEGY1_RESEARCH_CONSOLE="$RESEARCH_CONSOLE"
+export STRATEGY1_RESEARCH_QUEUE="$RESEARCH_QUEUE"
+export STRATEGY1_RESEARCH_DIR="$RESEARCH_DIR"
 
-  export STRATEGY1_RESEARCH=1
-  export STRATEGY1_RESEARCH_EVERY_N="$LOG_EVERY_N"
-  export STRATEGY1_RESEARCH_BOOK="$LOG_BOOK"
-  export STRATEGY1_RESEARCH_JSONL="$LOG_JSONL"
-  export STRATEGY1_RESEARCH_CONSOLE="$LOG_CONSOLE"
-  export STRATEGY1_RESEARCH_QUEUE="$LOG_QUEUE"
-  export STRATEGY1_RESEARCH_DIR="$LOG_DIR"
-  mkdir -p "$LOG_DIR"
-else
-  export STRATEGY1_DEBUG=0
-  export STRATEGY1_DEBUG_JSONL=0
-  export STRATEGY1_RESEARCH=0
-  export STRATEGY1_RESEARCH_JSONL=0
-  export STRATEGY1_RESEARCH_CONSOLE=0
-fi
+mkdir -p "$RESEARCH_DIR"
 
-# ------------------------------------------------------------
-# V4.1 fixed deploy policy.
-# Do NOT tune here; AdaptiveAgent will own adaptive parameters later.
-# ------------------------------------------------------------
+# Frozen V4.1 Strict policy.
 PARAMS="enable_mm_strategy=1 enable_kappa_strategy=0 lazy_load=1 \
 fast_update=1 sync_event_csv=0 history_len=0 \
 mm_base_size=0.25 max_inventory_base=1.20 inventory_close_threshold=0.25 \
@@ -182,9 +82,9 @@ passive_exit_only=1 aggressive_close_min_ticks=300 position_max_ticks=300 \
 mm_skip_inactive_tier=1 toxic_loss_streak=4 enable_auto_tuning=0 allow_tuning_config=0 \
 verbose_log=0 log_every_n=100 log_mm_strategy=0 log_direction=0 log_book_profile=0 \
 log_regime=0 log_momentum_pnl=0 log_book_memory=0 \
-debug_enabled=${LOG_ENABLED} debug_every_n=${LOG_EVERY_N} debug_jsonl=0 debug_book_id=${LOG_BOOK} \
-research_enabled=${LOG_ENABLED} research_every_n=${LOG_EVERY_N} research_book_id=${LOG_BOOK} \
-research_jsonl=${LOG_JSONL} research_console=${LOG_CONSOLE} research_queue_size=${LOG_QUEUE} \
+debug_enabled=1 debug_every_n=${RESEARCH_EVERY_N} debug_jsonl=0 debug_book_id=${RESEARCH_BOOK} \
+research_enabled=1 research_every_n=${RESEARCH_EVERY_N} research_book_id=${RESEARCH_BOOK} \
+research_jsonl=${RESEARCH_JSONL} research_console=${RESEARCH_CONSOLE} research_queue_size=${RESEARCH_QUEUE} \
 research_fix_global_stress=1 research_neutral_fallback=1 \
 research_adaptive_spread_thresholds=1 research_stress_percentile=0.95 research_toxic_percentile=0.99 \
 research_stress_floor_bps=8.0 research_toxic_floor_bps=10.0 \
@@ -208,10 +108,12 @@ research_kappa_completion_attempt_cap=4 research_kappa_completion_success_cap=2 
 research_kappa_completion_fill_mult=0.70 research_kappa_completion_fill_floor=0.10 \
 research_kappa_completion_relaxed_success_cap=2 research_kappa_completion_recent_pnl_floor=-0.01"
 
-echo "[BaseStrategy] agent=$PUBLIC_AGENT"
-echo "[BaseStrategy] flat=$FLAT_AGENT"
-echo "[BaseStrategy] detailed_log=$LOG_ENABLED"
-echo "[BaseStrategy] network=$ENDPOINT netuid=$NETUID"
+echo "[BaseStrategy] wallet=$WALLET_NAME"
+echo "[BaseStrategy] hotkey=$HOTKEY_NAME"
+echo "[BaseStrategy] netuid=$NETUID"
+echo "[BaseStrategy] axon_port=$AXON_PORT"
+echo "[BaseStrategy] endpoint=$ENDPOINT"
+echo "[BaseStrategy] agent=$AGENT_PATH/BaseStrategy.py"
 
 exec "$REPO_ROOT/run_miner.sh" \
   -e "$ENDPOINT" \
