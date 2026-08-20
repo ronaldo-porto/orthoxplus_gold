@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # SN79 launcher for standalone BaseStrategy.
-# Same CLI style as run_strategy1_research_v4_strict_test.sh.
 #
-# Example:
+# Core CLI style:
 #   ./run_base_strategy.sh -w sw_ck_st4_m1 -h sw_hk_st4_m1 -u 366 -a 8092
 #
-#   -w : wallet name / coldkey
-#   -h : wallet hotkey
-#   -u : netuid
-#   -a : axon port
-#   -e : subtensor endpoint (optional)
-#   -p : extra run_miner.sh parameter (optional, repeatable)
+# Enable detailed V4.1 research logging:
+#   ./run_base_strategy.sh -w sw_ck_st4_m1 -h sw_hk_st4_m1 -u 366 -a 8092 --log
+#
+# -w wallet/coldkey
+# -h hotkey
+# -u netuid
+# -a axon port
+# -e endpoint (optional)
+# -p extra miner parameter (optional, repeatable)
+# --log detailed research/debug telemetry
 
 set -euo pipefail
 
@@ -22,9 +25,9 @@ HOTKEY_NAME="${HOTKEY_NAME:-miner}"
 ENDPOINT="${ENDPOINT:-wss://test.finney.opentensor.ai:443}"
 NETUID="${NETUID:-366}"
 AXON_PORT="${AXON_PORT:-8090}"
-
 AGENT_PATH="${AGENT_PATH:-$REPO_ROOT/agents/strategy}"
 
+LOG_ENABLED=0
 RESEARCH_EVERY_N="${RESEARCH_EVERY_N:-10}"
 RESEARCH_BOOK="${RESEARCH_BOOK:--1}"
 RESEARCH_JSONL="${RESEARCH_JSONL:-1}"
@@ -32,7 +35,19 @@ RESEARCH_CONSOLE="${RESEARCH_CONSOLE:-1}"
 RESEARCH_QUEUE="${RESEARCH_QUEUE:-65536}"
 RESEARCH_DIR="${RESEARCH_DIR:-$REPO_ROOT/logs/base_strategy}"
 
+# Remove --log first, then parse the remaining short options with getopts.
+FILTERED_ARGS=()
+for arg in "$@"; do
+  if [[ "$arg" == "--log" ]]; then
+    LOG_ENABLED=1
+  else
+    FILTERED_ARGS+=("$arg")
+  fi
+done
+set -- "${FILTERED_ARGS[@]}"
+
 EXTRA=()
+OPTIND=1
 while getopts "w:h:u:a:e:p:" flag; do
   case "$flag" in
     w) WALLET_NAME="$OPTARG" ;;
@@ -45,33 +60,36 @@ while getopts "w:h:u:a:e:p:" flag; do
   esac
 done
 
-[[ -f "$REPO_ROOT/run_miner.sh" ]] || {
-  echo "run_miner.sh missing: $REPO_ROOT/run_miner.sh" >&2
-  exit 1
-}
+[[ -f "$REPO_ROOT/run_miner.sh" ]] || { echo "run_miner.sh missing" >&2; exit 1; }
+[[ -f "$AGENT_PATH/BaseStrategy.py" ]] || { echo "BaseStrategy.py missing: $AGENT_PATH/BaseStrategy.py" >&2; exit 1; }
 
-[[ -f "$AGENT_PATH/BaseStrategy.py" ]] || {
-  echo "BaseStrategy.py missing: $AGENT_PATH/BaseStrategy.py" >&2
-  exit 1
-}
+if (( LOG_ENABLED == 1 )); then
+  export STRATEGY1_DEBUG=1
+  export STRATEGY1_DEBUG_JSONL=0
+  export STRATEGY1_DEBUG_EVERY_N="$RESEARCH_EVERY_N"
+  export STRATEGY1_DEBUG_BOOK="$RESEARCH_BOOK"
 
-# Detailed V4.1 telemetry is enabled, matching the research launcher behavior.
-export STRATEGY1_DEBUG=1
-export STRATEGY1_DEBUG_JSONL=0
-export STRATEGY1_DEBUG_EVERY_N="$RESEARCH_EVERY_N"
-export STRATEGY1_DEBUG_BOOK="$RESEARCH_BOOK"
+  export STRATEGY1_RESEARCH=1
+  export STRATEGY1_RESEARCH_EVERY_N="$RESEARCH_EVERY_N"
+  export STRATEGY1_RESEARCH_BOOK="$RESEARCH_BOOK"
+  export STRATEGY1_RESEARCH_JSONL="$RESEARCH_JSONL"
+  export STRATEGY1_RESEARCH_CONSOLE="$RESEARCH_CONSOLE"
+  export STRATEGY1_RESEARCH_QUEUE="$RESEARCH_QUEUE"
+  export STRATEGY1_RESEARCH_DIR="$RESEARCH_DIR"
 
-export STRATEGY1_RESEARCH=1
-export STRATEGY1_RESEARCH_EVERY_N="$RESEARCH_EVERY_N"
-export STRATEGY1_RESEARCH_BOOK="$RESEARCH_BOOK"
-export STRATEGY1_RESEARCH_JSONL="$RESEARCH_JSONL"
-export STRATEGY1_RESEARCH_CONSOLE="$RESEARCH_CONSOLE"
-export STRATEGY1_RESEARCH_QUEUE="$RESEARCH_QUEUE"
-export STRATEGY1_RESEARCH_DIR="$RESEARCH_DIR"
+  mkdir -p "$RESEARCH_DIR"
+  DEBUG_ENABLED=1
+  RESEARCH_ENABLED=1
+else
+  export STRATEGY1_DEBUG=0
+  export STRATEGY1_DEBUG_JSONL=0
+  export STRATEGY1_RESEARCH=0
+  export STRATEGY1_RESEARCH_JSONL=0
+  export STRATEGY1_RESEARCH_CONSOLE=0
+  DEBUG_ENABLED=0
+  RESEARCH_ENABLED=0
+fi
 
-mkdir -p "$RESEARCH_DIR"
-
-# Frozen V4.1 Strict policy.
 PARAMS="enable_mm_strategy=1 enable_kappa_strategy=0 lazy_load=1 \
 fast_update=1 sync_event_csv=0 history_len=0 \
 mm_base_size=0.25 max_inventory_base=1.20 inventory_close_threshold=0.25 \
@@ -82,8 +100,8 @@ passive_exit_only=1 aggressive_close_min_ticks=300 position_max_ticks=300 \
 mm_skip_inactive_tier=1 toxic_loss_streak=4 enable_auto_tuning=0 allow_tuning_config=0 \
 verbose_log=0 log_every_n=100 log_mm_strategy=0 log_direction=0 log_book_profile=0 \
 log_regime=0 log_momentum_pnl=0 log_book_memory=0 \
-debug_enabled=1 debug_every_n=${RESEARCH_EVERY_N} debug_jsonl=0 debug_book_id=${RESEARCH_BOOK} \
-research_enabled=1 research_every_n=${RESEARCH_EVERY_N} research_book_id=${RESEARCH_BOOK} \
+debug_enabled=${DEBUG_ENABLED} debug_every_n=${RESEARCH_EVERY_N} debug_jsonl=0 debug_book_id=${RESEARCH_BOOK} \
+research_enabled=${RESEARCH_ENABLED} research_every_n=${RESEARCH_EVERY_N} research_book_id=${RESEARCH_BOOK} \
 research_jsonl=${RESEARCH_JSONL} research_console=${RESEARCH_CONSOLE} research_queue_size=${RESEARCH_QUEUE} \
 research_fix_global_stress=1 research_neutral_fallback=1 \
 research_adaptive_spread_thresholds=1 research_stress_percentile=0.95 research_toxic_percentile=0.99 \
@@ -113,7 +131,7 @@ echo "[BaseStrategy] hotkey=$HOTKEY_NAME"
 echo "[BaseStrategy] netuid=$NETUID"
 echo "[BaseStrategy] axon_port=$AXON_PORT"
 echo "[BaseStrategy] endpoint=$ENDPOINT"
-echo "[BaseStrategy] agent=$AGENT_PATH/BaseStrategy.py"
+echo "[BaseStrategy] detailed_log=$LOG_ENABLED"
 
 exec "$REPO_ROOT/run_miner.sh" \
   -e "$ENDPOINT" \
