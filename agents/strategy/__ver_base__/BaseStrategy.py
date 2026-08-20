@@ -1,40 +1,50 @@
 from __future__ import annotations
-"""BaseStrategy — standalone SN79 V4.1 Strict deploy baseline.
+
+"""BaseStrategy — optimized standalone SN79 V4.1 Strict base class.
 
 This module contains the complete runtime strategy implementation directly.
-It inherits FinanceSimulationAgent and does not require any external strategy
-builder, generated flat module, or parent Strategy1 strategy module at runtime.
-
-Detailed research telemetry is controlled by the launcher via --log.
+It is intended to be the stable parent for future Strategy agents while
+preserving the validated V4.1 Strict trading behavior and optional research
+telemetry.
 """
+
+import atexit
 import json
 import math
 import os
-from collections import defaultdict, deque
+import queue
+import threading
+import time
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Deque, Literal
+from enum import Enum
+from typing import Any, Callable, Deque, Literal, TypeVar
+
 import bittensor as bt
 from taos.common.agents import launch
 from taos.im.agents import FinanceSimulationAgent
-from taos.im.protocol.events import SimulationStartEvent, TradeEvent
 from taos.im.protocol import FinanceAgentResponse, MarketSimulationStateUpdate
-from taos.im.protocol.instructions import CancelOrdersInstruction, ClosePositionsInstruction, PlaceLimitOrderInstruction, PlaceMarketOrderInstruction
-from taos.im.protocol.models import Book, Account, LoanSettlementOption, OrderCurrency, OrderDirection, STP, TimeInForce
+from taos.im.protocol.events import SimulationStartEvent, TradeEvent
+from taos.im.protocol.instructions import (
+    CancelOrdersInstruction,
+    ClosePositionsInstruction,
+    PlaceLimitOrderInstruction,
+    PlaceMarketOrderInstruction,
+)
+from taos.im.protocol.models import (
+    Account,
+    Book,
+    LoanSettlementOption,
+    OrderCurrency,
+    OrderDirection,
+    STP,
+    TimeInForce,
+)
 from taos.im.utils import duration_from_timestamp
 from taos.im.utils.kappa import kappa_3
-import sys
-import time
-from collections import deque
-from dataclasses import dataclass
-from taos.im.protocol.models import Book, LoanSettlementOption, OrderDirection, STP, TimeInForce
-import atexit
-from collections import Counter
-from enum import Enum
-from typing import Any, Callable, TypeVar
-import queue
-import threading
-from typing import Any
-from taos.im.protocol.models import Book, OrderDirection, STP
+
+T = TypeVar("T")
+
 
 @dataclass
 class BookSnapshot:
@@ -174,9 +184,6 @@ class MarketRegime:
     scoring_overlay: ScoringOverlay | None
     confidence: float
     book_count: int
-_agent_dir = os.path.dirname(os.path.abspath(__file__))
-if _agent_dir not in sys.path:
-    sys.path.insert(0, _agent_dir)
 BookArchetype = Literal['DEAD_BOOK', 'MM_BOOK', 'WALL_BOOK', 'TREND_BOOK', 'TOXIC_BOOK', 'STRESSED']
 InventoryBand = Literal['FLAT', 'LONG', 'SHORT', 'MAX_LONG', 'MAX_SHORT']
 InventoryReason = Literal['UNKNOWN', 'MAINTENANCE', 'MM', 'ALPHA', 'MARKET']
@@ -286,10 +293,6 @@ class InventorySnapshot:
     reason: InventoryReason = 'UNKNOWN'
 DEFAULT_REGIME_PARAMS: dict[MarketRegimeMode, RegimeParamSet] = {'QUIET': RegimeParamSet(quote_enabled=True, alpha_enabled=False, spread_offset=0.25, skew_strength=0.15, size_mult=0.8, profit_target_bps=5.0, stop_loss_bps=35.0, min_fill_prob=0.15), 'CHOP': RegimeParamSet(quote_enabled=True, alpha_enabled=False, spread_offset=0.35, skew_strength=0.1, size_mult=0.7, profit_target_bps=8.0, stop_loss_bps=40.0, min_fill_prob=0.2), 'TRENDING_UP': RegimeParamSet(quote_enabled=True, alpha_enabled=True, spread_offset=0.2, skew_strength=0.3, size_mult=1.2, profit_target_bps=12.0, stop_loss_bps=45.0, min_fill_prob=0.25, buy_bias=2.0, sell_bias=0.5), 'TRENDING_DOWN': RegimeParamSet(quote_enabled=True, alpha_enabled=True, spread_offset=0.2, skew_strength=0.3, size_mult=1.2, profit_target_bps=12.0, stop_loss_bps=45.0, min_fill_prob=0.25, buy_bias=0.5, sell_bias=2.0), 'BROAD_LIQUID': RegimeParamSet(quote_enabled=True, alpha_enabled=True, spread_offset=0.22, skew_strength=0.2, size_mult=1.0, profit_target_bps=10.0, stop_loss_bps=40.0, min_fill_prob=0.2), 'DISPERSED': RegimeParamSet(quote_enabled=True, alpha_enabled=True, spread_offset=0.28, skew_strength=0.25, size_mult=0.9, profit_target_bps=10.0, stop_loss_bps=40.0, min_fill_prob=0.22), 'STRESSED': RegimeParamSet(quote_enabled=False, alpha_enabled=False, spread_offset=0.45, skew_strength=0.05, size_mult=0.5, profit_target_bps=15.0, stop_loss_bps=25.0, min_fill_prob=0.3, buy_bias=0.25, sell_bias=0.25), 'MIXED': RegimeParamSet(quote_enabled=True, alpha_enabled=False, spread_offset=0.28, skew_strength=0.18, size_mult=0.85, profit_target_bps=8.0, stop_loss_bps=38.0, min_fill_prob=0.18)}
 DEFAULT_ARCHETYPE_ADJUST: dict[BookArchetype, ArchetypeAdjust] = {'DEAD_BOOK': ArchetypeAdjust(size_mult=0.6, spread_offset_delta=0.1, min_fill_prob_delta=-0.05), 'MM_BOOK': ArchetypeAdjust(size_mult=0.3, spread_offset_delta=-0.05, skew_strength_mult=0.5), 'WALL_BOOK': ArchetypeAdjust(size_mult=0.5, spread_offset_delta=0.15, edge_bias=0.2), 'TREND_BOOK': ArchetypeAdjust(size_mult=1.0, spread_offset_delta=-0.05, skew_strength_mult=1.3, edge_bias=0.3), 'TOXIC_BOOK': ArchetypeAdjust(size_mult=0.4, spread_offset_delta=0.2, min_fill_prob_delta=0.05), 'STRESSED': ArchetypeAdjust(size_mult=0.25, quote_enabled_override=False)}
-_agent_dir = os.path.dirname(os.path.abspath(__file__))
-if _agent_dir not in sys.path:
-    sys.path.insert(0, _agent_dir)
-T = TypeVar('T')
 
 class DebugReason:
     """Stable reason codes for grep, jq, and automated comparisons."""
@@ -324,23 +327,9 @@ class DebugReason:
     INSUFFICIENT_BALANCE = 'INSUFFICIENT_BALANCE'
     QUOTE_ORDER_GATE = 'QUOTE_ORDER_GATE'
     NO_ACTION = 'NO_ACTION'
-_agent_dir = os.path.dirname(os.path.abspath(__file__))
-if _agent_dir not in sys.path:
-    sys.path.insert(0, _agent_dir)
-BASESTRATEGY_PROVENANCE = {
-    "policy": "V4.1 Strict",
-    "direct_base": "FinanceSimulationAgent",
-    "source_sha256": {
-        "DetailedTemplateAgent.py": "da843173806a2d70ee09fe8df31e01dd8d69b0f20b1bb440d7c924aec2cacb92",
-        "Strategy1.py": "ea4fb4c7e2fcd43de48fc8fa75cbf75ca4a46a64e0620ad0def1e6e0199b30bd",
-        "Strategy1_Debug.py": "eba1de76de99b52bca739c7a643254bc165b2793ff227989c8d49d019fef06fe",
-        "Strategy1_Research_v4_1_strict.py": "7a8554b712091b341c1553d99fe8523d38a44183c5a670e483cf671af1954fd8",
-    },
-}
-
 class BaseStrategy(FinanceSimulationAgent):
-    """Standalone V4.1 Strict deploy baseline."""
-    DEPLOY_POLICY_VERSION = 'base_v4_1_strict'
+    """Optimized standalone V4.1 Strict base for all derived Strategy agents."""
+    DEPLOY_POLICY_VERSION = 'base_v4_1_standalone_optimized_v1'
     REASON_ALIAS = {'LOW_EXPECTED_ALPHA': 'ALPHA', 'ZERO_ORDER_SIZE': 'SIZE_ZERO', 'MAX_INVENTORY': 'INVENTORY_MAX', 'INVALID_QUOTE_PRICES': 'BAD_PRICE', 'VOLUME_CAP': 'VOLUME_CAP', 'NON_POSITIVE_EDGE': 'EDGE', 'NEGATIVE_EXPECTED_PNL': 'NEG_PNL', 'LOW_FILL_PROBABILITY': 'FILL_PROB', 'INSTRUCTION_LIMIT': 'INSTR_LIMIT', 'INSUFFICIENT_BALANCE': 'BALANCE', 'QUOTE_ORDER_GATE': 'QUOTE_GATE', 'QUOTE_DISABLED': 'REGIME_DISABLED', 'TOXIC_BOOK': 'TOXIC', 'TOXIC_REGIME': 'TOXIC_REGIME', 'INACTIVE_TIER': 'INACTIVE', 'MM_CANDIDATE_LIMIT': 'MM_LIMIT', 'MANAGEMENT_LIMIT': 'MANAGEMENT_LIMIT', 'MANAGE_ORDER_GATE': 'MANAGE_GATE', 'MAINT_INVENTORY_NONFLAT': 'MAINT_INVENTORY', 'MAINT_ARCHETYPE_BLOCK': 'MAINT_ARCHETYPE', 'MAINT_ORDER_GATE': 'MAINT_GATE', 'NO_BOOK_SIDES': 'NO_BOOK_SIDES', 'NO_PROFILE': 'NO_PROFILE', 'AVOID_LIST': 'AVOID', 'NO_PREDICTION': 'NO_PREDICTION', 'GRACE_PERIOD': 'GRACE', 'NO_ACTION': 'NO_ACTION', 'HARD_CAP': 'HARD_CAP', 'STALE': 'STALE', 'DUST': 'DUST', 'DUST_POSITION': 'DUST', 'INACTIVE_DIAGNOSTIC_ONLY': 'INACTIVE_DIAG', 'MM_SUCCESS_CAP': 'MM_CAP', 'DUST_QUARANTINE': 'DUST_PARK', 'DUST_RELEASED': 'DUST_RELEASE', 'DUST_COMPACT': 'DUST_COMPACT', 'DUST_COMPACT_BLOCKED': 'DUST_COMPACT_BLOCKED', 'KAPPA_COMPLETION': 'KAPPA_COMPLETE', 'KAPPA_COMPLETION_ATTEMPT_CAP': 'KAPPA_ATTEMPT_CAP', 'KAPPA_COMPLETION_SUCCESS_CAP': 'KAPPA_SUCCESS_CAP', 'NORMAL_MM_ATTEMPT_CAP': 'NORMAL_ATTEMPT_CAP'}
 
     def _bsimpl_0_DetailedTemplateAgent_initialize(self) -> None:
@@ -408,6 +397,15 @@ class BaseStrategy(FinanceSimulationAgent):
         self._mid_history: dict[int, list[tuple[int, float]]] = defaultdict(list)
         self.realized_pnl_history: dict[int, dict[int, float]] = {}
         self.total_realized_pnl_by_book: dict[int, float] = defaultdict(float)
+        # Hot-path caches: profile construction used to scan the full PnL
+        # history twice for every book, and local Kappa was recomputed even
+        # when the realized-PnL history had not changed.
+        self._pnl_history_version = 0
+        self._pnl_lookback_cache_key: tuple[int, int] | None = None
+        self._pnl_obs_cache: dict[int, int] = {}
+        self._pnl_sum_cache: dict[int, float] = {}
+        self._local_kappa_cache_key: tuple[Any, ...] | None = None
+        self._local_kappa_cache: dict | None = None
         self._open_positions: dict[int, dict[str, Deque[tuple[int, float, float, float]]]] = defaultdict(lambda: {'longs': deque(), 'shorts': deque()})
         self._scoring_timestamp: int = 0
         self._pnl_tick_buffer: dict[int, float] = {}
@@ -415,6 +413,7 @@ class BaseStrategy(FinanceSimulationAgent):
 
     def _bsimpl_0_DetailedTemplateAgent__reset_pnl_state(self) -> None:
         self.realized_pnl_history.clear()
+        self._invalidate_pnl_caches()
         self.total_realized_pnl_by_book.clear()
         self._open_positions.clear()
         self._mid_history.clear()
@@ -492,13 +491,20 @@ class BaseStrategy(FinanceSimulationAgent):
             self._fast_update(state)
         else:
             super(BaseStrategy, self).update(state)
+        history_changed = False
         if self._pnl_tick_buffer:
             ts = self._scoring_timestamp
             bucket = self.realized_pnl_history.setdefault(ts, {})
             for book_id, pnl in self._pnl_tick_buffer.items():
                 bucket[book_id] = round(bucket.get(book_id, 0.0) + pnl, 10)
                 self.total_realized_pnl_by_book[book_id] += pnl
+            history_changed = True
+        before_prune = len(self.realized_pnl_history)
         self._prune_pnl_history(state.timestamp)
+        if len(self.realized_pnl_history) != before_prune:
+            history_changed = True
+        if history_changed:
+            self._invalidate_pnl_caches()
 
     def _bsimpl_0_DetailedTemplateAgent_onStart(self, event: SimulationStartEvent) -> None:
         self._reset_pnl_state()
@@ -738,6 +744,42 @@ class BaseStrategy(FinanceSimulationAgent):
         pct_momentum = (mid - old_mid) / old_mid
         return (log_return, pct_momentum)
 
+    def _invalidate_pnl_caches(self) -> None:
+        """Invalidate derived PnL/Kappa caches after a history mutation."""
+        self._pnl_history_version = int(getattr(self, '_pnl_history_version', 0)) + 1
+        self._pnl_lookback_cache_key = None
+        self._pnl_obs_cache = {}
+        self._pnl_sum_cache = {}
+        self._local_kappa_cache_key = None
+        self._local_kappa_cache = None
+
+    def _prepare_pnl_lookback_cache(self, current_ts: int) -> None:
+        """Aggregate lookback PnL once per history-version/timestamp.
+
+        The original implementation scanned every realized-PnL bucket once
+        for observation count and again for realized PnL for each book. With
+        128 books this is O(books * history). This cache preserves the same
+        bucket semantics while reducing profile construction to one history
+        pass plus O(1) lookups per book.
+        """
+        key = (int(getattr(self, '_pnl_history_version', 0)), int(current_ts))
+        if self._pnl_lookback_cache_key == key:
+            return
+        threshold = int(current_ts) - int(self.pnl_lookback_ns)
+        obs: dict[int, int] = defaultdict(int)
+        totals: dict[int, float] = defaultdict(float)
+        for ts, books in self.realized_pnl_history.items():
+            if ts < threshold:
+                continue
+            for book_id, pnl in books.items():
+                value = float(pnl)
+                totals[book_id] += value
+                if value != 0.0:
+                    obs[book_id] += 1
+        self._pnl_obs_cache = dict(obs)
+        self._pnl_sum_cache = dict(totals)
+        self._pnl_lookback_cache_key = key
+
     def _bsimpl_0_DetailedTemplateAgent__prune_pnl_history(self, current_timestamp: int) -> None:
         threshold = current_timestamp - self.pnl_lookback_ns
         self.realized_pnl_history = {ts: books for ts, books in self.realized_pnl_history.items() if ts >= threshold}
@@ -865,24 +907,13 @@ class BaseStrategy(FinanceSimulationAgent):
             bt.logging.info(f'[PREDICT] … {len(predictions) - max_books} more books omitted')
 
     def _bsimpl_0_DetailedTemplateAgent__pnl_observation_count(self, book_id: int, current_ts: int) -> int:
-        """Non-zero realized PnL buckets for a book within pnl_lookback_ns."""
-        threshold = current_ts - self.pnl_lookback_ns
-        count = 0
-        for ts, books in self.realized_pnl_history.items():
-            if ts < threshold:
-                continue
-            pnl = books.get(book_id, 0.0)
-            if pnl != 0.0:
-                count += 1
-        return count
+        """Non-zero realized-PnL buckets within the scoring lookback."""
+        self._prepare_pnl_lookback_cache(current_ts)
+        return int(self._pnl_obs_cache.get(book_id, 0))
 
     def _bsimpl_0_DetailedTemplateAgent__realized_pnl_lookback(self, book_id: int, current_ts: int) -> float:
-        threshold = current_ts - self.pnl_lookback_ns
-        total = 0.0
-        for ts, books in self.realized_pnl_history.items():
-            if ts >= threshold:
-                total += books.get(book_id, 0.0)
-        return total
+        self._prepare_pnl_lookback_cache(current_ts)
+        return float(self._pnl_sum_cache.get(book_id, 0.0))
 
     def _bsimpl_0_DetailedTemplateAgent__book_volatility(self, book_id: int) -> float:
         """Rolling std of log-returns from mid history."""
@@ -932,7 +963,9 @@ class BaseStrategy(FinanceSimulationAgent):
         spread = None
         if book.bids and book.asks:
             spread = book.asks[0].price - book.bids[0].price
-        imbalance = self._compute_flow_f(book)
+        # predict_direction() already computed top-of-book flow for this tick.
+        # Reuse it rather than traversing book depth a second time.
+        imbalance = float(prediction.flow_f) if prediction is not None else self._compute_flow_f(book)
         trade_rate = float(sum((1 for e in book.events or [] if getattr(e, 'type', None) in ('t', 'EVENT_TRADE', 'ET'))))
         volatility = self._book_volatility(book_id)
         pnl_obs_count = self._pnl_observation_count(book_id, state.timestamp)
@@ -950,6 +983,8 @@ class BaseStrategy(FinanceSimulationAgent):
     def _bsimpl_0_DetailedTemplateAgent_build_all_book_profiles(self, state: MarketSimulationStateUpdate, predictions: dict[int, DirectionForecast], kappa_values: dict | None=None) -> list[BookProfile]:
         if not state.books:
             return []
+        # One PnL-history aggregation serves every book profile this tick.
+        self._prepare_pnl_lookback_cache(state.timestamp)
         if kappa_values is None:
             kappa_values = self._compute_local_kappa(state)
         self._last_kappa = kappa_values
@@ -1101,12 +1136,32 @@ class BaseStrategy(FinanceSimulationAgent):
         bt.logging.info(f'[REGIME] {json.dumps(payload)}')
 
     def _bsimpl_0_DetailedTemplateAgent__compute_local_kappa(self, state: MarketSimulationStateUpdate) -> dict | None:
-        """Run validator kappa_3() on miner-side realized_pnl_history."""
+        """Run validator kappa_3(), reusing the result until PnL history changes."""
         cfg = state.config
         if not cfg or not self.realized_pnl_history:
             return None
+        key = (
+            int(getattr(self, '_pnl_history_version', 0)),
+            float(self.kappa_tau),
+            int(self.pnl_lookback_ns),
+            float(self.kappa_norm_min),
+            float(self.kappa_norm_max),
+            int(self.kappa_min_lookback),
+            int(self.kappa_min_observations),
+            int(cfg.grace_period),
+            int(cfg.book_count),
+        )
+        if self._local_kappa_cache_key == key:
+            return self._local_kappa_cache
         pnl_values = {ts: dict(books) for ts, books in self.realized_pnl_history.items()}
-        return kappa_3(self.uid, pnl_values, self.kappa_tau, self.pnl_lookback_ns, self.kappa_norm_min, self.kappa_norm_max, self.kappa_min_lookback, self.kappa_min_observations, cfg.grace_period, [], cfg.book_count, cache=None)
+        result = kappa_3(
+            self.uid, pnl_values, self.kappa_tau, self.pnl_lookback_ns,
+            self.kappa_norm_min, self.kappa_norm_max, self.kappa_min_lookback,
+            self.kappa_min_observations, cfg.grace_period, [], cfg.book_count, cache=None
+        )
+        self._local_kappa_cache_key = key
+        self._local_kappa_cache = result
+        return result
 
     @staticmethod
     def _bsimpl_0_DetailedTemplateAgent_parse_book(book_id: int, book: Book, detailed_depth: int) -> BookSnapshot:
@@ -1598,7 +1653,7 @@ class BaseStrategy(FinanceSimulationAgent):
         cfg = self.config
         self.fast_update = bool(getattr(cfg, 'fast_update', True))
         self.sync_event_csv = bool(getattr(cfg, 'sync_event_csv', False))
-        self.log_latency = bool(getattr(cfg, 'log_latency', True))
+        self.log_latency = bool(getattr(cfg, 'log_latency', False))
         self.history_len = int(getattr(cfg, 'history_len', 0))
         self.log_direction = bool(getattr(cfg, 'log_direction', False))
         self.log_book_profile = bool(getattr(cfg, 'log_book_profile', False))
@@ -2485,6 +2540,16 @@ class BaseStrategy(FinanceSimulationAgent):
         return self._bsimpl_0_DetailedTemplateAgent__place_directional_round_trip(response, state, book_id, direction, size, client_id_base)
 
     def _bsimpl_1_Strategy1_build_mm_strategy_instructions(self, response: FinanceAgentResponse, state: MarketSimulationStateUpdate, selection: BookSelection, predictions: dict[int, DirectionForecast], regime: MarketRegime, collect_archetypes: bool=True) -> dict:
+        # Archetype row materialization is diagnostic-only. Avoid per-book dict
+        # creation on the production no-log path while preserving it with --log.
+        collect_archetypes = bool(
+            collect_archetypes
+            and (
+                getattr(self, 'log_mm_strategy', False)
+                or getattr(self, 'debug_enabled', False)
+                or getattr(self, 'research_enabled', False)
+            )
+        )
         stats = {'quoted': 0, 'managed': 0, 'maintenance': 0, 'skipped_avoid': 0, 'skipped_archetype': 0, 'skipped_toxic': 0, 'skipped_alpha': 0, 'skipped_negative_pnl': 0, 'skipped_low_alpha': 0, 'skipped_small_inv': 0, 'skipped_maint_arch': 0, 'mm_candidates': 0, 'alpha_ranked': 0, 'instructions': 0}
         regime_params = self.get_regime_params(regime)
         avoid_set = set(selection.avoid_books)
@@ -2680,7 +2745,7 @@ class BaseStrategy(FinanceSimulationAgent):
     def _bsimpl_2_Strategy1_Debug_initialize(self) -> None:
         self._bsimpl_1_Strategy1_initialize()
         cfg = self.config
-        self.debug_enabled = self._env_bool('STRATEGY1_DEBUG', self._as_bool(getattr(cfg, 'debug_enabled', True)))
+        self.debug_enabled = self._env_bool('STRATEGY1_DEBUG', self._as_bool(getattr(cfg, 'debug_enabled', False)))
         self.debug_every_n = max(1, self._env_int('STRATEGY1_DEBUG_EVERY_N', int(getattr(cfg, 'debug_every_n', 1))))
         self.debug_summary_every_n = max(1, self._env_int('STRATEGY1_DEBUG_SUMMARY_N', int(getattr(cfg, 'debug_summary_every_n', 100))))
         self.debug_book_id = self._env_int('STRATEGY1_DEBUG_BOOK', int(getattr(cfg, 'debug_book_id', -1)))
@@ -3206,6 +3271,13 @@ class BaseStrategy(FinanceSimulationAgent):
         self._rworker = None
         self._rfile = None
         self._rdropped = 0
+        # Resolve the research switch before Debug.initialize() calls self._emit().
+        # This lets the production no-log path avoid even early telemetry records.
+        cfg = self.config
+        self.research_enabled = self._env_bool(
+            'STRATEGY1_RESEARCH',
+            self._as_bool(getattr(cfg, 'research_enabled', False)),
+        )
         self._bsimpl_2_Strategy1_Debug_initialize()
         cfg = self.config
         self.research_fix_global_stress = self._as_bool(getattr(cfg, 'research_fix_global_stress', True))
@@ -3300,7 +3372,7 @@ class BaseStrategy(FinanceSimulationAgent):
         self._research_completion_success_cap_hits = 0
         self._research_normal_attempt_cap_hits = 0
         self._research_aggressive_context: dict[int, dict[str, Any]] = {}
-        self.research_enabled = self._env_bool('STRATEGY1_RESEARCH', self._as_bool(getattr(cfg, 'research_enabled', True)))
+        # research_enabled resolved before Debug.initialize()
         self.research_every_n = max(1, self._env_int('STRATEGY1_RESEARCH_EVERY_N', int(getattr(cfg, 'research_every_n', 1))))
         self.research_book_id = self._env_int('STRATEGY1_RESEARCH_BOOK', int(getattr(cfg, 'research_book_id', -1)))
         self.research_console = self._env_bool('STRATEGY1_RESEARCH_CONSOLE', self._as_bool(getattr(cfg, 'research_console', True)))
@@ -3309,8 +3381,8 @@ class BaseStrategy(FinanceSimulationAgent):
         env_dir = os.getenv('STRATEGY1_RESEARCH_DIR', '').strip()
         configured = str(getattr(cfg, 'research_output_dir', '') or '')
         self.research_output_dir = env_dir or configured or os.path.join(self.output_dir, 'strategy1_research')
-        self._rq = queue.Queue(maxsize=self.research_queue_size)
-        self._rstop = threading.Event()
+        self._rq = queue.Queue(maxsize=self.research_queue_size) if self.research_enabled else None
+        self._rstop = threading.Event() if self.research_enabled else None
         self._research_output_file = None
         if self.research_enabled and self.research_jsonl:
             try:
@@ -3326,10 +3398,12 @@ class BaseStrategy(FinanceSimulationAgent):
             self._rworker.start()
             atexit.register(self._shutdown_research)
         self._research_ready = True
-        for record in self._research_early:
-            self._enqueue(record)
+        if self.research_enabled:
+            for record in self._research_early:
+                self._enqueue(record)
         self._research_early.clear()
-        self._enqueue({'type': 'RESEARCH_CONFIG', 'agent_id': getattr(self, 'uid', None), 'wall_time_ns': time.time_ns(), 'enabled': self.research_enabled, 'every_n': self.research_every_n, 'book_filter': self.research_book_id, 'console': self.research_console, 'jsonl': self.research_jsonl, 'queue_size': self.research_queue_size, 'output_dir': self.research_output_dir, 'policy_version': 'deadlock_fix_v4_1_strict', 'fix_global_stress': self.research_fix_global_stress, 'neutral_fallback': self.research_neutral_fallback, 'adaptive_spread_thresholds': self.research_adaptive_spread_thresholds, 'stress_percentile': self.research_stress_percentile, 'toxic_percentile': self.research_toxic_percentile, 'inactive_bootstrap': self.research_inactive_bootstrap, 'trade_global_stress': self.research_trade_global_stress, 'sync_min_order': self.research_sync_min_order, 'promote_min_order': self.research_promote_min_order, 'bootstrap_dead_as_mm': self.research_bootstrap_dead_as_mm, 'fix_inventory_util': self.research_fix_inventory_util, 'fix_quote_reservation': self.research_fix_quote_reservation, 'bootstrap_manage_min_clip': self.research_bootstrap_manage_min_clip, 'bootstrap_force_close_ticks': self.research_bootstrap_force_close_ticks, 'legacy_force_close_min_bps': self.research_bootstrap_force_close_min_bps, 'legacy_hard_close_ticks': self.research_bootstrap_hard_close_ticks, 'aggressive_close_touch_gate': self.research_aggressive_close_touch_gate, 'aggressive_close_fee_buffer_bps': self.research_aggressive_close_fee_buffer_bps, 'aggressive_close_min_net_bps': self.research_aggressive_close_min_net_bps, 'candidate_backfill': self.research_candidate_backfill, 'candidate_attempt_cap': self.research_candidate_attempt_cap, 'toxic_pnl_min_samples': self.research_toxic_pnl_min_samples, 'toxic_pnl_hard_floor': self.research_toxic_pnl_hard_floor, 'yellow_sparse_active': self.research_yellow_sparse_active, 'green_sparse_active': self.research_green_sparse_active, 'dust_safe_close': self.research_dust_safe_close, 'dust_park_enabled': self.research_dust_park_enabled, 'dust_heartbeat_ticks': self.research_dust_heartbeat_ticks, 'dust_warn_ticks': self.research_dust_warn_ticks, 'dust_compact_enabled': self.research_dust_compact_enabled, 'dust_compact_min_fraction': self.research_dust_compact_min_fraction, 'dust_compact_books_per_tick': self.research_dust_compact_books_per_tick, 'kappa_completion_enabled': self.research_kappa_completion_enabled, 'kappa_completion_target': self.research_kappa_completion_target, 'kappa_completion_rank_bonus': self.research_kappa_completion_rank_bonus, 'kappa_completion_fill_mult': self.research_kappa_completion_fill_mult, 'kappa_completion_fill_floor': self.research_kappa_completion_fill_floor, 'kappa_completion_relaxed_success_cap': self.research_kappa_completion_relaxed_success_cap, 'kappa_completion_attempt_cap': self.research_kappa_completion_attempt_cap, 'kappa_completion_success_cap': self.research_kappa_completion_success_cap, 'normal_attempt_cap': self.research_normal_attempt_cap, 'kappa_completion_recent_pnl_floor': self.research_kappa_completion_recent_pnl_floor, 'rotate_jsonl': self.research_rotate_jsonl, 'run_id': self.research_run_id, 'output_file': self._research_output_file})
+        if self.research_enabled:
+            self._enqueue({'type': 'RESEARCH_CONFIG', 'agent_id': getattr(self, 'uid', None), 'wall_time_ns': time.time_ns(), 'enabled': self.research_enabled, 'every_n': self.research_every_n, 'book_filter': self.research_book_id, 'console': self.research_console, 'jsonl': self.research_jsonl, 'queue_size': self.research_queue_size, 'output_dir': self.research_output_dir, 'policy_version': 'deadlock_fix_v4_1_strict', 'fix_global_stress': self.research_fix_global_stress, 'neutral_fallback': self.research_neutral_fallback, 'adaptive_spread_thresholds': self.research_adaptive_spread_thresholds, 'stress_percentile': self.research_stress_percentile, 'toxic_percentile': self.research_toxic_percentile, 'inactive_bootstrap': self.research_inactive_bootstrap, 'trade_global_stress': self.research_trade_global_stress, 'sync_min_order': self.research_sync_min_order, 'promote_min_order': self.research_promote_min_order, 'bootstrap_dead_as_mm': self.research_bootstrap_dead_as_mm, 'fix_inventory_util': self.research_fix_inventory_util, 'fix_quote_reservation': self.research_fix_quote_reservation, 'bootstrap_manage_min_clip': self.research_bootstrap_manage_min_clip, 'bootstrap_force_close_ticks': self.research_bootstrap_force_close_ticks, 'legacy_force_close_min_bps': self.research_bootstrap_force_close_min_bps, 'legacy_hard_close_ticks': self.research_bootstrap_hard_close_ticks, 'aggressive_close_touch_gate': self.research_aggressive_close_touch_gate, 'aggressive_close_fee_buffer_bps': self.research_aggressive_close_fee_buffer_bps, 'aggressive_close_min_net_bps': self.research_aggressive_close_min_net_bps, 'candidate_backfill': self.research_candidate_backfill, 'candidate_attempt_cap': self.research_candidate_attempt_cap, 'toxic_pnl_min_samples': self.research_toxic_pnl_min_samples, 'toxic_pnl_hard_floor': self.research_toxic_pnl_hard_floor, 'yellow_sparse_active': self.research_yellow_sparse_active, 'green_sparse_active': self.research_green_sparse_active, 'dust_safe_close': self.research_dust_safe_close, 'dust_park_enabled': self.research_dust_park_enabled, 'dust_heartbeat_ticks': self.research_dust_heartbeat_ticks, 'dust_warn_ticks': self.research_dust_warn_ticks, 'dust_compact_enabled': self.research_dust_compact_enabled, 'dust_compact_min_fraction': self.research_dust_compact_min_fraction, 'dust_compact_books_per_tick': self.research_dust_compact_books_per_tick, 'kappa_completion_enabled': self.research_kappa_completion_enabled, 'kappa_completion_target': self.research_kappa_completion_target, 'kappa_completion_rank_bonus': self.research_kappa_completion_rank_bonus, 'kappa_completion_fill_mult': self.research_kappa_completion_fill_mult, 'kappa_completion_fill_floor': self.research_kappa_completion_fill_floor, 'kappa_completion_relaxed_success_cap': self.research_kappa_completion_relaxed_success_cap, 'kappa_completion_attempt_cap': self.research_kappa_completion_attempt_cap, 'kappa_completion_success_cap': self.research_kappa_completion_success_cap, 'normal_attempt_cap': self.research_normal_attempt_cap, 'kappa_completion_recent_pnl_floor': self.research_kappa_completion_recent_pnl_floor, 'rotate_jsonl': self.research_rotate_jsonl, 'run_id': self.research_run_id, 'output_file': self._research_output_file})
 
     @staticmethod
     def _bsimpl_3_Strategy1_Research__percentile(values: list[float], q: float) -> float | None:
@@ -4145,7 +4219,11 @@ class BaseStrategy(FinanceSimulationAgent):
         self._emit('DECISION', tick=self._tick, timestamp=getattr(state, 'timestamp', None), book_id=book_id, action=record.get('action', 'SKIP'), reason=reason, regime=getattr(regime, 'mode', None), overlay=getattr(regime, 'scoring_overlay', None), archetype=record.get('archetype'), archetype_source=record.get('archetype_source'), tier=getattr(profile, 'tier', None) if profile is not None else None, mid=mid, spread_bps=profile_spread_bps if profile_spread_bps is not None else touch_spread_bps, touch_spread_bps=touch_spread_bps, volatility=getattr(profile, 'volatility', None) if profile is not None else None, trade_rate=getattr(profile, 'trade_rate', None) if profile is not None else None, imbalance=getattr(profile, 'imbalance', None) if profile is not None else None, direction=getattr(prediction, 'direction', None) if prediction else None, signal=getattr(prediction, 'score', None) if prediction else None, expected_alpha=record.get('expected_alpha'), min_expected_alpha=self.min_expected_alpha, fill_buy=record.get('fill_buy'), fill_sell=record.get('fill_sell'), bid_px=record.get('bid_px'), ask_px=record.get('ask_px'), quantity=record.get('quantity'), expected_realized_pnl=record.get('expected_realized_pnl'), inventory=record.get('inventory'), instructions=record.get('instructions', 0), decision_ms=record.get('quote_ms', record.get('manage_ms')), loss_streak=record.get('loss_streak', getattr(mem, 'loss_streak', None) if mem is not None else None), recent_pnl=record.get('recent_pnl', getattr(mem, 'recent_pnl', None) if mem is not None else None), toxic_loss=record.get('toxic_loss'), toxic_pnl=record.get('toxic_pnl'), toxic_spread=record.get('toxic_spread'), toxic_archetype=record.get('toxic_archetype'), toxic_red_tier=record.get('toxic_red_tier'), stressed_by_spread=record.get('stressed_by_spread'), stressed_by_regime=record.get('stressed_by_regime'), legacy_stressed_by_regime=record.get('legacy_stressed_by_regime'), stress_spread_bps=record.get('stress_spread_bps', self._research_stress_spread_bps), toxic_spread_bps=record.get('toxic_spread_bps', self._research_toxic_spread_bps), min_order_size=record.get('min_order_size', self._research_exchange_min_order_size), dynamic_size_raw=record.get('dynamic_size_raw'), dynamic_size_final=record.get('dynamic_size_final'), size_promoted_to_min=record.get('size_promoted_to_min'), inactive_bootstrap=inactive_gate_bypassed, inactive_gate_bypassed=inactive_gate_bypassed and (not self.mm_skip_inactive_tier), dead_trade_rate_hit=record.get('dead_trade_rate_hit'), active_sparse=record.get('active_sparse'), active_sparse_tier=record.get('active_sparse_tier'), dust_quarantine=record.get('dust_quarantine'), dust_compact=record.get('dust_compact'), dust_compact_selected=record.get('dust_compact_selected'), scheduler_lane=record.get('scheduler_lane'), normal_attempts_used=record.get('normal_attempts_used'), normal_attempt_cap=record.get('normal_attempt_cap'), completion_attempts_used=record.get('completion_attempts_used'), completion_attempt_cap=record.get('completion_attempt_cap'), completion_successes_used=record.get('completion_successes_used'), completion_success_cap=record.get('completion_success_cap'), kappa_completion_candidate=record.get('kappa_completion_candidate'), kappa_completion_samples=record.get('kappa_completion_samples'), kappa_completion_target=record.get('kappa_completion_target'), kappa_completion_fill_relaxed=record.get('kappa_completion_fill_relaxed'), kappa_completion_min_fill_original=record.get('kappa_completion_min_fill_original'), kappa_completion_min_fill_effective=record.get('kappa_completion_min_fill_effective'), kappa_completion_quote_success=record.get('kappa_completion_quote_success'), toxic_pnl_raw=record.get('toxic_pnl_raw'), toxic_pnl_samples=record.get('toxic_pnl_samples'), aggressive_touch_gross_bps=record.get('aggressive_touch_gross_bps'), aggressive_touch_net_bps=record.get('aggressive_touch_net_bps'), bootstrap_inactive=record.get('bootstrap_inactive'), inventory_util=record.get('inventory_util'), dust_position=record.get('dust_position'))
 
     def _bsimpl_3_Strategy1_Research__emit(self, event_type: str, force: bool=False, **payload: Any) -> None:
-        if not getattr(self, 'debug_enabled', True) and (not force):
+        # Production fast path: no JSON-safe conversion, timestamps, queue work,
+        # or diagnostic aggregation when both telemetry layers are disabled.
+        if not (getattr(self, 'debug_enabled', False) or getattr(self, 'research_enabled', False)):
+            return
+        if not getattr(self, 'debug_enabled', False) and (not force) and not getattr(self, 'research_enabled', False):
             return
         if event_type == 'RUN_SUMMARY':
             payload.setdefault('research_round_trip_closes', getattr(self, '_research_round_trip_closes', 0))
