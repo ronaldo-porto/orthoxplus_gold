@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1 research V2: diagnostics plus bootstrap/round-trip correctness fixes.
+"""Strategy1 research V4 Strict: dust-liveness and Kappa-completion controller.
 
 Requires Strategy1_Debug.py beside this file.
 
@@ -18,10 +18,21 @@ identified from the testnet research log:
 8. Cold INACTIVE books are not mislabeled DEAD solely from bootstrap trade-rate.
 9. Inventory is represented as signed base utilization (net_base / max_inventory_base).
 10. Quote skew uses a reservation-price shift instead of the legacy sign-confused formula.
-11. Any executable bootstrap position is managed immediately; stale bootstrap inventory may
-    be aggressively closed after a configurable age, without clearing local state before fill.
-12. Dust inventory is never rounded up into an over-close, and [S1R_POSITION] records expose
-    OPEN/INCREASE/REDUCE/FLAT transitions and confirmed round trips.
+11. Any executable bootstrap position is managed immediately; an optional aggressive close
+    after the age gate requires non-negative estimated close-at-touch economics after buffer.
+12. Dust is quarantined before normal quote selection, exact flatness follows volume precision,
+    and [S1R_POSITION] exposes OPEN/INCREASE/REDUCE/FLAT transitions.
+13. Quote selection backfills failed top-ranked candidates up to a bounded attempt cap while
+    preserving the original successful quote-book cap.
+14. Recent-PnL toxicity requires enough completed samples unless loss crosses a hard floor.
+15. Sparse-tape YELLOW and GREEN books retain a conservative active path instead of reverting
+    to DEAD solely because recent trade_rate is near zero.
+16. Sub-minimum exact inventory remains precisely tracked and parked outside the finite
+    management pool when it is too small to reduce safely with one minimum-size order.
+17. Large dust (> half the exchange minimum) gets bounded passive DUST_COMPACT treatment;
+    every possible partial fill is non-increasing in absolute exposure.
+18. Kappa-completion priority concentrates quote opportunities on books with 1-2 confirmed
+    realized observations so they can reach the 3-observation score-eligibility threshold.
 
 The production Strategy1 parent remains untouched; this subclass intentionally changes the
 above research-policy and correctness paths while retaining Strategy1 signals and ranking.
@@ -91,6 +102,12 @@ class Strategy1_Research(Strategy1_Debug):
         "DUST": "DUST",
         "DUST_POSITION": "DUST",
         "INACTIVE_DIAGNOSTIC_ONLY": "INACTIVE_DIAG",
+        "MM_SUCCESS_CAP": "MM_CAP",
+        "DUST_QUARANTINE": "DUST_PARK",
+        "DUST_RELEASED": "DUST_RELEASE",
+        "DUST_COMPACT": "DUST_COMPACT",
+        "DUST_COMPACT_BLOCKED": "DUST_COMPACT_BLOCKED",
+        "KAPPA_COMPLETION": "KAPPA_COMPLETE",
     }
 
     def initialize(self) -> None:
@@ -207,6 +224,84 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_rotate_jsonl = self._as_bool(
             getattr(cfg, "research_rotate_jsonl", True)
         )
+        # --------------------------------------------------------------
+        # V4 Strict execution-quality fixes, all derived from the completed
+        # research run. Keep them independently switchable for A/B testing.
+        # --------------------------------------------------------------
+        self.research_candidate_backfill = self._as_bool(
+            getattr(cfg, "research_candidate_backfill", True)
+        )
+        self.research_candidate_attempt_cap = max(
+            1, int(getattr(cfg, "research_candidate_attempt_cap", 12))
+        )
+        self.research_aggressive_close_touch_gate = self._as_bool(
+            getattr(cfg, "research_aggressive_close_touch_gate", True)
+        )
+        self.research_aggressive_close_fee_buffer_bps = max(
+            0.0, float(getattr(cfg, "research_aggressive_close_fee_buffer_bps", 3.0))
+        )
+        self.research_aggressive_close_min_net_bps = float(
+            getattr(cfg, "research_aggressive_close_min_net_bps", 0.0)
+        )
+        self.research_toxic_pnl_min_samples = max(
+            0, int(getattr(cfg, "research_toxic_pnl_min_samples", 3))
+        )
+        self.research_toxic_pnl_hard_floor = float(
+            getattr(cfg, "research_toxic_pnl_hard_floor", -0.05)
+        )
+        self.research_yellow_sparse_active = self._as_bool(
+            getattr(cfg, "research_yellow_sparse_active", True)
+        )
+        self.research_green_sparse_active = self._as_bool(
+            getattr(cfg, "research_green_sparse_active", True)
+        )
+        self.research_dust_park_enabled = self._as_bool(
+            getattr(cfg, "research_dust_park_enabled", True)
+        )
+        self.research_dust_heartbeat_ticks = max(
+            1, int(getattr(cfg, "research_dust_heartbeat_ticks", 250))
+        )
+        self.research_dust_warn_ticks = max(
+            self.research_dust_heartbeat_ticks,
+            int(getattr(cfg, "research_dust_warn_ticks", 1000)),
+        )
+        # V4 Strict: dust liveness. A minimum-size opposite order can only
+        # reduce exposure for every possible partial fill when |dust| > 0.5*min.
+        self.research_dust_compact_enabled = self._as_bool(
+            getattr(cfg, "research_dust_compact_enabled", True)
+        )
+        self.research_dust_compact_min_fraction = max(
+            0.500001,
+            min(0.95, float(getattr(cfg, "research_dust_compact_min_fraction", 0.50))),
+        )
+        self.research_dust_compact_books_per_tick = max(
+            1, int(getattr(cfg, "research_dust_compact_books_per_tick", 2))
+        )
+
+        # V4 Strict: concentrate realized observations so more individual books
+        # cross the validator's per-book minimum observation requirement.
+        self.research_kappa_completion_enabled = self._as_bool(
+            getattr(cfg, "research_kappa_completion_enabled", True)
+        )
+        self.research_kappa_completion_target = max(
+            2, int(getattr(cfg, "research_kappa_completion_target", 3))
+        )
+        self.research_kappa_completion_rank_bonus = max(
+            0.0, float(getattr(cfg, "research_kappa_completion_rank_bonus", 0.30))
+        )
+        self.research_kappa_completion_fill_mult = max(
+            0.50,
+            min(1.0, float(getattr(cfg, "research_kappa_completion_fill_mult", 0.70))),
+        )
+        self.research_kappa_completion_fill_floor = max(
+            0.0, float(getattr(cfg, "research_kappa_completion_fill_floor", 0.10))
+        )
+        self.research_kappa_completion_relaxed_success_cap = max(
+            0, int(getattr(cfg, "research_kappa_completion_relaxed_success_cap", 2))
+        )
+        self.research_kappa_completion_recent_pnl_floor = float(
+            getattr(cfg, "research_kappa_completion_recent_pnl_floor", -0.01)
+        )
         self.research_run_id = time.strftime("%Y%m%d_%H%M%S", time.localtime())
 
         self._research_stress_spread_bps = self.research_stress_fallback_bps
@@ -223,6 +318,25 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_position_opens = 0
         self._research_position_reductions = 0
         self._research_dust_blocks = 0
+        self._research_round_trip_samples_by_book: dict[int, int] = {}
+        self._research_realized_observations_by_book: dict[int, int] = {}
+        self._research_parked_dust: dict[int, dict[str, Any]] = {}
+        self._research_dust_entries = 0
+        self._research_dust_releases = 0
+        self._research_dust_heartbeats = 0
+        self._research_dust_compact_ids_this_tick: set[int] = set()
+        self._research_dust_compact_attempts = 0
+        self._research_dust_compact_orders = 0
+        self._research_dust_compact_fills = 0
+        self._research_volume_decimals = 8
+        self._research_backfill_active = False
+        self._research_quote_success_cap = 0
+        self._research_quote_successes = 0
+        self._research_quote_attempts = 0
+        self._research_completion_relaxed_successes = 0
+        self._research_completion_quote_attempts = 0
+        self._research_completion_quote_successes = 0
+        self._research_aggressive_context: dict[int, dict[str, Any]] = {}
 
         self.research_enabled = self._env_bool(
             "STRATEGY1_RESEARCH", self._as_bool(getattr(cfg, "research_enabled", True))
@@ -289,7 +403,7 @@ class Strategy1_Research(Strategy1_Debug):
             "jsonl": self.research_jsonl,
             "queue_size": self.research_queue_size,
             "output_dir": self.research_output_dir,
-            "policy_version": "deadlock_fix_v2",
+            "policy_version": "deadlock_fix_v4_strict",
             "fix_global_stress": self.research_fix_global_stress,
             "neutral_fallback": self.research_neutral_fallback,
             "adaptive_spread_thresholds": self.research_adaptive_spread_thresholds,
@@ -304,9 +418,31 @@ class Strategy1_Research(Strategy1_Debug):
             "fix_quote_reservation": self.research_fix_quote_reservation,
             "bootstrap_manage_min_clip": self.research_bootstrap_manage_min_clip,
             "bootstrap_force_close_ticks": self.research_bootstrap_force_close_ticks,
-            "bootstrap_force_close_min_bps": self.research_bootstrap_force_close_min_bps,
-            "bootstrap_hard_close_ticks": self.research_bootstrap_hard_close_ticks,
+            "legacy_force_close_min_bps": self.research_bootstrap_force_close_min_bps,
+            "legacy_hard_close_ticks": self.research_bootstrap_hard_close_ticks,
+            "aggressive_close_touch_gate": self.research_aggressive_close_touch_gate,
+            "aggressive_close_fee_buffer_bps": self.research_aggressive_close_fee_buffer_bps,
+            "aggressive_close_min_net_bps": self.research_aggressive_close_min_net_bps,
+            "candidate_backfill": self.research_candidate_backfill,
+            "candidate_attempt_cap": self.research_candidate_attempt_cap,
+            "toxic_pnl_min_samples": self.research_toxic_pnl_min_samples,
+            "toxic_pnl_hard_floor": self.research_toxic_pnl_hard_floor,
+            "yellow_sparse_active": self.research_yellow_sparse_active,
+            "green_sparse_active": self.research_green_sparse_active,
             "dust_safe_close": self.research_dust_safe_close,
+            "dust_park_enabled": self.research_dust_park_enabled,
+            "dust_heartbeat_ticks": self.research_dust_heartbeat_ticks,
+            "dust_warn_ticks": self.research_dust_warn_ticks,
+            "dust_compact_enabled": self.research_dust_compact_enabled,
+            "dust_compact_min_fraction": self.research_dust_compact_min_fraction,
+            "dust_compact_books_per_tick": self.research_dust_compact_books_per_tick,
+            "kappa_completion_enabled": self.research_kappa_completion_enabled,
+            "kappa_completion_target": self.research_kappa_completion_target,
+            "kappa_completion_rank_bonus": self.research_kappa_completion_rank_bonus,
+            "kappa_completion_fill_mult": self.research_kappa_completion_fill_mult,
+            "kappa_completion_fill_floor": self.research_kappa_completion_fill_floor,
+            "kappa_completion_relaxed_success_cap": self.research_kappa_completion_relaxed_success_cap,
+            "kappa_completion_recent_pnl_floor": self.research_kappa_completion_recent_pnl_floor,
             "rotate_jsonl": self.research_rotate_jsonl,
             "run_id": self.research_run_id,
             "output_file": self._research_output_file,
@@ -376,9 +512,21 @@ class Strategy1_Research(Strategy1_Debug):
         self,
         state: MarketSimulationStateUpdate,
     ) -> None:
+        cfg = getattr(state, "config", None)
+
+        # Quantity precision is needed even if min-size synchronization is
+        # disabled, because exact inventory/dust classification must follow the
+        # simulator's executable quantity grid.
+        try:
+            self._research_volume_decimals = max(
+                0, int(getattr(cfg, "volumeDecimals", self._research_volume_decimals))
+            )
+        except (TypeError, ValueError):
+            pass
+
         if not self.research_sync_min_order:
             return
-        cfg = getattr(state, "config", None)
+
         try:
             state_min = float(getattr(cfg, "min_order_size", 0.0) or 0.0)
         except (TypeError, ValueError):
@@ -392,6 +540,13 @@ class Strategy1_Research(Strategy1_Debug):
             self._research_exchange_min_order_size = max(
                 0.0, float(getattr(self, "min_order_size", 0.0) or 0.0)
             )
+
+    def _execution_flat_epsilon(self) -> float:
+        """Half one quantity tick; only sub-half-tick residuals are execution-flat."""
+        return max(
+            0.5 * (10.0 ** (-int(self._research_volume_decimals))),
+            1e-12,
+        )
 
     def classify_market_regime_from_profiles(
         self,
@@ -516,6 +671,185 @@ class Strategy1_Research(Strategy1_Debug):
             )
         return params
 
+    def _mem(self, book_id: int):
+        """Attach the book id to parent BookMemory for completion-aware ranking."""
+        mem = super()._mem(book_id)
+        try:
+            setattr(mem, "_research_book_id", int(book_id))
+        except Exception:
+            pass
+        return mem
+
+    def _completion_observation_count(self, book_id: int) -> int:
+        return int(self._research_realized_observations_by_book.get(int(book_id), 0))
+
+    def _is_kappa_completion_candidate(self, book_id: int) -> bool:
+        if not self.research_kappa_completion_enabled:
+            return False
+        samples = self._completion_observation_count(book_id)
+        if samples <= 0 or samples >= self.research_kappa_completion_target:
+            return False
+        mem = self._mem(book_id)
+        return float(getattr(mem, "recent_pnl", 0.0) or 0.0) >= (
+            self.research_kappa_completion_recent_pnl_floor
+        )
+
+    def _global_book_rank(self, expected_alpha: float, mem) -> float:
+        """Preserve Strategy1 economics, then prioritize near-complete Kappa books."""
+        base_rank = super()._global_book_rank(expected_alpha, mem)
+        if not self.research_kappa_completion_enabled:
+            return base_rank
+        book_id = getattr(mem, "_research_book_id", None)
+        if book_id is None or not self._is_kappa_completion_candidate(int(book_id)):
+            return base_rank
+        samples = self._completion_observation_count(int(book_id))
+        denom = max(1, self.research_kappa_completion_target - 1)
+        # One-away books receive the full bonus; two-away books receive half.
+        progress = max(0.0, min(1.0, samples / denom))
+        return base_rank + self.research_kappa_completion_rank_bonus * progress
+
+    def _is_compactable_dust(self, net_base: float) -> bool:
+        if not self.research_dust_compact_enabled or not self._is_dust_qty(net_base):
+            return False
+        min_size = max(0.0, float(self._research_exchange_min_order_size))
+        if min_size <= 0.0:
+            return False
+        abs_base = abs(float(net_base))
+        threshold = self.research_dust_compact_min_fraction * min_size
+        return abs_base > threshold + self._execution_flat_epsilon()
+
+    def _select_dust_compaction_books(self, state: MarketSimulationStateUpdate) -> set[int]:
+        """Pick a tiny bounded set; ordinary executable inventory keeps its 8-slot pool."""
+        if not self.research_dust_compact_enabled:
+            return set()
+        tick = int(getattr(self, "_tick", 0) or 0)
+        rows: list[tuple[float, int, int]] = []
+        for book_id, info in self._research_parked_dust.items():
+            qty = float(info.get("net_base", 0.0) or 0.0)
+            if not self._is_compactable_dust(qty):
+                continue
+            if book_id not in getattr(state, "books", {}):
+                continue
+            first_tick = int(info.get("first_tick", tick))
+            age = max(0, tick - first_tick)
+            # Larger residual first (greater trapped exposure), then older.
+            rows.append((abs(qty), age, int(book_id)))
+        rows.sort(reverse=True)
+        return {
+            book_id
+            for _abs_qty, _age, book_id in rows[: self.research_dust_compact_books_per_tick]
+        }
+
+    def _dust_compaction_safe_for_any_fill(self, net_base: float) -> bool:
+        """Proof condition for q -> q - sign(q)*f, 0<=f<=min_size."""
+        min_size = max(0.0, float(self._research_exchange_min_order_size))
+        q = abs(float(net_base))
+        return min_size > 0.0 and q > 0.5 * min_size and q < min_size
+
+    def _sparse_active_tier_enabled(self, tier: str) -> bool:
+        tier_u = str(tier or "").upper()
+        return (
+            (tier_u == "YELLOW" and self.research_yellow_sparse_active)
+            or (tier_u == "GREEN" and self.research_green_sparse_active)
+        )
+
+    def _is_dust_qty(self, net_base: float) -> bool:
+        min_size = max(0.0, float(self._research_exchange_min_order_size))
+        abs_base = abs(float(net_base))
+        return (
+            self.research_dust_safe_close
+            and min_size > 0.0
+            and abs_base >= self._execution_flat_epsilon()
+            and abs_base + 1e-12 < min_size
+        )
+
+    def _refresh_dust_state(
+        self,
+        book_id: int,
+        net_base: float,
+        *,
+        emit: bool = True,
+    ) -> bool:
+        """Park exchange-uncloseable residuals without hiding exact inventory.
+
+        V4 Strict does not synthesize an exchange-illegal exact close and does
+        not add fresh risk merely to make dust executable. Dust remains in exact
+        accounting, is removed from the finite management queue, and is
+        quarantined from fresh MM/maintenance orders.
+        """
+        if not self.research_dust_park_enabled:
+            self._research_parked_dust.pop(book_id, None)
+            return False
+
+        tick = int(getattr(self, "_tick", 0) or 0)
+        qty = float(net_base)
+        is_dust = self._is_dust_qty(qty)
+        prior = self._research_parked_dust.get(book_id)
+
+        if not is_dust:
+            if prior is not None:
+                self._research_dust_releases += 1
+                self._research_parked_dust.pop(book_id, None)
+                if emit:
+                    self._emit(
+                        "POSITION_GUARD",
+                        tick=tick,
+                        book_id=book_id,
+                        reason="DUST_RELEASED",
+                        net_base=qty,
+                        min_order_size=self._research_exchange_min_order_size,
+                        first_tick=prior.get("first_tick"),
+                        age_ticks=max(0, tick - int(prior.get("first_tick", tick))),
+                        parked=False,
+                    )
+            return False
+
+        if prior is None:
+            prior = {
+                "first_tick": tick,
+                "last_tick": tick,
+                "last_emit_tick": tick,
+                "net_base": qty,
+            }
+            self._research_parked_dust[book_id] = prior
+            self._research_dust_entries += 1
+            self._research_dust_blocks += 1
+            if emit:
+                self._emit(
+                    "POSITION_GUARD",
+                    tick=tick,
+                    book_id=book_id,
+                    reason="DUST_POSITION",
+                    net_base=qty,
+                    min_order_size=self._research_exchange_min_order_size,
+                    first_tick=tick,
+                    age_ticks=0,
+                    parked=True,
+                    stale=False,
+                )
+            return True
+
+        prior["last_tick"] = tick
+        prior["net_base"] = qty
+        age = max(0, tick - int(prior.get("first_tick", tick)))
+        last_emit = int(prior.get("last_emit_tick", tick))
+        if emit and tick - last_emit >= self.research_dust_heartbeat_ticks:
+            prior["last_emit_tick"] = tick
+            self._research_dust_heartbeats += 1
+            self._emit(
+                "POSITION_GUARD",
+                tick=tick,
+                book_id=book_id,
+                reason="DUST_HEARTBEAT",
+                net_base=qty,
+                min_order_size=self._research_exchange_min_order_size,
+                first_tick=prior.get("first_tick"),
+                age_ticks=age,
+                parked=True,
+                stale=(age >= self.research_dust_warn_ticks),
+            )
+        return True
+
     def classify_book_archetype(
         self,
         profile: BookProfile,
@@ -540,10 +874,21 @@ class Strategy1_Research(Strategy1_Debug):
             and overlay == "SCORING_PRESSURE"
             and tier == "INACTIVE"
         )
+        profile_book_id = getattr(profile, "book_id", None)
+        parked_dust = (
+            self.research_dust_park_enabled
+            and profile_book_id in self._research_parked_dust
+        )
 
+        # Parked dust is an execution quarantine, not a market-risk opinion.
+        # Represent it as TOXIC_BOOK only to guarantee inherited maintenance/MM
+        # paths cannot add a new order; archetype_source preserves the semantics.
+        if parked_dust:
+            archetype: BookArchetype = "TOXIC_BOOK"
+            source = "PARKED_DUST"
         # Local risk always wins. Global STRESSED is deliberately not a local
         # archetype condition; otherwise one regime bit poisons all books.
-        if spread_bps >= stress_cutoff:
+        elif spread_bps >= stress_cutoff:
             archetype: BookArchetype = "STRESSED"
             source = "LOCAL_SPREAD"
         elif bootstrap_inactive:
@@ -573,6 +918,29 @@ class Strategy1_Research(Strategy1_Debug):
             else:
                 archetype = "MM_BOOK"
                 source = "INACTIVE_BOOTSTRAP"
+        elif (
+            self._sparse_active_tier_enabled(tier)
+            and trade_rate < self.archetype_dead_trade_rate
+        ):
+            # V4 Strict bridge: a book that already earned YELLOW history but has
+            # sparse tape is not identical to an unproven DEAD book. Preserve
+            # genuine local risk first, then directional/wall information.
+            extreme_vol = (
+                self.research_bootstrap_extreme_vol_mult
+                * max(float(self.archetype_vol_threshold), 1e-12)
+            )
+            if volatility >= extreme_vol:
+                archetype = "TOXIC_BOOK"
+                source = "ACTIVE_SPARSE_EXTREME_VOL"
+            elif abs(imbalance) >= self.archetype_wall_imbalance:
+                archetype = "WALL_BOOK"
+                source = "ACTIVE_SPARSE_WALL"
+            elif abs(predict_score) >= self.direction_threshold:
+                archetype = "TREND_BOOK"
+                source = "ACTIVE_SPARSE_TREND"
+            else:
+                archetype = "MM_BOOK"
+                source = "ACTIVE_SPARSE_MM"
         elif trade_rate < self.archetype_dead_trade_rate:
             archetype = "DEAD_BOOK"
             source = "DEAD_TRADE_RATE"
@@ -618,7 +986,13 @@ class Strategy1_Research(Strategy1_Debug):
                 str(getattr(regime, "mode", "")).upper() == "STRESSED"
             )
             record["bootstrap_inactive"] = bootstrap_inactive
+            record["parked_dust"] = parked_dust
             record["dead_trade_rate_hit"] = trade_rate < self.archetype_dead_trade_rate
+            record["active_sparse"] = (
+                self._sparse_active_tier_enabled(tier)
+                and trade_rate < self.archetype_dead_trade_rate
+            )
+            record["active_sparse_tier"] = tier if record["active_sparse"] else None
         return archetype
 
     def is_toxic_book(
@@ -627,6 +1001,19 @@ class Strategy1_Research(Strategy1_Debug):
         profile: BookProfile,
         archetype: BookArchetype,
     ) -> bool:
+        dust_info = self._research_parked_dust.get(book_id)
+        if self.research_dust_park_enabled and dust_info is not None:
+            if self.debug_enabled:
+                record = self._book_record(book_id)
+                record["dust_position"] = True
+                record["dust_quarantine"] = True
+                record["dust_qty"] = abs(float(dust_info.get("net_base", 0.0)))
+                record["toxic"] = False
+            # Parent Strategy1 exposes a boolean pre-candidate exclusion hook.
+            # Use it as quarantine transport; emitted diagnostics rewrite this
+            # to DUST_QUARANTINE so parked dust is not called genuine toxicity.
+            return True
+
         mem = self._mem(book_id)
         spread_bps = self._profile_float(profile, "spread_bps")
         toxic_cutoff = (
@@ -636,7 +1023,12 @@ class Strategy1_Research(Strategy1_Debug):
         )
 
         toxic_loss = mem.loss_streak >= self.toxic_loss_streak
-        toxic_pnl = mem.recent_pnl < self.toxic_recent_pnl
+        pnl_samples = int(self._research_round_trip_samples_by_book.get(book_id, 0))
+        toxic_pnl_raw = mem.recent_pnl < self.toxic_recent_pnl
+        toxic_pnl = toxic_pnl_raw and (
+            pnl_samples >= self.research_toxic_pnl_min_samples
+            or mem.recent_pnl <= self.research_toxic_pnl_hard_floor
+        )
         toxic_spread = (
             spread_bps is not None and spread_bps > toxic_cutoff
         )
@@ -658,6 +1050,10 @@ class Strategy1_Research(Strategy1_Debug):
             record["recent_pnl"] = mem.recent_pnl
             record["toxic_loss"] = toxic_loss
             record["toxic_pnl"] = toxic_pnl
+            record["toxic_pnl_raw"] = toxic_pnl_raw
+            record["toxic_pnl_samples"] = pnl_samples
+            record["toxic_pnl_min_samples"] = self.research_toxic_pnl_min_samples
+            record["toxic_pnl_hard_floor"] = self.research_toxic_pnl_hard_floor
             record["toxic_spread"] = toxic_spread
             record["toxic_archetype"] = toxic_archetype
             record["toxic_red_tier"] = toxic_red_tier
@@ -675,7 +1071,7 @@ class Strategy1_Research(Strategy1_Debug):
         net_base = float(tracker.net_qty)
         max_base = max(float(self.max_inventory_base), 1e-9)
         signed_util = net_base / max_base
-        flat_eps = max(float(self.mm_base_size) * 1e-3, 1e-12)
+        flat_eps = self._execution_flat_epsilon()
 
         if abs(net_base) < flat_eps:
             band = "FLAT"
@@ -715,6 +1111,10 @@ class Strategy1_Research(Strategy1_Debug):
             opened_at_ns=tracker.opened_at_ns,
             reason=self._inventory_reason.get(book_id, "UNKNOWN"),
         )
+        try:
+            setattr(inventory, "_research_book_id", int(book_id))
+        except Exception:
+            pass
         if self.debug_enabled:
             self._book_record(book_id)["inventory"] = {
                 "net_base": inventory.net_base,
@@ -726,6 +1126,7 @@ class Strategy1_Research(Strategy1_Debug):
                 "position_ticks": inventory.position_ticks,
                 "reason": inventory.reason,
             }
+        self._refresh_dust_state(book_id, net_base, emit=True)
         return inventory
 
     def _inventory_util(self, inventory: InventorySnapshot) -> float:
@@ -736,12 +1137,28 @@ class Strategy1_Research(Strategy1_Debug):
     def _inventory_needs_management(self, inventory: InventorySnapshot) -> bool:
         if inventory.band in ("MAX_LONG", "MAX_SHORT"):
             return True
+
         abs_base = abs(float(inventory.net_base))
         min_size = max(0.0, float(self._research_exchange_min_order_size))
+        eps = self._execution_flat_epsilon()
+
+        # V4 Strict: only mathematically safe, explicitly selected dust enters
+        # management. Tiny/nonselected dust remains parked and consumes no slot.
+        if (
+            self.research_dust_park_enabled
+            and self._is_dust_qty(inventory.net_base)
+        ):
+            book_id = getattr(inventory, "_research_book_id", None)
+            return (
+                book_id is not None
+                and int(book_id) in self._research_dust_compact_ids_this_tick
+                and self._dust_compaction_safe_for_any_fill(inventory.net_base)
+            )
+
         if (
             self._research_bootstrap_active
             and self.research_bootstrap_manage_min_clip
-            and abs_base > 0.0
+            and abs_base >= eps
             and (min_size <= 0.0 or abs_base + 1e-12 >= min_size)
         ):
             return True
@@ -837,22 +1254,44 @@ class Strategy1_Research(Strategy1_Debug):
         time_stop: bool,
         stop_loss_hit: bool,
     ) -> bool:
+        # Safety controls remain immediate. These are the only bootstrap paths
+        # allowed to ignore the touch-economics gate.
         if stop_loss_hit or inventory.band in ("MAX_LONG", "MAX_SHORT"):
             return True
+
         if (
             self._research_bootstrap_active
             and self.research_bootstrap_allow_aggressive_close
         ):
             ticks = int(inventory.position_ticks)
-            if ticks >= self.research_bootstrap_hard_close_ticks:
-                return True
-            if ticks >= self.research_bootstrap_force_close_ticks:
-                unreal = inventory.unrealized_bps
-                if (
-                    unreal is not None
-                    and unreal >= self.research_bootstrap_force_close_min_bps
-                ):
+            if not self.research_aggressive_close_touch_gate:
+                # Explicit A/B fallback to the previous V2 behavior.
+                if ticks >= self.research_bootstrap_hard_close_ticks:
                     return True
+                if ticks >= self.research_bootstrap_force_close_ticks:
+                    unreal = inventory.unrealized_bps
+                    return (
+                        unreal is not None
+                        and unreal >= self.research_bootstrap_force_close_min_bps
+                    )
+                return False
+
+            if ticks >= self.research_bootstrap_force_close_ticks:
+                ctx = self._research_aggressive_context.get(book_id) or {}
+                net_touch_bps = ctx.get("net_touch_bps")
+                if net_touch_bps is not None:
+                    # Age permits consideration; executable economics decide.
+                    return (
+                        float(net_touch_bps)
+                        >= self.research_aggressive_close_min_net_bps
+                    )
+
+            # V4 Strict deliberately removes age-only / close-score-only market
+            # exits while the scoring-pressure bootstrap is active. The old
+            # age-60 cohort was overwhelmingly loss-making, and age>=180 alone
+            # is not evidence that crossing the spread improves the outcome.
+            return False
+
         return super()._allows_aggressive_close(
             book_id, inventory, close_score, time_stop, stop_loss_hit
         )
@@ -899,28 +1338,112 @@ class Strategy1_Research(Strategy1_Debug):
         regime: MarketRegime,
         archetype: BookArchetype,
     ) -> int:
+        # Estimate executable close economics at the opposing touch rather than
+        # using mark-to-mid. The configurable buffer covers taker fee/slippage.
+        touch_gross_bps = None
+        net_touch_bps = None
+        entry = inventory.vwap_entry
+        if (
+            entry is not None
+            and float(entry) > 0.0
+            and getattr(book, "bids", None)
+            and getattr(book, "asks", None)
+        ):
+            entry_f = float(entry)
+            if inventory.net_base > 0.0:
+                touch_px = float(book.bids[0].price)
+                touch_gross_bps = (touch_px - entry_f) / entry_f * 10_000.0
+            elif inventory.net_base < 0.0:
+                touch_px = float(book.asks[0].price)
+                touch_gross_bps = (entry_f - touch_px) / entry_f * 10_000.0
+            if touch_gross_bps is not None:
+                net_touch_bps = (
+                    float(touch_gross_bps)
+                    - self.research_aggressive_close_fee_buffer_bps
+                )
+
+        self._research_aggressive_context[book_id] = {
+            "touch_gross_bps": touch_gross_bps,
+            "net_touch_bps": net_touch_bps,
+            "age_ticks": int(inventory.position_ticks),
+        }
+        if self.debug_enabled:
+            record = self._book_record(book_id)
+            record["aggressive_touch_gross_bps"] = touch_gross_bps
+            record["aggressive_touch_net_bps"] = net_touch_bps
+            record["aggressive_close_fee_buffer_bps"] = (
+                self.research_aggressive_close_fee_buffer_bps
+            )
+            record["aggressive_close_min_net_bps"] = (
+                self.research_aggressive_close_min_net_bps
+            )
+
         min_size = max(0.0, float(self._research_exchange_min_order_size))
         abs_base = abs(float(inventory.net_base))
         if (
             self.research_dust_safe_close
             and inventory.band != "FLAT"
-            and min_size > 0.0
-            and abs_base + 1e-12 < min_size
+            and self._is_dust_qty(inventory.net_base)
         ):
-            self._research_dust_blocks += 1
+            self._refresh_dust_state(book_id, inventory.net_base, emit=True)
+            compact_selected = (
+                book_id in self._research_dust_compact_ids_this_tick
+                and self._dust_compaction_safe_for_any_fill(inventory.net_base)
+            )
+            if compact_selected:
+                self._research_dust_compact_attempts += 1
+                before_ix = len(response.instructions)
+                n = super()._place_passive_inventory_exit(
+                    response,
+                    state,
+                    book_id,
+                    book,
+                    inventory,
+                    min_size,
+                )
+                if n:
+                    self._research_dust_compact_orders += 1
+                    self._inventory_reason[book_id] = "DUST_COMPACT"
+                    self._emit(
+                        "POSITION_GUARD",
+                        tick=getattr(self, "_tick", None),
+                        book_id=book_id,
+                        reason="DUST_COMPACT",
+                        net_base=inventory.net_base,
+                        min_order_size=min_size,
+                        projected_full_fill_net=(
+                            float(inventory.net_base)
+                            - (min_size if inventory.net_base > 0.0 else -min_size)
+                        ),
+                        exposure_nonincreasing=True,
+                        instructions=len(response.instructions) - before_ix,
+                    )
+                    if self.debug_enabled:
+                        record = self._book_record(book_id)
+                        record["action"] = "MANAGE"
+                        record["reason"] = "DUST_COMPACT"
+                        record["dust_compact"] = True
+                        record["dust_compact_qty"] = min_size
+                        record["instructions"] = n
+                    return n
+
+                self._emit(
+                    "POSITION_GUARD",
+                    tick=getattr(self, "_tick", None),
+                    book_id=book_id,
+                    reason="DUST_COMPACT_BLOCKED",
+                    net_base=inventory.net_base,
+                    min_order_size=min_size,
+                    exposure_nonincreasing=True,
+                )
+
             if self.debug_enabled:
                 record = self._book_record(book_id)
                 record["dust_position"] = True
+                record["dust_quarantine"] = True
                 record["dust_qty"] = abs_base
                 record["min_order_size"] = min_size
-            self._emit(
-                "POSITION_GUARD",
-                tick=getattr(self, "_tick", None),
-                book_id=book_id,
-                reason="DUST_POSITION",
-                net_base=inventory.net_base,
-                min_order_size=min_size,
-            )
+                record["dust_compact_selected"] = compact_selected
             return 0
         return super()._manage_inventory(
             response, state, book_id, book, inventory, regime_params, regime, archetype
@@ -937,12 +1460,23 @@ class Strategy1_Research(Strategy1_Debug):
         if book_id is not None:
             before = float(self._position_tracker_snapshot(book_id).net_qty)
             pnl_before = float(self._pnl_tick_buffer.get(book_id, 0.0))
+
         super().onTrade(event, validator)
         if book_id is None or not own:
             return
+
         after = float(self._position_tracker_snapshot(book_id).net_qty)
         pnl_after = float(self._pnl_tick_buffer.get(book_id, 0.0))
-        eps = max(float(self.mm_base_size) * 1e-3, 1e-12)
+        realized_delta = pnl_after - pnl_before
+        if abs(realized_delta) > 1e-12:
+            self._research_realized_observations_by_book[book_id] = (
+                self._research_realized_observations_by_book.get(book_id, 0) + 1
+            )
+
+        before_was_dust = self._is_dust_qty(before)
+        self._refresh_dust_state(book_id, after, emit=True)
+        eps = self._execution_flat_epsilon()
+
         if abs(before) < eps and abs(after) >= eps:
             transition = "OPEN"
             self._research_position_opens += 1
@@ -950,15 +1484,39 @@ class Strategy1_Research(Strategy1_Debug):
             transition = "FLAT"
             self._research_round_trip_closes += 1
             self._research_position_reductions += 1
+            self._research_round_trip_samples_by_book[book_id] = (
+                self._research_round_trip_samples_by_book.get(book_id, 0) + 1
+            )
+            if before_was_dust:
+                self._research_dust_compact_fills += 1
+        elif before * after < 0.0:
+            # A cross closes the old FIFO lifecycle and opens a new opposite
+            # residual. Check this BEFORE REDUCE/INCREASE magnitude tests.
+            transition = "CROSS"
+            self._research_position_reductions += 1
+            if abs(realized_delta) > 1e-12:
+                self._research_round_trip_closes += 1
+                self._research_round_trip_samples_by_book[book_id] = (
+                    self._research_round_trip_samples_by_book.get(book_id, 0) + 1
+                )
+            self._position_ticks[book_id] = 0
+            self._research_position_tick_seen[book_id] = int(getattr(self, "_tick", 0) or 0)
+            if before_was_dust:
+                self._research_dust_compact_fills += 1
+                self._inventory_reason[book_id] = "DUST_COMPACT"
         elif abs(after) < abs(before) - eps:
             transition = "REDUCE"
             self._research_position_reductions += 1
+            if before_was_dust:
+                self._research_dust_compact_fills += 1
         elif abs(after) > abs(before) + eps:
             transition = "INCREASE"
-        elif before * after < 0.0:
-            transition = "CROSS"
         else:
             transition = "UNCHANGED"
+
+        round_trip_event = transition == "FLAT" or (
+            transition == "CROSS" and abs(realized_delta) > 1e-12
+        )
         self._emit(
             "POSITION",
             tick=getattr(self, "_tick", None),
@@ -967,10 +1525,16 @@ class Strategy1_Research(Strategy1_Debug):
             transition=transition,
             net_before=before,
             net_after=after,
-            realized_pnl_delta=pnl_after - pnl_before,
-            round_trip=(transition == "FLAT"),
+            realized_pnl_delta=realized_delta,
+            realized_book_observations=self._research_realized_observations_by_book.get(book_id, 0),
+            round_trip=round_trip_event,
             round_trip_total=self._research_round_trip_closes,
-            reason=self._inventory_reason.get(book_id, "FLAT" if transition == "FLAT" else "UNKNOWN"),
+            round_trip_book_samples=self._research_round_trip_samples_by_book.get(book_id, 0),
+            execution_flat_epsilon=eps,
+            reason=self._inventory_reason.get(
+                book_id,
+                "FLAT" if transition == "FLAT" else "UNKNOWN",
+            ),
         )
 
     def dynamic_order_size(
@@ -1038,6 +1602,92 @@ class Strategy1_Research(Strategy1_Debug):
             record["size_promoted_to_min"] = promoted
         return size
 
+    def _place_skewed_quotes(
+        self,
+        response: FinanceAgentResponse,
+        state: MarketSimulationStateUpdate,
+        book_id: int,
+        book,
+        profile: BookProfile,
+        prediction: DirectionForecast,
+        inventory: InventorySnapshot,
+        regime_params: RegimeParamSet,
+        size: float,
+        edge_bias: float,
+        stats: dict | None = None,
+    ) -> int:
+        # Parent Strategy1 slices candidates before quote-level gates. V4 Strict
+        # scans a bounded larger prefix but preserves the original cap as the
+        # number of books that may actually emit quotes.
+        if self._research_backfill_active:
+            if self._research_quote_successes >= self._research_quote_success_cap:
+                if self.debug_enabled:
+                    record = self._book_record(book_id)
+                    record["action"] = "SKIP"
+                    record["reason"] = "MM_SUCCESS_CAP"
+                return 0
+            if self._research_quote_attempts >= self.research_candidate_attempt_cap:
+                return 0
+            self._research_quote_attempts += 1
+
+        completion_candidate = (
+            inventory.band == "FLAT"
+            and self._is_kappa_completion_candidate(book_id)
+        )
+        completion_samples = self._completion_observation_count(book_id)
+        allow_relaxed_fill = (
+            completion_candidate
+            and self._research_completion_relaxed_successes
+                < self.research_kappa_completion_relaxed_success_cap
+        )
+
+        old_min_fill = float(regime_params.min_fill_prob)
+        relaxed_min_fill = old_min_fill
+        if allow_relaxed_fill:
+            relaxed_min_fill = max(
+                self.research_kappa_completion_fill_floor,
+                old_min_fill * self.research_kappa_completion_fill_mult,
+            )
+            regime_params.min_fill_prob = min(old_min_fill, relaxed_min_fill)
+            self._research_completion_quote_attempts += 1
+
+        if self.debug_enabled:
+            record = self._book_record(book_id)
+            record["kappa_completion_candidate"] = completion_candidate
+            record["kappa_completion_samples"] = completion_samples
+            record["kappa_completion_target"] = self.research_kappa_completion_target
+            record["kappa_completion_fill_relaxed"] = allow_relaxed_fill
+            record["kappa_completion_min_fill_original"] = old_min_fill
+            record["kappa_completion_min_fill_effective"] = float(regime_params.min_fill_prob)
+
+        try:
+            placed = super()._place_skewed_quotes(
+                response,
+                state,
+                book_id,
+                book,
+                profile,
+                prediction,
+                inventory,
+                regime_params,
+                size,
+                edge_bias,
+                stats=stats,
+            )
+        finally:
+            regime_params.min_fill_prob = old_min_fill
+
+        if self._research_backfill_active and placed:
+            self._research_quote_successes += 1
+        if completion_candidate and placed:
+            self._research_completion_quote_successes += 1
+            if allow_relaxed_fill:
+                self._research_completion_relaxed_successes += 1
+            if self.debug_enabled:
+                record = self._book_record(book_id)
+                record["kappa_completion_quote_success"] = True
+        return placed
+
     def build_mm_strategy_instructions(
         self,
         response: FinanceAgentResponse,
@@ -1058,6 +1708,20 @@ class Strategy1_Research(Strategy1_Debug):
 
         old_skip_inactive = self.mm_skip_inactive_tier
         old_maintenance_mult = self.maintenance_size_mult
+        old_max_mm_books = self.max_mm_books_per_tick
+
+        self._research_backfill_active = bool(self.research_candidate_backfill)
+        self._research_quote_success_cap = int(old_max_mm_books)
+        self._research_quote_successes = 0
+        self._research_quote_attempts = 0
+        self._research_completion_relaxed_successes = 0
+        self._research_completion_quote_attempts = 0
+        self._research_completion_quote_successes = 0
+        self._research_dust_compact_ids_this_tick = self._select_dust_compaction_books(state)
+        if self._research_backfill_active:
+            self.max_mm_books_per_tick = max(
+                old_max_mm_books, self.research_candidate_attempt_cap
+            )
 
         try:
             # FIX 3: permit cold books to acquire their first realized samples
@@ -1101,11 +1765,28 @@ class Strategy1_Research(Strategy1_Debug):
                 stats["research_round_trip_closes"] = self._research_round_trip_closes
                 stats["research_position_opens"] = self._research_position_opens
                 stats["research_dust_blocks"] = self._research_dust_blocks
+                stats["research_parked_dust"] = len(self._research_parked_dust)
+                stats["research_dust_entries"] = self._research_dust_entries
+                stats["research_dust_releases"] = self._research_dust_releases
+                stats["research_dust_heartbeats"] = self._research_dust_heartbeats
+                stats["research_dust_compact_selected"] = len(self._research_dust_compact_ids_this_tick)
+                stats["research_dust_compact_attempts"] = self._research_dust_compact_attempts
+                stats["research_dust_compact_orders"] = self._research_dust_compact_orders
+                stats["research_dust_compact_fills"] = self._research_dust_compact_fills
+                stats["research_quote_attempts"] = self._research_quote_attempts
+                stats["research_completion_quote_attempts"] = self._research_completion_quote_attempts
+                stats["research_completion_quote_successes"] = self._research_completion_quote_successes
+                stats["research_completion_relaxed_successes"] = self._research_completion_relaxed_successes
+                stats["research_quote_successes"] = self._research_quote_successes
+                stats["research_quote_success_cap"] = self._research_quote_success_cap
+                stats["research_flat_epsilon"] = self._execution_flat_epsilon()
             return stats
         finally:
             self.mm_skip_inactive_tier = old_skip_inactive
             self.maintenance_size_mult = old_maintenance_mult
+            self.max_mm_books_per_tick = old_max_mm_books
             self._research_bootstrap_active = False
+            self._research_backfill_active = False
 
     # Strategy1_Debug emits an explicit DECISION payload rather than forwarding
     # the full internal record. Override it so the new research diagnostics are
@@ -1134,6 +1815,11 @@ class Strategy1_Research(Strategy1_Debug):
         mem = self._mem(book_id) if profile is not None else None
 
         reason = str(record.get("reason", DebugReason.NO_ACTION))
+        if (
+            record.get("dust_quarantine")
+            and reason in ("TOXIC_BOOK", "TOXIC_REGIME")
+        ):
+            reason = "DUST_QUARANTINE"
         inactive_gate_bypassed = (
             self.research_inactive_bootstrap
             and str(getattr(regime, "scoring_overlay", "")).upper() == "SCORING_PRESSURE"
@@ -1205,6 +1891,22 @@ class Strategy1_Research(Strategy1_Debug):
             inactive_bootstrap=inactive_gate_bypassed,
             inactive_gate_bypassed=inactive_gate_bypassed and not self.mm_skip_inactive_tier,
             dead_trade_rate_hit=record.get("dead_trade_rate_hit"),
+            active_sparse=record.get("active_sparse"),
+            active_sparse_tier=record.get("active_sparse_tier"),
+            dust_quarantine=record.get("dust_quarantine"),
+            dust_compact=record.get("dust_compact"),
+            dust_compact_selected=record.get("dust_compact_selected"),
+            kappa_completion_candidate=record.get("kappa_completion_candidate"),
+            kappa_completion_samples=record.get("kappa_completion_samples"),
+            kappa_completion_target=record.get("kappa_completion_target"),
+            kappa_completion_fill_relaxed=record.get("kappa_completion_fill_relaxed"),
+            kappa_completion_min_fill_original=record.get("kappa_completion_min_fill_original"),
+            kappa_completion_min_fill_effective=record.get("kappa_completion_min_fill_effective"),
+            kappa_completion_quote_success=record.get("kappa_completion_quote_success"),
+            toxic_pnl_raw=record.get("toxic_pnl_raw"),
+            toxic_pnl_samples=record.get("toxic_pnl_samples"),
+            aggressive_touch_gross_bps=record.get("aggressive_touch_gross_bps"),
+            aggressive_touch_net_bps=record.get("aggressive_touch_net_bps"),
             bootstrap_inactive=record.get("bootstrap_inactive"),
             inventory_util=record.get("inventory_util"),
             dust_position=record.get("dust_position"),
@@ -1219,13 +1921,55 @@ class Strategy1_Research(Strategy1_Debug):
             payload.setdefault("research_position_opens", getattr(self, "_research_position_opens", 0))
             payload.setdefault("research_position_reductions", getattr(self, "_research_position_reductions", 0))
             payload.setdefault("research_dust_blocks", getattr(self, "_research_dust_blocks", 0))
+            payload.setdefault("research_parked_dust_positions", len(getattr(self, "_research_parked_dust", {})))
+            payload.setdefault("research_dust_entries", getattr(self, "_research_dust_entries", 0))
+            payload.setdefault("research_dust_releases", getattr(self, "_research_dust_releases", 0))
+            payload.setdefault("research_dust_heartbeats", getattr(self, "_research_dust_heartbeats", 0))
+            payload.setdefault("research_dust_compact_attempts", getattr(self, "_research_dust_compact_attempts", 0))
+            payload.setdefault("research_dust_compact_orders", getattr(self, "_research_dust_compact_orders", 0))
+            payload.setdefault("research_dust_compact_fills", getattr(self, "_research_dust_compact_fills", 0))
+            obs_counts = getattr(self, "_research_realized_observations_by_book", {})
+            target = int(getattr(self, "research_kappa_completion_target", 3))
+            payload.setdefault("research_realized_observation_total", sum(obs_counts.values()))
+            payload.setdefault("research_kappa_books_with_obs", sum(1 for v in obs_counts.values() if v > 0))
+            payload.setdefault("research_kappa_books_pending_1", sum(1 for v in obs_counts.values() if v == 1))
+            payload.setdefault("research_kappa_books_pending_2", sum(1 for v in obs_counts.values() if v == 2))
+            payload.setdefault("research_kappa_books_eligible", sum(1 for v in obs_counts.values() if v >= target))
+            payload.setdefault(
+                "research_parked_dust_abs_base",
+                sum(
+                    abs(float(info.get("net_base", 0.0)))
+                    for info in getattr(self, "_research_parked_dust", {}).values()
+                ),
+            )
             try:
+                current_tick = int(getattr(self, "_tick", 0) or 0)
+                dust_registry = getattr(self, "_research_parked_dust", {})
+                payload.setdefault(
+                    "research_oldest_dust_ticks",
+                    max(
+                        (
+                            max(0, current_tick - int(info.get("first_tick", current_tick)))
+                            for info in dust_registry.values()
+                        ),
+                        default=0,
+                    ),
+                )
                 payload.setdefault(
                     "research_open_positions",
                     sum(
                         1 for bid in getattr(self, "_open_positions", {})
                         if abs(float(self._position_tracker_snapshot(bid).net_qty))
-                        >= max(float(self.mm_base_size) * 1e-3, 1e-12)
+                        >= self._execution_flat_epsilon()
+                    ),
+                )
+                payload.setdefault(
+                    "research_actionable_open_positions",
+                    sum(
+                        1 for bid in getattr(self, "_open_positions", {})
+                        if bid not in dust_registry
+                        and abs(float(self._position_tracker_snapshot(bid).net_qty))
+                        >= self._execution_flat_epsilon()
                     ),
                 )
             except Exception:
@@ -1308,9 +2052,24 @@ class Strategy1_Research(Strategy1_Debug):
                     f"fix_inv={int(bool(r.get('fix_inventory_util')))} "
                     f"fix_reservation={int(bool(r.get('fix_quote_reservation')))} "
                     f"manage_min_clip={int(bool(r.get('bootstrap_manage_min_clip')))} "
-                    f"force_close_ticks={r.get('bootstrap_force_close_ticks')} "
-                    f"hard_close_ticks={r.get('bootstrap_hard_close_ticks')} "
+                    f"close_age_gate={r.get('bootstrap_force_close_ticks')} "
+                    f"touch_gate={int(bool(r.get('aggressive_close_touch_gate')))} "
+                    f"touch_buffer_bps={self._fmt(r.get('aggressive_close_fee_buffer_bps'))} "
+                    f"touch_min_net_bps={self._fmt(r.get('aggressive_close_min_net_bps'))} "
+                    f"backfill={int(bool(r.get('candidate_backfill')))} "
+                    f"attempt_cap={r.get('candidate_attempt_cap')} "
+                    f"toxic_samples={r.get('toxic_pnl_min_samples')} "
+                    f"yellow_sparse={int(bool(r.get('yellow_sparse_active')))} "
+                    f"green_sparse={int(bool(r.get('green_sparse_active')))} "
                     f"dust_safe={int(bool(r.get('dust_safe_close')))} "
+                    f"dust_park={int(bool(r.get('dust_park_enabled')))} "
+                    f"dust_hb={r.get('dust_heartbeat_ticks')} "
+                    f"dust_compact={int(bool(r.get('dust_compact_enabled')))} "
+                    f"dust_compact_frac={self._fmt(r.get('dust_compact_min_fraction'))} "
+                    f"kappa_complete={int(bool(r.get('kappa_completion_enabled')))} "
+                    f"kappa_target={r.get('kappa_completion_target')} "
+                    f"kappa_bonus={self._fmt(r.get('kappa_completion_rank_bonus'))} "
+                    f"kappa_fill_mult={self._fmt(r.get('kappa_completion_fill_mult'))} "
                     f"min_order_sync={int(bool(r.get('sync_min_order')))} "
                     f"run_id={self._short(r.get('run_id'))} "
                     f"file={self._short(r.get('output_file'))}")
@@ -1374,6 +2133,15 @@ class Strategy1_Research(Strategy1_Debug):
                 f"bootstrap={self._fmt(r.get('inactive_bootstrap'))} "
                 f"inactive_bypass={self._fmt(r.get('inactive_gate_bypassed'))} "
                 f"dead_rate_hit={self._fmt(r.get('dead_trade_rate_hit'))} "
+                f"active_sparse={self._fmt(r.get('active_sparse'))} "
+                f"active_sparse_tier={self._short(r.get('active_sparse_tier'))} "
+                f"dust_quarantine={self._fmt(r.get('dust_quarantine'))} "
+                f"dust_compact={self._fmt(r.get('dust_compact'))} "
+                f"kappa_complete={self._fmt(r.get('kappa_completion_candidate'))} "
+                f"kappa_samples={self._fmt(r.get('kappa_completion_samples'))} "
+                f"kappa_fill_relaxed={self._fmt(r.get('kappa_completion_fill_relaxed'))} "
+                f"toxic_pnl_samples={self._fmt(r.get('toxic_pnl_samples'))} "
+                f"touch_net_bps={self._fmt(r.get('aggressive_touch_net_bps'))} "
                 f"inv_util={self._fmt(r.get('inventory_util'))} "
                 f"dust={self._fmt(r.get('dust_position'))} "
                 f"exp_pnl={self._fmt(r.get('expected_realized_pnl'))} "
@@ -1392,13 +2160,17 @@ class Strategy1_Research(Strategy1_Debug):
                 f"net_before={self._fmt(r.get('net_before'))} net_after={self._fmt(r.get('net_after'))} "
                 f"realized_delta={self._fmt(r.get('realized_pnl_delta'))} "
                 f"round_trip={self._fmt(r.get('round_trip'))} total_round_trips={r.get('round_trip_total')} "
+                f"book_samples={r.get('round_trip_book_samples')} "
+                f"realized_obs={r.get('realized_book_observations')} "
+                f"flat_eps={self._fmt(r.get('execution_flat_epsilon'))} "
                 f"reason={self._short(r.get('reason'))}"
             )
         if typ == "POSITION_GUARD":
             return (
                 f"[S1R_DUST] tick={r.get('tick')} book={r.get('book_id')} "
                 f"net_base={self._fmt(r.get('net_base'))} min_order={self._fmt(r.get('min_order_size'))} "
-                f"reason={self._short(r.get('reason'))}"
+                f"age_ticks={self._fmt(r.get('age_ticks'))} parked={self._fmt(r.get('parked'))} "
+                f"stale={self._fmt(r.get('stale'))} reason={self._short(r.get('reason'))}"
             )
         if typ == "ORDER_LIFECYCLE":
             phase = str(r.get("phase", "UNKNOWN")).upper()
@@ -1440,6 +2212,17 @@ class Strategy1_Research(Strategy1_Debug):
                     f"reductions={r.get('research_position_reductions', 0)} "
                     f"round_trips={r.get('research_round_trip_closes', 0)} "
                     f"open_positions={r.get('research_open_positions', 0)} "
+                    f"actionable_open={r.get('research_actionable_open_positions', 0)} "
+                    f"parked_dust={r.get('research_parked_dust_positions', 0)} "
+                    f"parked_dust_base={self._fmt(r.get('research_parked_dust_abs_base'))} "
+                    f"dust_entries={r.get('research_dust_entries', 0)} "
+                    f"dust_releases={r.get('research_dust_releases', 0)} "
+                    f"dust_compact_orders={r.get('research_dust_compact_orders', 0)} "
+                    f"dust_compact_fills={r.get('research_dust_compact_fills', 0)} "
+                    f"oldest_dust_ticks={r.get('research_oldest_dust_ticks', 0)} "
+                    f"kappa_eligible={r.get('research_kappa_books_eligible', 0)} "
+                    f"kappa_pending1={r.get('research_kappa_books_pending_1', 0)} "
+                    f"kappa_pending2={r.get('research_kappa_books_pending_2', 0)} "
                     f"dust_blocks={r.get('research_dust_blocks', 0)} queue_dropped={self._rdropped}")
         if typ == "ERROR":
             return (f"[S1R_ERROR] tick={r.get('tick')} stage={self._short(r.get('stage'))} "
