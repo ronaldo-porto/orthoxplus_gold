@@ -1,0 +1,94 @@
+{
+  "date": "2026-08-21",
+  "verdict": "PASS",
+  "ready_to_restart": true,
+  "miners_started": false,
+  "research": {
+    "live_source": "agents/strategy/Strategy1_Research.py",
+    "version": "Strategy1 Research V4.2 Strict",
+    "policy_marker": "dust_actionable_v4_2_strict",
+    "archive_source": "agents/strategy/__ver_st1_log__/Strategy1_Research_v4_2_strict.py",
+    "live_sha256": "008cc602f4271664ba23d6fba0b4cefa833b11e1703fa16217c9979413ca666d",
+    "archive_sha256": "008cc602f4271664ba23d6fba0b4cefa833b11e1703fa16217c9979413ca666d",
+    "hashes_equal": "PASS",
+    "live_launcher": "run_strategy1_research_test_multi.sh",
+    "versioned_launcher": "agents/strategy/__ver_st1_log__/run_strategy1_research_v4_2_strict_test.sh",
+    "pm2": "sn79-m1",
+    "port": 8091,
+    "run_miner_multi": "PASS",
+    "syntax": "PASS",
+    "mro": [
+      "Strategy1_Research",
+      "Strategy1_Debug",
+      "Strategy1",
+      "DetailedTemplateAgent",
+      "FinanceSimulationAgent"
+    ]
+  },
+  "base": {
+    "live_source": "agents/strategy/BaseStrategy.py",
+    "version": "BaseStrategy V4.1.1 Strict Maker Guard",
+    "policy_marker": "base_v4_1_1_maker_guard",
+    "archive_source": "agents/strategy/__ver_base__/BaseStrategy_v4_1_1_strict.py",
+    "live_sha256": "a9f700bc0664298eb2ff515577cab53ca631b141a04a0d126a9077536576c687",
+    "archive_sha256": "a9f700bc0664298eb2ff515577cab53ca631b141a04a0d126a9077536576c687",
+    "hashes_equal": "PASS",
+    "live_launcher": "run_base_strategy_multi.sh",
+    "versioned_launcher": "agents/strategy/__ver_base__/run_base_strategy_v4_1_1_strict.sh",
+    "pm2": "sn79-m2",
+    "port": 8092,
+    "run_miner_multi": "PASS",
+    "syntax": "PASS",
+    "mro": [
+      "BaseStrategy",
+      "FinanceSimulationAgent"
+    ]
+  },
+  "adaptive": {
+    "live_source": "agents/strategy/AdaptiveAgent.py",
+    "version": "AdaptiveAgent V2 Strict",
+    "policy_marker": "adaptive_v2_strict",
+    "archive_source": "agents/strategy/__ver_adaptive__/AdaptiveAgent_v2_strict.py",
+    "live_sha256": "facae9cd624be1354ce226ae371674f0d7b17523a541dfae25359cba17081fa1",
+    "archive_sha256": "facae9cd624be1354ce226ae371674f0d7b17523a541dfae25359cba17081fa1",
+    "hashes_equal": "PASS",
+    "parent_base": "agents/strategy/BaseStrategy.py",
+    "import": "from BaseStrategy import BaseStrategy",
+    "mro": [
+      "AdaptiveAgent",
+      "BaseStrategy",
+      "FinanceSimulationAgent"
+    ],
+    "environment_isolation": "testnet_<netuid>_m3 or net_<netuid>_m3",
+    "state_directory": "adaptive_state/m3",
+    "live_launcher": "run_adaptive_agent_multi.sh",
+    "versioned_launcher": "agents/strategy/__ver_adaptive__/run_adaptive_agent_v2_strict.sh",
+    "pm2": "sn79-m3",
+    "port": 8093,
+    "run_miner_multi": "PASS",
+    "syntax": "PASS"
+  },
+  "runner": {
+    "file": "run_miner_multi.sh",
+    "sha256": "a5d2b63b2402835bd06f231677f4ba5679549529fc0521b7f62599076d88c98d",
+    "syntax": "PASS",
+    "supports_i": true,
+    "generic_pm2_delete_miner_absent": true,
+    "unique_process_behavior": true,
+    "modified": false
+  },
+  "invariants": {
+    "base_hard_risk_changes": "none",
+    "research_unsafe_dust_rescue": "none",
+    "adaptive_hard_risk_overrides": "none",
+    "unexpected_policy_changes": "none"
+  },
+  "launcher_sha256": {
+    "run_strategy1_research_test_multi.sh": "7347e41b28af471b747bb61f4de86dcf368b8d612898e00f623fca4abace1ed3",
+    "run_base_strategy_multi.sh": "c43818255ea22a8d137655c104d54c41c8f85993e0e2be319037e64c71a6ea39",
+    "run_adaptive_agent_multi.sh": "acef8831eac455c6ca0b645e64beefad79cb79392f8b23109560fe9b2f34fdae",
+    "agents/strategy/__ver_st1_log__/run_strategy1_research_v4_2_strict_test.sh": "d9ad39e44d85eb97690fbdb3d8323b8a846f0df37d4b1af16125bffbab8d029b",
+    "agents/strategy/__ver_base__/run_base_strategy_v4_1_1_strict.sh": "3d6b1fe77c3820a4d7fd8f20812512d5e6f813ba0397fcbee982c72e97c98449",
+    "agents/strategy/__ver_adaptive__/run_adaptive_agent_v2_strict.sh": "9512f001d1f2b8883ae2a776d9d978d992e75150bef42c242fc37c1b847e07fe"
+  }
+}

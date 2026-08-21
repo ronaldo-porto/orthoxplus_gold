@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# VERSION ARCHIVE: BaseStrategy V4.1.1 Strict versioned launcher. Stable root name: run_base_strategy_multi.sh
 # Internal runner: run_miner_multi.sh
 # SN79 launcher for standalone BaseStrategy (Miner 2).
 # Default PM2 name: sn79-m2 | Default Axon port: 8092
@@ -20,7 +21,17 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Version-archive copy. Locate repo root even if this file is not at repo root.
+# Runtime still uses live agents/strategy/*.py, not this directory.
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$_SCRIPT_DIR"
+while [[ "$REPO_ROOT" != "/" && ! -f "$REPO_ROOT/run_miner_multi.sh" ]]; do
+  REPO_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
+done
+if [[ ! -f "$REPO_ROOT/run_miner_multi.sh" ]]; then
+  echo "ERROR: cannot locate repo-root run_miner_multi.sh from $_SCRIPT_DIR" >&2
+  exit 1
+fi
 cd "$REPO_ROOT"
 
 WALLET_NAME="${WALLET_NAME:-taos}"
@@ -144,6 +155,7 @@ echo "[BaseStrategy] endpoint=$ENDPOINT"
 echo "[BaseStrategy] detailed_log=$LOG_ENABLED"
 echo "[BaseStrategy] pm2_name=$PM2_NAME"
 echo "[BaseStrategy] log_dir=$RESEARCH_DIR"
+echo "[BaseStrategy] version=base_v4_1_1_maker_guard"
 
 exec "$REPO_ROOT/run_miner_multi.sh" \
   -i "$PM2_NAME" \

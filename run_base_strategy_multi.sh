@@ -144,6 +144,7 @@ echo "[BaseStrategy] endpoint=$ENDPOINT"
 echo "[BaseStrategy] detailed_log=$LOG_ENABLED"
 echo "[BaseStrategy] pm2_name=$PM2_NAME"
 echo "[BaseStrategy] log_dir=$RESEARCH_DIR"
+echo "[BaseStrategy] version=base_v4_1_1_maker_guard"
 
 exec "$REPO_ROOT/run_miner_multi.sh" \
   -i "$PM2_NAME" \

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+# VERSION ARCHIVE: AdaptiveAgent V2 Strict versioned launcher. Stable root name: run_adaptive_agent_multi.sh
 # Internal runner: run_miner_multi.sh
-# SN79 launcher for AdaptiveAgent V3 HJB shadow (BaseStrategy champion) (Miner 3).
+# SN79 launcher for AdaptiveAgent v2 Strict (BaseStrategy) (Miner 3).
 # Default PM2 name: sn79-m3 | Default Axon port: 8093
-# Requires agents/strategy/AdaptiveAgent.py with ADAPTIVE_VERSION=adaptive_v3_hjb_shadow.
+# Requires agents/strategy/AdaptiveAgent.py with ADAPTIVE_VERSION=adaptive_v2_strict.
 #
 # Normal:
 #   ./run_adaptive_agent.sh -w sw_ck_st4_m3 -h sw_hk_st4_m3 -u 366 -a 8093
@@ -12,7 +13,17 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Version-archive copy. Locate repo root even if this file is not at repo root.
+# Runtime still uses live agents/strategy/*.py, not this directory.
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$_SCRIPT_DIR"
+while [[ "$REPO_ROOT" != "/" && ! -f "$REPO_ROOT/run_miner_multi.sh" ]]; do
+  REPO_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
+done
+if [[ ! -f "$REPO_ROOT/run_miner_multi.sh" ]]; then
+  echo "ERROR: cannot locate repo-root run_miner_multi.sh from $_SCRIPT_DIR" >&2
+  exit 1
+fi
 cd "$REPO_ROOT"
 
 WALLET_NAME="${WALLET_NAME:-taos}"
@@ -118,7 +129,7 @@ done
   exit 1
 }
 if ! grep -q "DEPLOY_POLICY_VERSION = 'base_v4_1_1_maker_guard'" "$AGENT_PATH/BaseStrategy.py"; then
-  echo "ERROR: AdaptiveAgent V3 requires live BaseStrategy V4.1.1 maker-guard." >&2
+  echo "ERROR: AdaptiveAgent V2 requires live BaseStrategy V4.1.1 maker-guard." >&2
   echo "Expected DEPLOY_POLICY_VERSION = 'base_v4_1_1_maker_guard' in $AGENT_PATH/BaseStrategy.py" >&2
   exit 1
 fi
@@ -126,9 +137,9 @@ fi
   echo "ERROR: AdaptiveAgent.py missing: $AGENT_PATH/AdaptiveAgent.py" >&2
   exit 1
 }
-if ! grep -q 'ADAPTIVE_VERSION = "adaptive_v3_hjb_shadow"' "$AGENT_PATH/AdaptiveAgent.py"; then
-  echo "ERROR: AdaptiveAgent.py is not adaptive_v3_hjb_shadow." >&2
-  echo "Deploy the V3 AdaptiveAgent.py before starting this launcher." >&2
+if ! grep -q 'ADAPTIVE_VERSION = "adaptive_v2_strict"' "$AGENT_PATH/AdaptiveAgent.py"; then
+  echo "ERROR: AdaptiveAgent.py is not adaptive_v2_strict." >&2
+  echo "Deploy the V2 AdaptiveAgent.py before starting this launcher." >&2
   exit 1
 fi
 
@@ -216,11 +227,10 @@ adaptive_drift_spread_ratio=1.30 adaptive_drift_spread_delta_bps=4.0 \
 adaptive_drift_pnl_hard_floor=-0.02 adaptive_drift_pnl_ratio=0.35 \
 adaptive_drift_pnl_baseline_min=0.03 adaptive_drift_min_maker_realized=6 \
 adaptive_drift_baseline_alpha=0.15 adaptive_drift_hold_requests=500 \
-adaptive_kappa_one_away_bonus=0.0 adaptive_dust_enabled=1 \
+adaptive_kappa_one_away_bonus=0.08 adaptive_dust_enabled=1 \
 adaptive_dust_cooldown_ticks=100 adaptive_dust_max_cooldown_ticks=600 \
 adaptive_dust_prior_fill=0.02 adaptive_dust_prior_strength=20 \
-adaptive_telemetry_every_n=25 adaptive_fill_overlay_enabled=0 \
-adaptive_hjb_shadow_enabled=1 adaptive_hjb_policy_enabled=0"
+adaptive_telemetry_every_n=25"
 
 echo "[AdaptiveAgent] wallet=$WALLET_NAME"
 echo "[AdaptiveAgent] hotkey=$HOTKEY_NAME"
@@ -232,7 +242,7 @@ echo "[AdaptiveAgent] detailed_log=$LOG_ENABLED"
 echo "[AdaptiveAgent] pm2_name=$PM2_NAME"
 echo "[AdaptiveAgent] log_dir=$LOG_DIR"
 echo "[AdaptiveAgent] state_dir=$ADAPTIVE_STATE_DIR"
-echo "[AdaptiveAgent] version=adaptive_v3_hjb_shadow"
+echo "[AdaptiveAgent] version=adaptive_v2_strict"
 echo "[AdaptiveAgent] base_policy=base_v4_1_1_maker_guard"
 
 exec "$REPO_ROOT/run_miner_multi.sh" \

@@ -1,29 +1,31 @@
 # SPDX-License-Identifier: MIT
 """
-AdaptiveAgent — bounded control plane over the Phase 2 BaseStrategy champion.
+AdaptiveAgent — conservative self-calibrating Strategy built on BaseStrategy.
 
 Architecture
 ------------
-Research  →  BaseStrategy  →  AdaptiveAgent
+FinanceSimulationAgent
+        |
+    BaseStrategy
+        |
+   AdaptiveAgent
 
-BaseStrategy is authoritative for safety, order construction, min size,
-inventory limits, maker guards, dust invariants, fill hazard, Score-EV,
-hysteresis, TTL, and final execution validity.
+The BaseStrategy safety/execution invariants remain authoritative. AdaptiveAgent
+only learns bounded execution/calibration overlays:
 
-AdaptiveAgent inherits that engine. It only:
+1. maker fill-probability calibration;
+2. per-book execution-quality ranking;
+3. bounded quote-width / size-multiplier adaptation;
+4. restart-safe Kappa-completion observation state;
+5. environment-isolated persistent learning;
+6. OBSERVE -> BOOTSTRAP -> NORMAL phases plus composite DRIFT fallback;
+7. dust-compaction cooldown/ranking learned without weakening the dust theorem;
+8. stronger one-away Kappa-completion priority;
+9. explicit Adaptive telemetry for auditability.
 
-1. schedules OBSERVE -> BOOTSTRAP -> NORMAL plus composite DRIFT;
-2. applies bounded RegimeParamSet spread/size corrections;
-3. keeps per-book/per-side execution memory for drift and quality;
-4. persists environment-isolated learning;
-5. ranks already-safe dust-compaction candidates with cooldown;
-6. overlays Score-EV completion *weights* by phase (does not reimplement Score-EV);
-7. applies a bounded expected-value quote overlay (never low-fill → tighten);
-8. detects persistent fast-vs-slow execution drift and recovers DRIFT -> BOOTSTRAP -> NORMAL;
-9. scores an analytical HJB reservation in SHADOW MODE only (never submits it).
-
-It does NOT duplicate fill-hazard, Score-EV one-away ranking, dust theorems,
-Research modules, or order construction.
+It intentionally does NOT override inventory correctness, dust safety, order
+precision/minimum-order handling, hard inventory limits, FIFO accounting,
+aggressive-close gates, CROSS lifecycle handling, or V4.1 scheduler budgets.
 """
 
 from __future__ import annotations
@@ -56,35 +58,13 @@ from BaseStrategy import (
     InventorySnapshot,
     RegimeParamSet,
 )
-from adaptive_drift import (
-    DriftConfig,
-    DriftObservation,
-    DriftTracker,
-    PhaseClocks,
-    current_phase,
-    enter_or_extend_drift,
-    phase_transition_reason,
-)
-from adaptive_hjb import HjbConfig, HjbState, compute_hjb_quote, shadow_quote_ev
-from adaptive_ev import EvSnapshot, choose_overlay
-from adaptive_persistence import (
-    CURRENT_SCHEMA,
-    apply_session_reset,
-    build_identity,
-    build_save_payload,
-    decide_load,
-    infer_network,
-    merge_priors_into_stats,
-    parse_environment_key,
-    state_filename,
-)
 
 
 class AdaptiveAgent(BaseStrategy):
     """Bounded adaptive execution layer over the verified standalone BaseStrategy."""
 
-    ADAPTIVE_VERSION = "adaptive_v3_hjb_shadow"
-    ADAPTIVE_STATE_SCHEMA = CURRENT_SCHEMA
+    ADAPTIVE_VERSION = "adaptive_v2_strict"
+    ADAPTIVE_STATE_SCHEMA = 2
 
     # ------------------------------------------------------------------
     # Lifecycle / configuration
@@ -131,14 +111,9 @@ class AdaptiveAgent(BaseStrategy):
         self.adaptive_fill_max_delta = self._adaptive_clamp(
             float(getattr(cfg, "adaptive_fill_max_delta", 0.15)), 0.01, 0.30
         )
-        # Default off: Base frozen hazard is the fill engine. Residual overlay
-        # is allowed only when Base reports a fallback_reason.
-        self.adaptive_fill_overlay_enabled = self._adaptive_bool(
-            getattr(cfg, "adaptive_fill_overlay_enabled", False)
-        )
 
-        # Bounded EV overlay. Tightening is allowed only when AdaptiveUtility
-        # beats the Base quote. Size never exceeds the Base multiplier.
+        # Bounded execution overlay.  AdaptiveAgent may widen quotes or reduce
+        # size materially; tightening is deliberately much smaller.
         self.adaptive_max_widen = self._adaptive_clamp(
             float(getattr(cfg, "adaptive_max_widen", 0.18)), 0.0, 0.50
         )
@@ -158,12 +133,13 @@ class AdaptiveAgent(BaseStrategy):
             float(getattr(cfg, "adaptive_rank_max_adjust", 0.06)), 0.0, 0.15
         )
 
-        # Fast-vs-slow drift detector. V2 compared a 250-request fill window
-        # against the all-time fill rate, which stayed NORMAL through gradual
-        # execution-rate changes. V3 requires multiple deteriorating windows
-        # plus a sample floor, then recovers DRIFT -> BOOTSTRAP -> NORMAL.
+        # V2 drift detection is composite.  V1 used a 12 percentage-point
+        # absolute fill-rate shift, which was too insensitive in the observed
+        # SN79 run.  V2 combines relative fill degradation, spread-regime
+        # expansion, and maker realized-PnL deterioration.  It may enter DRIFT
+        # during BOOTSTRAP (after OBSERVE) rather than waiting for NORMAL.
         self.adaptive_drift_window_requests = max(
-            25, int(float(getattr(cfg, "adaptive_drift_window_requests", 100)))
+            50, int(float(getattr(cfg, "adaptive_drift_window_requests", 250)))
         )
         self.adaptive_drift_start_requests = max(
             self.adaptive_observe_requests,
@@ -172,41 +148,17 @@ class AdaptiveAgent(BaseStrategy):
         self.adaptive_drift_min_quotes = max(
             10, int(float(getattr(cfg, "adaptive_drift_min_quotes", 30)))
         )
-        self.adaptive_drift_min_windows = max(
-            2, int(float(getattr(cfg, "adaptive_drift_min_windows", 2)))
-        )
-        self.adaptive_drift_min_samples = max(
-            20, int(float(getattr(cfg, "adaptive_drift_min_samples", 40)))
-        )
-        self.adaptive_drift_min_window_samples = max(
-            8, int(float(getattr(cfg, "adaptive_drift_min_window_samples", 20)))
-        )
-        self.adaptive_drift_min_signals = max(
-            1, int(float(getattr(cfg, "adaptive_drift_min_signals", 1)))
-        )
-        self.adaptive_drift_fast_alpha = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_drift_fast_alpha", 0.15)), 0.02, 0.50
-        )
-        self.adaptive_drift_slow_alpha = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_drift_slow_alpha", 0.03)), 0.005, 0.15
-        )
         self.adaptive_drift_fill_abs_min = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_drift_fill_abs_min", 0.02)), 0.001, 0.10
+            float(getattr(cfg, "adaptive_drift_fill_abs_min", 0.005)), 0.001, 0.05
         )
         self.adaptive_drift_fill_relative = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_drift_fill_relative", 0.25)), 0.10, 1.50
+            float(getattr(cfg, "adaptive_drift_fill_relative", 0.40)), 0.10, 1.50
         )
         self.adaptive_drift_spread_ratio = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_drift_spread_ratio", 1.25)), 1.05, 2.50
+            float(getattr(cfg, "adaptive_drift_spread_ratio", 1.30)), 1.05, 2.50
         )
         self.adaptive_drift_spread_delta_bps = max(
             0.5, float(getattr(cfg, "adaptive_drift_spread_delta_bps", 4.0))
-        )
-        self.adaptive_drift_markout_delta_bps = max(
-            0.5, float(getattr(cfg, "adaptive_drift_markout_delta_bps", 2.0))
-        )
-        self.adaptive_drift_dust_abs = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_drift_dust_abs", 0.05)), 0.01, 0.40
         )
         self.adaptive_drift_pnl_hard_floor = min(
             0.0, float(getattr(cfg, "adaptive_drift_pnl_hard_floor", -0.02))
@@ -220,16 +172,12 @@ class AdaptiveAgent(BaseStrategy):
         self.adaptive_drift_min_maker_realized = max(
             2, int(float(getattr(cfg, "adaptive_drift_min_maker_realized", 6)))
         )
+        self.adaptive_drift_baseline_alpha = self._adaptive_clamp(
+            float(getattr(cfg, "adaptive_drift_baseline_alpha", 0.15)), 0.02, 0.50
+        )
         self.adaptive_drift_hold_requests = max(
             self.adaptive_drift_window_requests,
             int(float(getattr(cfg, "adaptive_drift_hold_requests", 500))),
-        )
-        self.adaptive_drift_recovery_requests = max(
-            self.adaptive_drift_window_requests,
-            int(float(getattr(cfg, "adaptive_drift_recovery_requests", 500))),
-        )
-        self.adaptive_drift_trust_scale = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_drift_trust_scale", 0.35)), 0.05, 1.0
         )
 
         # Restart-safe, environment-isolated state.  The launcher supplies a
@@ -279,10 +227,11 @@ class AdaptiveAgent(BaseStrategy):
             1.0,
         )
 
-        # Kept for launcher compatibility. Score-EV already pays one-away;
-        # Adaptive V3 does not add a second completion bonus.
+        # V2 Kappa completion: books with exactly target-1 observations receive
+        # a small additional rank bonus.  The BaseStrategy completion gates,
+        # attempt caps, fill floor and PnL floor remain authoritative.
         self.adaptive_kappa_one_away_bonus = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_kappa_one_away_bonus", 0.0)), 0.0, 0.15
+            float(getattr(cfg, "adaptive_kappa_one_away_bonus", 0.08)), 0.0, 0.15
         )
 
         # V2 dust execution learning.  This NEVER changes the proof condition
@@ -305,47 +254,9 @@ class AdaptiveAgent(BaseStrategy):
             1.0, float(getattr(cfg, "adaptive_dust_prior_strength", 20.0))
         )
 
-        self.adaptive_hjb_shadow_enabled = self._adaptive_bool(
-            getattr(cfg, "adaptive_hjb_shadow_enabled", True)
-        )
-        # Phase 3 Step 5: HJB is telemetry only. Never honor a policy flag.
-        requested_hjb_policy = self._adaptive_bool(
-            getattr(cfg, "adaptive_hjb_policy_enabled", False)
-        )
-        self.adaptive_hjb_policy_enabled = False
-        if requested_hjb_policy:
-            bt.logging.warning(
-                "AdaptiveAgent: HJB policy requested but ignored (shadow-only)"
-            )
-        self.adaptive_hjb_gamma = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_hjb_gamma", 0.15)), 0.01, 1.0
-        )
-        self.adaptive_hjb_gamma_min = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_hjb_gamma_min", 0.05)), 0.01, 0.50
-        )
-        self.adaptive_hjb_gamma_max = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_hjb_gamma_max", 0.60)), 0.05, 2.0
-        )
-        if self.adaptive_hjb_gamma_max < self.adaptive_hjb_gamma_min:
-            self.adaptive_hjb_gamma_max = self.adaptive_hjb_gamma_min
-        self.adaptive_hjb_kappa = max(
-            0.05, float(getattr(cfg, "adaptive_hjb_kappa", 1.5))
-        )
-        self.adaptive_hjb_horizon = max(
-            0.05, float(getattr(cfg, "adaptive_hjb_horizon", 1.0))
-        )
-        self.adaptive_hjb_alpha_shift = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_hjb_alpha_shift", 0.28)), 0.0, 1.0
-        )
-        self.adaptive_hjb_vol_floor = max(
-            1e-6, float(getattr(cfg, "adaptive_hjb_vol_floor", 5e-4))
-        )
-        self.adaptive_hjb_latency_weight = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_hjb_latency_weight", 0.15)), 0.0, 1.0
-        )
-        self.adaptive_hjb_adverse_weight = self._adaptive_clamp(
-            float(getattr(cfg, "adaptive_hjb_adverse_weight", 0.20)), 0.0, 1.0
-        )
+        # Explicit child-layer telemetry.  Quote telemetry is emitted only for
+        # books that actually placed an MM instruction, avoiding 128-book/tick
+        # JSONL amplification.
         self.adaptive_telemetry_every_n = max(
             1, int(float(getattr(cfg, "adaptive_telemetry_every_n", 25)))
         )
@@ -362,12 +273,6 @@ class AdaptiveAgent(BaseStrategy):
         self._adaptive_base_kappa_relaxed_success_cap = int(
             self.research_kappa_completion_relaxed_success_cap
         )
-        self._adaptive_base_score_ev_one_away = float(
-            getattr(self, "score_ev_one_away_weight", 0.18) or 0.18
-        )
-        self._adaptive_base_score_ev_two_away = float(
-            getattr(self, "score_ev_two_away_weight", 0.06) or 0.06
-        )
 
         # Runtime state.
         self.adaptive_total_requests = 0
@@ -375,8 +280,13 @@ class AdaptiveAgent(BaseStrategy):
         self._adaptive_last_sim_timestamp: int | None = None
         self._adaptive_last_saved_request = 0
         self._adaptive_drift_until_request = 0
-        self._adaptive_recovery_until_request = 0
-        self._adaptive_drift_tracker = DriftTracker(self._adaptive_drift_config())
+        self._adaptive_drift_snapshot_request = 0
+        self._adaptive_drift_snapshot_quotes = 0
+        self._adaptive_drift_snapshot_fills = 0
+        self._adaptive_drift_snapshot_maker_realized = 0
+        self._adaptive_spread_window_sum = 0.0
+        self._adaptive_spread_window_count = 0
+        self._adaptive_spread_baseline_bps: float | None = None
         self._adaptive_last_drift_metrics: dict[str, Any] = {}
         self._adaptive_last_phase = "OBSERVE"
 
@@ -385,15 +295,10 @@ class AdaptiveAgent(BaseStrategy):
         self._adaptive_state_lock = threading.Lock()
         self._adaptive_last_fill_diag: dict[int, dict[str, Any]] = {}
         self._adaptive_last_exec_diag: dict[int, dict[str, Any]] = {}
-        self._adaptive_last_hjb: dict[int, dict[str, Any]] = {}
-        self._adaptive_identity = self._adaptive_current_identity()
-        self._adaptive_load_reason = "uninitialized"
 
         if self.adaptive_persistence_enabled:
             self._adaptive_load_state()
             atexit.register(self._adaptive_save_state, True)
-        else:
-            self._adaptive_load_reason = "disabled"
 
         self._adaptive_last_phase = self._adaptive_phase()
         bt.logging.info(
@@ -416,29 +321,17 @@ class AdaptiveAgent(BaseStrategy):
             total_requests=self.adaptive_total_requests,
             environment_key=self.adaptive_environment_key,
             persistence=self.adaptive_persistence_enabled,
-            persistence_reason=self._adaptive_load_reason,
-            identity=self._adaptive_identity,
             observe_requests=self.adaptive_observe_requests,
             normal_after_requests=self.adaptive_normal_after_requests,
             drift_start_requests=self.adaptive_drift_start_requests,
             drift_window_requests=self.adaptive_drift_window_requests,
-            drift_min_windows=self.adaptive_drift_min_windows,
-            drift_min_samples=self.adaptive_drift_min_samples,
-            drift_recovery_requests=self.adaptive_drift_recovery_requests,
-            drift_trust_scale=self.adaptive_drift_trust_scale,
             drift_fill_abs_min=self.adaptive_drift_fill_abs_min,
             drift_fill_relative=self.adaptive_drift_fill_relative,
             drift_spread_ratio=self.adaptive_drift_spread_ratio,
             drift_spread_delta_bps=self.adaptive_drift_spread_delta_bps,
-            drift_markout_delta_bps=self.adaptive_drift_markout_delta_bps,
-            drift_dust_abs=self.adaptive_drift_dust_abs,
             drift_pnl_hard_floor=self.adaptive_drift_pnl_hard_floor,
             drift_pnl_ratio=self.adaptive_drift_pnl_ratio,
             kappa_one_away_bonus=self.adaptive_kappa_one_away_bonus,
-            fill_overlay_enabled=self.adaptive_fill_overlay_enabled,
-            hjb_shadow_enabled=self.adaptive_hjb_shadow_enabled,
-            hjb_policy_enabled=self.adaptive_hjb_policy_enabled,
-            hjb_gamma=self.adaptive_hjb_gamma,
             dust_cooldown_ticks=self.adaptive_dust_cooldown_ticks,
             dust_max_cooldown_ticks=self.adaptive_dust_max_cooldown_ticks,
         )
@@ -469,47 +362,8 @@ class AdaptiveAgent(BaseStrategy):
             return
 
     def _adaptive_state_path(self) -> Path:
-        identity = getattr(self, "_adaptive_identity", None) or self._adaptive_current_identity()
-        return Path(self.adaptive_state_dir) / state_filename(identity)
-
-    def _adaptive_current_identity(self) -> dict[str, Any]:
-        cfg = getattr(self, "config", None)
-        env = str(getattr(self, "adaptive_environment_key", "unscoped") or "unscoped")
-        parsed_network, parsed_uid = parse_environment_key(env)
-        endpoint = ""
-        if cfg is not None:
-            endpoint = str(getattr(cfg, "endpoint", "") or "")
-        endpoint = endpoint or str(os.getenv("BT_ENDPOINT", "") or "")
-        network = infer_network(endpoint=endpoint, environment_key=env)
-        if network == "unknown":
-            network = parsed_network
-        netuid = parsed_uid
-        if netuid is None and cfg is not None:
-            try:
-                netuid = int(getattr(cfg, "netuid"))
-            except (TypeError, ValueError, AttributeError):
-                netuid = None
-        min_order = float(getattr(self, "_research_exchange_min_order_size", 0.0) or 0.0)
-        if min_order <= 0.0:
-            min_order = float(
-                getattr(self, "min_order_size", 0.0)
-                or getattr(self, "mm_base_size", 0.0)
-                or 0.0
-            )
-        family = "im"
-        if cfg is not None:
-            family = str(getattr(cfg, "simulation_family", "") or family)
-        family = str(os.getenv("ADAPTIVE_SIMULATION_FAMILY", "") or family or "im")
-        return build_identity(
-            network=network,
-            netuid=netuid,
-            validator_environment=env,
-            base_version=str(getattr(self, "DEPLOY_POLICY_VERSION", "unknown")),
-            adaptive_version=str(self.ADAPTIVE_VERSION),
-            schema=int(self.ADAPTIVE_STATE_SCHEMA),
-            min_order_size=min_order,
-            simulation_family=family,
-        )
+        key = self._adaptive_sanitize_key(self.adaptive_environment_key)
+        return Path(self.adaptive_state_dir) / f"adaptive_state_{key}.json"
 
     # ------------------------------------------------------------------
     # State helpers / persistence
@@ -611,53 +465,75 @@ class AdaptiveAgent(BaseStrategy):
         return stats
 
     def _adaptive_load_state(self) -> None:
-        """Load compatible execution priors only. Never restore a phase clock."""
-        self.adaptive_total_requests = 0
-        self.adaptive_session_requests = 0
-        self._adaptive_drift_until_request = 0
-        self._adaptive_recovery_until_request = 0
-        self._adaptive_last_sim_timestamp = None
-        self._adaptive_load_reason = "missing"
         path = self._adaptive_state_path()
         try:
             if not path.is_file():
                 return
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                self._adaptive_load_reason = "corrupted"
-                bt.logging.warning(f"AdaptiveAgent: corrupted state {path}")
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
                 return
-            identity = getattr(self, "_adaptive_identity", None) or self._adaptive_current_identity()
-            decision = decide_load(identity, raw)
-            self._adaptive_load_reason = decision.reason
-            self.adaptive_total_requests = 0
-            self._adaptive_global = merge_priors_into_stats(
-                self._adaptive_new_stats(), decision.global_priors
+            schema = int(payload.get("schema", -1))
+            if schema not in (1, self.ADAPTIVE_STATE_SCHEMA):
+                bt.logging.warning(f"AdaptiveAgent: ignoring incompatible state {path}")
+                return
+            if str(payload.get("environment_key", "")) != self.adaptive_environment_key:
+                bt.logging.warning(f"AdaptiveAgent: ignoring environment-mismatched state {path}")
+                return
+
+            self.adaptive_total_requests = max(
+                0, int(payload.get("total_requests", 0))
             )
-            self._adaptive_books = {}
-            for book_id, priors in decision.book_priors.items():
-                self._adaptive_books[int(book_id)] = merge_priors_into_stats(
-                    self._adaptive_new_stats(), priors
+            last_ts = payload.get("last_sim_timestamp")
+            self._adaptive_last_sim_timestamp = (
+                int(last_ts) if last_ts is not None else None
+            )
+            self._adaptive_drift_until_request = max(
+                0, int(payload.get("drift_until_request", 0))
+            )
+            try:
+                spread_baseline = payload.get("spread_baseline_bps")
+                self._adaptive_spread_baseline_bps = (
+                    float(spread_baseline) if spread_baseline is not None else None
                 )
-            self._adaptive_reset_drift_window()
-            bt.logging.info(
-                "AdaptiveAgent: loaded persistence "
-                f"reason={decision.reason} factor={decision.prior_factor} "
-                f"phase={decision.phase} mismatches={decision.mismatches}"
+            except (TypeError, ValueError):
+                self._adaptive_spread_baseline_bps = None
+
+            self._adaptive_global = self._adaptive_normalize_stats(
+                payload.get("global")
             )
+            books = payload.get("books", {})
+            if isinstance(books, dict):
+                for key, raw in books.items():
+                    try:
+                        book_id = int(key)
+                    except (TypeError, ValueError):
+                        continue
+                    self._adaptive_books[book_id] = self._adaptive_normalize_stats(raw)
+
+            # Drift window snapshots intentionally restart with the process.
+            q, f = self._adaptive_global_fill_totals()
+            self._adaptive_drift_snapshot_quotes = q
+            self._adaptive_drift_snapshot_fills = f
+            self._adaptive_drift_snapshot_maker_realized = int(
+                self._adaptive_global.get("maker_realized_obs", 0)
+            )
+            self._adaptive_drift_snapshot_request = self.adaptive_total_requests
+            self._adaptive_last_saved_request = self.adaptive_total_requests
         except Exception as exc:
-            self._adaptive_load_reason = "corrupted"
-            self.adaptive_total_requests = 0
             bt.logging.warning(f"AdaptiveAgent: state load failed: {exc}")
 
     def _adaptive_state_payload(self) -> dict[str, Any]:
-        identity = getattr(self, "_adaptive_identity", None) or self._adaptive_current_identity()
-        return build_save_payload(
-            identity=identity,
-            global_stats=self._adaptive_global,
-            book_stats=self._adaptive_books,
-        )
+        return {
+            "schema": self.ADAPTIVE_STATE_SCHEMA,
+            "version": self.ADAPTIVE_VERSION,
+            "environment_key": self.adaptive_environment_key,
+            "total_requests": int(self.adaptive_total_requests),
+            "last_sim_timestamp": self._adaptive_last_sim_timestamp,
+            "drift_until_request": int(self._adaptive_drift_until_request),
+            "spread_baseline_bps": self._adaptive_spread_baseline_bps,
+            "global": self._adaptive_global,
+            "books": {str(k): v for k, v in sorted(self._adaptive_books.items())},
+        }
 
     def _adaptive_save_state(self, force: bool = False) -> None:
         if not self.adaptive_persistence_enabled:
@@ -683,52 +559,51 @@ class AdaptiveAgent(BaseStrategy):
         except Exception as exc:
             bt.logging.warning(f"AdaptiveAgent: state save failed: {exc}")
 
-    def _adaptive_drift_config(self) -> DriftConfig:
-        return DriftConfig(
-            fast_alpha=float(self.adaptive_drift_fast_alpha),
-            slow_alpha=float(self.adaptive_drift_slow_alpha),
-            window_requests=int(self.adaptive_drift_window_requests),
-            min_windows=int(self.adaptive_drift_min_windows),
-            min_samples=int(self.adaptive_drift_min_samples),
-            min_window_samples=int(self.adaptive_drift_min_window_samples),
-            min_signals=int(self.adaptive_drift_min_signals),
-            fill_abs=float(self.adaptive_drift_fill_abs_min),
-            fill_rel=float(self.adaptive_drift_fill_relative),
-            markout_delta_bps=float(self.adaptive_drift_markout_delta_bps),
-            spread_ratio=float(self.adaptive_drift_spread_ratio),
-            spread_delta_bps=float(self.adaptive_drift_spread_delta_bps),
-            pnl_hard_floor=float(self.adaptive_drift_pnl_hard_floor),
-            pnl_ratio=float(self.adaptive_drift_pnl_ratio),
-            pnl_baseline_min=float(self.adaptive_drift_pnl_baseline_min),
-            dust_abs=float(self.adaptive_drift_dust_abs),
-            hold_requests=int(self.adaptive_drift_hold_requests),
-            recovery_requests=int(self.adaptive_drift_recovery_requests),
-        )
+    def _adaptive_reset_session_scoped_state(self) -> None:
+        """Reset scoring-session counters while preserving environment learning."""
+        for stats in self._adaptive_books.values():
+            stats["session_realized_obs"] = 0
+        self._adaptive_global["session_realized_obs"] = 0
 
-    def _adaptive_reset_drift_window(self) -> None:
-        tracker = getattr(self, "_adaptive_drift_tracker", None)
-        if tracker is None:
-            self._adaptive_drift_tracker = DriftTracker(self._adaptive_drift_config())
-        else:
-            tracker.cfg = self._adaptive_drift_config()
-            tracker.reset(request=int(self.adaptive_total_requests))
+        # BaseStrategy completion counts are session-scoped too.
+        if hasattr(self, "_research_realized_observations_by_book"):
+            self._research_realized_observations_by_book.clear()
+        if hasattr(self, "_research_round_trip_samples_by_book"):
+            self._research_round_trip_samples_by_book.clear()
+
+        self.adaptive_session_requests = 0
+
+        # A new simulation is a fresh market-regime session. Preserve learned
+        # per-book execution calibration, but do not carry a stale DRIFT window.
+        self._adaptive_drift_until_request = 0
+        q, f = self._adaptive_global_fill_totals()
+        self._adaptive_drift_snapshot_quotes = q
+        self._adaptive_drift_snapshot_fills = f
+        self._adaptive_drift_snapshot_maker_realized = int(
+            self._adaptive_global.get("maker_realized_obs", 0)
+        )
+        self._adaptive_drift_snapshot_request = self.adaptive_total_requests
+        self._adaptive_spread_window_sum = 0.0
+        self._adaptive_spread_window_count = 0
+        self._adaptive_spread_baseline_bps = None
         self._adaptive_last_drift_metrics = {}
-        self._adaptive_last_saved_request = int(self.adaptive_total_requests)
+        # Neutralize short-vs-long drift state while retaining long-run quality.
+        long_pnl = float(self._adaptive_global.get("maker_pnl_long_ewma", 0.0) or 0.0)
+        self._adaptive_global["maker_pnl_short_ewma"] = long_pnl
 
-    def _adaptive_phase_clocks(self) -> PhaseClocks:
-        return PhaseClocks(
-            observe_requests=int(self.adaptive_observe_requests),
-            normal_after_requests=int(self.adaptive_normal_after_requests),
-            drift_until_request=int(self._adaptive_drift_until_request),
-            recovery_until_request=int(self._adaptive_recovery_until_request),
-            total_requests=int(self.adaptive_total_requests),
-        )
-
+    # ------------------------------------------------------------------
+    # Phase / drift
+    # ------------------------------------------------------------------
     def _adaptive_phase(self) -> str:
-        return current_phase(
-            self._adaptive_phase_clocks(),
-            enabled=bool(self.adaptive_enabled),
-        )
+        if not self.adaptive_enabled:
+            return "DISABLED"
+        if self.adaptive_total_requests < self.adaptive_observe_requests:
+            return "OBSERVE"
+        if self.adaptive_total_requests < self._adaptive_drift_until_request:
+            return "DRIFT"
+        if self.adaptive_total_requests < self.adaptive_normal_after_requests:
+            return "BOOTSTRAP"
+        return "NORMAL"
 
     def _adaptive_global_fill_totals(self) -> tuple[int, int]:
         g = self._adaptive_global
@@ -736,12 +611,8 @@ class AdaptiveAgent(BaseStrategy):
         fills = sum(g["buy_fills"]) + sum(g["sell_fills"])
         return int(quotes), int(fills)
 
-    def _adaptive_mean(self, values: list[float]) -> float | None:
-        if not values:
-            return None
-        return float(sum(values) / len(values))
-
-    def _adaptive_median_spread_bps(self) -> float | None:
+    def _adaptive_observe_market_state(self) -> None:
+        """Accumulate a no-extra-book-scan market snapshot from BaseStrategy profiles."""
         profiles = getattr(self, "_last_profiles", None) or []
         spreads: list[float] = []
         for profile in profiles:
@@ -752,116 +623,148 @@ class AdaptiveAgent(BaseStrategy):
             if math.isfinite(value) and value >= 0.0:
                 spreads.append(value)
         if not spreads:
-            return None
+            return
         spreads.sort()
         n = len(spreads)
         if n % 2:
-            return float(spreads[n // 2])
-        return float(0.5 * (spreads[n // 2 - 1] + spreads[n // 2]))
-
-    def _adaptive_collect_drift_observation(self) -> DriftObservation:
-        hazards: list[float] = []
-        actionables: list[float] = []
-        dusts: list[float] = []
-        markouts: list[float] = []
-        last = getattr(self, "_execution_last", {}) or {}
-        for row in last.values():
-            if not isinstance(row, dict):
-                continue
-            for pred in (row.get("buy"), row.get("sell")):
-                hazard = self._adaptive_pred_field(pred, "any_fill")
-                actionable = self._adaptive_pred_field(pred, "actionable_fill")
-                dust = self._adaptive_pred_field(pred, "dust")
-                if hazard is not None:
-                    hazards.append(hazard)
-                if actionable is not None:
-                    actionables.append(actionable)
-                if dust is not None:
-                    dusts.append(dust)
-        for ev in (getattr(self, "_score_ev_last", {}) or {}).values():
-            try:
-                markout = getattr(ev, "expected_markout_bps", None)
-                if markout is None:
-                    continue
-                markout = float(markout)
-            except (TypeError, ValueError, AttributeError):
-                continue
-            if math.isfinite(markout):
-                markouts.append(markout)
-
-        dust_rate = self._adaptive_mean(dusts)
-        if dust_rate is None:
-            attempts = int(self._adaptive_global.get("dust_attempts", 0) or 0)
-            if attempts > 0:
-                fills = int(self._adaptive_global.get("dust_fills", 0) or 0)
-                dust_rate = 1.0 - fills / max(attempts, 1)
-
-        maker_obs = int(self._adaptive_global.get("maker_realized_obs", 0) or 0)
-        maker_pnl = None
-        if maker_obs >= int(self.adaptive_drift_min_maker_realized):
-            maker_pnl = float(
-                self._adaptive_global.get("maker_pnl_short_ewma", 0.0) or 0.0
-            )
-            if not math.isfinite(maker_pnl):
-                maker_pnl = None
-
-        return DriftObservation(
-            fill_hazard=self._adaptive_mean(hazards),
-            actionable_fill=self._adaptive_mean(actionables),
-            markout_bps=self._adaptive_mean(markouts),
-            spread_bps=self._adaptive_median_spread_bps(),
-            maker_pnl=maker_pnl,
-            dust_rate=dust_rate,
-        )
+            median = spreads[n // 2]
+        else:
+            median = 0.5 * (spreads[n // 2 - 1] + spreads[n // 2])
+        self._adaptive_spread_window_sum += float(median)
+        self._adaptive_spread_window_count += 1
 
     def _adaptive_maybe_detect_drift(self) -> None:
-        tracker = getattr(self, "_adaptive_drift_tracker", None)
-        if tracker is None:
+        if self.adaptive_total_requests < self.adaptive_drift_start_requests:
             return
-        tracker.observe(self._adaptive_collect_drift_observation())
-        verdict = tracker.maybe_close_window(int(self.adaptive_total_requests))
-        if verdict is None:
+        if (
+            self.adaptive_total_requests - self._adaptive_drift_snapshot_request
+            < self.adaptive_drift_window_requests
+        ):
             return
 
-        old_until = int(self._adaptive_drift_until_request)
-        old_phase = self._adaptive_last_phase
-        armed = self.adaptive_total_requests >= self.adaptive_drift_start_requests
-        if not armed:
-            tracker.consecutive_deteriorating = 0
-        trigger = bool(verdict.trigger_drift and armed)
-        if trigger:
-            clocks = enter_or_extend_drift(
-                self._adaptive_phase_clocks(),
-                hold_requests=int(self.adaptive_drift_hold_requests),
-                recovery_requests=int(self.adaptive_drift_recovery_requests),
+        total_q, total_f = self._adaptive_global_fill_totals()
+        dq = max(0, total_q - self._adaptive_drift_snapshot_quotes)
+        df = max(0, total_f - self._adaptive_drift_snapshot_fills)
+        window_fill = self._adaptive_clamp(df / max(dq, 1), 0.0, 1.0)
+        long_fill = self._adaptive_clamp(total_f / max(total_q, 1), 0.0, 1.0)
+        fill_abs = abs(window_fill - long_fill)
+        fill_rel = fill_abs / max(long_fill, self.adaptive_drift_fill_abs_min)
+
+        maker_obs = int(self._adaptive_global.get("maker_realized_obs", 0))
+        maker_obs_window = max(
+            0, maker_obs - self._adaptive_drift_snapshot_maker_realized
+        )
+        maker_short = float(
+            self._adaptive_global.get("maker_pnl_short_ewma", 0.0) or 0.0
+        )
+        maker_long = float(
+            self._adaptive_global.get("maker_pnl_long_ewma", 0.0) or 0.0
+        )
+
+        spread_window = None
+        if self._adaptive_spread_window_count > 0:
+            spread_window = (
+                self._adaptive_spread_window_sum
+                / self._adaptive_spread_window_count
             )
-            self._adaptive_drift_until_request = int(clocks.drift_until_request)
-            self._adaptive_recovery_until_request = int(clocks.recovery_until_request)
+        spread_baseline = self._adaptive_spread_baseline_bps
+        spread_ratio = 1.0
+        spread_delta = 0.0
+        if (
+            spread_window is not None
+            and spread_baseline is not None
+            and spread_baseline > 1e-9
+        ):
+            spread_ratio = spread_window / spread_baseline
+            spread_delta = spread_window - spread_baseline
+
+        fill_signal = (
+            dq >= self.adaptive_drift_min_quotes
+            and total_q >= 2 * self.adaptive_drift_min_quotes
+            and fill_abs >= self.adaptive_drift_fill_abs_min
+            and fill_rel >= self.adaptive_drift_fill_relative
+        )
+        spread_signal = (
+            spread_window is not None
+            and spread_baseline is not None
+            and spread_ratio >= self.adaptive_drift_spread_ratio
+            and spread_delta >= self.adaptive_drift_spread_delta_bps
+        )
+        pnl_hard_signal = (
+            maker_obs_window >= self.adaptive_drift_min_maker_realized
+            and maker_short <= self.adaptive_drift_pnl_hard_floor
+        )
+        pnl_relative_signal = (
+            maker_obs_window >= self.adaptive_drift_min_maker_realized
+            and maker_long >= self.adaptive_drift_pnl_baseline_min
+            and maker_short <= maker_long * self.adaptive_drift_pnl_ratio
+        )
+
+        # One hard economic signal or one material spread-regime shift is
+        # sufficient.  Fill-only drift remains conservative: it must combine
+        # with PnL weakness unless the absolute/relative move is extreme.
+        fill_extreme = fill_signal and fill_rel >= 0.80
+        trigger = bool(
+            pnl_hard_signal
+            or spread_signal
+            or fill_extreme
+            or (fill_signal and pnl_relative_signal)
+        )
+
+        old_until = self._adaptive_drift_until_request
+        if trigger:
+            self._adaptive_drift_until_request = max(
+                self._adaptive_drift_until_request,
+                self.adaptive_total_requests + self.adaptive_drift_hold_requests,
+            )
 
         metrics = {
             "tick": int(getattr(self, "_tick", 0) or 0),
             "requests": self.adaptive_total_requests,
-            "phase_before": old_phase,
-            "phase_after": self._adaptive_phase(),
-            "armed": int(armed),
+            "phase_before": self._adaptive_last_phase,
             "trigger": trigger,
-            "drift_extended": int(self._adaptive_drift_until_request > old_until),
+            "fill_signal": fill_signal,
+            "fill_extreme": fill_extreme,
+            "window_quotes": dq,
+            "window_fills": df,
+            "window_fill_rate": window_fill,
+            "long_fill_rate": long_fill,
+            "fill_abs_delta": fill_abs,
+            "fill_relative_delta": fill_rel,
+            "spread_signal": spread_signal,
+            "spread_window_bps": spread_window,
+            "spread_baseline_bps": spread_baseline,
+            "spread_ratio": spread_ratio,
+            "spread_delta_bps": spread_delta,
+            "pnl_hard_signal": pnl_hard_signal,
+            "pnl_relative_signal": pnl_relative_signal,
+            "maker_realized_window": maker_obs_window,
+            "maker_pnl_short": maker_short,
+            "maker_pnl_long": maker_long,
             "drift_until_request": self._adaptive_drift_until_request,
-            "recovery_until_request": self._adaptive_recovery_until_request,
-            "trust_scale": (
-                float(self.adaptive_drift_trust_scale)
-                if self._adaptive_phase() == "DRIFT"
-                else 1.0
-            ),
-            **verdict.as_log(),
-            **tracker.as_log(),
+            "drift_extended": self._adaptive_drift_until_request > old_until,
         }
         self._adaptive_last_drift_metrics = metrics
-        self._adaptive_emit(
-            "ADAPTIVE_DRIFT",
-            force=trigger or verdict.deteriorated,
-            **metrics,
-        )
+        self._adaptive_emit("ADAPTIVE_DRIFT", force=trigger, **metrics)
+
+        # Baseline follows the environment slowly. During a shift this lets the
+        # strategy eventually leave DRIFT after the new regime stabilizes.
+        if spread_window is not None:
+            if self._adaptive_spread_baseline_bps is None:
+                self._adaptive_spread_baseline_bps = float(spread_window)
+            else:
+                a = self.adaptive_drift_baseline_alpha
+                self._adaptive_spread_baseline_bps = (
+                    (1.0 - a) * self._adaptive_spread_baseline_bps
+                    + a * float(spread_window)
+                )
+
+        self._adaptive_drift_snapshot_request = self.adaptive_total_requests
+        self._adaptive_drift_snapshot_quotes = total_q
+        self._adaptive_drift_snapshot_fills = total_f
+        self._adaptive_drift_snapshot_maker_realized = maker_obs
+        self._adaptive_spread_window_sum = 0.0
+        self._adaptive_spread_window_count = 0
 
     def _adaptive_log_phase_if_changed(self) -> None:
         phase = self._adaptive_phase()
@@ -869,10 +772,9 @@ class AdaptiveAgent(BaseStrategy):
             return
         old = self._adaptive_last_phase
         self._adaptive_last_phase = phase
-        reason = phase_transition_reason(old, phase)
         bt.logging.info(
             f"AdaptiveAgent: phase {old} -> {phase} "
-            f"reason={reason} requests={self.adaptive_total_requests}"
+            f"requests={self.adaptive_total_requests}"
         )
         self._adaptive_emit(
             "ADAPTIVE_PHASE",
@@ -880,52 +782,22 @@ class AdaptiveAgent(BaseStrategy):
             tick=int(getattr(self, "_tick", 0) or 0),
             old_phase=old,
             new_phase=phase,
-            reason=reason,
             requests=self.adaptive_total_requests,
             drift_until_request=self._adaptive_drift_until_request,
-            recovery_until_request=self._adaptive_recovery_until_request,
-            trust_scale=(
-                float(self.adaptive_drift_trust_scale) if phase == "DRIFT" else 1.0
-            ),
-            drift=self._adaptive_last_drift_metrics,
         )
-
-    def _adaptive_reset_session_scoped_state(self) -> None:
-        """New scoring episode: OBSERVE. Keep environment execution priors."""
-        apply_session_reset(self._adaptive_global)
-        for stats in self._adaptive_books.values():
-            apply_session_reset(stats)
-
-        if hasattr(self, "_research_realized_observations_by_book"):
-            self._research_realized_observations_by_book.clear()
-        if hasattr(self, "_research_round_trip_samples_by_book"):
-            self._research_round_trip_samples_by_book.clear()
-
-        self.adaptive_total_requests = 0
-        self.adaptive_session_requests = 0
-        self._adaptive_drift_until_request = 0
-        self._adaptive_recovery_until_request = 0
-        self._adaptive_last_sim_timestamp = None
-        self._adaptive_reset_drift_window()
-        self._adaptive_last_phase = "OBSERVE"
 
     # ------------------------------------------------------------------
     # Main request hook
     # ------------------------------------------------------------------
-
-    def _adaptive_apply_phase_controls(self) -> tuple:
-        """Apply temporary scheduler / Score-EV weight overlays; return restore tuple."""
+    def _adaptive_apply_phase_controls(self) -> tuple[int, bool, float, int]:
+        """Apply temporary scheduler controls and return values to restore."""
         old = (
             int(self.max_mm_books_per_tick),
             bool(self.research_kappa_completion_enabled),
             float(self.research_kappa_completion_rank_bonus),
             int(self.research_kappa_completion_relaxed_success_cap),
-            float(getattr(self, "score_ev_one_away_weight", self._adaptive_base_score_ev_one_away)),
-            float(getattr(self, "score_ev_two_away_weight", self._adaptive_base_score_ev_two_away)),
         )
         phase = self._adaptive_phase()
-        one = self._adaptive_base_score_ev_one_away
-        two = self._adaptive_base_score_ev_two_away
 
         if phase == "OBSERVE":
             self.max_mm_books_per_tick = min(
@@ -935,8 +807,6 @@ class AdaptiveAgent(BaseStrategy):
             self.research_kappa_completion_enabled = False
             self.research_kappa_completion_rank_bonus = 0.0
             self.research_kappa_completion_relaxed_success_cap = 0
-            self.score_ev_one_away_weight = 0.0
-            self.score_ev_two_away_weight = 0.0
         elif phase == "BOOTSTRAP":
             self.max_mm_books_per_tick = min(
                 self._adaptive_base_max_mm_books,
@@ -952,9 +822,6 @@ class AdaptiveAgent(BaseStrategy):
             self.research_kappa_completion_relaxed_success_cap = min(
                 self._adaptive_base_kappa_relaxed_success_cap, 1
             )
-            scale = self.adaptive_bootstrap_kappa_rank_scale
-            self.score_ev_one_away_weight = one * scale
-            self.score_ev_two_away_weight = two * scale
         elif phase == "DRIFT":
             self.max_mm_books_per_tick = min(
                 self._adaptive_base_max_mm_books,
@@ -967,8 +834,6 @@ class AdaptiveAgent(BaseStrategy):
                 self._adaptive_base_kappa_rank_bonus, 0.15
             )
             self.research_kappa_completion_relaxed_success_cap = 0
-            self.score_ev_one_away_weight = one * 0.25
-            self.score_ev_two_away_weight = two * 0.25
         else:
             self.max_mm_books_per_tick = self._adaptive_base_max_mm_books
             self.research_kappa_completion_enabled = (
@@ -980,18 +845,17 @@ class AdaptiveAgent(BaseStrategy):
             self.research_kappa_completion_relaxed_success_cap = (
                 self._adaptive_base_kappa_relaxed_success_cap
             )
-            self.score_ev_one_away_weight = one
-            self.score_ev_two_away_weight = two
         return old
 
-    def _adaptive_restore_phase_controls(self, old: tuple) -> None:
+    def _adaptive_restore_phase_controls(
+        self,
+        old: tuple[int, bool, float, int],
+    ) -> None:
         (
             self.max_mm_books_per_tick,
             self.research_kappa_completion_enabled,
             self.research_kappa_completion_rank_bonus,
             self.research_kappa_completion_relaxed_success_cap,
-            self.score_ev_one_away_weight,
-            self.score_ev_two_away_weight,
         ) = old
 
     def handle(self, state):
@@ -1025,8 +889,9 @@ class AdaptiveAgent(BaseStrategy):
             self._adaptive_restore_phase_controls(phase_old)
 
         if self.adaptive_enabled:
-            # Consume Base outputs already computed this request; no extra
-            # 128-book scan.
+            # Reuse the profiles that BaseStrategy already computed; this adds
+            # no second 128-book prediction/profile pass.
+            self._adaptive_observe_market_state()
             self._adaptive_maybe_detect_drift()
             self._adaptive_log_phase_if_changed()
 
@@ -1057,13 +922,6 @@ class AdaptiveAgent(BaseStrategy):
                     kappa_pending_2=sum(1 for v in obs.values() if v == 2),
                     kappa_eligible=sum(1 for v in obs.values() if v >= target),
                     parked_dust=len(getattr(self, "_research_parked_dust", {})),
-                    market_regime=getattr(self, "_market_regime", None),
-                    score_regime=getattr(self, "_score_regime", None),
-                    ttl_min_ms=getattr(self, "ttl_min_ms", None),
-                    ttl_max_ms=getattr(self, "ttl_max_ms", None),
-                    persistence_reason=getattr(self, "_adaptive_load_reason", None),
-                    drift_until_request=self._adaptive_drift_until_request,
-                    recovery_until_request=self._adaptive_recovery_until_request,
                     drift=self._adaptive_last_drift_metrics,
                 )
             self._adaptive_save_state(False)
@@ -1177,90 +1035,6 @@ class AdaptiveAgent(BaseStrategy):
             return self.adaptive_drift_fill_blend
         return self.adaptive_normal_fill_blend
 
-    @staticmethod
-    def _adaptive_pred_field(pred: Any, name: str) -> float | None:
-        if pred is None:
-            return None
-        try:
-            value = getattr(pred, name, None)
-            if value is None:
-                return None
-            value = float(value)
-        except (TypeError, ValueError, AttributeError):
-            return None
-        return value if math.isfinite(value) else None
-
-    def _adaptive_base_outputs(self, book_id: int | None = None) -> dict[str, Any]:
-        """Read BaseStrategy engine outputs. Never recompute them here."""
-        out: dict[str, Any] = {
-            "market_regime": getattr(self, "_market_regime", None),
-            "score_regime": getattr(self, "_score_regime", None),
-            "ttl_min_ms": getattr(self, "ttl_min_ms", None),
-            "ttl_max_ms": getattr(self, "ttl_max_ms", None),
-        }
-        if book_id is None:
-            return out
-        bid = int(book_id)
-        last = (getattr(self, "_execution_last", {}) or {}).get(bid, {}) or {}
-        buy_pred = last.get("buy")
-        sell_pred = last.get("sell")
-        ev = (getattr(self, "_score_ev_last", {}) or {}).get(bid)
-        snap = (getattr(self, "_quote_submit_snapshot", {}) or {}).get(bid, {}) or {}
-        acts = [
-            v
-            for v in (
-                self._adaptive_pred_field(buy_pred, "actionable_fill"),
-                self._adaptive_pred_field(sell_pred, "actionable_fill"),
-            )
-            if v is not None
-        ]
-        dusts = [
-            v
-            for v in (
-                self._adaptive_pred_field(buy_pred, "dust"),
-                self._adaptive_pred_field(sell_pred, "dust"),
-            )
-            if v is not None
-        ]
-        out.update(
-            {
-                "fallback_reason": last.get("fallback_reason") or "",
-                "model_confidence": last.get("model_confidence"),
-                "fill_hazard_any_buy": self._adaptive_pred_field(buy_pred, "any_fill"),
-                "fill_hazard_any_sell": self._adaptive_pred_field(sell_pred, "any_fill"),
-                "fill_hazard_usable": bool(
-                    (buy_pred is not None and bool(getattr(buy_pred, "usable", False)))
-                    or (sell_pred is not None and bool(getattr(sell_pred, "usable", False)))
-                ),
-                "actionable_fill_probability": (
-                    None if ev is None else getattr(ev, "actionable_fill_prob", None)
-                ),
-                "dust_probability": None if ev is None else getattr(ev, "dust_prob", None),
-                "score_ev": None if ev is None else getattr(ev, "final_score", None),
-                "kappa_completion_value": (
-                    None if ev is None else getattr(ev, "completion_value", None)
-                ),
-                "markout_estimate": (
-                    None if ev is None else getattr(ev, "expected_markout_bps", None)
-                ),
-                "trading_ev": None if ev is None else getattr(ev, "trading_ev", None),
-                "observations_remaining": (
-                    None if ev is None else getattr(ev, "observations_remaining", None)
-                ),
-                "ofi": snap.get("imbalance"),
-                "chosen_ttl": snap.get("chosen_ttl"),
-                "inventory_util": snap.get("inventory_util"),
-                "candidate_reject_reason": (
-                    None if ev is None else getattr(ev, "reject_reason", None)
-                ),
-            }
-        )
-        if out["actionable_fill_probability"] is None and acts:
-            out["actionable_fill_probability"] = sum(acts) / len(acts)
-        if out["dust_probability"] is None and dusts:
-            out["dust_probability"] = sum(dusts) / len(dusts)
-        return out
-
     def estimate_fill_probability(
         self,
         book,
@@ -1280,28 +1054,12 @@ class AdaptiveAgent(BaseStrategy):
             sell_price,
             book_id=book_id,
         )
-        if book_id is not None:
-            self._adaptive_last_fill_diag[int(book_id)] = {
-                "phase": self._adaptive_phase(),
-                "base_buy": float(base.buy),
-                "base_sell": float(base.sell),
-                "final_buy": float(base.buy),
-                "final_sell": float(base.sell),
-                "overlay": 0,
-                **self._adaptive_base_outputs(int(book_id)),
-            }
         if (
             not self.adaptive_enabled
-            or not getattr(self, "adaptive_fill_overlay_enabled", False)
             or book_id is None
             or spread <= 0.0
             or mid <= 0.0
         ):
-            return base
-
-        last = (getattr(self, "_execution_last", {}) or {}).get(int(book_id), {}) or {}
-        fallback_reason = str(last.get("fallback_reason") or "")
-        if not fallback_reason:
             return base
 
         bid = int(book_id)
@@ -1355,11 +1113,23 @@ class AdaptiveAgent(BaseStrategy):
             "buy_bucket": buy_bucket,
             "sell_bucket": sell_bucket,
             "phase_blend": phase_blend,
-            "overlay": 1,
-            "fallback_reason": fallback_reason,
-            **self._adaptive_base_outputs(bid),
         }
         self._adaptive_last_fill_diag[bid] = diag
+
+        if self.debug_enabled and hasattr(self, "_book_record"):
+            record = self._book_record(bid)
+            record["adaptive_phase"] = diag["phase"]
+            record["adaptive_fill_base_buy"] = diag["base_buy"]
+            record["adaptive_fill_base_sell"] = diag["base_sell"]
+            record["adaptive_fill_learned_buy"] = diag["learned_buy"]
+            record["adaptive_fill_learned_sell"] = diag["learned_sell"]
+            record["adaptive_fill_buy"] = diag["final_buy"]
+            record["adaptive_fill_sell"] = diag["final_sell"]
+            record["adaptive_fill_buy_samples"] = buy_n
+            record["adaptive_fill_sell_samples"] = sell_n
+            record["adaptive_fill_buy_conf"] = buy_conf
+            record["adaptive_fill_sell_conf"] = sell_conf
+
         return FillProbabilityEstimate(buy=buy, sell=sell)
 
     # ------------------------------------------------------------------
@@ -1440,327 +1210,96 @@ class AdaptiveAgent(BaseStrategy):
             maker_pnl = 0.0
         return confidence, fill_rate, maker_pnl
 
-    def _adaptive_ev_snapshot(self, book_id: int) -> EvSnapshot:
-        """Build an EV snapshot from Base outputs plus Adaptive memory."""
-        bid = int(book_id)
-        outputs = self._adaptive_base_outputs(bid)
-        conf, fill_rate, maker_pnl = self._adaptive_execution_quality(bid)
-        ev = (getattr(self, "_score_ev_last", {}) or {}).get(bid)
-        reject = "" if ev is None else str(getattr(ev, "reject_reason", "") or "")
-        if reject in {"TOXIC", "UNSAFE", "INVENTORY_BLOCKED"}:
-            conf = 0.0
-        p = outputs.get("actionable_fill_probability")
-        if p is None:
-            buy_p = outputs.get("fill_hazard_any_buy")
-            sell_p = outputs.get("fill_hazard_any_sell")
-            vals = [float(v) for v in (buy_p, sell_p) if v is not None]
-            p = sum(vals) / len(vals) if vals else 0.12
-        capture = 0.0 if ev is None else float(getattr(ev, "spread_capture_bps", 0.0) or 0.0)
-        markout = 0.0 if ev is None else float(getattr(ev, "expected_markout_bps", 0.0) or 0.0)
-        fees = 0.5 if ev is None else float(getattr(ev, "fees_bps", 0.5) or 0.5)
-        completion = 0.0 if ev is None else float(getattr(ev, "completion_value", 0.0) or 0.0)
-        inventory = 0.0 if ev is None else float(getattr(ev, "inventory_cost", 0.0) or 0.0)
-        dust = outputs.get("dust_probability")
-        if dust is None:
-            dust = 0.0 if ev is None else float(getattr(ev, "dust_prob", 0.0) or 0.0)
-        latency = 0.0 if ev is None else float(getattr(ev, "latency_cost", 0.0) or 0.0)
-        spec = 0.0
-        try:
-            spec = float(getattr(self._mem(bid), "specialization_score", 0.0) or 0.0)
-        except Exception:
-            spec = 0.0
-        stats = self._adaptive_book(bid)
-        buy_fill = None
-        sell_fill = None
-        bq = sum(int(x) for x in stats["buy_quotes"])
-        sq = sum(int(x) for x in stats["sell_quotes"])
-        if bq >= int(self.adaptive_fill_min_samples):
-            buy_fill = sum(int(x) for x in stats["buy_fills"]) / max(bq, 1)
-        if sq >= int(self.adaptive_fill_min_samples):
-            sell_fill = sum(int(x) for x in stats["sell_fills"]) / max(sq, 1)
-        learned_markout = math.tanh(maker_pnl / max(self.adaptive_pnl_scale, 1e-6)) * 8.0
-        return EvSnapshot(
-            actionable_p=float(p),
-            spread_capture_bps=capture,
-            markout_bps=markout,
-            fees_bps=fees,
-            completion_value=completion,
-            inventory_cost=inventory,
-            dust_prob=float(dust or 0.0),
-            latency_cost=latency,
-            learned_fill=float(fill_rate) if conf > 0.0 else None,
-            learned_markout_bps=learned_markout if conf > 0.0 else None,
-            buy_fill=buy_fill,
-            sell_fill=sell_fill,
-            confidence=float(conf),
-            specialization=spec,
-        )
-
     def _adaptive_regime_overlay(
         self,
         book_id: int,
         regime_params: RegimeParamSet,
     ) -> RegimeParamSet:
         phase = self._adaptive_phase()
-        base_quote = {
-            "spread_offset": float(regime_params.spread_offset),
-            "size_mult": float(regime_params.size_mult),
-            "buy_bias": float(regime_params.buy_bias),
-            "sell_bias": float(regime_params.sell_bias),
-        }
         if phase in {"DISABLED", "OBSERVE"}:
-            self._adaptive_last_exec_diag[int(book_id)] = {
-                "phase": phase,
-                "base_quote": base_quote,
-                "adaptive_quote": dict(base_quote),
-                "base_ev": None,
-                "adaptive_ev": None,
-                "spread_delta": 0.0,
-                "fill_hazard_delta": 0.0,
-                "markout_delta": 0.0,
-                "reason": "HOLD",
-                "confidence": 0.0,
-            }
             return regime_params
 
-        snap = self._adaptive_ev_snapshot(int(book_id))
-        max_tighten = float(self.adaptive_max_tighten)
-        max_widen = float(self.adaptive_max_widen)
-        max_size_cut = float(self.adaptive_max_size_cut)
+        confidence, fill_rate, maker_pnl = self._adaptive_execution_quality(book_id)
+        if confidence <= 0.0:
+            return regime_params
+
+        pnl_bad = self._adaptive_clamp(
+            -maker_pnl / self.adaptive_pnl_scale, 0.0, 1.0
+        )
+        pnl_good = self._adaptive_clamp(
+            maker_pnl / self.adaptive_pnl_scale, 0.0, 1.0
+        )
+
+        widen = self.adaptive_max_widen * confidence * pnl_bad
+        tighten_need = self._adaptive_clamp(
+            (self.adaptive_target_maker_fill - fill_rate)
+            / max(self.adaptive_target_maker_fill, 1e-9),
+            0.0,
+            1.0,
+        )
+        tighten = (
+            self.adaptive_max_tighten
+            * confidence
+            * pnl_good
+            * tighten_need
+        )
+
         if phase == "BOOTSTRAP":
-            max_tighten *= 0.50
-            max_widen *= 0.60
-            max_size_cut *= 0.60
+            widen *= 0.60
+            tighten *= 0.50
         elif phase == "DRIFT":
-            snap = replace(
-                snap,
-                confidence=float(snap.confidence) * float(self.adaptive_drift_trust_scale),
-            )
-            max_tighten = 0.0
-        decision = choose_overlay(
-            snap,
-            phase=phase,  # type: ignore[arg-type]
-            max_tighten=max_tighten,
-            max_widen=max_widen,
-            max_size_cut=max_size_cut,
-        )
-        size_scale = min(1.0, float(decision.proposal.size_scale))
-        base_spread = float(regime_params.spread_offset)
+            # Drift response is one-sided defensive: widen and reduce size;
+            # do not tighten until the environment stabilizes again.
+            widen = max(widen, 0.08 * confidence)
+            tighten = 0.0
+
         spread_scale = self._adaptive_clamp(
-            float(decision.proposal.spread_scale),
-            1.0 - float(self.adaptive_max_tighten),
-            1.0 + float(self.adaptive_max_widen),
+            1.0 + widen - tighten,
+            1.0 - self.adaptive_max_tighten,
+            1.0 + self.adaptive_max_widen,
         )
+
+        size_cut = self.adaptive_max_size_cut * confidence * pnl_bad
+        if phase == "BOOTSTRAP":
+            size_cut *= 0.60
+        elif phase == "DRIFT":
+            size_cut = max(size_cut, 0.20 * confidence)
+
+        # Never increase BaseStrategy size from this adaptive overlay.
+        size_scale = self._adaptive_clamp(1.0 - size_cut, 0.30, 1.0)
+
         adapted = replace(
             regime_params,
-            spread_offset=max(0.05, base_spread * spread_scale),
-            size_mult=max(0.0, min(float(regime_params.size_mult), float(regime_params.size_mult) * size_scale)),
-            buy_bias=max(
-                0.25, min(2.0, float(regime_params.buy_bias) * float(decision.proposal.buy_bias_scale))
+            spread_offset=max(
+                0.05, float(regime_params.spread_offset) * spread_scale
             ),
-            sell_bias=max(
-                0.25, min(2.0, float(regime_params.sell_bias) * float(decision.proposal.sell_bias_scale))
+            size_mult=max(
+                0.0, float(regime_params.size_mult) * size_scale
             ),
         )
-        adaptive_quote = {
-            "spread_offset": float(adapted.spread_offset),
-            "size_mult": float(adapted.size_mult),
-            "buy_bias": float(adapted.buy_bias),
-            "sell_bias": float(adapted.sell_bias),
-        }
-        log = {
+        self._adaptive_last_exec_diag[int(book_id)] = {
             "phase": phase,
-            "base_quote": base_quote,
-            "adaptive_quote": adaptive_quote,
-            "base_ev": decision.base_ev,
-            "adaptive_ev": decision.adaptive_ev,
-            "spread_delta": decision.spread_delta,
-            "fill_hazard_delta": decision.fill_hazard_delta,
-            "markout_delta": decision.markout_delta,
-            "reason": decision.reason,
-            "confidence": decision.confidence,
-            **decision.as_log(),
+            "confidence": confidence,
+            "maker_fill_rate": fill_rate,
+            "maker_pnl_ewma": maker_pnl,
+            "spread_scale": spread_scale,
+            "size_scale": size_scale,
+            "base_spread_offset": float(regime_params.spread_offset),
+            "final_spread_offset": float(adapted.spread_offset),
+            "base_size_mult": float(regime_params.size_mult),
+            "final_size_mult": float(adapted.size_mult),
         }
-        self._adaptive_last_exec_diag[int(book_id)] = log
+
         if self.debug_enabled and hasattr(self, "_book_record"):
             record = self._book_record(int(book_id))
             record["adaptive_phase"] = phase
-            record["adaptive_reason"] = decision.reason
-            record["adaptive_base_ev"] = decision.base_ev
-            record["adaptive_ev"] = decision.adaptive_ev
-            record["adaptive_spread_delta"] = decision.spread_delta
-        self._adaptive_emit("ADAPTIVE_EV", force=decision.accepted, book=int(book_id), **log)
+            record["adaptive_exec_conf"] = confidence
+            record["adaptive_maker_fill_rate"] = fill_rate
+            record["adaptive_maker_pnl_ewma"] = maker_pnl
+            record["adaptive_spread_scale"] = spread_scale
+            record["adaptive_size_scale"] = size_scale
+
         return adapted
-
-    def _adaptive_hjb_config(self) -> HjbConfig:
-        return HjbConfig(
-            gamma=float(self.adaptive_hjb_gamma),
-            gamma_min=float(self.adaptive_hjb_gamma_min),
-            gamma_max=float(self.adaptive_hjb_gamma_max),
-            kappa=float(self.adaptive_hjb_kappa),
-            horizon=float(self.adaptive_hjb_horizon),
-            alpha_shift=float(self.adaptive_hjb_alpha_shift),
-            vol_floor=float(self.adaptive_hjb_vol_floor),
-            latency_weight=float(self.adaptive_hjb_latency_weight),
-            adverse_weight=float(self.adaptive_hjb_adverse_weight),
-        )
-
-    def _adaptive_hjb_shadow(
-        self,
-        *,
-        state,
-        book_id: int,
-        book,
-        profile: BookProfile,
-        prediction: DirectionForecast,
-        inventory: InventorySnapshot,
-        base_params: RegimeParamSet,
-        adapted_params: RegimeParamSet,
-        size: float,
-        edge_bias: float,
-    ) -> None:
-        """Compare HJB quotes to Base+Adaptive. Never submit HJB prices."""
-        if not self.adaptive_hjb_shadow_enabled or self.adaptive_hjb_policy_enabled:
-            return
-        try:
-            if not getattr(book, "bids", None) or not getattr(book, "asks", None):
-                return
-            best_bid = float(book.bids[0].price)
-            best_ask = float(book.asks[0].price)
-            spread = best_ask - best_bid
-            mid = 0.5 * (best_bid + best_ask)
-            if mid <= 0.0 or spread <= 0.0:
-                return
-            cfg_state = getattr(state, "config", None)
-            try:
-                price_dec = int(getattr(cfg_state, "priceDecimals", 8) or 8)
-            except (TypeError, ValueError, AttributeError):
-                price_dec = 8
-            alpha = float(getattr(prediction, "score", 0.0) or 0.0)
-            inv_ratio = float(getattr(inventory, "inventory_ratio", 0.0) or 0.0)
-            base_prices = self.skewed_quote_prices(
-                best_bid, best_ask, alpha, inv_ratio, base_params, price_dec, edge_bias=edge_bias
-            )
-            adaptive_prices = self.skewed_quote_prices(
-                best_bid, best_ask, alpha, inv_ratio, adapted_params, price_dec, edge_bias=edge_bias
-            )
-            if not base_prices or not adaptive_prices:
-                return
-
-            micro_sig = float(self.microprice_signal(book) or 0.0)
-            microprice = mid + micro_sig * spread
-            try:
-                util = float(self._inventory_util(inventory))
-            except Exception:
-                util = min(1.0, abs(inv_ratio))
-            net = float(getattr(inventory, "net_base", 0.0) or 0.0)
-            signed_inv = util if net >= 0.0 else -util
-
-            outputs = self._adaptive_base_outputs(int(book_id))
-            buy_h = outputs.get("fill_hazard_any_buy")
-            sell_h = outputs.get("fill_hazard_any_sell")
-            last = (getattr(self, "_execution_last", {}) or {}).get(int(book_id), {}) or {}
-            act_buy = self._adaptive_pred_field(last.get("buy"), "actionable_fill")
-            act_sell = self._adaptive_pred_field(last.get("sell"), "actionable_fill")
-            markout = outputs.get("markout_estimate")
-            if markout is None:
-                ev = (getattr(self, "_score_ev_last", {}) or {}).get(int(book_id))
-                markout = None if ev is None else getattr(ev, "expected_markout_bps", 0.0)
-            ofi = outputs.get("ofi")
-            if ofi is None:
-                ofi = getattr(profile, "imbalance", 0.0)
-            latency_ms = outputs.get("chosen_ttl")
-            snap = (getattr(self, "_quote_submit_snapshot", {}) or {}).get(int(book_id), {}) or {}
-            if latency_ms is None:
-                latency_ms = snap.get("chosen_ttl")
-            regime = str(getattr(self, "_market_regime", "") or "")
-            parked = int(book_id) in (getattr(self, "_research_parked_dust", {}) or {})
-            toxicity = 1.0 if regime.upper() in {"TOXIC"} or parked or bool(snap.get("toxic")) else 0.0
-            try:
-                markout_f = float(markout or 0.0)
-            except (TypeError, ValueError):
-                markout_f = 0.0
-            toxicity = max(toxicity, self._adaptive_clamp(-markout_f / 8.0, 0.0, 1.0))
-
-            drawdown = 0.0
-            unreal = getattr(inventory, "unrealized_bps", None)
-            try:
-                if unreal is not None and float(unreal) < 0.0:
-                    drawdown = self._adaptive_clamp(abs(float(unreal)) / 40.0, 0.0, 1.0)
-            except (TypeError, ValueError):
-                drawdown = 0.0
-            pnl = float(self._adaptive_global.get("maker_pnl_short_ewma", 0.0) or 0.0)
-            if pnl < 0.0:
-                drawdown = max(
-                    drawdown,
-                    self._adaptive_clamp(-pnl / max(self.adaptive_pnl_scale, 1e-6), 0.0, 1.0),
-                )
-
-            try:
-                sigma = float(getattr(profile, "volatility", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                sigma = 0.0
-            hjb_cfg = self._adaptive_hjb_config()
-            hjb_state = HjbState(
-                mid=mid,
-                microprice=microprice,
-                spread=spread,
-                alpha=alpha,
-                inventory=signed_inv,
-                sigma=sigma,
-                fill_hazard_buy=float(buy_h if buy_h is not None else 0.12),
-                fill_hazard_sell=float(sell_h if sell_h is not None else 0.12),
-                actionable_buy=float(act_buy if act_buy is not None else (buy_h or 0.12)),
-                actionable_sell=float(act_sell if act_sell is not None else (sell_h or 0.12)),
-                ofi=float(ofi or 0.0),
-                markout_bps=markout_f,
-                toxicity=float(toxicity),
-                latency_ms=float(latency_ms or 0.0),
-                drawdown=float(drawdown),
-                phase=self._adaptive_phase(),  # type: ignore[arg-type]
-                base_size=max(0.0, float(size)),
-                regime=regime,
-            )
-            quote = compute_hjb_quote(hjb_state, hjb_cfg)
-            if quote is None:
-                return
-            base_ev = shadow_quote_ev(
-                mid=mid,
-                spread=spread,
-                bid=float(base_prices[0]),
-                ask=float(base_prices[1]),
-                fill_buy=hjb_state.fill_hazard_buy,
-                fill_sell=hjb_state.fill_hazard_sell,
-                markout_bps=markout_f,
-                fees_bps=hjb_cfg.fees_bps,
-            )
-            payload = {
-                "book": int(book_id),
-                "base_bid": float(base_prices[0]),
-                "base_ask": float(base_prices[1]),
-                "adaptive_bid": float(adaptive_prices[0]),
-                "adaptive_ask": float(adaptive_prices[1]),
-                "hjb_reservation": quote.reservation,
-                "hjb_bid": quote.bid,
-                "hjb_ask": quote.ask,
-                "inventory": quote.inventory,
-                "gamma": quote.gamma,
-                "sigma": quote.sigma,
-                "alpha": quote.alpha,
-                "fill_hazard_buy": quote.fill_hazard_buy,
-                "fill_hazard_sell": quote.fill_hazard_sell,
-                "markout": quote.markout_bps,
-                "latency_penalty": quote.latency_penalty,
-                "adverse_penalty": quote.adverse_penalty,
-                "estimated_base_ev": base_ev,
-                "estimated_hjb_ev": quote.estimated_ev,
-                "policy_activated": 0,
-                **quote.as_log(),
-            }
-            self._adaptive_last_hjb[int(book_id)] = payload
-            self._adaptive_emit("ADAPTIVE_HJB_SHADOW", force=True, **payload)
-        except Exception:
-            return
 
     def _place_skewed_quotes(
         self,
@@ -1794,19 +1333,6 @@ class AdaptiveAgent(BaseStrategy):
             edge_bias,
             stats=stats,
         )
-        if self.adaptive_enabled:
-            self._adaptive_hjb_shadow(
-                state=state,
-                book_id=book_id,
-                book=book,
-                profile=profile,
-                prediction=prediction,
-                inventory=inventory,
-                base_params=regime_params,
-                adapted_params=adapted_params,
-                size=size,
-                edge_bias=edge_bias,
-            )
         if placed > 0 and self.adaptive_enabled:
             bid = int(book_id)
             self._adaptive_emit(
@@ -1819,7 +1345,6 @@ class AdaptiveAgent(BaseStrategy):
                 completion_samples=self._completion_observation_count(bid),
                 fill=self._adaptive_last_fill_diag.get(bid, {}),
                 execution=self._adaptive_last_exec_diag.get(bid, {}),
-                base=self._adaptive_base_outputs(bid),
                 inventory_band=getattr(inventory, "band", None),
                 inventory_base=getattr(inventory, "net_base", None),
                 inventory_ticks=getattr(inventory, "position_ticks", None),
@@ -1836,22 +1361,40 @@ class AdaptiveAgent(BaseStrategy):
             return base_rank
         bid = int(book_id)
 
-        # Score-EV already includes Kappa completion value. Do not add a
-        # second one-away bonus on top of Base.
-        confidence, _fill_rate, maker_pnl = self._adaptive_execution_quality(bid)
-        if confidence <= 0.0:
-            return base_rank
+        # V2: prefer a book that is exactly one observation away from Kappa
+        # eligibility.  This is additive to V4.1's progress bonus and remains
+        # bounded. DRIFT disables this extra pressure.
+        one_away = 0.0
+        if self._adaptive_phase() != "DRIFT":
+            try:
+                samples = self._completion_observation_count(bid)
+                target = int(self.research_kappa_completion_target)
+                if (
+                    samples == target - 1
+                    and self._is_kappa_completion_candidate(bid)
+                ):
+                    one_away = self.adaptive_kappa_one_away_bonus
+            except Exception:
+                one_away = 0.0
 
+        confidence, fill_rate, maker_pnl = self._adaptive_execution_quality(bid)
+        if confidence <= 0.0:
+            return base_rank + one_away
+
+        fill_quality = self._adaptive_clamp(
+            (fill_rate - self.adaptive_target_maker_fill)
+            / max(self.adaptive_target_maker_fill, 1e-9),
+            -1.0,
+            1.0,
+        )
         pnl_quality = math.tanh(maker_pnl / self.adaptive_pnl_scale)
-        quality = pnl_quality
+        quality = 0.45 * fill_quality + 0.55 * pnl_quality
         adjust = (
             self.adaptive_rank_max_adjust
             * confidence
             * self._adaptive_clamp(quality, -1.0, 1.0)
         )
-        if self._adaptive_phase() == "DRIFT":
-            adjust = min(adjust, 0.0)
-        return base_rank + adjust
+        return base_rank + one_away + adjust
 
     # ------------------------------------------------------------------
     # Dust-compaction selection learning
@@ -1907,33 +1450,52 @@ class AdaptiveAgent(BaseStrategy):
 
         tick = int(getattr(self, "_tick", 0) or 0)
         self._adaptive_sync_dust_attempts()
-        parked = getattr(self, "_research_parked_dust", {}) or {}
-        cap = max(1, int(self.research_dust_compact_books_per_tick))
-        old_cap = cap
-        try:
-            self.research_dust_compact_books_per_tick = max(cap, len(parked))
-            universe = set(super()._select_dust_compaction_books(state))
-        finally:
-            self.research_dust_compact_books_per_tick = old_cap
-
+        min_size = max(
+            0.0, float(getattr(self, "_research_exchange_min_order_size", 0.0))
+        )
         rows: list[tuple[float, float, int, int]] = []
-        for bid in universe:
-            info = parked.get(int(bid), {})
+
+        for book_id, info in getattr(self, "_research_parked_dust", {}).items():
+            bid = int(book_id)
             qty = float(info.get("net_base", 0.0) or 0.0)
+            # BaseStrategy proof condition remains authoritative.
+            if not self._is_compactable_dust(qty):
+                continue
             if not self._dust_compaction_safe_for_any_fill(qty):
                 continue
-            stats = self._adaptive_book(int(bid))
+            if bid not in getattr(state, "books", {}):
+                continue
+
+            stats = self._adaptive_book(bid)
             last_tick = int(stats.get("dust_last_attempt_tick", -1))
             cooldown = self._adaptive_dust_cooldown(stats)
             if last_tick >= 0 and tick - last_tick < cooldown:
                 continue
+
             first_tick = int(info.get("first_tick", tick))
             age = max(0, tick - first_tick)
             posterior = self._adaptive_dust_fill_posterior(stats)
-            rows.append((posterior, abs(qty), age, int(bid)))
+            qty_fraction = (
+                self._adaptive_clamp(abs(qty) / min_size, 0.0, 1.0)
+                if min_size > 0.0
+                else 0.0
+            )
+            age_score = self._adaptive_clamp(
+                age / max(float(self.research_dust_warn_ticks), 1.0),
+                0.0,
+                3.0,
+            )
+            # Fill likelihood first; then age and closeness to min-order size.
+            score = posterior + 0.015 * age_score + 0.01 * qty_fraction
+            rows.append((score, abs(qty), age, bid))
 
         rows.sort(reverse=True)
-        selected = {bid for _score, _qty, _age, bid in rows[:cap]}
+        selected = {
+            bid
+            for _score, _qty, _age, bid in rows[
+                : self.research_dust_compact_books_per_tick
+            ]
+        }
 
         for bid in selected:
             stats = self._adaptive_book(bid)

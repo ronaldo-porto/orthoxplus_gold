@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
+# VERSION ARCHIVE: Strategy1 Research V4.2 Strict versioned launcher. Stable root name: run_strategy1_research_test_multi.sh
 # Internal runner: run_miner_multi.sh
 # SN79 testnet launcher for Strategy1_Research V4.2 Strict (Miner 1).
 # Default PM2 name: sn79-m1 | Default Axon port: 8091
 set -euo pipefail
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Version-archive copy. Locate repo root even if this file is not at repo root.
+# Runtime still uses live agents/strategy/*.py, not this directory.
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$_SCRIPT_DIR"
+while [[ "$REPO_ROOT" != "/" && ! -f "$REPO_ROOT/run_miner_multi.sh" ]]; do
+  REPO_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
+done
+if [[ ! -f "$REPO_ROOT/run_miner_multi.sh" ]]; then
+  echo "ERROR: cannot locate repo-root run_miner_multi.sh from $_SCRIPT_DIR" >&2
+  exit 1
+fi
 cd "$REPO_ROOT"
 
 WALLET_NAME="${WALLET_NAME:-taos}"

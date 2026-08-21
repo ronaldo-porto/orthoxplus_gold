@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1 research V4.3 Phase 1: independent MarketRegime / ScoreRegime.
+"""Strategy1 research V4.2 Strict: dust-aware actionable-fill execution.
 
 Requires Strategy1_Debug.py beside this file.
 
@@ -45,18 +45,6 @@ identified from the testnet research log:
     retry cooldown so repeated 1%-quality attempts do not dominate execution capacity.
 24. Normal MM and explicit maintenance quote pairs are forced maker-only inside their quote
     context; inventory-management exits retain the inherited risk behavior.
-25. V4.3 Phase 1 splits MarketRegime (book/cross-section) from ScoreRegime (Kappa/coverage).
-    Parent mean-spread STRESSED and UNEXPOSED_BY_PARENT no longer latch the market state.
-26. V4.3 Phase 2 records maker-quote lifecycle through fill/cancel/expiry, classifies fills
-    against the runtime min order size, and measures delayed maker markout off the request path.
-27. V4.3 Phase 3 learns a discrete fill-hazard at quote TTL with shrinkage and calibration.
-    The inherited fill estimator remains the live policy path unless explicitly enabled.
-28. V4.3 Phase 4 ranks books by Score-EV (TradingEV + Kappa completion - dust/inventory/latency)
-    using the runtime Kappa observation requirement. Hard safety still beats completion.
-29. V4.3 Phase 5 holds maker quotes through tiny price noise, adapts TTL inside hard bounds,
-    and allows experimental old-dust escape only when absolute exposure strictly falls.
-30. V4.3 Phase 6 optionally screens books with a cheap score, then runs full prediction only
-    on forced inventory/dust/Kappa/risk books plus a configurable candidate cap.
 
 The production Strategy1 parent remains untouched; this subclass intentionally changes the
 above research-policy and correctness paths while retaining Strategy1 signals and ranking.
@@ -84,54 +72,15 @@ from Strategy1 import (
     BookProfile,
     BookSelection,
     DirectionForecast,
-    FillProbabilityEstimate,
     InventorySnapshot,
     MarketRegime,
     RegimeParamSet,
 )
 from Strategy1_Debug import DebugReason, Strategy1_Debug
-from research_regime_v2 import (
-    DebounceState,
-    RegimeV2Thresholds,
-    classify_regime_v2,
-)
-from research_quote_lifecycle import (
-    QuoteLifecycleStore,
-    QuoteRecord,
-    actual_microprice,
-    classify_fill,
-    optional_queue_metrics,
-    sim_delta_ms,
-    ms_to_ns,
-    touch_distance,
-)
-from research_fill_hazard import (
-    FillHazardModel,
-    HazardFeatures,
-    HazardPrediction,
-    cal_bucket,
-)
-from research_score_ev import (
-    compute_score_ev,
-    required_observation_count,
-    scheduler_bucket_counts,
-    select_rank,
-)
-from research_quote_hysteresis import (
-    choose_ttl_ms,
-    dust_escape_allowed,
-    should_replace_quote,
-)
-from research_candidate_screen import (
-    ScreenBook,
-    ScreenResult,
-    cheap_book_score,
-    select_fast_candidates,
-)
 
 
 class Strategy1_Research(Strategy1_Debug):
-    RESEARCH_POLICY_VERSION = "dust_actionable_v4_3_screen"
+    RESEARCH_POLICY_VERSION = "dust_actionable_v4_2_strict"
     REASON_ALIAS = {
         "LOW_EXPECTED_ALPHA": "ALPHA",
         "ZERO_ORDER_SIZE": "SIZE_ZERO",
@@ -347,15 +296,11 @@ class Strategy1_Research(Strategy1_Debug):
 
         # V4.1 Strict: concentrate realized observations so more individual books
         # cross the validator's per-book minimum observation requirement.
-        # Do not hard-code 3: follow miner kappa_min_observations unless overridden.
         self.research_kappa_completion_enabled = self._as_bool(
             getattr(cfg, "research_kappa_completion_enabled", True)
         )
-        _runtime_kappa_min = getattr(self, "kappa_min_observations", None)
-        _cfg_target = getattr(cfg, "research_kappa_completion_target", None)
-        self.research_kappa_completion_target = required_observation_count(
-            kappa_min_observations=_runtime_kappa_min,
-            research_target=_cfg_target,
+        self.research_kappa_completion_target = max(
+            2, int(getattr(cfg, "research_kappa_completion_target", 3))
         )
         self.research_kappa_completion_rank_bonus = max(
             0.0, float(getattr(cfg, "research_kappa_completion_rank_bonus", 0.30))
@@ -475,175 +420,6 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_dust_compact_prior_strength = max(
             0.0, float(getattr(cfg, "research_dust_compact_prior_strength", 8.0))
         )
-
-        # V4.3 Phase 3: learn fill hazard; do not use it for live ranking by default.
-        self.research_enable_fill_hazard = self._as_bool(
-            getattr(cfg, "research_enable_fill_hazard", True)
-        )
-        self.research_use_fill_hazard_for_policy = self._as_bool(
-            getattr(cfg, "research_use_fill_hazard_for_policy", False)
-        )
-        self.research_fill_hazard_min_samples = max(
-            1, int(getattr(cfg, "research_fill_hazard_min_samples", 12))
-        )
-        self.research_fill_hazard_prior_strength = max(
-            0.0, float(getattr(cfg, "research_fill_hazard_prior_strength", 8.0))
-        )
-        self.research_fill_hazard_prior_any = max(
-            0.01, min(0.5, float(getattr(cfg, "research_fill_hazard_prior_any", 0.12)))
-        )
-
-        # V4.3 Phase 4: Score-EV ranking. Legacy _global_book_rank remains when off.
-        self.research_enable_score_ev = self._as_bool(
-            getattr(cfg, "research_enable_score_ev", True)
-        )
-        self.research_score_ev_min_trading = float(
-            getattr(cfg, "research_score_ev_min_trading", 0.0)
-        )
-        self.research_score_ev_one_away_weight = max(
-            0.0, float(getattr(cfg, "research_score_ev_one_away_weight", 0.18))
-        )
-        self.research_score_ev_two_away_weight = max(
-            0.0, float(getattr(cfg, "research_score_ev_two_away_weight", 0.06))
-        )
-        self.research_score_ev_new_book_weight = max(
-            0.0, float(getattr(cfg, "research_score_ev_new_book_weight", 0.0))
-        )
-        self.research_score_ev_dust_weight = max(
-            0.0, float(getattr(cfg, "research_score_ev_dust_weight", 0.25))
-        )
-        self.research_score_ev_fees_bps = max(
-            0.0, float(getattr(cfg, "research_score_ev_fees_bps", 0.5))
-        )
-        self.research_score_ev_min_fill_samples = max(
-            1, int(getattr(cfg, "research_score_ev_min_fill_samples", 8))
-        )
-        self.research_score_ev_min_markout_samples = max(
-            1, int(getattr(cfg, "research_score_ev_min_markout_samples", 8))
-        )
-
-        self.research_enable_quote_hysteresis = self._as_bool(
-            getattr(cfg, "research_enable_quote_hysteresis", True)
-        )
-        self.research_hysteresis_min_price_ticks = max(
-            0.25, float(getattr(cfg, "research_hysteresis_min_price_ticks", 1.0))
-        )
-        self.research_hysteresis_ev_threshold = max(
-            0.0, float(getattr(cfg, "research_hysteresis_ev_threshold", 0.04))
-        )
-        self.research_enable_adaptive_ttl = self._as_bool(
-            getattr(cfg, "research_enable_adaptive_ttl", True)
-        )
-        baseline_ttl_ms = sim_delta_ms(0, int(getattr(self, "mm_expiry_period", 500_000_000))) or 500.0
-        self.research_ttl_min_ms = max(
-            50.0, float(getattr(cfg, "research_ttl_min_ms", 200.0))
-        )
-        self.research_ttl_max_ms = max(
-            self.research_ttl_min_ms,
-            float(getattr(cfg, "research_ttl_max_ms", max(800.0, baseline_ttl_ms))),
-        )
-        self.research_enable_dust_escape = self._as_bool(
-            getattr(cfg, "research_enable_dust_escape", False)
-        )
-        self.research_dust_escape_min_age_ticks = max(
-            1, int(getattr(cfg, "research_dust_escape_min_age_ticks", 400))
-        )
-        self.research_dust_escape_cost_bps = max(
-            0.0, float(getattr(cfg, "research_dust_escape_cost_bps", 2.5))
-        )
-
-        self.research_enable_fast_candidate_screen = self._as_bool(
-            getattr(cfg, "research_enable_fast_candidate_screen", True)
-        )
-        self.research_candidate_count = max(
-            8, min(64, int(getattr(cfg, "research_candidate_count", 20)))
-        )
-
-        # V4.3 Phase 1: independent market vs score regime. Defaults preserve
-        # hard risk gates; they only stop the parent mean-spread STRESSED latch.
-        self.research_regime_debounce_ticks = max(
-            1, int(getattr(cfg, "research_regime_debounce_ticks", 3))
-        )
-        self.research_regime_stressed_ratio_enter = max(
-            0.05, min(0.95, float(getattr(cfg, "research_regime_stressed_ratio_enter", 0.35)))
-        )
-        self.research_regime_stressed_ratio_exit = max(
-            0.02,
-            min(
-                self.research_regime_stressed_ratio_enter,
-                float(getattr(cfg, "research_regime_stressed_ratio_exit", 0.25)),
-            ),
-        )
-        self.research_regime_toxic_ratio_enter = max(
-            self.research_regime_stressed_ratio_enter,
-            min(0.99, float(getattr(cfg, "research_regime_toxic_ratio_enter", 0.50))),
-        )
-        self.research_regime_toxic_ratio_exit = max(
-            self.research_regime_stressed_ratio_exit,
-            min(
-                self.research_regime_toxic_ratio_enter,
-                float(getattr(cfg, "research_regime_toxic_ratio_exit", 0.38)),
-            ),
-        )
-        self.research_regime_quiet_trade_rate = max(
-            0.0, float(getattr(cfg, "research_regime_quiet_trade_rate", 0.10))
-        )
-        self.research_regime_liquid_ratio_enter = max(
-            0.05, min(0.95, float(getattr(cfg, "research_regime_liquid_ratio_enter", 0.55)))
-        )
-        self.research_regime_trend_frac_enter = max(
-            0.20, min(0.90, float(getattr(cfg, "research_regime_trend_frac_enter", 0.45)))
-        )
-        self.research_regime_completion_pending_ratio = max(
-            0.05, min(0.90, float(getattr(cfg, "research_regime_completion_pending_ratio", 0.20)))
-        )
-        self._research_regime_thresholds = RegimeV2Thresholds(
-            stressed_ratio_enter=self.research_regime_stressed_ratio_enter,
-            stressed_ratio_exit=self.research_regime_stressed_ratio_exit,
-            toxic_ratio_enter=self.research_regime_toxic_ratio_enter,
-            toxic_ratio_exit=self.research_regime_toxic_ratio_exit,
-            quiet_trade_rate=self.research_regime_quiet_trade_rate,
-            liquid_ratio_enter=self.research_regime_liquid_ratio_enter,
-            liquid_ratio_exit=max(0.05, self.research_regime_liquid_ratio_enter - 0.10),
-            trend_frac_enter=self.research_regime_trend_frac_enter,
-            trend_frac_exit=max(0.15, self.research_regime_trend_frac_enter - 0.10),
-            debounce_ticks=self.research_regime_debounce_ticks,
-            coverage_inactive_ratio=float(
-                getattr(self, "max_inactive_books_ratio", 0.375) or 0.375
-            ),
-            completion_pending_ratio=self.research_regime_completion_pending_ratio,
-            completion_pending_exit=max(
-                0.02, self.research_regime_completion_pending_ratio - 0.08
-            ),
-        )
-        self._research_market_debounce = DebounceState("NORMAL", "NORMAL", 0)
-        self._research_score_debounce = DebounceState("NORMAL", "NORMAL", 0)
-        self._research_market_regime = "NORMAL"
-        self._research_score_regime = "NORMAL"
-        self._research_quote_store = QuoteLifecycleStore()
-        self._research_fill_hazard = FillHazardModel(
-            min_samples=self.research_fill_hazard_min_samples,
-            prior_strength=self.research_fill_hazard_prior_strength,
-            prior_any=self.research_fill_hazard_prior_any,
-        )
-        self._research_hazard_last: dict[int, dict[str, Any]] = {}
-        self._research_score_ev_last: dict[int, Any] = {}
-        self._research_markout_by_book: dict[int, dict[str, float]] = {}
-        self._research_hysteresis_holds = 0
-        self._research_hysteresis_replaces = 0
-        self._research_ttl_stale_skips = 0
-        self._research_dust_escape_attempts = 0
-        self._research_dust_escape_orders = 0
-        self._research_timing: dict[str, float | int] = {}
-        self._research_response_ms: list[float] = []
-        self._research_microprice_px: dict[int, float] = {}
-        self._research_book_micro: dict[int, dict[str, Any]] = {}
-        self._research_last_selection = None
-        self._research_last_predictions: dict[int, Any] = {}
-        self._research_markout_eval_ms = 0.0
-        self._research_quotes_registered = 0
-        self._research_fills_classified = 0
-        self._research_markouts_emitted = 0
 
         self.research_run_id = time.strftime("%Y%m%d_%H%M%S", time.localtime())
 
@@ -829,27 +605,6 @@ class Strategy1_Research(Strategy1_Debug):
             "dust_compact_max_cooldown_ticks": self.research_dust_compact_max_cooldown_ticks,
             "dust_compact_prior_fill": self.research_dust_compact_prior_fill,
             "dust_compact_prior_strength": self.research_dust_compact_prior_strength,
-            "regime_debounce_ticks": self.research_regime_debounce_ticks,
-            "regime_stressed_ratio_enter": self.research_regime_stressed_ratio_enter,
-            "regime_completion_pending_ratio": self.research_regime_completion_pending_ratio,
-            "quote_lifecycle": True,
-            "markout_horizons_ms": (100, 250, 500, 1000),
-            "enable_fill_hazard": self.research_enable_fill_hazard,
-            "use_fill_hazard_for_policy": self.research_use_fill_hazard_for_policy,
-            "fill_hazard_min_samples": self.research_fill_hazard_min_samples,
-            "fill_hazard_prior_any": self.research_fill_hazard_prior_any,
-            "enable_score_ev": self.research_enable_score_ev,
-            "score_ev_min_trading": self.research_score_ev_min_trading,
-            "score_ev_one_away_weight": self.research_score_ev_one_away_weight,
-            "required_observation_count": self._research_required_observation_count(),
-            "enable_quote_hysteresis": self.research_enable_quote_hysteresis,
-            "enable_adaptive_ttl": self.research_enable_adaptive_ttl,
-            "ttl_min_ms": self.research_ttl_min_ms,
-            "ttl_max_ms": self.research_ttl_max_ms,
-            "enable_dust_escape": self.research_enable_dust_escape,
-            "dust_escape_min_age_ticks": self.research_dust_escape_min_age_ticks,
-            "enable_fast_candidate_screen": self.research_enable_fast_candidate_screen,
-            "candidate_count": self.research_candidate_count,
             "rotate_jsonl": self.research_rotate_jsonl,
             "run_id": self.research_run_id,
             "output_file": self._research_output_file,
@@ -955,1154 +710,94 @@ class Strategy1_Research(Strategy1_Debug):
             1e-12,
         )
 
-    def handle(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
-        self._research_timing = {
-            "screen_all_books_ms": 0.0,
-            "full_predict_ms": 0.0,
-            "selection_ms": 0.0,
-            "build_orders_ms": 0.0,
-            "adaptive_or_research_ms": 0.0,
-            "candidate_count": 0,
-            "forced_inventory_count": 0,
-            "forced_kappa_count": 0,
-        }
-        started = time.perf_counter()
-        try:
-            self._research_evaluate_markouts(state)
-        except Exception:
-            pass
-        self._research_markout_eval_ms = (time.perf_counter() - started) * 1000.0
-        if not getattr(self, "debug_enabled", False):
-            try:
-                notices = (getattr(state, "notices", None) or {}).get(self.uid, []) or []
-                now = getattr(state, "timestamp", None)
-                for notice in notices:
-                    phase = type(notice).__name__.upper()
-                    if any(token in phase for token in ("CANCEL", "EXPIRE", "REJECT", "FAIL")):
-                        self._research_close_from_notice(notice, now, phase=phase)
-            except Exception:
-                pass
-        response = super().handle(state)
-        total_ms = (time.perf_counter() - started) * 1000.0
-        self._research_record_timing(state, response, total_ms)
-        return response
-
-    def respond(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
-        t0 = time.perf_counter()
-        response = super().respond(state)
-        self._research_timing["_respond_wall_ms"] = (time.perf_counter() - t0) * 1000.0
-        if not getattr(self, "debug_enabled", False):
-            try:
-                self._research_register_submitted_quotes(response, state)
-            except Exception:
-                pass
-        return response
-
-    def predict_direction(self, book_id: int, book: Book, timestamp: int):
-        prev_px = self._research_microprice_px.get(int(book_id))
-        forecast = super().predict_direction(book_id, book, timestamp)
-        try:
-            bid = book.bids[0].price if getattr(book, "bids", None) else None
-            ask = book.asks[0].price if getattr(book, "asks", None) else None
-            bq = book.bids[0].quantity if getattr(book, "bids", None) else None
-            aq = book.asks[0].quantity if getattr(book, "asks", None) else None
-            micro_px = actual_microprice(bid, ask, bq, aq)
-            if micro_px is not None:
-                self._research_microprice_px[int(book_id)] = float(micro_px)
-            deep = None
-            persist = None
-            try:
-                deep = float(self._compute_l2_l5_imbalance(book))
-            except Exception:
-                pass
-            try:
-                persist = float(self._trade_persistence(int(book_id)))
-            except Exception:
-                pass
-            self._research_book_micro[int(book_id)] = {
-                "microprice": micro_px,
-                "microprice_delta": (
-                    None if prev_px is None or micro_px is None
-                    else float(micro_px) - float(prev_px)
-                ),
-                "deep_imbalance": deep,
-                "trade_sign_persistence": persist,
-                "momentum": getattr(forecast, "momentum_m", None),
-                "trade_imbalance": getattr(forecast, "trade_imbalance", None),
-                "imbalance": getattr(forecast, "imbalance", None),
-            }
-        except Exception:
-            pass
-        return forecast
-
-    def _research_cheap_tob(self, book) -> tuple[float | None, float | None, int]:
-        bids = getattr(book, "bids", None) or []
-        asks = getattr(book, "asks", None) or []
-        if not bids or not asks:
-            return None, None, 0
-        try:
-            bid = float(bids[0].price)
-            ask = float(asks[0].price)
-            bq = float(getattr(bids[0], "quantity", 0.0) or 0.0)
-            aq = float(getattr(asks[0], "quantity", 0.0) or 0.0)
-        except (TypeError, ValueError, IndexError, AttributeError):
-            return None, None, 0
-        mid = 0.5 * (bid + ask)
-        spread_bps = ((ask - bid) / mid) * 10_000.0 if mid > 0.0 else None
-        denom = bq + aq
-        imb = ((bq - aq) / denom) if denom > 0.0 else 0.0
-        ntrade = 0
-        for event in getattr(book, "events", None) or []:
-            etype = getattr(event, "type", None)
-            if etype in ("t", "EVENT_TRADE", "ET"):
-                ntrade += 1
-        return spread_bps, imb, ntrade
-
-    def _research_abs_inventory(self, book_id: int) -> float:
-        try:
-            snap = self._position_tracker_snapshot(int(book_id))
-            return abs(float(getattr(snap, "net_qty", 0.0) or 0.0))
-        except Exception:
-            return 0.0
-
-    def _research_keep_cheap_state(self, book_id, book, timestamp) -> None:
-        """Keep momentum windows warm for books skipped by Stage 2."""
-        try:
-            mid = self._book_mid(book)
-        except Exception:
-            mid = None
-        if mid and mid > 0:
-            try:
-                self._update_direction_accuracy(book_id, mid)
-            except Exception:
-                pass
-            try:
-                self._update_momentum(book_id, timestamp, mid)
-            except Exception:
-                pass
-        try:
-            self._micro_prev[book_id] = self.microprice_signal(book)
-        except Exception:
-            pass
-
-    def _research_fast_screen(self, state) -> ScreenResult:
-        parked = getattr(self, "_research_parked_dust", {}) or {}
-        store = getattr(self, "_research_quotes", None)
-        min_size = float(getattr(self, "_research_exchange_min_order_size", 0.0) or 0.0)
-        max_inv = max(float(getattr(self, "max_inventory_base", 1.0) or 1.0), 1e-12)
-        toxic_spread = float(getattr(self, "_research_toxic_spread_bps", 40.0) or 40.0)
-        toxic_streak = int(getattr(self, "toxic_loss_streak", 4) or 4)
-        close_thr = float(getattr(self, "inventory_close_threshold", 0.95) or 0.95)
-        flat = self._execution_flat_epsilon()
-        mems = getattr(self, "book_memory", {}) or {}
-        score_ev_last = getattr(self, "_research_score_ev_last", {}) or {}
-        rows: list[ScreenBook] = []
-        for book_id, book in (getattr(state, "books", None) or {}).items():
-            bid = int(book_id)
-            qty = self._research_abs_inventory(bid)
-            has_inv = qty > flat or bid in (getattr(self, "_open_positions", {}) or {})
-            is_dust = bid in parked or (
-                has_inv and min_size > 0.0 and qty + 1e-12 < min_size
-            )
-            remaining = self._research_observations_remaining(bid)
-            mem = mems.get(bid)
-            if mem is None:
-                mem = mems.get(book_id)
-            spread_bps, imb, ntrade = self._research_cheap_tob(book)
-            live = False
-            if store is not None:
-                try:
-                    live = (
-                        store.live_for_book_side(bid, "buy") is not None
-                        or store.live_for_book_side(bid, "sell") is not None
-                    )
-                except Exception:
-                    live = False
-            hard = False
-            if (qty / max_inv) >= close_thr:
-                hard = True
-            if mem is not None and int(getattr(mem, "loss_streak", 0) or 0) >= toxic_streak:
-                hard = True
-            if spread_bps is not None and spread_bps >= toxic_spread:
-                hard = True
-            fill_rate = float(getattr(mem, "fill_rate", 0.0) or 0.0) if mem is not None else 0.0
-            spec = float(mem.specialization_score) if mem is not None else 0.0
-            last_alpha = float(getattr(mem, "last_expected_alpha", 0.0) or 0.0) if mem is not None else 0.0
-            ev = score_ev_last.get(bid)
-            if ev is not None:
-                last_alpha = max(last_alpha, float(getattr(ev, "final_score", 0.0) or 0.0))
-            rows.append(
-                ScreenBook(
-                    book_id=bid,
-                    has_inventory=has_inv,
-                    is_dust=bool(is_dust),
-                    observations_remaining=int(remaining),
-                    is_hard_risk=hard,
-                    has_live_quote=live,
-                    cheap_score=cheap_book_score(
-                        spread_bps=spread_bps,
-                        trade_events=ntrade,
-                        top_imbalance=imb,
-                        fill_rate=fill_rate,
-                        last_alpha=last_alpha,
-                        specialization=spec,
-                    ),
-                )
-            )
-        result = select_fast_candidates(rows, self.research_candidate_count)
-        self._research_last_screen = result
-        return result
-
-    def _predict_all_books(self, state: MarketSimulationStateUpdate):
-        books = getattr(state, "books", None) or {}
-        if not books:
-            self._last_predictions = {}
-            return {}
-        if not getattr(self, "research_enable_fast_candidate_screen", False):
-            started = time.perf_counter()
-            predictions = super()._predict_all_books(state)
-            self._research_timing["full_predict_ms"] = (time.perf_counter() - started) * 1000.0
-            self._research_timing["screen_all_books_ms"] = 0.0
-            self._research_timing["candidate_count"] = len(predictions)
-            self._research_timing["forced_inventory_count"] = 0
-            self._research_timing["forced_kappa_count"] = 0
-            return predictions
-        started = time.perf_counter()
-        screen = self._research_fast_screen(state)
-        self._research_timing["screen_all_books_ms"] = (time.perf_counter() - started) * 1000.0
-        selected = {int(bid) for bid in screen.selected}
-        started = time.perf_counter()
-        predictions = {}
-        timestamp = getattr(state, "timestamp", 0)
-        for book_id, book in books.items():
-            if int(book_id) in selected:
-                predictions[book_id] = self.predict_direction(book_id, book, timestamp)
-            else:
-                self._research_keep_cheap_state(book_id, book, timestamp)
-        self._last_predictions = predictions
-        self._research_timing["full_predict_ms"] = (time.perf_counter() - started) * 1000.0
-        self._research_timing["candidate_count"] = len(screen.selected)
-        self._research_timing["forced_inventory_count"] = len(screen.forced_inventory)
-        self._research_timing["forced_kappa_count"] = len(screen.forced_kappa)
-        return predictions
-
-    def select_books_for_trading(self, state, predictions):
-        started = time.perf_counter()
-        selection = super().select_books_for_trading(state, predictions)
-        if getattr(self, "research_enable_fast_candidate_screen", False):
-            screen = getattr(self, "_research_last_screen", None)
-            allowed = {int(bid) for bid in getattr(screen, "selected", []) or []}
-            if allowed:
-                selection.alpha_books = [
-                    bid for bid in selection.alpha_books if int(bid) in allowed
-                ]
-                selection.maintenance_books = [
-                    bid for bid in selection.maintenance_books if int(bid) in allowed
-                ]
-        self._research_timing["selection_ms"] = (time.perf_counter() - started) * 1000.0
-        return selection
-
-    def _research_record_timing(self, state, response, total_ms: float) -> None:
-        timing = getattr(self, "_research_timing", {}) or {}
-        screen_ms = float(timing.get("screen_all_books_ms", 0.0) or 0.0)
-        predict_ms = float(timing.get("full_predict_ms", 0.0) or 0.0)
-        select_ms = float(timing.get("selection_ms", 0.0) or 0.0)
-        build_ms = float(timing.get("build_orders_ms", 0.0) or 0.0)
-        respond_wall = float(timing.get("_respond_wall_ms", 0.0) or 0.0)
-        residual = max(0.0, respond_wall - (screen_ms + predict_ms + select_ms + build_ms))
-        adaptive_ms = float(getattr(self, "_research_markout_eval_ms", 0.0) or 0.0) + residual
-        samples = getattr(self, "_research_response_ms", None)
-        if samples is None:
-            samples = []
-            self._research_response_ms = samples
-        samples.append(float(total_ms))
-        if len(samples) > 1024:
-            del samples[:-1024]
-        payload = {
-            "tick": getattr(self, "_tick", None),
-            "timestamp": getattr(state, "timestamp", None),
-            "screen_all_books_ms": round(screen_ms, 4),
-            "full_predict_ms": round(predict_ms, 4),
-            "selection_ms": round(select_ms, 4),
-            "build_orders_ms": round(build_ms, 4),
-            "adaptive_or_research_ms": round(adaptive_ms, 4),
-            "total_response_ms": round(float(total_ms), 4),
-            "candidate_count": int(timing.get("candidate_count", 0) or 0),
-            "forced_inventory_count": int(timing.get("forced_inventory_count", 0) or 0),
-            "forced_kappa_count": int(timing.get("forced_kappa_count", 0) or 0),
-            "mean_response_ms": round(sum(samples) / max(len(samples), 1), 4),
-            "p50_response_ms": round(self._research_pct(samples, 0.50), 4),
-            "p95_response_ms": round(self._research_pct(samples, 0.95), 4),
-            "p99_response_ms": round(self._research_pct(samples, 0.99), 4),
-            "worst_response_ms": round(max(samples), 4),
-            "instructions": len(getattr(response, "instructions", []) or []),
-        }
-        try:
-            self._emit("RESPOND_TIMING", force=True, **payload)
-        except Exception:
-            pass
-
-    @staticmethod
-    def _research_pct(xs: list[float], p: float) -> float:
-        if not xs:
-            return 0.0
-        ordered = sorted(float(x) for x in xs)
-        k = (len(ordered) - 1) * max(0.0, min(1.0, float(p)))
-        lo = int(k)
-        hi = min(len(ordered) - 1, lo + 1)
-        if lo == hi:
-            return ordered[lo]
-        w = k - lo
-        return ordered[lo] * (1.0 - w) + ordered[hi] * w
-
-    def _research_tick_size(self, state) -> float | None:
-        try:
-            decimals = int(getattr(getattr(state, "config", None), "priceDecimals", 0) or 0)
-            return 10.0 ** (-decimals) if decimals >= 0 else None
-        except (TypeError, ValueError):
-            return None
-
-    def _research_instruction_is_maker(self, instruction) -> bool:
-        flag = self._get(instruction, "postOnly", "post_only")
-        if flag is True or flag == 1:
-            return True
-        if isinstance(flag, str) and flag.strip().lower() in {"true", "1", "yes"}:
-            return True
-        return False
-
-    def _research_instruction_side(self, instruction) -> str:
-        raw = self._get(instruction, "direction", "side")
-        token = str(getattr(raw, "name", raw)).upper()
-        if token in {"0", "BUY", "BID", "ORDERDIRECTION.BUY"}:
-            return "buy"
-        return "sell"
-
-    def _research_ttl_ms(self, instruction) -> float | None:
-        expiry = self._get(
-            instruction, "expiryPeriod", "expiry_period", "expiryPeriodNs",
-        )
-        if expiry is None:
-            expiry = getattr(self, "mm_expiry_period", None)
-        try:
-            return sim_delta_ms(0, int(expiry))
-        except (TypeError, ValueError):
-            return None
-
-    def _research_queue_metrics(self, book, side: str, quote_price: float | None):
-        if book is None or quote_price is None:
-            return {}
-        levels = getattr(book, "bids", None) if side == "buy" else getattr(book, "asks", None)
-        if not levels:
-            return {}
-        target = float(quote_price)
-        for level in list(levels)[:8]:
-            try:
-                price = float(getattr(level, "price"))
-            except (TypeError, ValueError, AttributeError):
-                continue
-            if abs(price - target) > 1e-12:
-                continue
-            orders = getattr(level, "orders", None)
-            order_maps = None
-            if orders:
-                order_maps = []
-                for order in orders:
-                    try:
-                        order_maps.append(
-                            {"quantity": float(getattr(order, "quantity", 0.0) or 0.0)}
-                        )
-                    except (TypeError, ValueError, AttributeError):
-                        continue
-            qty = None
-            try:
-                qty = float(getattr(level, "quantity"))
-            except (TypeError, ValueError, AttributeError):
-                qty = None
-            return optional_queue_metrics(level_quantity=qty, orders=order_maps)
-        return {}
-
-    def _research_register_submitted_quotes(self, response, state) -> None:
-        store = getattr(self, "_research_quote_store", None)
-        if store is None:
-            return
-        now = getattr(state, "timestamp", None)
-        tick_size = self._research_tick_size(state)
-        books = getattr(state, "books", None) or {}
-        selection = getattr(self, "_research_last_selection", None)
-        profiles = {
-            int(getattr(p, "book_id")): p
-            for p in list(getattr(selection, "profiles", None) or [])
-            if getattr(p, "book_id", None) is not None
-        }
-        for instruction in getattr(response, "instructions", []) or []:
-            if not self._research_instruction_is_maker(instruction):
-                continue
-            book_id = self._get(instruction, "bookId", "book_id")
-            if book_id is None:
-                continue
-            try:
-                book_id = int(book_id)
-            except (TypeError, ValueError):
-                continue
-            side = self._research_instruction_side(instruction)
-            client_id = self._get(instruction, "clientOrderId", "client_order_id")
-            try:
-                client_id = int(client_id) if client_id is not None else None
-            except (TypeError, ValueError):
-                client_id = None
-            quote_price = self._get(instruction, "price", "limitPrice", "limit_price")
-            quantity = self._get(instruction, "quantity", "qty", "size")
-            try:
-                quote_price = float(quote_price) if quote_price is not None else None
-            except (TypeError, ValueError):
-                quote_price = None
-            try:
-                quantity = float(quantity) if quantity is not None else None
-            except (TypeError, ValueError):
-                quantity = None
-            book = books.get(book_id) if isinstance(books, dict) else None
-            bid = ask = mid = spread = spread_bps = None
-            if book is not None and getattr(book, "bids", None) and getattr(book, "asks", None):
-                bid = float(book.bids[0].price)
-                ask = float(book.asks[0].price)
-                mid = 0.5 * (bid + ask)
-                spread = ask - bid
-                if mid > 0.0:
-                    spread_bps = spread / mid * 10_000.0
-            dist_ticks, dist_bps = touch_distance(
-                side, quote_price or 0.0, bid, ask, mid, tick_size,
-            ) if quote_price is not None else (None, None)
-            profile = profiles.get(book_id)
-            signals = self._research_book_micro.get(book_id) or {}
-            decision = (
-                self._book_record(book_id) if getattr(self, "debug_enabled", False) else {}
-            )
-            predicted = None
-            if side == "buy":
-                predicted = decision.get("fill_buy")
-            elif side == "sell":
-                predicted = decision.get("fill_sell")
-            haz_pack = (getattr(self, "_research_hazard_last", {}) or {}).get(int(book_id), {})
-            haz_pred = haz_pack.get(side)
-            old_est = haz_pack.get("old")
-            if old_est is not None:
-                predicted = getattr(old_est, side, predicted)
-            inventory_before = None
-            try:
-                inventory_before = float(self._position_tracker_snapshot(book_id).net_qty)
-            except Exception:
-                inv = decision.get("inventory") or {}
-                inventory_before = inv.get("net_base")
-            queue = self._research_queue_metrics(book, side, quote_price)
-            ttl_ms = self._research_ttl_ms(instruction)
-            feat = HazardFeatures.from_snapshot(
-                side=side,
-                distance_from_touch_bps=dist_bps,
-                spread_bps=spread_bps,
-                volatility=(
-                    getattr(profile, "volatility", None) if profile is not None else None
-                ),
-                trade_rate=(
-                    getattr(profile, "trade_rate", None) if profile is not None else None
-                ),
-                imbalance=(
-                    getattr(profile, "imbalance", None) if profile is not None else
-                    signals.get("imbalance")
-                ),
-                market_regime=getattr(self, "_research_market_regime", None),
-                ttl_ms=ttl_ms,
-            )
-            if haz_pred is None and getattr(self, "research_enable_fill_hazard", False):
-                haz_pred = self._research_fill_hazard.predict(feat)
-            record = QuoteRecord(
-                quote_id=store.next_quote_id(),
-                client_id=client_id,
-                book=book_id,
-                side=side,
-                decision_ts=now if now is None else int(now),
-                submit_ts=now if now is None else int(now),
-                requested_quantity=quantity,
-                remaining_quantity=quantity,
-                quote_price=quote_price,
-                configured_ttl_ms=ttl_ms,
-                predicted_fill_probability=(
-                    float(predicted) if predicted is not None else None
-                ),
-                predicted_any_fill_probability=(
-                    None if haz_pred is None else float(haz_pred.any_fill)
-                ),
-                predicted_actionable_fill_probability=(
-                    None if haz_pred is None else float(haz_pred.actionable_fill)
-                ),
-                predicted_dust_probability=(
-                    None if haz_pred is None else float(haz_pred.dust)
-                ),
-                hazard_source=None if haz_pred is None else str(haz_pred.source),
-                hazard_features={
-                    "side": feat.side,
-                    "dist_bucket": feat.dist_bucket,
-                    "spread_bucket": feat.spread_bucket,
-                    "vol_bucket": feat.vol_bucket,
-                    "trade_bucket": feat.trade_bucket,
-                    "imb_bucket": feat.imb_bucket,
-                    "regime_group": feat.regime_group,
-                    "ttl_bucket": feat.ttl_bucket,
-                    "ttl_ms": feat.ttl_ms,
-                },
-                market_regime=getattr(self, "_research_market_regime", None),
-                score_regime=getattr(self, "_research_score_regime", None),
-                book_archetype=decision.get("archetype"),
-                snapshot={
-                    "mid": mid,
-                    "microprice": signals.get("microprice"),
-                    "microprice_delta": signals.get("microprice_delta"),
-                    "best_bid": bid,
-                    "best_ask": ask,
-                    "spread": spread,
-                    "spread_bps": spread_bps,
-                    "distance_from_touch_ticks": dist_ticks,
-                    "distance_from_touch_bps": dist_bps,
-                    "volatility": (
-                        getattr(profile, "volatility", None) if profile is not None else None
-                    ),
-                    "trade_rate": (
-                        getattr(profile, "trade_rate", None) if profile is not None else None
-                    ),
-                    "imbalance": (
-                        getattr(profile, "imbalance", None) if profile is not None else
-                        signals.get("imbalance")
-                    ),
-                    "deep_imbalance": signals.get("deep_imbalance"),
-                    "momentum": signals.get("momentum"),
-                    "trade_imbalance": signals.get("trade_imbalance"),
-                    "trade_sign_persistence": signals.get("trade_sign_persistence"),
-                    "inventory_before": inventory_before,
-                    "kappa_observation_count_before": int(
-                        self._research_realized_observations_by_book.get(book_id, 0)
-                    ),
-                    "alpha": (
-                        None if decision.get("signal") is None
-                        else float(decision.get("signal"))
-                    ),
-                    "quote_ev": (
-                        None if (getattr(self, "_research_score_ev_last", {}) or {}).get(int(book_id)) is None
-                        else getattr(
-                            self._research_score_ev_last[int(book_id)], "trading_ev", None
-                        )
-                    ),
-                    "inventory_util": (
-                        None if inventory_before is None
-                        else abs(float(inventory_before))
-                        / max(float(getattr(self, "max_inventory_base", 1.0) or 1.0), 1e-9)
-                    ),
-                    "toxic": str(getattr(self, "_research_market_regime", "")).upper() in {"TOXIC"},
-                    **queue,
-                },
-            )
-            store.register_quote(record)
-            replaced = getattr(store, "last_replaced", None)
-            if replaced is not None:
-                self._research_observe_quote_end(
-                    replaced, filled=False, timestamp=record.submit_ts, reason="REPLACE",
-                )
-            self._research_quotes_registered += 1
-            payload = {
-                "quote_id": record.quote_id,
-                "client_id": record.client_id,
-                "book": record.book,
-                "side": record.side,
-                "decision_timestamp": record.decision_ts,
-                "submit_timestamp": record.submit_ts,
-                "cancel_timestamp": None,
-                "fill_timestamp": None,
-                "quote_price": record.quote_price,
-                "requested_quantity": record.requested_quantity,
-                "filled_quantity": 0.0,
-                "remaining_quantity": record.remaining_quantity,
-                "quote_age_ms": 0.0,
-                "configured_ttl_ms": record.configured_ttl_ms,
-                "predicted_fill_probability": record.predicted_fill_probability,
-                "predicted_any_fill_probability": record.predicted_any_fill_probability,
-                "predicted_actionable_fill_probability": record.predicted_actionable_fill_probability,
-                "predicted_dust_probability": record.predicted_dust_probability,
-                "hazard_source": record.hazard_source,
-                "market_regime": record.market_regime,
-                "score_regime": record.score_regime,
-                "book_archetype": record.book_archetype,
-                **record.snapshot,
-            }
-            self._emit("QUOTE", force=True, tick=getattr(self, "_tick", None), **payload)
-
-    def _research_close_from_notice(self, notice, timestamp, phase: str | None = None) -> None:
-        store = getattr(self, "_research_quote_store", None)
-        if store is None:
-            return
-        book_id = self._get(notice, "bookId", "book_id")
-        client_id = self._get(notice, "clientOrderId", "client_order_id")
-        if book_id is None:
-            return
-        try:
-            book_id = int(book_id)
-        except (TypeError, ValueError):
-            return
-        try:
-            client_id = int(client_id) if client_id is not None else None
-        except (TypeError, ValueError):
-            client_id = None
-        record = store.lookup(book_id, client_id)
-        if record is None or not record.open:
-            return
-        ts = timestamp if timestamp is None else int(timestamp)
-        store.close_quote(record, cancel_ts=ts)
-        token = str(phase or "").upper()
-        reason = "EXPIRE" if "EXPIRE" in token else "CANCEL"
-        self._research_observe_quote_end(
-            record, filled=False, timestamp=ts, reason=reason,
-        )
-
-    def _research_observe_quote_end(
-        self,
-        record: QuoteRecord,
-        *,
-        filled: bool,
-        timestamp: int | None,
-        reason: str,
-        fill_class: str | None = None,
-    ) -> None:
-        if not getattr(self, "research_enable_fill_hazard", False):
-            return
-        if getattr(record, "hazard_closed", False):
-            return
-        if filled is False and record.fill_ts is not None:
-            return
-        stored = getattr(record, "hazard_features", None) or {}
-        try:
-            feat = HazardFeatures(
-                side=str(stored.get("side") or record.side or "buy"),
-                dist_bucket=int(stored.get("dist_bucket", 1)),
-                spread_bucket=int(stored.get("spread_bucket", 1)),
-                vol_bucket=int(stored.get("vol_bucket", 1)),
-                trade_bucket=int(stored.get("trade_bucket", 1)),
-                imb_bucket=int(stored.get("imb_bucket", 1)),
-                regime_group=str(stored.get("regime_group") or "NORMAL"),
-                ttl_bucket=int(stored.get("ttl_bucket", 1)),
-                ttl_ms=float(stored.get("ttl_ms") or record.configured_ttl_ms or 500.0),
-            )
-        except Exception:
-            feat = HazardFeatures.from_snapshot(
-                side=record.side,
-                distance_from_touch_bps=(record.snapshot or {}).get("distance_from_touch_bps"),
-                spread_bps=(record.snapshot or {}).get("spread_bps"),
-                volatility=(record.snapshot or {}).get("volatility"),
-                trade_rate=(record.snapshot or {}).get("trade_rate"),
-                imbalance=(record.snapshot or {}).get("imbalance"),
-                market_regime=record.market_regime,
-                ttl_ms=record.configured_ttl_ms,
-            )
-        age_ms = sim_delta_ms(record.submit_ts, timestamp)
-        if age_ms is None:
-            age_ms = 0.0
-        pred = None
-        if record.predicted_any_fill_probability is not None:
-            pred = HazardPrediction(
-                any_fill=float(record.predicted_any_fill_probability),
-                actionable_fill=float(record.predicted_actionable_fill_probability or 0.0),
-                dust=float(record.predicted_dust_probability or 0.0),
-                source=str(record.hazard_source or "fallback"),
-                usable=True,
-                n_at_risk=0,
-                ttl_ms=feat.ttl_ms,
-            )
-        self._research_fill_hazard.observe(
-            feat,
-            age_ms=float(age_ms),
-            filled=bool(filled),
-            fill_class=fill_class,
-            predicted=pred,
-        )
-        record.hazard_closed = True
-        if pred is not None:
-            try:
-                self._research_emit_fill_cal(pred, feat.side)
-            except Exception:
-                pass
-
-    def _research_emit_fill_cal(self, predicted: HazardPrediction, side: str) -> None:
-        model = self._research_fill_hazard
-        overall = model.brier_overall()
-        mapping = (
-            ("ANY", predicted.any_fill),
-            ("ACTIONABLE", predicted.actionable_fill),
-            ("DUST", predicted.dust),
-        )
-        for kind, p in mapping:
-            bucket = cal_bucket(p)
-            snap = model.calibration.get((kind, str(side).upper(), bucket))
-            if snap is None or snap.sample_count <= 0:
-                continue
-            row = snap.snapshot()
-            self._emit(
-                "FILL_CAL",
-                force=True,
-                tick=getattr(self, "_tick", None),
-                kind=kind,
-                side=str(side).upper(),
-                bucket=bucket,
-                predicted_mean=row["predicted_mean"],
-                observed_rate=row["observed_rate"],
-                sample_count=row["sample_count"],
-                brier_component=row["brier_component"],
-                brier_overall=overall.get(kind),
-                observations=model.observations,
-                events=model.events,
-                censored=model.censored,
-            )
-
-    def _research_on_own_fill(
-        self,
-        *,
-        event,
-        book_id: int,
-        before: float,
-        after: float,
-        kappa_before: int,
-        kappa_after: int,
-        is_maker: bool,
-    ) -> None:
-        store = getattr(self, "_research_quote_store", None)
-        if store is None:
-            return
-        client_id = getattr(event, "clientOrderId", None)
-        try:
-            client_id = int(client_id) if client_id is not None else None
-        except (TypeError, ValueError):
-            client_id = None
-        event_side = getattr(event, "side", None)
-        if is_maker:
-            side = "buy" if event_side == 1 else "sell"
-        else:
-            side = "buy" if event_side == 0 else "sell"
-        record = store.lookup(book_id, client_id)
-        fill_qty = abs(float(getattr(event, "quantity", 0.0) or 0.0))
-        fill_price = float(getattr(event, "price", 0.0) or 0.0)
-        fill_ts = getattr(event, "timestamp", None)
-        fill_ts = None if fill_ts is None else int(fill_ts)
-        eps = self._execution_flat_epsilon()
-        min_size = max(0.0, float(self._research_exchange_min_order_size))
-        requested = record.requested_quantity if record is not None else None
-        filled_cum = fill_qty
-        quote_id = None
-        remaining = None
-        quote_age_ms = None
-        snap = {}
-        if record is not None:
-            quote_id = record.quote_id
-            filled_cum = store.apply_fill(
-                record, fill_qty=fill_qty, fill_ts=fill_ts, flat_eps=eps,
-            )
-            requested = record.requested_quantity
-            remaining = record.remaining_quantity
-            quote_age_ms = sim_delta_ms(record.submit_ts, fill_ts)
-            snap = dict(record.snapshot)
-            side = record.side or side
-        fill_class = classify_fill(
-            inventory_before=before,
-            inventory_after=after,
-            fill_quantity=fill_qty,
-            requested_quantity=requested,
-            filled_quantity=filled_cum,
-            min_order_size=min_size,
-            flat_eps=eps,
-        )
-        self._research_fills_classified += 1
-        fee = None
-        try:
-            fee = float(event.makerFee if is_maker else event.takerFee)
-        except Exception:
-            fee = None
-        payload = {
-            "quote_id": quote_id,
-            "client_id": client_id,
-            "book": book_id,
-            "side": side,
-            "decision_timestamp": None if record is None else record.decision_ts,
-            "submit_timestamp": None if record is None else record.submit_ts,
-            "cancel_timestamp": None if record is None else record.cancel_ts,
-            "fill_timestamp": fill_ts,
-            "mid": snap.get("mid"),
-            "microprice": snap.get("microprice"),
-            "microprice_delta": snap.get("microprice_delta"),
-            "best_bid": snap.get("best_bid"),
-            "best_ask": snap.get("best_ask"),
-            "spread": snap.get("spread"),
-            "spread_bps": snap.get("spread_bps"),
-            "quote_price": None if record is None else record.quote_price,
-            "distance_from_touch_ticks": snap.get("distance_from_touch_ticks"),
-            "distance_from_touch_bps": snap.get("distance_from_touch_bps"),
-            "volatility": snap.get("volatility"),
-            "trade_rate": snap.get("trade_rate"),
-            "imbalance": snap.get("imbalance"),
-            "deep_imbalance": snap.get("deep_imbalance"),
-            "momentum": snap.get("momentum"),
-            "trade_imbalance": snap.get("trade_imbalance"),
-            "trade_sign_persistence": snap.get("trade_sign_persistence"),
-            "inventory_before": before,
-            "inventory_after": after,
-            "requested_quantity": requested,
-            "filled_quantity": filled_cum,
-            "remaining_quantity": remaining,
-            "quote_age_ms": quote_age_ms,
-            "configured_ttl_ms": None if record is None else record.configured_ttl_ms,
-            "predicted_fill_probability": (
-                None if record is None else record.predicted_fill_probability
-            ),
-            "predicted_any_fill_probability": (
-                None if record is None else record.predicted_any_fill_probability
-            ),
-            "predicted_actionable_fill_probability": (
-                None if record is None else record.predicted_actionable_fill_probability
-            ),
-            "predicted_dust_probability": (
-                None if record is None else record.predicted_dust_probability
-            ),
-            "hazard_source": None if record is None else record.hazard_source,
-            "market_regime": None if record is None else record.market_regime,
-            "score_regime": None if record is None else record.score_regime,
-            "book_archetype": None if record is None else record.book_archetype,
-            "kappa_observation_count_before": kappa_before,
-            "kappa_observation_count_after": kappa_after,
-            "maker": bool(is_maker),
-            "taker": (not bool(is_maker)),
-            "fee": fee,
-            "fill_class": fill_class,
-            "fill_price": fill_price,
-            "min_order_size": min_size,
-        }
-        if "queue_ahead" in snap:
-            payload["queue_ahead"] = snap["queue_ahead"]
-        if "queue_depth_at_price" in snap:
-            payload["queue_depth_at_price"] = snap["queue_depth_at_price"]
-        self._emit("FILL", force=True, tick=getattr(self, "_tick", None), **payload)
-
-        if is_maker and record is not None:
-            self._research_observe_quote_end(
-                record,
-                filled=True,
-                timestamp=fill_ts,
-                reason="FILL",
-                fill_class=str(fill_class),
-            )
-
-        if record is not None and (
-            remaining is not None and remaining <= eps
-            or fill_class in {"FLAT", "FULL", "CROSS_DUST"}
-        ):
-            store.close_quote(record, fill_ts=fill_ts)
-
-        if is_maker and fill_ts is not None and fill_price > 0.0:
-            dropped = store.schedule_markouts(
-                quote_id=int(quote_id if quote_id is not None else store.next_quote_id()),
-                book=int(book_id),
-                side=str(side),
-                fill_price=float(fill_price),
-                fill_ts=int(fill_ts),
-            )
-            for row in dropped:
-                self._research_markouts_emitted += 1
-                self._emit(
-                    "MARKOUT",
-                    force=True,
-                    tick=getattr(self, "_tick", None),
-                    quote_id=row.quote_id,
-                    book=row.book,
-                    side=row.side,
-                    horizon_ms=row.horizon_ms,
-                    fill_price=row.fill_price,
-                    future_mid=row.future_mid,
-                    markout_bps=row.markout_bps,
-                    status=row.status,
-                )
-
-    def _research_evaluate_markouts(self, state) -> None:
-        store = getattr(self, "_research_quote_store", None)
-        if store is None or not store.pending:
-            return
-        needed = {item.book for item in store.pending}
-        books = getattr(state, "books", None) or {}
-        mids: dict[int, float] = {}
-        for book_id in needed:
-            book = books.get(book_id) if isinstance(books, dict) else None
-            if book is None or not getattr(book, "bids", None) or not getattr(book, "asks", None):
-                continue
-            mid = 0.5 * (float(book.bids[0].price) + float(book.asks[0].price))
-            if mid > 0.0:
-                mids[int(book_id)] = mid
-        now = int(getattr(state, "timestamp", 0) or 0)
-        for row in store.evaluate(now_ts=now, mids=mids):
-            self._research_markouts_emitted += 1
-            if row.status == "OK" and row.markout_bps is not None:
-                stats = self._research_markout_by_book.setdefault(
-                    int(row.book), {"n": 0.0, "sum": 0.0}
-                )
-                stats["n"] = float(stats.get("n", 0.0)) + 1.0
-                stats["sum"] = float(stats.get("sum", 0.0)) + float(row.markout_bps)
-            self._emit(
-                "MARKOUT",
-                force=True,
-                tick=getattr(self, "_tick", None),
-                quote_id=row.quote_id,
-                book=row.book,
-                side=row.side,
-                horizon_ms=row.horizon_ms,
-                fill_price=row.fill_price,
-                future_mid=row.future_mid,
-                markout_bps=row.markout_bps,
-                status=row.status,
-            )
-
-    def _log_submitted_instructions(self, response, state) -> None:
-        super()._log_submitted_instructions(response, state)
-        try:
-            self._research_register_submitted_quotes(response, state)
-        except Exception:
-            pass
-
-    def _log_notices(self, state, tick: int) -> None:
-        super()._log_notices(state, tick)
-        try:
-            notices = (getattr(state, "notices", None) or {}).get(self.uid, []) or []
-            now = getattr(state, "timestamp", None)
-            for notice in notices:
-                phase = type(notice).__name__.upper()
-                if any(token in phase for token in ("CANCEL", "EXPIRE", "REJECT", "FAIL")):
-                    self._research_close_from_notice(notice, now, phase=phase)
-        except Exception:
-            pass
-
-    def _research_regime_snapshot(
-        self,
-        profiles: list,
-        predictions,
-        selection,
-    ) -> dict[str, Any]:
-        """One pass over already-built profiles. Does not rescan L2 books."""
-        profile_list = list(profiles or [])
-        n = len(profile_list)
-        spreads: list[float] = []
-        vols: list[float] = []
-        rates: list[float] = []
-        imbalances: list[float] = []
-        inactive = 0
-        red = 0
-        green = 0
-        liquid_count = 0
-        stressed_count = 0
-        low_trade_count = 0
-        dead_rate = float(getattr(self, "archetype_dead_trade_rate", 0.0) or 0.0)
-        stress_cut = float(self._research_stress_spread_bps)
-        for profile in profile_list:
-            tier = str(getattr(profile, "tier", "")).upper()
-            if tier == "INACTIVE":
-                inactive += 1
-            elif tier == "RED":
-                red += 1
-            elif tier == "GREEN":
-                green += 1
-            spread = self._profile_float(profile, "spread_bps")
-            vol = self._profile_float(profile, "volatility")
-            rate = self._profile_float(profile, "trade_rate")
-            imb = self._profile_float(profile, "imbalance")
-            if spread is not None:
-                spreads.append(spread)
-                if spread >= stress_cut:
-                    stressed_count += 1
-            if vol is not None:
-                vols.append(vol)
-            if rate is not None:
-                rates.append(rate)
-                if rate < dead_rate:
-                    low_trade_count += 1
-            if imb is not None:
-                imbalances.append(abs(imb))
-            spread_ok = (spread or 0.0) < stress_cut
-            rate_ok = (rate or 0.0) >= dead_rate
-            if spread_ok and rate_ok:
-                liquid_count += 1
-
-        pred_values = list(predictions.values()) if isinstance(predictions, dict) else []
-        pred_n = max(len(pred_values), 1)
-        up = sum(1 for p in pred_values if str(getattr(p, "direction", "")).upper() == "UP")
-        down = sum(1 for p in pred_values if str(getattr(p, "direction", "")).upper() == "DOWN")
-        hold = sum(1 for p in pred_values if str(getattr(p, "direction", "")).upper() == "HOLD")
-        micro: list[float] = []
-        scores: list[float] = []
-        for pred in pred_values:
-            log_ret = getattr(pred, "log_return", None)
-            mom = getattr(pred, "momentum_m", None)
-            if log_ret is not None:
-                try:
-                    micro.append(abs(float(log_ret)))
-                except (TypeError, ValueError):
-                    pass
-            elif mom is not None:
-                try:
-                    micro.append(abs(float(mom)))
-                except (TypeError, ValueError):
-                    pass
-            try:
-                scores.append(abs(float(getattr(pred, "score", 0.0) or 0.0)))
-            except (TypeError, ValueError):
-                pass
-
-        target = int(getattr(self, "research_kappa_completion_target", 3))
-        obs_map = getattr(self, "_research_realized_observations_by_book", {}) or {}
-        pending = 0
-        if getattr(self, "research_kappa_completion_enabled", True):
-            for profile in profile_list:
-                try:
-                    bid = int(getattr(profile, "book_id"))
-                except (TypeError, ValueError):
-                    continue
-                nobs = int(obs_map.get(bid, 0) or 0)
-                if 0 < nobs < target:
-                    pending += 1
-
-        denom = max(n, 1)
-        return {
-            "book_count": n,
-            "active": max(0, n - inactive),
-            "inactive": inactive,
-            "inactive_frac": inactive / denom,
-            "red_frac": red / denom,
-            "green_frac": green / denom,
-            "spread_med": self._percentile(spreads, 0.50),
-            "spread_p90": self._percentile(spreads, 0.90),
-            "spread_max": max(spreads) if spreads else None,
-            "vol_med": self._percentile(vols, 0.50),
-            "vol_p90": self._percentile(vols, 0.90),
-            "trade_rate_med": self._percentile(rates, 0.50),
-            "trade_rate_p90": self._percentile(rates, 0.90),
-            "imbalance_med": self._percentile(imbalances, 0.50),
-            "micro_vel_med": self._percentile(micro, 0.50),
-            "liquid_ratio": liquid_count / denom,
-            "stressed_ratio": stressed_count / denom,
-            "low_trade_ratio": low_trade_count / denom,
-            "trend_up_ratio": up / pred_n,
-            "trend_down_ratio": down / pred_n,
-            "hold_frac": hold / pred_n,
-            "up_frac": up / pred_n,
-            "down_frac": down / pred_n,
-            "mean_abs_score": (sum(scores) / len(scores)) if scores else 0.0,
-            "mean_volatility": (sum(vols) / len(vols)) if vols else 0.0,
-            "mean_trade_rate": (sum(rates) / len(rates)) if rates else 0.0,
-            "mean_spread_bps": (sum(spreads) / len(spreads)) if spreads else None,
-            "mean_imbalance": (
-                sum(
-                    float(getattr(p, "imbalance", 0.0) or 0.0)
-                    for p in profile_list
-                ) / denom
-            ),
-            "pending_kappa_frac": pending / denom,
-            "stress_spread_bps": stress_cut,
-            "toxic_spread_bps": float(self._research_toxic_spread_bps),
-            "tier_counts": dict(getattr(selection, "tier_counts", {}) or {}),
-        }
-
-    def _research_parent_regime(self, snapshot: dict[str, Any], decision) -> MarketRegime:
-        """Project V2 labels onto the inherited MarketRegime object."""
-        n = int(snapshot.get("book_count", 0) or 0)
-        return MarketRegime(
-            mode=decision.parent_mode,
-            hold_frac=float(snapshot.get("hold_frac", 0.0) or 0.0),
-            up_frac=float(snapshot.get("up_frac", 0.0) or 0.0),
-            down_frac=float(snapshot.get("down_frac", 0.0) or 0.0),
-            mean_score=0.0,
-            mean_abs_score=float(snapshot.get("mean_abs_score", 0.0) or 0.0),
-            mean_volatility=float(snapshot.get("mean_volatility", 0.0) or 0.0),
-            mean_trade_rate=float(snapshot.get("mean_trade_rate", 0.0) or 0.0),
-            mean_spread_bps=snapshot.get("mean_spread_bps"),
-            mean_imbalance=float(snapshot.get("mean_imbalance", 0.0) or 0.0),
-            mean_log_return=snapshot.get("micro_vel_med"),
-            return_dispersion=None,
-            direction_dispersion=0.0,
-            tier_counts=dict(snapshot.get("tier_counts") or {}),
-            inactive_frac=float(snapshot.get("inactive_frac", 0.0) or 0.0),
-            red_frac=float(snapshot.get("red_frac", 0.0) or 0.0),
-            green_frac=float(snapshot.get("green_frac", 0.0) or 0.0),
-            scoring_overlay=decision.scoring_overlay,
-            confidence=min(1.0, 0.35 + 0.65 * float(snapshot.get("liquid_ratio", 0.0) or 0.0)),
-            book_count=n,
-        )
-
     def classify_market_regime_from_profiles(
         self,
         profiles,
         predictions,
         selection,
     ):
-        """V4.3: MarketRegime V2 + ScoreRegime. Parent mean-spread latch is not used."""
-        started = time.perf_counter()
-        profile_list = list(profiles or [])
+        # Update local per-book risk cutoffs once per request. The global regime
+        # classifier itself remains inherited so we can measure it honestly.
+        profile_list = list(profiles)
         self._update_spread_thresholds(profile_list)
-        snapshot = self._research_regime_snapshot(profile_list, predictions, selection)
-        decision = classify_regime_v2(
-            snapshot,
-            market_state=self._research_market_debounce,
-            score_state=self._research_score_debounce,
-            thresholds=self._research_regime_thresholds,
+        regime = super().classify_market_regime_from_profiles(
+            profile_list, predictions, selection
         )
-        self._research_market_debounce = decision.market_debounce
-        self._research_score_debounce = decision.score_debounce
-        self._research_market_regime = decision.market_regime
-        self._research_score_regime = decision.score_regime
-        regime = self._research_parent_regime(snapshot, decision)
-        try:
-            setattr(regime, "research_market_regime", decision.market_regime)
-            setattr(regime, "research_score_regime", decision.score_regime)
-            setattr(regime, "research_market_trigger", decision.market_trigger)
-            setattr(regime, "research_score_trigger", decision.score_trigger)
-        except Exception:
-            pass
-        self._last_regime = regime
-        if getattr(self, "debug_enabled", False):
-            self._debug_current_regime = regime
-        if getattr(self, "_debug_stage_ms", None) is not None:
-            self._debug_stage_ms["classify_regime_ms"] = (
-                time.perf_counter() - started
-            ) * 1000.0
+
+        spreads = [
+            value
+            for profile in profile_list
+            if (value := self._profile_float(profile, "spread_bps")) is not None
+        ]
+        vols = [
+            value
+            for profile in profile_list
+            if (value := self._profile_float(profile, "volatility")) is not None
+        ]
+        rates = [
+            value
+            for profile in profile_list
+            if (value := self._profile_float(profile, "trade_rate")) is not None
+        ]
+
+        inactive = sum(
+            1 for profile in profile_list
+            if str(getattr(profile, "tier", "")).upper() == "INACTIVE"
+        )
+        active = max(0, len(profile_list) - inactive)
+        stressed_count = sum(
+            1 for value in spreads
+            if value >= self._research_stress_spread_bps
+        )
+        liquid_count = sum(
+            1
+            for profile in profile_list
+            if (
+                (self._profile_float(profile, "spread_bps") or 0.0)
+                < self._research_stress_spread_bps
+                and (self._profile_float(profile, "trade_rate") or 0.0)
+                >= float(getattr(self, "archetype_dead_trade_rate", 0.0))
+            )
+        )
+        low_trade_count = sum(
+            1
+            for profile in profile_list
+            if (self._profile_float(profile, "trade_rate") or 0.0)
+            < float(getattr(self, "archetype_dead_trade_rate", 0.0))
+        )
+
+        pred_values = list(predictions.values()) if isinstance(predictions, dict) else []
+        up = sum(1 for p in pred_values if str(getattr(p, "direction", "")).upper() == "UP")
+        down = sum(1 for p in pred_values if str(getattr(p, "direction", "")).upper() == "DOWN")
+        pred_n = max(len(pred_values), 1)
+        n = max(len(profile_list), 1)
+
+        trigger = self._pick(regime, "trigger", "reason", "cause")
+        threshold = self._pick(regime, "threshold", "trigger_threshold")
 
         self._emit(
             "REGIME",
-            force=True,
-            tick=getattr(self, "_tick", None),
-            market_regime=decision.market_regime,
-            score_regime=decision.score_regime,
-            mode=decision.parent_mode,
-            overlay=decision.scoring_overlay,
-            book_count=snapshot["book_count"],
-            active=snapshot["active"],
-            inactive=snapshot["inactive"],
-            spread_med=snapshot["spread_med"],
-            spread_p90=snapshot["spread_p90"],
-            spread_max=snapshot["spread_max"],
-            vol_med=snapshot["vol_med"],
-            vol_p90=snapshot["vol_p90"],
-            trade_rate_med=snapshot["trade_rate_med"],
-            trade_rate_p90=snapshot["trade_rate_p90"],
-            liquid_ratio=snapshot["liquid_ratio"],
-            stressed_ratio=snapshot["stressed_ratio"],
-            trend_up_ratio=snapshot["trend_up_ratio"],
-            trend_down_ratio=snapshot["trend_down_ratio"],
-            imbalance_med=snapshot["imbalance_med"],
-            micro_vel_med=snapshot["micro_vel_med"],
-            pending_kappa_frac=snapshot["pending_kappa_frac"],
-            market_trigger=decision.market_trigger,
-            market_threshold=decision.market_threshold,
-            score_trigger=decision.score_trigger,
-            score_threshold=decision.score_threshold,
-            stress_spread_bps=snapshot["stress_spread_bps"],
-            toxic_spread_bps=snapshot["toxic_spread_bps"],
-            parent_mode=decision.parent_mode,
+            tick=self._tick,
+            mode=getattr(regime, "mode", None),
+            overlay=getattr(regime, "scoring_overlay", None),
+            book_count=len(profile_list),
+            active=active,
+            inactive=inactive,
+            spread_med=self._percentile(spreads, 0.50),
+            spread_p90=self._percentile(spreads, 0.90),
+            spread_max=max(spreads) if spreads else None,
+            stress_spread_bps=self._research_stress_spread_bps,
+            toxic_spread_bps=self._research_toxic_spread_bps,
+            vol_med=self._percentile(vols, 0.50),
+            vol_p90=self._percentile(vols, 0.90),
+            trade_rate_med=self._percentile(rates, 0.50),
+            liquid_ratio=liquid_count / n,
+            low_trade_ratio=low_trade_count / n,
+            stressed_ratio=stressed_count / n,
+            trend_up_ratio=up / pred_n,
+            trend_down_ratio=down / pred_n,
+            trigger=trigger if trigger is not None else "UNEXPOSED_BY_PARENT",
+            threshold=threshold if threshold is not None else "UNEXPOSED_BY_PARENT",
             adaptive=self.research_adaptive_spread_thresholds,
             min_order_size=self._research_exchange_min_order_size,
         )
@@ -2137,92 +832,6 @@ class Strategy1_Research(Strategy1_Debug):
                 sell_bias=params.sell_bias,
             )
         return params
-
-    def estimate_fill_probability(
-        self,
-        book: Book,
-        mid: float,
-        spread: float,
-        trade_rate: float,
-        buy_price: float,
-        sell_price: float,
-        book_id: int | None = None,
-    ) -> FillProbabilityEstimate:
-        old = super().estimate_fill_probability(
-            book, mid, spread, trade_rate, buy_price, sell_price, book_id=book_id,
-        )
-        if not getattr(self, "research_enable_fill_hazard", False):
-            return old
-        try:
-            ttl_ms = sim_delta_ms(0, int(getattr(self, "mm_expiry_period", 500_000_000)))
-            ttl_ms = 500.0 if ttl_ms is None else float(ttl_ms)
-            touch_bid = mid - 0.5 * spread
-            touch_ask = mid + 0.5 * spread
-            buy_dist_bps = (
-                ((touch_bid - buy_price) / mid) * 10_000.0 if mid > 0 else None
-            )
-            sell_dist_bps = (
-                ((sell_price - touch_ask) / mid) * 10_000.0 if mid > 0 else None
-            )
-            profile = self._research_profile_for_book(book_id)
-            vol = None if profile is None else getattr(profile, "volatility", None)
-            imb = None if profile is None else getattr(profile, "imbalance", None)
-            spread_bps = (spread / mid) * 10_000.0 if mid > 0 else None
-            regime = getattr(self, "_research_market_regime", None)
-            buy_feat = HazardFeatures.from_snapshot(
-                side="buy",
-                distance_from_touch_bps=buy_dist_bps,
-                spread_bps=spread_bps,
-                volatility=vol,
-                trade_rate=trade_rate,
-                imbalance=imb,
-                market_regime=regime,
-                ttl_ms=ttl_ms,
-            )
-            sell_feat = HazardFeatures.from_snapshot(
-                side="sell",
-                distance_from_touch_bps=sell_dist_bps,
-                spread_bps=spread_bps,
-                volatility=vol,
-                trade_rate=trade_rate,
-                imbalance=imb,
-                market_regime=regime,
-                ttl_ms=ttl_ms,
-            )
-            model = self._research_fill_hazard
-            pred_buy = model.predict(buy_feat)
-            pred_sell = model.predict(sell_feat)
-            if book_id is not None:
-                self._research_hazard_last[int(book_id)] = {
-                    "old": old,
-                    "buy": pred_buy,
-                    "sell": pred_sell,
-                    "buy_feat": buy_feat,
-                    "sell_feat": sell_feat,
-                }
-            buy = model.select_policy_probability(
-                old.buy, pred_buy,
-                use_for_policy=self.research_use_fill_hazard_for_policy,
-            )
-            sell = model.select_policy_probability(
-                old.sell, pred_sell,
-                use_for_policy=self.research_use_fill_hazard_for_policy,
-            )
-            return FillProbabilityEstimate(buy=buy, sell=sell)
-        except Exception:
-            return old
-
-    def _research_profile_for_book(self, book_id: int | None):
-        if book_id is None:
-            return None
-        selection = getattr(self, "_research_last_selection", None)
-        for profile in list(getattr(selection, "profiles", None) or []):
-            try:
-                if int(getattr(profile, "book_id")) == int(book_id):
-                    return profile
-            except (TypeError, ValueError, AttributeError):
-                continue
-        return None
 
     def _mem(self, book_id: int):
         """Attach the book id to parent BookMemory for completion-aware ranking."""
@@ -2426,11 +1035,11 @@ class Strategy1_Research(Strategy1_Debug):
         base = int(self.mm_expiry_period)
         if not self.research_partial_fill_hold_enabled:
             return base
-        if completion_samples >= self._research_required_observation_count():
+        if completion_samples >= self.research_kappa_completion_target:
             return base
         if (
             self.research_partial_fill_hold_one_away_only
-            and completion_samples != self._research_required_observation_count() - 1
+            and completion_samples != self.research_kappa_completion_target - 1
         ):
             return base
         quality = self._actionable_fill_snapshot(int(book_id))
@@ -2439,174 +1048,31 @@ class Strategy1_Research(Strategy1_Debug):
         publish = int(getattr(getattr(state, "config", None), "publish_interval", base) or base)
         return max(base, min(int(self.research_partial_fill_hold_max_ns), publish))
 
-    def _research_required_observation_count(self) -> int:
-        return required_observation_count(
-            kappa_min_observations=getattr(self, "kappa_min_observations", None),
-            research_target=getattr(self, "research_kappa_completion_target", None),
-        )
-
     def _completion_observation_count(self, book_id: int) -> int:
         return int(self._research_realized_observations_by_book.get(int(book_id), 0))
-
-    def _research_observations_remaining(self, book_id: int) -> int:
-        required = self._research_required_observation_count()
-        realized = self._completion_observation_count(book_id)
-        return max(0, required - int(realized))
 
     def _is_kappa_completion_candidate(self, book_id: int) -> bool:
         if not self.research_kappa_completion_enabled:
             return False
         samples = self._completion_observation_count(book_id)
-        target = self._research_required_observation_count()
-        if samples <= 0 or samples >= target:
+        if samples <= 0 or samples >= self.research_kappa_completion_target:
             return False
         mem = self._mem(book_id)
         return float(getattr(mem, "recent_pnl", 0.0) or 0.0) >= (
             self.research_kappa_completion_recent_pnl_floor
         )
 
-    def _research_markout_snapshot(self, book_id: int) -> tuple[float | None, int]:
-        row = self._research_markout_by_book.get(int(book_id), {})
-        n = int(row.get("n", 0) or 0)
-        if n <= 0:
-            return None, 0
-        return float(row.get("sum", 0.0)) / n, n
-
-    def _research_score_ev_for_book(
-        self,
-        book_id: int,
-        expected_alpha: float,
-        mem,
-    ):
-        profile = self._research_profile_for_book(book_id)
-        spread_bps = 0.0
-        if profile is not None:
-            try:
-                spread_bps = float(getattr(profile, "spread_bps", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                spread_bps = 0.0
-        haz = (getattr(self, "_research_hazard_last", {}) or {}).get(int(book_id), {})
-        pred_buy = haz.get("buy")
-        pred_sell = haz.get("sell")
-        old = haz.get("old")
-        fill_old = float(getattr(mem, "fill_rate", 0.0) or 0.0)
-        if old is not None:
-            fill_old = 0.5 * (float(getattr(old, "buy", 0.0)) + float(getattr(old, "sell", 0.0)))
-        hazard_any = None
-        hazard_act = None
-        hazard_dust = None
-        hazard_usable = False
-        if pred_buy is not None or pred_sell is not None:
-            anys = []
-            acts = []
-            dusts = []
-            usable = False
-            for pred in (pred_buy, pred_sell):
-                if pred is None:
-                    continue
-                anys.append(float(pred.any_fill))
-                acts.append(float(pred.actionable_fill))
-                dusts.append(float(pred.dust))
-                usable = usable or bool(pred.usable)
-            if anys:
-                hazard_any = sum(anys) / len(anys)
-                hazard_act = sum(acts) / len(acts)
-                hazard_dust = sum(dusts) / len(dusts)
-                hazard_usable = usable
-        quality = self._actionable_fill_snapshot(int(book_id))
-        dust_prob = float(quality.get("p_dust", 0.0) or 0.0)
-        if hazard_dust is not None and hazard_usable:
-            dust_prob = max(dust_prob, float(hazard_dust))
-        markout_mean, markout_n = self._research_markout_snapshot(book_id)
-        inv_util = 0.0
-        inventory_blocked = False
-        try:
-            snap = self._position_tracker_snapshot(int(book_id))
-            cap = max(float(getattr(self, "max_inventory_base", 1.0) or 1.0), 1e-9)
-            inv_util = min(1.0, abs(float(getattr(snap, "net_qty", 0.0) or 0.0)) / cap)
-            inventory_blocked = inv_util + 1e-12 >= 1.0
-        except Exception:
-            pass
-        toxic = int(book_id) in getattr(self, "_research_parked_dust", {})
-        market_regime = str(getattr(self, "_research_market_regime", "") or "").upper()
-        unsafe = market_regime in {"TOXIC"}
-        side = "MM"
-        if inv_util > 0.05:
-            net = 0.0
-            try:
-                net = float(self._position_tracker_snapshot(int(book_id)).net_qty)
-            except Exception:
-                net = 0.0
-            side = "SELL" if net > 0 else "BUY"
-        return compute_score_ev(
-            book=int(book_id),
-            side=side,
-            alpha=float(expected_alpha),
-            fill_prob_old=float(fill_old),
-            fill_prob_hazard=hazard_any,
-            actionable_fill_hazard=hazard_act,
-            hazard_usable=hazard_usable,
-            learned_actionable_p=float(quality.get("p_actionable", 0.0) or 0.0),
-            learned_actionable_samples=int(quality.get("samples", 0) or 0),
-            dust_prob=dust_prob,
-            spread_capture_bps=0.5 * max(0.0, spread_bps),
-            markout_mean_bps=markout_mean,
-            markout_samples=markout_n,
-            fees_bps=float(self.research_score_ev_fees_bps),
-            realized_observation_count=self._completion_observation_count(book_id),
-            required=self._research_required_observation_count(),
-            inventory_util=inv_util,
-            latency_ms=float(getattr(self, "_research_markout_eval_ms", 0.0) or 0.0) or None,
-            toxic=bool(toxic),
-            inventory_blocked=bool(inventory_blocked),
-            unsafe=bool(unsafe),
-            min_trading_ev=float(self.research_score_ev_min_trading),
-            min_fill_samples=int(self.research_score_ev_min_fill_samples),
-            min_markout_samples=int(self.research_score_ev_min_markout_samples),
-            one_away_weight=float(self.research_score_ev_one_away_weight),
-            two_away_weight=float(self.research_score_ev_two_away_weight),
-            new_book_weight=float(self.research_score_ev_new_book_weight),
-            dust_target=float(self.research_dust_risk_target),
-            dust_weight=float(self.research_score_ev_dust_weight),
-        )
-
     def _global_book_rank(self, expected_alpha: float, mem) -> float:
-        """V4.3 Score-EV rank, or V4.2 legacy rank when the feature flag is off."""
+        """V4.2 rank: preserve economics, finish Kappa, penalize dust-prone fills."""
+        base_rank = super()._global_book_rank(expected_alpha, mem)
         book_id = getattr(mem, "_research_book_id", None)
         if book_id is None:
-            return super()._global_book_rank(expected_alpha, mem)
+            return base_rank
         book_id = int(book_id)
 
-        if not getattr(self, "research_enable_score_ev", False):
-            return self._research_legacy_book_rank(expected_alpha, mem, book_id)
-
-        breakdown = self._research_score_ev_for_book(book_id, expected_alpha, mem)
-        self._research_score_ev_last[book_id] = breakdown
-        try:
-            self._emit(
-                "RANK",
-                force=True,
-                tick=getattr(self, "_tick", None),
-                **breakdown.as_log(),
-            )
-        except Exception:
-            pass
-        chosen = select_rank(
-            enable_score_ev=True,
-            score_ev=breakdown,
-            legacy_rank=super()._global_book_rank(expected_alpha, mem),
-        )
-        if chosen is None:
-            return float("-1e9")
-        return float(chosen)
-
-    def _research_legacy_book_rank(self, expected_alpha: float, mem, book_id: int) -> float:
-        """V4.2 rank kept for A/B when research_enable_score_ev=0."""
-        base_rank = super()._global_book_rank(expected_alpha, mem)
-        target = self._research_required_observation_count()
         if self.research_kappa_completion_enabled and self._is_kappa_completion_candidate(book_id):
             samples = self._completion_observation_count(book_id)
-            denom = max(1, target - 1)
+            denom = max(1, self.research_kappa_completion_target - 1)
             progress = max(0.0, min(1.0, samples / denom))
             base_rank += self.research_kappa_completion_rank_bonus * progress
 
@@ -2618,6 +1084,8 @@ class Strategy1_Research(Strategy1_Debug):
         if confident:
             p_actionable = float(quality["p_actionable"])
             p_dust = float(quality["p_dust"])
+            # Adjust only relative to the run-calibrated neutral prior.  This
+            # prevents the fill-quality layer from simply rewarding every book.
             quality_adjust = self.research_actionable_fill_rank_weight * (
                 p_actionable - self.research_actionable_fill_prior_actionable
             )
@@ -2629,46 +1097,17 @@ class Strategy1_Research(Strategy1_Debug):
         if (
             self.research_kappa_completion_enabled
             and self._is_kappa_completion_candidate(book_id)
-            and self._completion_observation_count(book_id) == target - 1
+            and self._completion_observation_count(book_id)
+                == self.research_kappa_completion_target - 1
         ):
+            # A one-away completion immediately creates an eligible book.  Weight
+            # the extra bonus by learned actionability when confidence exists.
             quality_scale = (
                 0.50 + 0.50 * float(quality["p_actionable"])
                 if confident else 0.75
             )
             base_rank += self.research_kappa_one_away_bonus * quality_scale
         return base_rank
-
-    def _research_emit_scheduler(self, stats: dict, selection) -> None:
-        required = self._research_required_observation_count()
-        counts = dict(self._research_realized_observations_by_book)
-        for profile in list(getattr(selection, "profiles", None) or []):
-            try:
-                bid = int(getattr(profile, "book_id"))
-            except (TypeError, ValueError, AttributeError):
-                continue
-            counts.setdefault(bid, int(self._research_realized_observations_by_book.get(bid, 0)))
-        eligible_ids = {
-            int(book)
-            for book, ev in (getattr(self, "_research_score_ev_last", {}) or {}).items()
-            if getattr(ev, "eligible", False)
-        }
-        buckets = scheduler_bucket_counts(
-            counts, required, eligible_ids=eligible_ids,
-        )
-        attempts = int(getattr(self, "_research_completion_quote_attempts", 0) or 0)
-        successes = int(getattr(self, "_research_completion_quote_successes", 0) or 0)
-        success_rate = (successes / attempts) if attempts > 0 else 0.0
-        payload = {
-            **buckets,
-            "kappa_completion_attempts": attempts,
-            "kappa_completion_successes": successes,
-            "kappa_completion_success_rate": success_rate,
-            "enable_score_ev": int(bool(self.research_enable_score_ev)),
-            "mm_candidates": stats.get("mm_candidates"),
-        }
-        if isinstance(stats, dict):
-            stats.update({f"research_{k}": v for k, v in payload.items()})
-        self._emit("SCHED", force=True, tick=getattr(self, "_tick", None), **payload)
 
     def _is_compactable_dust(self, net_base: float) -> bool:
         if not self.research_dust_compact_enabled or not self._is_dust_qty(net_base):
@@ -3477,11 +1916,6 @@ class Strategy1_Research(Strategy1_Debug):
                     exposure_nonincreasing=True,
                 )
 
-            if self._research_try_dust_escape(
-                response, state, book_id, book, inventory, min_size,
-            ):
-                return 1
-
             if self.debug_enabled:
                 record = self._book_record(book_id)
                 record["dust_position"] = True
@@ -3493,92 +1927,6 @@ class Strategy1_Research(Strategy1_Debug):
         return super()._manage_inventory(
             response, state, book_id, book, inventory, regime_params, regime, archetype
         )
-
-    def _research_try_dust_escape(
-        self,
-        response,
-        state,
-        book_id: int,
-        book,
-        inventory,
-        min_size: float,
-    ) -> bool:
-        """Experimental old-dust reducer. Passive compact remains the default path."""
-        if not getattr(self, "research_enable_dust_escape", False):
-            return False
-        if min_size <= 0.0 or not self._is_dust_qty(inventory.net_base):
-            return False
-        parked = (getattr(self, "_research_parked_dust", {}) or {}).get(int(book_id)) or {}
-        tick = int(getattr(self, "_tick", 0) or 0)
-        first = int(parked.get("first_tick", tick) or tick)
-        age = max(0, tick - first)
-        ctx = (getattr(self, "_research_aggressive_context", {}) or {}).get(int(book_id)) or {}
-        net_touch = ctx.get("net_touch_bps")
-        benefit = 0.0 if net_touch is None else float(net_touch)
-        benefit += min(5.0, 2.0 * (age / max(1.0, float(self.research_dust_escape_min_age_ticks))))
-        cost = float(self.research_dust_escape_cost_bps)
-        ok, after, reason = dust_escape_allowed(
-            inventory_before=float(inventory.net_base),
-            reduce_qty=float(min_size),
-            age_ticks=age,
-            min_age_ticks=int(self.research_dust_escape_min_age_ticks),
-            benefit_bps=benefit,
-            cost_bps=cost,
-            eps=self._execution_flat_epsilon(),
-        )
-        self._research_dust_escape_attempts += 1
-        if not ok:
-            self._emit(
-                "POSITION_GUARD",
-                tick=tick,
-                book_id=book_id,
-                reason="DUST_ESCAPE_BLOCKED",
-                net_base=inventory.net_base,
-                projected_net=after,
-                escape_reason=reason,
-                age_ticks=age,
-                benefit_bps=benefit,
-                cost_bps=cost,
-                exposure_nonincreasing=abs(after) < abs(float(inventory.net_base)),
-            )
-            return False
-        long_pos = float(inventory.net_base) > 0.0
-        placed = self._execute_aggressive_close(
-            response, book_id, book, float(min_size), long_pos,
-        )
-        if not placed:
-            self._emit(
-                "POSITION_GUARD",
-                tick=tick,
-                book_id=book_id,
-                reason="DUST_ESCAPE_BLOCKED",
-                net_base=inventory.net_base,
-                projected_net=after,
-                escape_reason="PLACE_FAIL",
-                age_ticks=age,
-            )
-            return False
-        self._research_dust_escape_orders += 1
-        self._inventory_reason[book_id] = "DUST_ESCAPE"
-        self._emit(
-            "POSITION_GUARD",
-            tick=tick,
-            book_id=book_id,
-            reason="DUST_ESCAPE",
-            net_base=inventory.net_base,
-            projected_net=after,
-            min_order_size=min_size,
-            age_ticks=age,
-            benefit_bps=benefit,
-            cost_bps=cost,
-            exposure_nonincreasing=True,
-        )
-        if self.debug_enabled:
-            record = self._book_record(book_id)
-            record["action"] = "MANAGE"
-            record["reason"] = "DUST_ESCAPE"
-            record["dust_escape"] = True
-        return True
 
     def _dust_fill_matches_recent_compaction(self, book_id: int) -> bool:
         """Telemetry-only attribution guard for DUST_COMPACT fills.
@@ -3692,25 +2040,6 @@ class Strategy1_Research(Strategy1_Debug):
                 timestamp=getattr(event, "timestamp", None),
             )
 
-        try:
-            self._research_on_own_fill(
-                event=event,
-                book_id=int(book_id),
-                before=before,
-                after=after,
-                kappa_after=int(
-                    self._research_realized_observations_by_book.get(book_id, 0)
-                ),
-                kappa_before=max(
-                    0,
-                    int(self._research_realized_observations_by_book.get(book_id, 0))
-                    - (1 if abs(realized_delta) > 1e-12 else 0),
-                ),
-                is_maker=is_maker,
-            )
-        except Exception:
-            pass
-
         self._emit(
             "POSITION",
             tick=getattr(self, "_tick", None),
@@ -3802,144 +2131,6 @@ class Strategy1_Research(Strategy1_Debug):
             record["size_promoted_to_min"] = promoted
         return size
 
-    def _research_live_quote(self, book_id: int, side: str):
-        store = getattr(self, "_research_quote_store", None)
-        if store is None:
-            return None
-        rec = store.live_for_book_side(int(book_id), side)
-        if rec is None or not rec.open:
-            return None
-        return rec
-
-    def _research_choose_ttl(
-        self, book_id: int, profile, state, *, baseline_ns: int,
-    ) -> tuple[float | None, str, float | None]:
-        baseline = sim_delta_ms(0, int(baseline_ns)) or 500.0
-        haz_pack = (getattr(self, "_research_hazard_last", {}) or {}).get(int(book_id), {})
-        preds = [p for p in (haz_pack.get("buy"), haz_pack.get("sell")) if p is not None]
-        fill_hazard = None
-        if preds:
-            fill_hazard = sum(float(p.any_fill) for p in preds) / len(preds)
-        signals = self._research_book_micro.get(int(book_id)) or {}
-        tick = self._research_tick_size(state) or 0.01
-        micro_delta = signals.get("microprice_delta")
-        vel_ticks = None
-        if micro_delta is not None and tick > 0:
-            vel_ticks = abs(float(micro_delta)) / tick
-        imb = None
-        if profile is not None:
-            imb = getattr(profile, "imbalance", None)
-        if imb is None:
-            imb = signals.get("imbalance") or signals.get("deep_imbalance")
-        vol = None if profile is None else getattr(profile, "volatility", None)
-        queue_ahead = None
-        toxic = str(getattr(self, "_research_market_regime", "")).upper() in {"TOXIC", "STRESSED"}
-        ttl, reason, _info = choose_ttl_ms(
-            baseline_ms=float(baseline),
-            min_ms=float(self.research_ttl_min_ms),
-            max_ms=float(self.research_ttl_max_ms),
-            fill_hazard=fill_hazard,
-            volatility=None if vol is None else float(vol),
-            imbalance=None if imb is None else float(imb),
-            microprice_velocity=vel_ticks,
-            toxicity=toxic,
-            market_regime=getattr(self, "_research_market_regime", None),
-            queue_ahead=queue_ahead,
-            stale_velocity_ticks=8.0,
-        )
-        return ttl, reason, fill_hazard
-
-    def _research_hysteresis_hold_sides(
-        self,
-        state,
-        book_id: int,
-        book,
-        profile,
-        prediction,
-        inventory,
-        regime_params,
-        edge_bias: float,
-    ) -> set[str]:
-        hold: set[str] = set()
-        if book is None or not getattr(book, "bids", None) or not getattr(book, "asks", None):
-            return hold
-        try:
-            tick_size = self._research_tick_size(state) or 0.01
-            now = getattr(state, "timestamp", None)
-            price_dec = int(getattr(getattr(state, "config", None), "priceDecimals", 2) or 2)
-            prices = self.skewed_quote_prices(
-                float(book.bids[0].price),
-                float(book.asks[0].price),
-                float(getattr(prediction, "score", 0.0) or 0.0),
-                float(getattr(inventory, "inventory_ratio", 0.0) or 0.0),
-                regime_params,
-                price_dec,
-                edge_bias=float(edge_bias or 0.0),
-            )
-            if not prices:
-                return hold
-            new_buy, new_sell = prices
-            alpha = float(getattr(prediction, "score", 0.0) or 0.0)
-            imb = None if profile is None else getattr(profile, "imbalance", None)
-            regime = getattr(self, "_research_market_regime", None)
-            try:
-                util = float(self._inventory_util(inventory))
-            except Exception:
-                util = 0.0
-            toxic = str(regime or "").upper() in {"TOXIC"} or int(book_id) in (
-                getattr(self, "_research_parked_dust", {}) or {}
-            )
-            ev_row = (getattr(self, "_research_score_ev_last", {}) or {}).get(int(book_id))
-            new_ev = None if ev_row is None else getattr(ev_row, "trading_ev", None)
-            hard = toxic or str(getattr(inventory, "band", "")).upper() in {
-                "MAX_LONG", "MAX_SHORT",
-            }
-            if ev_row is not None and not bool(getattr(ev_row, "eligible", True)):
-                hard = True
-            for side, new_px in (("buy", new_buy), ("sell", new_sell)):
-                rec = self._research_live_quote(book_id, side)
-                snap = {} if rec is None else dict(rec.snapshot or {})
-                age_ms = None if rec is None else sim_delta_ms(rec.submit_ts, now)
-                decision = should_replace_quote(
-                    old_price=None if rec is None else rec.quote_price,
-                    new_price=float(new_px),
-                    tick_size=float(tick_size),
-                    min_price_ticks=float(self.research_hysteresis_min_price_ticks),
-                    old_alpha=snap.get("alpha"),
-                    new_alpha=alpha,
-                    old_imbalance=snap.get("imbalance"),
-                    new_imbalance=None if imb is None else float(imb),
-                    old_regime=None if rec is None else rec.market_regime,
-                    new_regime=regime,
-                    old_inventory_util=snap.get("inventory_util"),
-                    new_inventory_util=util,
-                    old_toxic=bool(snap.get("toxic")),
-                    new_toxic=toxic,
-                    order_age_ms=age_ms,
-                    ttl_ms=None if rec is None else rec.configured_ttl_ms,
-                    old_ev=snap.get("quote_ev"),
-                    new_ev=new_ev,
-                    ev_improve_threshold=float(self.research_hysteresis_ev_threshold),
-                    hard_safety=hard,
-                )
-                try:
-                    self._emit(
-                        "CANCEL_DECISION",
-                        force=True,
-                        tick=getattr(self, "_tick", None),
-                        **decision.as_log(book=int(book_id), side=side),
-                    )
-                except Exception:
-                    pass
-                if decision.cancel:
-                    self._research_hysteresis_replaces += 1
-                else:
-                    self._research_hysteresis_holds += 1
-                    hold.add(side)
-        except Exception:
-            return set()
-        return hold
-
     def _place_skewed_quotes(
         self,
         response: FinanceAgentResponse,
@@ -3968,16 +2159,6 @@ class Strategy1_Research(Strategy1_Debug):
         )
         completion_samples = self._completion_observation_count(book_id)
         lane = "COMPLETION" if completion_candidate else "NORMAL"
-
-        if getattr(self, "research_enable_score_ev", False):
-            ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(int(book_id))
-            if ev is not None and not bool(getattr(ev, "eligible", True)):
-                if self.debug_enabled:
-                    record = self._book_record(book_id)
-                    record["action"] = "SKIP"
-                    record["reason"] = str(getattr(ev, "reject_reason", None) or "SCORE_EV")
-                    record["scheduler_lane"] = lane
-                return 0
 
         if self._research_backfill_active:
             if self._research_quote_successes >= self._research_quote_success_cap:
@@ -4068,7 +2249,7 @@ class Strategy1_Research(Strategy1_Debug):
         hold_active = False
         incomplete_flat = (
             inventory.band == "FLAT"
-            and completion_samples < self._research_required_observation_count()
+            and completion_samples < self.research_kappa_completion_target
         )
         if incomplete_flat:
             hold_expiry = self._partial_fill_hold_expiry(
@@ -4081,56 +2262,6 @@ class Strategy1_Research(Strategy1_Debug):
         if self.research_force_mm_post_only:
             self._research_force_maker_context = True
 
-        hold_sides: set[str] = set()
-        ttl_reason = "BASELINE"
-        fill_hazard = None
-        if getattr(self, "research_enable_adaptive_ttl", False):
-            chosen, ttl_reason, fill_hazard = self._research_choose_ttl(
-                book_id, profile, state, baseline_ns=old_expiry,
-            )
-            if chosen is None:
-                self._research_ttl_stale_skips += 1
-                if self.debug_enabled:
-                    record = self._book_record(book_id)
-                    record["action"] = "SKIP"
-                    record["reason"] = "TTL_STALE"
-                    record["ttl_reason"] = ttl_reason
-                regime_params.min_fill_prob = old_min_fill
-                self.mm_expiry_period = old_expiry
-                self._research_force_maker_context = old_maker_context
-                return 0
-            self.mm_expiry_period = ms_to_ns(chosen)
-            if hold_active and not (
-                str(getattr(self, "_research_market_regime", "")).upper()
-                in {"TOXIC", "STRESSED"}
-            ) and ttl_reason not in {"TOXIC_SHORT", "ADVERSE_SHORT"}:
-                self.mm_expiry_period = max(int(self.mm_expiry_period), int(hold_expiry))
-            try:
-                vol = None if profile is None else getattr(profile, "volatility", None)
-                self._emit(
-                    "TTL",
-                    force=True,
-                    tick=getattr(self, "_tick", None),
-                    book=int(book_id),
-                    chosen_ttl_ms=sim_delta_ms(0, int(self.mm_expiry_period)),
-                    ttl_reason=ttl_reason,
-                    fill_hazard=fill_hazard,
-                    toxicity=int(
-                        str(getattr(self, "_research_market_regime", "")).upper()
-                        in {"TOXIC", "STRESSED"}
-                    ),
-                    volatility=vol,
-                    market_regime=getattr(self, "_research_market_regime", None),
-                )
-            except Exception:
-                pass
-
-        if getattr(self, "research_enable_quote_hysteresis", False):
-            hold_sides = self._research_hysteresis_hold_sides(
-                state, book_id, book, profile, prediction, inventory,
-                regime_params, edge_bias,
-            )
-
         if self.debug_enabled:
             record = self._book_record(book_id)
             quality = self._actionable_fill_snapshot(book_id)
@@ -4141,32 +2272,6 @@ class Strategy1_Research(Strategy1_Debug):
             record["partial_fill_hold"] = hold_active
             record["partial_fill_hold_expiry_ns"] = hold_expiry
             record["force_mm_post_only"] = bool(self.research_force_mm_post_only)
-            record["chosen_ttl_ms"] = sim_delta_ms(0, int(self.mm_expiry_period))
-            record["ttl_reason"] = ttl_reason
-            record["fill_hazard"] = fill_hazard
-            record["hysteresis_hold_buy"] = "buy" in hold_sides
-            record["hysteresis_hold_sell"] = "sell" in hold_sides
-
-        orig_limit = getattr(response, "limit_order", None)
-        orig_record_fill = self._record_fill_quote
-        if hold_sides and orig_limit is not None:
-            def _gated_limit_order(*args, **kwargs):
-                direction = kwargs.get("direction")
-                if direction is None and len(args) >= 2:
-                    direction = args[1]
-                token = str(getattr(direction, "name", direction)).upper()
-                side = "buy" if token in {"0", "BUY", "BID", "ORDERDIRECTION.BUY"} else "sell"
-                if side in hold_sides:
-                    return None
-                return orig_limit(*args, **kwargs)
-
-            def _gated_record_fill(mem, side, dist_from_touch):
-                if str(side).lower() in hold_sides:
-                    return None
-                return orig_record_fill(mem, side, dist_from_touch)
-
-            response.limit_order = _gated_limit_order
-            self._record_fill_quote = _gated_record_fill
 
         try:
             placed = super()._place_skewed_quotes(
@@ -4183,15 +2288,9 @@ class Strategy1_Research(Strategy1_Debug):
                 stats=stats,
             )
         finally:
-            if hold_sides and orig_limit is not None:
-                response.limit_order = orig_limit
-                self._record_fill_quote = orig_record_fill
             regime_params.min_fill_prob = old_min_fill
             self.mm_expiry_period = old_expiry
             self._research_force_maker_context = old_maker_context
-
-        if hold_sides and not placed:
-            placed = len(hold_sides)
 
         if self._research_backfill_active and placed:
             self._research_quote_successes += 1
@@ -4221,9 +2320,6 @@ class Strategy1_Research(Strategy1_Debug):
         regime: MarketRegime,
         collect_archetypes: bool = True,
     ) -> dict:
-        started = time.perf_counter()
-        self._research_last_selection = selection
-        self._research_last_predictions = predictions
         self._sync_exchange_constraints(state)
 
         overlay = str(getattr(regime, "scoring_overlay", "")).upper()
@@ -4251,7 +2347,6 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_completion_success_cap_hits = 0
         self._research_normal_attempt_cap_hits = 0
         self._research_dust_compact_ids_this_tick = self._select_dust_compaction_books(state)
-        self._research_score_ev_last = {}
 
         if self._research_backfill_active:
             # Parent Strategy1 slices mm_candidates before calling our quote
@@ -4337,17 +2432,8 @@ class Strategy1_Research(Strategy1_Debug):
                 stats["research_partial_fill_hold_candidates"] = self._research_partial_fill_hold_candidates
                 stats["research_partial_fill_hold_quoted"] = self._research_partial_fill_hold_quoted
                 stats["research_forced_maker_quote_books"] = self._research_forced_maker_quote_books
-                stats["research_hysteresis_holds"] = getattr(self, "_research_hysteresis_holds", 0)
-                stats["research_hysteresis_replaces"] = getattr(self, "_research_hysteresis_replaces", 0)
-                stats["research_ttl_stale_skips"] = getattr(self, "_research_ttl_stale_skips", 0)
-                stats["research_dust_escape_attempts"] = getattr(self, "_research_dust_escape_attempts", 0)
-                stats["research_dust_escape_orders"] = getattr(self, "_research_dust_escape_orders", 0)
                 stats["research_dust_compact_cooldown_skips"] = self._research_dust_compact_cooldown_skips
                 stats["research_flat_epsilon"] = self._execution_flat_epsilon()
-                try:
-                    self._research_emit_scheduler(stats, selection)
-                except Exception:
-                    pass
             return stats
         finally:
             self.mm_skip_inactive_tier = old_skip_inactive
@@ -4355,9 +2441,6 @@ class Strategy1_Research(Strategy1_Debug):
             self.max_mm_books_per_tick = old_max_mm_books
             self._research_bootstrap_active = False
             self._research_backfill_active = False
-            self._research_timing["build_orders_ms"] = (
-                time.perf_counter() - started
-            ) * 1000.0
 
     # Strategy1_Debug emits an explicit DECISION payload rather than forwarding
     # the full internal record. Override it so the new research diagnostics are
@@ -4643,7 +2726,7 @@ class Strategy1_Research(Strategy1_Debug):
 
     def _console_allowed(self, r: dict[str, Any]) -> bool:
         typ = str(r.get("type", ""))
-        if typ in {"ERROR", "RUN_SUMMARY", "RESEARCH_CONFIG", "DEBUG_CONFIG", "POSITION", "POSITION_GUARD", "ACTIONABLE_FILL", "REGIME", "QUOTE", "FILL", "MARKOUT", "FILL_CAL", "RANK", "SCHED", "CANCEL_DECISION", "TTL", "RESPOND_TIMING"}:
+        if typ in {"ERROR", "RUN_SUMMARY", "RESEARCH_CONFIG", "DEBUG_CONFIG", "POSITION", "POSITION_GUARD", "ACTIONABLE_FILL"}:
             return True
         if typ == "ORDER_LIFECYCLE":
             phase = str(r.get("phase", "")).upper()
@@ -4712,181 +2795,23 @@ class Strategy1_Research(Strategy1_Debug):
                     f"debug_every_n={r.get('every_n')} debug_book={r.get('book_filter')}")
         if typ == "REGIME":
             return (
-                f"[S1R_REGIME] tick={r.get('tick')} "
-                f"market_regime={self._short(r.get('market_regime'))} "
-                f"score_regime={self._short(r.get('score_regime'))} "
-                f"book_count={r.get('book_count')} "
+                f"[S1R_REGIME] tick={r.get('tick')} mode={self._short(r.get('mode'))} "
+                f"overlay={self._short(r.get('overlay'))} book_count={r.get('book_count')} "
                 f"active={r.get('active')} inactive={r.get('inactive')} "
                 f"spread_med={self._fmt(r.get('spread_med'))} "
                 f"spread_p90={self._fmt(r.get('spread_p90'))} "
                 f"spread_max={self._fmt(r.get('spread_max'))} "
+                f"stress_cut={self._fmt(r.get('stress_spread_bps'))} "
+                f"toxic_cut={self._fmt(r.get('toxic_spread_bps'))} "
                 f"vol_med={self._fmt(r.get('vol_med'))} vol_p90={self._fmt(r.get('vol_p90'))} "
                 f"trade_rate_med={self._fmt(r.get('trade_rate_med'))} "
-                f"trade_rate_p90={self._fmt(r.get('trade_rate_p90'))} "
                 f"liquid_ratio={self._fmt(r.get('liquid_ratio'))} "
+                f"low_trade_ratio={self._fmt(r.get('low_trade_ratio'))} "
                 f"stressed_ratio={self._fmt(r.get('stressed_ratio'))} "
                 f"trend_up_ratio={self._fmt(r.get('trend_up_ratio'))} "
                 f"trend_down_ratio={self._fmt(r.get('trend_down_ratio'))} "
-                f"market_trigger={self._short(r.get('market_trigger'))} "
-                f"market_threshold={self._short(r.get('market_threshold'))} "
-                f"score_trigger={self._short(r.get('score_trigger'))} "
-                f"score_threshold={self._short(r.get('score_threshold'))}"
-            )
-        if typ == "QUOTE":
-            q_ahead = r.get("queue_ahead")
-            q_depth = r.get("queue_depth_at_price")
-            queue = ""
-            if q_depth is not None:
-                queue += f" queue_depth_at_price={self._fmt(q_depth)}"
-            if q_ahead is not None:
-                queue += f" queue_ahead={self._fmt(q_ahead)}"
-            return (
-                f"[S1R_QUOTE] tick={r.get('tick')} quote_id={r.get('quote_id')} "
-                f"client_id={self._short(r.get('client_id'))} book={r.get('book')} "
-                f"side={self._short(r.get('side'))} "
-                f"decision_ts={r.get('decision_timestamp')} submit_ts={r.get('submit_timestamp')} "
-                f"cancel_ts={r.get('cancel_timestamp')} fill_ts={r.get('fill_timestamp')} "
-                f"mid={self._fmt(r.get('mid'))} microprice={self._fmt(r.get('microprice'))} "
-                f"microprice_delta={self._fmt(r.get('microprice_delta'))} "
-                f"best_bid={self._fmt(r.get('best_bid'))} best_ask={self._fmt(r.get('best_ask'))} "
-                f"spread={self._fmt(r.get('spread'))} spread_bps={self._fmt(r.get('spread_bps'))} "
-                f"quote_price={self._fmt(r.get('quote_price'))} "
-                f"dist_ticks={self._fmt(r.get('distance_from_touch_ticks'))} "
-                f"dist_bps={self._fmt(r.get('distance_from_touch_bps'))} "
-                f"vol={self._fmt(r.get('volatility'))} trade_rate={self._fmt(r.get('trade_rate'))} "
-                f"imbalance={self._fmt(r.get('imbalance'))} "
-                f"deep_imbalance={self._fmt(r.get('deep_imbalance'))} "
-                f"momentum={self._fmt(r.get('momentum'))} "
-                f"trade_imbalance={self._fmt(r.get('trade_imbalance'))} "
-                f"trade_sign_persistence={self._fmt(r.get('trade_sign_persistence'))} "
-                f"inv_before={self._fmt(r.get('inventory_before'))} "
-                f"qty={self._fmt(r.get('requested_quantity'))} "
-                f"ttl_ms={self._fmt(r.get('configured_ttl_ms'))} "
-                f"p_fill={self._fmt(r.get('predicted_fill_probability'))} "
-                f"p_any={self._fmt(r.get('predicted_any_fill_probability'))} "
-                f"p_act={self._fmt(r.get('predicted_actionable_fill_probability'))} "
-                f"p_dust={self._fmt(r.get('predicted_dust_probability'))} "
-                f"market_regime={self._short(r.get('market_regime'))} "
-                f"score_regime={self._short(r.get('score_regime'))} "
-                f"archetype={self._short(r.get('book_archetype'))} "
-                f"kappa_obs={r.get('kappa_observation_count_before')}"
-                f"{queue}"
-            )
-        if typ == "FILL":
-            return (
-                f"[S1R_FILL] tick={r.get('tick')} quote_id={r.get('quote_id')} "
-                f"client_id={self._short(r.get('client_id'))} book={r.get('book')} "
-                f"side={self._short(r.get('side'))} fill_class={self._short(r.get('fill_class'))} "
-                f"fill_price={self._fmt(r.get('fill_price'))} "
-                f"requested_qty={self._fmt(r.get('requested_quantity'))} "
-                f"filled_qty={self._fmt(r.get('filled_quantity'))} "
-                f"remaining_qty={self._fmt(r.get('remaining_quantity'))} "
-                f"inv_before={self._fmt(r.get('inventory_before'))} "
-                f"inv_after={self._fmt(r.get('inventory_after'))} "
-                f"quote_age_ms={self._fmt(r.get('quote_age_ms'))} "
-                f"ttl_ms={self._fmt(r.get('configured_ttl_ms'))} "
-                f"p_fill={self._fmt(r.get('predicted_fill_probability'))} "
-                f"p_any={self._fmt(r.get('predicted_any_fill_probability'))} "
-                f"p_act={self._fmt(r.get('predicted_actionable_fill_probability'))} "
-                f"p_dust={self._fmt(r.get('predicted_dust_probability'))} "
-                f"market_regime={self._short(r.get('market_regime'))} "
-                f"score_regime={self._short(r.get('score_regime'))} "
-                f"archetype={self._short(r.get('book_archetype'))} "
-                f"kappa_before={r.get('kappa_observation_count_before')} "
-                f"kappa_after={r.get('kappa_observation_count_after')} "
-                f"maker={int(bool(r.get('maker')))} fee={self._fmt(r.get('fee'))} "
-                f"min_order={self._fmt(r.get('min_order_size'))}"
-            )
-        if typ == "MARKOUT":
-            return (
-                f"[S1R_MARKOUT] quote_id={r.get('quote_id')} book={r.get('book')} "
-                f"side={self._short(r.get('side'))} horizon_ms={r.get('horizon_ms')} "
-                f"fill_price={self._fmt(r.get('fill_price'))} "
-                f"future_mid={self._fmt(r.get('future_mid'))} "
-                f"markout_bps={self._fmt(r.get('markout_bps'))} "
-                f"status={self._short(r.get('status'))}"
-            )
-        if typ == "FILL_CAL":
-            return (
-                f"[S1R_FILL_CAL] kind={self._short(r.get('kind'))} "
-                f"side={self._short(r.get('side'))} bucket={self._short(r.get('bucket'))} "
-                f"predicted_mean={self._fmt(r.get('predicted_mean'))} "
-                f"observed_rate={self._fmt(r.get('observed_rate'))} "
-                f"sample_count={r.get('sample_count')} "
-                f"brier_component={self._fmt(r.get('brier_component'))} "
-                f"brier_overall={self._fmt(r.get('brier_overall'))} "
-                f"n={r.get('observations')} events={r.get('events')} "
-                f"censored={r.get('censored')}"
-            )
-        if typ == "RANK":
-            return (
-                f"[S1R_RANK] book={r.get('book')} side={self._short(r.get('side'))} "
-                f"alpha={self._fmt(r.get('alpha'))} "
-                f"fill_prob_old={self._fmt(r.get('fill_prob_old'))} "
-                f"fill_prob_hazard={self._fmt(r.get('fill_prob_hazard'))} "
-                f"actionable_fill_prob={self._fmt(r.get('actionable_fill_prob'))} "
-                f"dust_prob={self._fmt(r.get('dust_prob'))} "
-                f"spread_capture_bps={self._fmt(r.get('spread_capture_bps'))} "
-                f"expected_markout_bps={self._fmt(r.get('expected_markout_bps'))} "
-                f"fees_bps={self._fmt(r.get('fees_bps'))} "
-                f"trading_ev={self._fmt(r.get('trading_ev'))} "
-                f"observation_count={r.get('observation_count')} "
-                f"observations_remaining={r.get('observations_remaining')} "
-                f"completion_value={self._fmt(r.get('completion_value'))} "
-                f"dust_cost={self._fmt(r.get('dust_cost'))} "
-                f"inventory_cost={self._fmt(r.get('inventory_cost'))} "
-                f"latency_cost={self._fmt(r.get('latency_cost'))} "
-                f"final_score={self._fmt(r.get('final_score'))} "
-                f"eligible={int(bool(r.get('eligible')))} "
-                f"reject={self._short(r.get('reject_reason'))}"
-            )
-        if typ == "SCHED":
-            return (
-                f"[S1R_SCHED] required={r.get('required_observation_count')} "
-                f"zero_obs={r.get('books_zero_obs')} "
-                f"one_remaining={r.get('books_one_remaining')} "
-                f"two_remaining={r.get('books_two_remaining')} "
-                f"eligible={r.get('eligible_books')} "
-                f"kappa_attempts={r.get('kappa_completion_attempts')} "
-                f"kappa_successes={r.get('kappa_completion_successes')} "
-                f"completion_success_rate={self._fmt(r.get('kappa_completion_success_rate'))} "
-                f"score_ev={r.get('enable_score_ev')}"
-            )
-        if typ == "CANCEL_DECISION":
-            return (
-                f"[S1R_CANCEL_DECISION] book={r.get('book')} "
-                f"side={self._short(r.get('side'))} cancel={r.get('cancel')} "
-                f"reason={self._short(r.get('reason'))} "
-                f"old_price={self._fmt(r.get('old_price'))} "
-                f"new_price={self._fmt(r.get('new_price'))} "
-                f"price_delta_ticks={self._fmt(r.get('price_delta_ticks'))} "
-                f"old_ev={self._fmt(r.get('old_ev'))} "
-                f"new_ev={self._fmt(r.get('new_ev'))} "
-                f"ev_delta={self._fmt(r.get('ev_delta'))} "
-                f"order_age_ms={self._fmt(r.get('order_age_ms'))}"
-            )
-        if typ == "TTL":
-            return (
-                f"[S1R_TTL] book={r.get('book')} "
-                f"chosen_ttl_ms={self._fmt(r.get('chosen_ttl_ms'))} "
-                f"ttl_reason={self._short(r.get('ttl_reason'))} "
-                f"fill_hazard={self._fmt(r.get('fill_hazard'))} "
-                f"toxicity={r.get('toxicity')} "
-                f"volatility={self._fmt(r.get('volatility'))} "
-                f"market_regime={self._short(r.get('market_regime'))}"
-            )
-        if typ == "RESPOND_TIMING":
-            return (
-                f"[S1R_TIMING] tick={r.get('tick')} sim_ts={r.get('timestamp')} "
-                f"screen_all_books_ms={self._fmt(r.get('screen_all_books_ms'))} "
-                f"full_predict_ms={self._fmt(r.get('full_predict_ms'))} "
-                f"selection_ms={self._fmt(r.get('selection_ms'))} "
-                f"build_orders_ms={self._fmt(r.get('build_orders_ms'))} "
-                f"adaptive_or_research_ms={self._fmt(r.get('adaptive_or_research_ms'))} "
-                f"total_response_ms={self._fmt(r.get('total_response_ms'))} "
-                f"candidate_count={r.get('candidate_count', 0)} "
-                f"forced_inventory_count={r.get('forced_inventory_count', 0)} "
-                f"forced_kappa_count={r.get('forced_kappa_count', 0)}"
+                f"min_order={self._fmt(r.get('min_order_size'))} "
+                f"trigger={self._short(r.get('trigger'))} threshold={self._short(r.get('threshold'))}"
             )
         if typ == "TIMING":
             return (f"[S1R_REQ] tick={r.get('tick')} sim_ts={r.get('timestamp')} "
@@ -4952,7 +2877,7 @@ class Strategy1_Research(Strategy1_Debug):
             )
             if action == "SKIP":
                 return f"[S1R_SKIP] {common} side=BOTH reason={reason} raw_reason={raw}"
-            return (f"[S1R_DECISION] {common} action={action} reason={reason} "
+            return (f"[S1R_QUOTE] {common} action={action} reason={reason} "
                     f"bid={self._fmt(r.get('bid_px'))} ask={self._fmt(r.get('ask_px'))} "
                     f"decision_ms={self._fmt(r.get('decision_ms'))}")
         if typ == "ACTIONABLE_FILL":
@@ -4998,7 +2923,7 @@ class Strategy1_Research(Strategy1_Debug):
                         f"client_id={self._short(self._pick(p, 'clientOrderId', 'client_order_id'))} index={r.get('instruction_index')}")
             e = r.get("event") or {}
             if "TRADE" in phase or "FILL" in phase:
-                return (f"[S1R_TRADE_NOTICE] tick={r.get('tick')} book={book} phase={phase} "
+                return (f"[S1R_FILL] tick={r.get('tick')} book={book} phase={phase} "
                         f"side={self._side(self._pick(e, 'direction', 'side'))} "
                         f"price={self._fmt(self._pick(e, 'price', 'tradePrice', 'trade_price'))} "
                         f"qty={self._fmt(self._pick(e, 'quantity', 'qty', 'size'))} "

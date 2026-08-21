@@ -43,6 +43,17 @@ from taos.im.protocol.models import (
 from taos.im.utils import duration_from_timestamp
 from taos.im.utils.kappa import kappa_3
 
+from regime_v2 import DebounceState, RegimeV2Thresholds, classify_regime_v2
+from execution_lifecycle import QuoteLifecycleStore, QuoteRecord, classify_fill, sim_delta_ms, ms_to_ns
+from execution_hazard import FillHazardModel, HazardFeatures, HazardPrediction
+from score_ev import compute_score_ev, required_observation_count, select_rank
+from quote_hysteresis import (
+    choose_ttl_ms,
+    predicted_dust_blocks_increase,
+    should_replace_quote,
+    would_create_dust,
+)
+
 T = TypeVar("T")
 
 
@@ -330,6 +341,10 @@ class DebugReason:
 class BaseStrategy(FinanceSimulationAgent):
     """Optimized standalone V4.1 Strict base for all derived Strategy agents."""
     DEPLOY_POLICY_VERSION = 'base_v4_1_1_maker_guard'
+    REGIME_POLICY_VERSION = 'regime_v2'
+    EXECUTION_POLICY_VERSION = 'execution_v1_frozen'
+    SCORE_EV_POLICY_VERSION = 'score_ev_v1'
+    QUOTE_POLICY_VERSION = 'quote_hysteresis_ttl_v1'
     REASON_ALIAS = {'LOW_EXPECTED_ALPHA': 'ALPHA', 'ZERO_ORDER_SIZE': 'SIZE_ZERO', 'MAX_INVENTORY': 'INVENTORY_MAX', 'INVALID_QUOTE_PRICES': 'BAD_PRICE', 'VOLUME_CAP': 'VOLUME_CAP', 'NON_POSITIVE_EDGE': 'EDGE', 'NEGATIVE_EXPECTED_PNL': 'NEG_PNL', 'LOW_FILL_PROBABILITY': 'FILL_PROB', 'INSTRUCTION_LIMIT': 'INSTR_LIMIT', 'INSUFFICIENT_BALANCE': 'BALANCE', 'QUOTE_ORDER_GATE': 'QUOTE_GATE', 'QUOTE_DISABLED': 'REGIME_DISABLED', 'TOXIC_BOOK': 'TOXIC', 'TOXIC_REGIME': 'TOXIC_REGIME', 'INACTIVE_TIER': 'INACTIVE', 'MM_CANDIDATE_LIMIT': 'MM_LIMIT', 'MANAGEMENT_LIMIT': 'MANAGEMENT_LIMIT', 'MANAGE_ORDER_GATE': 'MANAGE_GATE', 'MAINT_INVENTORY_NONFLAT': 'MAINT_INVENTORY', 'MAINT_ARCHETYPE_BLOCK': 'MAINT_ARCHETYPE', 'MAINT_ORDER_GATE': 'MAINT_GATE', 'NO_BOOK_SIDES': 'NO_BOOK_SIDES', 'NO_PROFILE': 'NO_PROFILE', 'AVOID_LIST': 'AVOID', 'NO_PREDICTION': 'NO_PREDICTION', 'GRACE_PERIOD': 'GRACE', 'NO_ACTION': 'NO_ACTION', 'HARD_CAP': 'HARD_CAP', 'STALE': 'STALE', 'DUST': 'DUST', 'DUST_POSITION': 'DUST', 'INACTIVE_DIAGNOSTIC_ONLY': 'INACTIVE_DIAG', 'MM_SUCCESS_CAP': 'MM_CAP', 'DUST_QUARANTINE': 'DUST_PARK', 'DUST_RELEASED': 'DUST_RELEASE', 'DUST_COMPACT': 'DUST_COMPACT', 'DUST_COMPACT_BLOCKED': 'DUST_COMPACT_BLOCKED', 'KAPPA_COMPLETION': 'KAPPA_COMPLETE', 'KAPPA_COMPLETION_ATTEMPT_CAP': 'KAPPA_ATTEMPT_CAP', 'KAPPA_COMPLETION_SUCCESS_CAP': 'KAPPA_SUCCESS_CAP', 'NORMAL_MM_ATTEMPT_CAP': 'NORMAL_ATTEMPT_CAP'}
 
     def _bsimpl_0_DetailedTemplateAgent_initialize(self) -> None:
@@ -2679,6 +2694,9 @@ class BaseStrategy(FinanceSimulationAgent):
                 stats['skipped_low_alpha'] += 1
                 continue
             global_rank = self._global_book_rank(expected_alpha, mem)
+            if not math.isfinite(global_rank) or global_rank <= -1e8:
+                stats['skipped_score_ev'] = stats.get('skipped_score_ev', 0) + 1
+                continue
             mm_candidates.append((global_rank, expected_alpha, book_id, book, profile, prediction, inventory, book_params, edge_bias))
         manage_queue.sort(key=lambda x: x[0], reverse=True)
         for _urgency, book_id, book, inventory, book_params, archetype in manage_queue[:self.max_managed_books_per_tick]:
@@ -2842,7 +2860,23 @@ class BaseStrategy(FinanceSimulationAgent):
         self._record_latency('total_ms', total_ms)
         self._debug_response_count += 1
         if self._should_emit_tick(self._tick):
-            self._emit('TIMING', tick=self._tick, timestamp=getattr(state, 'timestamp', None), update_ms=round(update_ms, 4), respond_ms=round(respond_ms, 4), report_ms=round(report_ms, 4), total_ms=round(total_ms, 4), internal_ms={key: round(value, 4) for key, value in sorted(self._debug_stage_ms.items())}, notices=len((getattr(state, 'notices', None) or {}).get(self.uid, [])), instructions=len(getattr(response, 'instructions', []) or []))
+            self._emit(
+                'TIMING',
+                tick=self._tick,
+                timestamp=getattr(state, 'timestamp', None),
+                update_ms=round(update_ms, 4),
+                respond_ms=round(respond_ms, 4),
+                report_ms=round(report_ms, 4),
+                total_ms=round(total_ms, 4),
+                screen_all_books_ms=0.0,
+                full_predict_ms=round(float(self._debug_stage_ms.get('predict_all_books_ms', 0.0) or 0.0), 4),
+                select_books_ms=round(float(self._debug_stage_ms.get('select_books_ms', 0.0) or 0.0), 4),
+                build_orders_ms=round(float(self._debug_stage_ms.get('build_mm_ms', 0.0) or 0.0), 4),
+                total_response_ms=round(total_ms, 4),
+                internal_ms={key: round(value, 4) for key, value in sorted(self._debug_stage_ms.items())},
+                notices=len((getattr(state, 'notices', None) or {}).get(self.uid, [])),
+                instructions=len(getattr(response, 'instructions', []) or []),
+            )
         if self.debug_slow_request_ms > 0.0 and total_ms >= self.debug_slow_request_ms:
             stage_ms = {key: round(value, 4) for key, value in sorted(self._debug_stage_ms.items())}
             max_stage = max(stage_ms.items(), key=lambda item: item[1]) if stage_ms else (None, None)
@@ -3420,7 +3454,10 @@ class BaseStrategy(FinanceSimulationAgent):
         self.research_dust_compact_min_fraction = max(0.500001, min(0.95, float(getattr(cfg, 'research_dust_compact_min_fraction', 0.5))))
         self.research_dust_compact_books_per_tick = max(1, int(getattr(cfg, 'research_dust_compact_books_per_tick', 2)))
         self.research_kappa_completion_enabled = self._as_bool(getattr(cfg, 'research_kappa_completion_enabled', True))
-        self.research_kappa_completion_target = max(2, int(getattr(cfg, 'research_kappa_completion_target', 3)))
+        self.research_kappa_completion_target = required_observation_count(
+            kappa_min_observations=getattr(self, 'kappa_min_observations', None),
+            research_target=getattr(cfg, 'research_kappa_completion_target', None),
+        )
         self.research_kappa_completion_rank_bonus = max(0.0, float(getattr(cfg, 'research_kappa_completion_rank_bonus', 0.3)))
         self.research_kappa_completion_fill_mult = max(0.5, min(1.0, float(getattr(cfg, 'research_kappa_completion_fill_mult', 0.7))))
         self.research_kappa_completion_fill_floor = max(0.0, float(getattr(cfg, 'research_kappa_completion_fill_floor', 0.1)))
@@ -3432,6 +3469,31 @@ class BaseStrategy(FinanceSimulationAgent):
         self.research_kappa_completion_success_cap = min(int(self.max_mm_books_per_tick), requested_completion_success_cap)
         self.research_kappa_completion_relaxed_success_cap = min(self.research_kappa_completion_relaxed_success_cap, self.research_kappa_completion_success_cap)
         self.research_kappa_completion_recent_pnl_floor = float(getattr(cfg, 'research_kappa_completion_recent_pnl_floor', -0.01))
+        self.score_ev_enabled = self._as_bool(getattr(cfg, 'score_ev_enabled', True))
+        self.score_ev_min_trading = float(getattr(cfg, 'score_ev_min_trading', 0.0))
+        self.score_ev_one_away_weight = max(0.0, float(getattr(cfg, 'score_ev_one_away_weight', 0.18)))
+        self.score_ev_two_away_weight = max(0.0, float(getattr(cfg, 'score_ev_two_away_weight', 0.06)))
+        self.score_ev_new_book_weight = max(0.0, float(getattr(cfg, 'score_ev_new_book_weight', 0.0)))
+        self.score_ev_dust_weight = max(0.0, float(getattr(cfg, 'score_ev_dust_weight', 0.25)))
+        self.score_ev_dust_target = max(0.0, min(1.0, float(getattr(cfg, 'score_ev_dust_target', 0.15))))
+        self.score_ev_fees_bps = max(0.0, float(getattr(cfg, 'score_ev_fees_bps', 0.5)))
+        self.score_ev_min_fill_samples = max(1, int(getattr(cfg, 'score_ev_min_fill_samples', 8)))
+        self.score_ev_min_markout_samples = max(1, int(getattr(cfg, 'score_ev_min_markout_samples', 8)))
+        self._score_ev_last: dict[int, Any] = {}
+        self.quote_hysteresis_enabled = self._as_bool(getattr(cfg, 'quote_hysteresis_enabled', True))
+        self.hysteresis_min_price_ticks = max(0.25, float(getattr(cfg, 'hysteresis_min_price_ticks', 1.0)))
+        self.hysteresis_ev_threshold = max(0.0, float(getattr(cfg, 'hysteresis_ev_threshold', 0.04)))
+        self.adaptive_ttl_enabled = self._as_bool(getattr(cfg, 'adaptive_ttl_enabled', True))
+        _baseline_ttl_ms = sim_delta_ms(0, int(getattr(self, 'mm_expiry_period', 500000000) or 500000000)) or 500.0
+        self.ttl_min_ms = max(50.0, float(getattr(cfg, 'ttl_min_ms', 200.0)))
+        self.ttl_max_ms = max(self.ttl_min_ms, float(getattr(cfg, 'ttl_max_ms', max(800.0, _baseline_ttl_ms))))
+        self.dust_prevent_enabled = self._as_bool(getattr(cfg, 'dust_prevent_enabled', True))
+        self._hysteresis_holds = 0
+        self._hysteresis_replaces = 0
+        self._ttl_stale_skips = 0
+        self._dust_creation_count = 0
+        self._dust_prevent_skips = 0
+        self._quote_submit_snapshot: dict[int, dict[str, Any]] = {}
         self.research_run_id = time.strftime('%Y%m%d_%H%M%S', time.localtime())
         self._research_stress_spread_bps = self.research_stress_fallback_bps
         self._research_toxic_spread_bps = max(self.research_toxic_fallback_bps, self._research_stress_spread_bps + self.research_toxic_gap_bps)
@@ -3445,6 +3507,18 @@ class BaseStrategy(FinanceSimulationAgent):
         self._research_round_trip_samples_by_book: dict[int, int] = {}
         self._research_realized_observations_by_book: dict[int, int] = {}
         self._research_parked_dust: dict[int, dict[str, Any]] = {}
+        self._regime_v2_thresholds = RegimeV2Thresholds()
+        self._market_regime_debounce = DebounceState('NORMAL', 'NORMAL', 0)
+        self._score_regime_debounce = DebounceState('NORMAL', 'NORMAL', 0)
+        self._market_regime = 'NORMAL'
+        self._score_regime = 'NORMAL'
+        self.execution_hazard_enabled = self._as_bool(getattr(cfg, 'execution_hazard_enabled', True))
+        self.execution_hazard_use_for_policy = self._as_bool(getattr(cfg, 'execution_hazard_use_for_policy', True))
+        self._execution_observe_cap = max(64, int(getattr(cfg, 'execution_hazard_observe_cap', 8192)))
+        self._execution_quotes = QuoteLifecycleStore(max_live=1024, max_pending_markouts=16)
+        self._execution_hazard = FillHazardModel()
+        self._execution_last: dict[int, dict[str, Any]] = {}
+        self._execution_fills_classified = 0
         self._research_dust_entries = 0
         self._research_dust_releases = 0
         self._research_dust_heartbeats = 0
@@ -3499,7 +3573,7 @@ class BaseStrategy(FinanceSimulationAgent):
                 self._enqueue(record)
         self._research_early.clear()
         if self.research_enabled:
-            self._enqueue({'type': 'RESEARCH_CONFIG', 'agent_id': getattr(self, 'uid', None), 'wall_time_ns': time.time_ns(), 'enabled': self.research_enabled, 'every_n': self.research_every_n, 'book_filter': self.research_book_id, 'console': self.research_console, 'jsonl': self.research_jsonl, 'queue_size': self.research_queue_size, 'output_dir': self.research_output_dir, 'policy_version': 'deadlock_fix_v4_1_1_strict', 'fix_global_stress': self.research_fix_global_stress, 'neutral_fallback': self.research_neutral_fallback, 'adaptive_spread_thresholds': self.research_adaptive_spread_thresholds, 'stress_percentile': self.research_stress_percentile, 'toxic_percentile': self.research_toxic_percentile, 'inactive_bootstrap': self.research_inactive_bootstrap, 'trade_global_stress': self.research_trade_global_stress, 'sync_min_order': self.research_sync_min_order, 'promote_min_order': self.research_promote_min_order, 'bootstrap_dead_as_mm': self.research_bootstrap_dead_as_mm, 'fix_inventory_util': self.research_fix_inventory_util, 'fix_quote_reservation': self.research_fix_quote_reservation, 'bootstrap_manage_min_clip': self.research_bootstrap_manage_min_clip, 'bootstrap_force_close_ticks': self.research_bootstrap_force_close_ticks, 'legacy_force_close_min_bps': self.research_bootstrap_force_close_min_bps, 'legacy_hard_close_ticks': self.research_bootstrap_hard_close_ticks, 'aggressive_close_touch_gate': self.research_aggressive_close_touch_gate, 'aggressive_close_fee_buffer_bps': self.research_aggressive_close_fee_buffer_bps, 'aggressive_close_min_net_bps': self.research_aggressive_close_min_net_bps, 'candidate_backfill': self.research_candidate_backfill, 'candidate_attempt_cap': self.research_candidate_attempt_cap, 'toxic_pnl_min_samples': self.research_toxic_pnl_min_samples, 'toxic_pnl_hard_floor': self.research_toxic_pnl_hard_floor, 'yellow_sparse_active': self.research_yellow_sparse_active, 'green_sparse_active': self.research_green_sparse_active, 'dust_safe_close': self.research_dust_safe_close, 'dust_park_enabled': self.research_dust_park_enabled, 'dust_heartbeat_ticks': self.research_dust_heartbeat_ticks, 'dust_warn_ticks': self.research_dust_warn_ticks, 'dust_compact_enabled': self.research_dust_compact_enabled, 'dust_compact_min_fraction': self.research_dust_compact_min_fraction, 'dust_compact_books_per_tick': self.research_dust_compact_books_per_tick, 'kappa_completion_enabled': self.research_kappa_completion_enabled, 'kappa_completion_target': self.research_kappa_completion_target, 'kappa_completion_rank_bonus': self.research_kappa_completion_rank_bonus, 'kappa_completion_fill_mult': self.research_kappa_completion_fill_mult, 'kappa_completion_fill_floor': self.research_kappa_completion_fill_floor, 'kappa_completion_relaxed_success_cap': self.research_kappa_completion_relaxed_success_cap, 'kappa_completion_attempt_cap': self.research_kappa_completion_attempt_cap, 'kappa_completion_success_cap': self.research_kappa_completion_success_cap, 'normal_attempt_cap': self.research_normal_attempt_cap, 'kappa_completion_recent_pnl_floor': self.research_kappa_completion_recent_pnl_floor, 'rotate_jsonl': self.research_rotate_jsonl, 'run_id': self.research_run_id, 'output_file': self._research_output_file, 'base_deploy_policy_version': self.DEPLOY_POLICY_VERSION, 'mm_force_post_only': self.mm_force_post_only, 'mm_maker_guard_reprice': self.mm_maker_guard_reprice, 'debug_slow_request_ms': self.debug_slow_request_ms})
+            self._enqueue({'type': 'RESEARCH_CONFIG', 'agent_id': getattr(self, 'uid', None), 'wall_time_ns': time.time_ns(), 'enabled': self.research_enabled, 'every_n': self.research_every_n, 'book_filter': self.research_book_id, 'console': self.research_console, 'jsonl': self.research_jsonl, 'queue_size': self.research_queue_size, 'output_dir': self.research_output_dir, 'policy_version': 'deadlock_fix_v4_1_1_strict', 'fix_global_stress': self.research_fix_global_stress, 'neutral_fallback': self.research_neutral_fallback, 'adaptive_spread_thresholds': self.research_adaptive_spread_thresholds, 'stress_percentile': self.research_stress_percentile, 'toxic_percentile': self.research_toxic_percentile, 'inactive_bootstrap': self.research_inactive_bootstrap, 'trade_global_stress': self.research_trade_global_stress, 'sync_min_order': self.research_sync_min_order, 'promote_min_order': self.research_promote_min_order, 'bootstrap_dead_as_mm': self.research_bootstrap_dead_as_mm, 'fix_inventory_util': self.research_fix_inventory_util, 'fix_quote_reservation': self.research_fix_quote_reservation, 'bootstrap_manage_min_clip': self.research_bootstrap_manage_min_clip, 'bootstrap_force_close_ticks': self.research_bootstrap_force_close_ticks, 'legacy_force_close_min_bps': self.research_bootstrap_force_close_min_bps, 'legacy_hard_close_ticks': self.research_bootstrap_hard_close_ticks, 'aggressive_close_touch_gate': self.research_aggressive_close_touch_gate, 'aggressive_close_fee_buffer_bps': self.research_aggressive_close_fee_buffer_bps, 'aggressive_close_min_net_bps': self.research_aggressive_close_min_net_bps, 'candidate_backfill': self.research_candidate_backfill, 'candidate_attempt_cap': self.research_candidate_attempt_cap, 'toxic_pnl_min_samples': self.research_toxic_pnl_min_samples, 'toxic_pnl_hard_floor': self.research_toxic_pnl_hard_floor, 'yellow_sparse_active': self.research_yellow_sparse_active, 'green_sparse_active': self.research_green_sparse_active, 'dust_safe_close': self.research_dust_safe_close, 'dust_park_enabled': self.research_dust_park_enabled, 'dust_heartbeat_ticks': self.research_dust_heartbeat_ticks, 'dust_warn_ticks': self.research_dust_warn_ticks, 'dust_compact_enabled': self.research_dust_compact_enabled, 'dust_compact_min_fraction': self.research_dust_compact_min_fraction, 'dust_compact_books_per_tick': self.research_dust_compact_books_per_tick, 'kappa_completion_enabled': self.research_kappa_completion_enabled, 'kappa_completion_target': self.research_kappa_completion_target, 'kappa_completion_rank_bonus': self.research_kappa_completion_rank_bonus, 'kappa_completion_fill_mult': self.research_kappa_completion_fill_mult, 'kappa_completion_fill_floor': self.research_kappa_completion_fill_floor, 'kappa_completion_relaxed_success_cap': self.research_kappa_completion_relaxed_success_cap, 'kappa_completion_attempt_cap': self.research_kappa_completion_attempt_cap, 'kappa_completion_success_cap': self.research_kappa_completion_success_cap, 'normal_attempt_cap': self.research_normal_attempt_cap, 'kappa_completion_recent_pnl_floor': self.research_kappa_completion_recent_pnl_floor, 'rotate_jsonl': self.research_rotate_jsonl, 'run_id': self.research_run_id, 'output_file': self._research_output_file, 'base_deploy_policy_version': self.DEPLOY_POLICY_VERSION, 'regime_policy_version': self.REGIME_POLICY_VERSION, 'mm_force_post_only': self.mm_force_post_only, 'mm_maker_guard_reprice': self.mm_maker_guard_reprice, 'debug_slow_request_ms': self.debug_slow_request_ms})
 
     @staticmethod
     def _bsimpl_3_Strategy1_Research__percentile(values: list[float], q: float) -> float | None:
@@ -3558,26 +3632,190 @@ class BaseStrategy(FinanceSimulationAgent):
         """Half one quantity tick; only sub-half-tick residuals are execution-flat."""
         return max(0.5 * 10.0 ** (-int(self._research_volume_decimals)), 1e-12)
 
-    def _bsimpl_3_Strategy1_Research_classify_market_regime_from_profiles(self, profiles, predictions, selection):
-        profile_list = list(profiles)
-        self._update_spread_thresholds(profile_list)
-        regime = self._bsimpl_2_Strategy1_Debug_classify_market_regime_from_profiles(profile_list, predictions, selection)
-        spreads = [value for profile in profile_list if (value := self._profile_float(profile, 'spread_bps')) is not None]
-        vols = [value for profile in profile_list if (value := self._profile_float(profile, 'volatility')) is not None]
-        rates = [value for profile in profile_list if (value := self._profile_float(profile, 'trade_rate')) is not None]
-        inactive = sum((1 for profile in profile_list if str(getattr(profile, 'tier', '')).upper() == 'INACTIVE'))
-        active = max(0, len(profile_list) - inactive)
-        stressed_count = sum((1 for value in spreads if value >= self._research_stress_spread_bps))
-        liquid_count = sum((1 for profile in profile_list if (self._profile_float(profile, 'spread_bps') or 0.0) < self._research_stress_spread_bps and (self._profile_float(profile, 'trade_rate') or 0.0) >= float(getattr(self, 'archetype_dead_trade_rate', 0.0))))
-        low_trade_count = sum((1 for profile in profile_list if (self._profile_float(profile, 'trade_rate') or 0.0) < float(getattr(self, 'archetype_dead_trade_rate', 0.0))))
+    def _regime_v2_snapshot(self, profile_list, predictions, selection) -> dict[str, Any]:
+        """One pass over already-built profiles/predictions. No extra L2 scans."""
+        n = len(profile_list)
+        spreads: list[float] = []
+        vols: list[float] = []
+        rates: list[float] = []
+        spread_rate: list[tuple[float | None, float | None]] = []
+        inactive = 0
+        red = 0
+        green = 0
+        imb_sum = 0.0
+        target = int(getattr(self, 'research_kappa_completion_target', 3))
+        obs_map = getattr(self, '_research_realized_observations_by_book', {}) or {}
+        kappa_on = getattr(self, 'research_kappa_completion_enabled', True)
+        pending = 0
+        for profile in profile_list:
+            tier = str(getattr(profile, 'tier', '')).upper()
+            if tier == 'INACTIVE':
+                inactive += 1
+            elif tier == 'RED':
+                red += 1
+            elif tier == 'GREEN':
+                green += 1
+            spread = self._profile_float(profile, 'spread_bps')
+            vol = self._profile_float(profile, 'volatility')
+            rate = self._profile_float(profile, 'trade_rate')
+            imb = self._profile_float(profile, 'imbalance')
+            if spread is not None:
+                spreads.append(spread)
+            if vol is not None:
+                vols.append(vol)
+            if rate is not None:
+                rates.append(rate)
+            if imb is not None:
+                imb_sum += imb
+            spread_rate.append((spread, rate))
+            if kappa_on:
+                try:
+                    nobs = int(obs_map.get(int(getattr(profile, 'book_id')), 0) or 0)
+                except (TypeError, ValueError):
+                    nobs = 0
+                if 0 < nobs < target:
+                    pending += 1
+
+        if self.research_adaptive_spread_thresholds and len(spreads) >= self.research_min_profiles_for_adaptive:
+            p_stress = self._percentile(spreads, self.research_stress_percentile)
+            p_toxic = self._percentile(spreads, self.research_toxic_percentile)
+            stress = max(self.research_stress_floor_bps, p_stress if p_stress is not None else self.research_stress_fallback_bps)
+            toxic = max(self.research_toxic_floor_bps, p_toxic if p_toxic is not None else self.research_toxic_fallback_bps, stress + self.research_toxic_gap_bps)
+        else:
+            stress = self.research_stress_fallback_bps
+            toxic = max(self.research_toxic_fallback_bps, stress + self.research_toxic_gap_bps)
+        self._research_stress_spread_bps = float(stress)
+        self._research_toxic_spread_bps = float(toxic)
+
+        dead_rate = float(getattr(self, 'archetype_dead_trade_rate', 0.0) or 0.0)
+        stressed_count = 0
+        liquid_count = 0
+        for spread, rate in spread_rate:
+            if spread is not None and spread >= stress:
+                stressed_count += 1
+            if (spread or 0.0) < stress and (rate or 0.0) >= dead_rate:
+                liquid_count += 1
+
         pred_values = list(predictions.values()) if isinstance(predictions, dict) else []
-        up = sum((1 for p in pred_values if str(getattr(p, 'direction', '')).upper() == 'UP'))
-        down = sum((1 for p in pred_values if str(getattr(p, 'direction', '')).upper() == 'DOWN'))
         pred_n = max(len(pred_values), 1)
-        n = max(len(profile_list), 1)
-        trigger = self._pick(regime, 'trigger', 'reason', 'cause')
-        threshold = self._pick(regime, 'threshold', 'trigger_threshold')
-        self._emit('REGIME', tick=self._tick, mode=getattr(regime, 'mode', None), overlay=getattr(regime, 'scoring_overlay', None), book_count=len(profile_list), active=active, inactive=inactive, spread_med=self._percentile(spreads, 0.5), spread_p90=self._percentile(spreads, 0.9), spread_max=max(spreads) if spreads else None, stress_spread_bps=self._research_stress_spread_bps, toxic_spread_bps=self._research_toxic_spread_bps, vol_med=self._percentile(vols, 0.5), vol_p90=self._percentile(vols, 0.9), trade_rate_med=self._percentile(rates, 0.5), liquid_ratio=liquid_count / n, low_trade_ratio=low_trade_count / n, stressed_ratio=stressed_count / n, trend_up_ratio=up / pred_n, trend_down_ratio=down / pred_n, trigger=trigger if trigger is not None else 'UNEXPOSED_BY_PARENT', threshold=threshold if threshold is not None else 'UNEXPOSED_BY_PARENT', adaptive=self.research_adaptive_spread_thresholds, min_order_size=self._research_exchange_min_order_size)
+        up = 0
+        down = 0
+        hold = 0
+        score_abs = 0.0
+        score_n = 0
+        for pred in pred_values:
+            direction = str(getattr(pred, 'direction', '')).upper()
+            if direction == 'UP':
+                up += 1
+            elif direction == 'DOWN':
+                down += 1
+            elif direction == 'HOLD':
+                hold += 1
+            try:
+                score_abs += abs(float(getattr(pred, 'score', 0.0) or 0.0))
+                score_n += 1
+            except (TypeError, ValueError):
+                pass
+
+        denom = max(n, 1)
+        return {
+            'book_count': n,
+            'active': max(0, n - inactive),
+            'inactive': inactive,
+            'inactive_frac': inactive / denom,
+            'red_frac': red / denom,
+            'green_frac': green / denom,
+            'spread_med': self._percentile(spreads, 0.5),
+            'vol_med': self._percentile(vols, 0.5),
+            'trade_rate_med': self._percentile(rates, 0.5),
+            'liquid_ratio': liquid_count / denom,
+            'stressed_ratio': stressed_count / denom,
+            'trend_up_ratio': up / pred_n,
+            'trend_down_ratio': down / pred_n,
+            'hold_frac': hold / pred_n,
+            'up_frac': up / pred_n,
+            'down_frac': down / pred_n,
+            'mean_abs_score': (score_abs / score_n) if score_n else 0.0,
+            'mean_volatility': (sum(vols) / len(vols)) if vols else 0.0,
+            'mean_trade_rate': (sum(rates) / len(rates)) if rates else 0.0,
+            'mean_spread_bps': (sum(spreads) / len(spreads)) if spreads else None,
+            'mean_imbalance': imb_sum / denom,
+            'pending_kappa_frac': pending / denom,
+            'stress_spread_bps': float(stress),
+            'toxic_spread_bps': float(toxic),
+            'tier_counts': dict(getattr(selection, 'tier_counts', {}) or {}),
+        }
+
+    def _build_market_regime_from_v2(self, snapshot: dict[str, Any], decision) -> MarketRegime:
+        n = int(snapshot.get('book_count', 0) or 0)
+        return MarketRegime(
+            mode=decision.parent_mode,
+            hold_frac=float(snapshot.get('hold_frac', 0.0) or 0.0),
+            up_frac=float(snapshot.get('up_frac', 0.0) or 0.0),
+            down_frac=float(snapshot.get('down_frac', 0.0) or 0.0),
+            mean_score=0.0,
+            mean_abs_score=float(snapshot.get('mean_abs_score', 0.0) or 0.0),
+            mean_volatility=float(snapshot.get('mean_volatility', 0.0) or 0.0),
+            mean_trade_rate=float(snapshot.get('mean_trade_rate', 0.0) or 0.0),
+            mean_spread_bps=snapshot.get('mean_spread_bps'),
+            mean_imbalance=float(snapshot.get('mean_imbalance', 0.0) or 0.0),
+            mean_log_return=None,
+            return_dispersion=None,
+            direction_dispersion=0.0,
+            tier_counts=dict(snapshot.get('tier_counts') or {}),
+            inactive_frac=float(snapshot.get('inactive_frac', 0.0) or 0.0),
+            red_frac=float(snapshot.get('red_frac', 0.0) or 0.0),
+            green_frac=float(snapshot.get('green_frac', 0.0) or 0.0),
+            scoring_overlay=decision.scoring_overlay,
+            confidence=min(1.0, 0.35 + 0.65 * float(snapshot.get('liquid_ratio', 0.0) or 0.0)),
+            book_count=n,
+        )
+
+    def _bsimpl_3_Strategy1_Research_classify_market_regime_from_profiles(self, profiles, predictions, selection):
+        """MarketRegime V2 + independent ScoreRegime. Parent 5 bps mean-spread latch is not used."""
+        started = time.perf_counter()
+        profile_list = list(profiles or [])
+        snapshot = self._regime_v2_snapshot(profile_list, predictions, selection)
+        decision = classify_regime_v2(
+            snapshot,
+            market_state=getattr(self, '_market_regime_debounce', None),
+            score_state=getattr(self, '_score_regime_debounce', None),
+            thresholds=getattr(self, '_regime_v2_thresholds', None),
+        )
+        self._market_regime_debounce = decision.market_debounce
+        self._score_regime_debounce = decision.score_debounce
+        self._market_regime = decision.market_regime
+        self._score_regime = decision.score_regime
+        regime = self._build_market_regime_from_v2(snapshot, decision)
+        try:
+            setattr(regime, 'market_regime', decision.market_regime)
+            setattr(regime, 'score_regime', decision.score_regime)
+            setattr(regime, 'market_trigger', decision.market_trigger)
+            setattr(regime, 'score_trigger', decision.score_trigger)
+        except Exception:
+            pass
+        self._last_regime = regime
+        if getattr(self, 'debug_enabled', False):
+            self._debug_current_regime = regime
+        if getattr(self, '_debug_stage_ms', None) is not None:
+            self._debug_stage_ms['classify_regime_ms'] = (time.perf_counter() - started) * 1000.0
+        self._emit(
+            'REGIME',
+            tick=self._tick,
+            market_regime=decision.market_regime,
+            score_regime=decision.score_regime,
+            mode=decision.parent_mode,
+            overlay=decision.scoring_overlay,
+            book_count=snapshot['book_count'],
+            inactive=snapshot['inactive'],
+            stressed_ratio=snapshot['stressed_ratio'],
+            liquid_ratio=snapshot['liquid_ratio'],
+            spread_med=snapshot['spread_med'],
+            trade_rate_med=snapshot['trade_rate_med'],
+            pending_kappa_frac=snapshot['pending_kappa_frac'],
+            market_trigger=decision.market_trigger,
+            score_trigger=decision.score_trigger,
+        )
         return regime
 
     def _bsimpl_3_Strategy1_Research_get_regime_params(self, regime: MarketRegime) -> RegimeParamSet:
@@ -3600,27 +3838,156 @@ class BaseStrategy(FinanceSimulationAgent):
     def _bsimpl_3_Strategy1_Research__completion_observation_count(self, book_id: int) -> int:
         return int(self._research_realized_observations_by_book.get(int(book_id), 0))
 
+    def _required_observation_count(self) -> int:
+        return required_observation_count(
+            kappa_min_observations=getattr(self, 'kappa_min_observations', None),
+            research_target=getattr(self, 'research_kappa_completion_target', None),
+        )
+
+    def _observations_remaining(self, book_id: int) -> int:
+        required = self._required_observation_count()
+        realized = self._completion_observation_count(book_id)
+        return max(0, required - int(realized))
+
     def _bsimpl_3_Strategy1_Research__is_kappa_completion_candidate(self, book_id: int) -> bool:
         if not self.research_kappa_completion_enabled:
             return False
         samples = self._completion_observation_count(book_id)
-        if samples <= 0 or samples >= self.research_kappa_completion_target:
+        target = self._required_observation_count()
+        if samples <= 0 or samples >= target:
             return False
         mem = self._mem(book_id)
         return float(getattr(mem, 'recent_pnl', 0.0) or 0.0) >= self.research_kappa_completion_recent_pnl_floor
 
+    def _score_ev_for_book(self, book_id: int, expected_alpha: float, mem):
+        profile = self._execution_profile_for_book(book_id)
+        spread_bps = 0.0
+        if profile is not None:
+            try:
+                spread_bps = float(getattr(profile, 'spread_bps', 0.0) or 0.0)
+            except (TypeError, ValueError):
+                spread_bps = 0.0
+        last = (getattr(self, '_execution_last', {}) or {}).get(int(book_id), {})
+        pred_buy = last.get('buy')
+        pred_sell = last.get('sell')
+        old = last.get('legacy')
+        fill_old = float(getattr(mem, 'fill_rate', 0.0) or 0.0)
+        if old is not None:
+            fill_old = 0.5 * (float(getattr(old, 'buy', 0.0)) + float(getattr(old, 'sell', 0.0)))
+        hazard_any = None
+        hazard_act = None
+        hazard_dust = None
+        hazard_usable = False
+        if pred_buy is not None or pred_sell is not None:
+            anys = []
+            acts = []
+            dusts = []
+            usable = False
+            for pred in (pred_buy, pred_sell):
+                if pred is None:
+                    continue
+                anys.append(float(pred.any_fill))
+                acts.append(float(pred.actionable_fill))
+                dusts.append(float(pred.dust))
+                usable = usable or bool(pred.usable)
+            if anys:
+                hazard_any = sum(anys) / len(anys)
+                hazard_act = sum(acts) / len(acts)
+                hazard_dust = sum(dusts) / len(dusts)
+                hazard_usable = usable
+        dust_prob = 0.0 if hazard_dust is None or not hazard_usable else float(hazard_dust)
+        inv_util = 0.0
+        inventory_blocked = False
+        try:
+            snap = self._position_tracker_snapshot(int(book_id))
+            cap = max(float(getattr(self, 'max_inventory_base', 1.0) or 1.0), 1e-9)
+            inv_util = min(1.0, abs(float(getattr(snap, 'net_qty', 0.0) or 0.0)) / cap)
+            inventory_blocked = inv_util + 1e-12 >= 1.0
+        except Exception:
+            pass
+        toxic = int(book_id) in getattr(self, '_research_parked_dust', {})
+        market_regime = str(getattr(self, '_market_regime', '') or '').upper()
+        unsafe = market_regime in {'TOXIC'}
+        side = 'MM'
+        if inv_util > 0.05:
+            net = 0.0
+            try:
+                net = float(self._position_tracker_snapshot(int(book_id)).net_qty)
+            except Exception:
+                net = 0.0
+            side = 'SELL' if net > 0 else 'BUY'
+        return compute_score_ev(
+            book=int(book_id),
+            side=side,
+            alpha=float(expected_alpha),
+            fill_prob_old=float(fill_old),
+            fill_prob_hazard=hazard_any,
+            actionable_fill_hazard=hazard_act,
+            hazard_usable=hazard_usable,
+            dust_prob=dust_prob,
+            spread_capture_bps=0.5 * max(0.0, spread_bps),
+            fees_bps=float(self.score_ev_fees_bps),
+            realized_observation_count=self._completion_observation_count(book_id),
+            required=self._required_observation_count(),
+            inventory_util=inv_util,
+            toxic=bool(toxic),
+            inventory_blocked=bool(inventory_blocked),
+            unsafe=bool(unsafe),
+            min_trading_ev=float(self.score_ev_min_trading),
+            min_fill_samples=int(self.score_ev_min_fill_samples),
+            min_markout_samples=int(self.score_ev_min_markout_samples),
+            one_away_weight=float(self.score_ev_one_away_weight),
+            two_away_weight=float(self.score_ev_two_away_weight),
+            new_book_weight=float(self.score_ev_new_book_weight),
+            dust_target=float(self.score_ev_dust_target),
+            dust_weight=float(self.score_ev_dust_weight),
+        )
+
     def _bsimpl_3_Strategy1_Research__global_book_rank(self, expected_alpha: float, mem) -> float:
-        """Preserve Strategy1 economics, then prioritize near-complete Kappa books."""
-        base_rank = self._bsimpl_1_Strategy1__global_book_rank(expected_alpha, mem)
-        if not self.research_kappa_completion_enabled:
-            return base_rank
+        """Score-EV rank, or V4.1 legacy rank when the feature flag is off."""
         book_id = getattr(mem, '_research_book_id', None)
-        if book_id is None or not self._is_kappa_completion_candidate(int(book_id)):
-            return base_rank
-        samples = self._completion_observation_count(int(book_id))
-        denom = max(1, self.research_kappa_completion_target - 1)
-        progress = max(0.0, min(1.0, samples / denom))
-        return base_rank + self.research_kappa_completion_rank_bonus * progress
+        if book_id is None:
+            return self._bsimpl_1_Strategy1__global_book_rank(expected_alpha, mem)
+        book_id = int(book_id)
+        if not getattr(self, 'score_ev_enabled', True):
+            base_rank = self._bsimpl_1_Strategy1__global_book_rank(expected_alpha, mem)
+            if not self.research_kappa_completion_enabled or not self._is_kappa_completion_candidate(book_id):
+                return base_rank
+            samples = self._completion_observation_count(book_id)
+            denom = max(1, self._required_observation_count() - 1)
+            progress = max(0.0, min(1.0, samples / denom))
+            return base_rank + self.research_kappa_completion_rank_bonus * progress
+        breakdown = self._score_ev_for_book(book_id, expected_alpha, mem)
+        self._score_ev_last[book_id] = breakdown
+        if getattr(self, 'debug_enabled', False) or getattr(self, 'research_enabled', False):
+            self._emit(
+                'SCORE_EV',
+                force=True,
+                tick=getattr(self, '_tick', None),
+                book=book_id,
+                trading_ev=breakdown.trading_ev,
+                completion_value=breakdown.completion_value,
+                dust_cost=breakdown.dust_cost,
+                inventory_cost=breakdown.inventory_cost,
+                latency_cost=breakdown.latency_cost,
+                final_score=None if not math.isfinite(breakdown.final_score) else breakdown.final_score,
+                observation_count=breakdown.observation_count,
+                required_observation_count=breakdown.required_observation_count,
+                observations_remaining=breakdown.observations_remaining,
+                actionable_fill_prob=breakdown.actionable_fill_prob,
+                dust_prob=breakdown.dust_prob,
+                alpha=breakdown.alpha,
+                eligible=int(breakdown.eligible),
+                reject_reason=breakdown.reject_reason or '',
+            )
+        chosen = select_rank(
+            enable_score_ev=True,
+            score_ev=breakdown,
+            legacy_rank=self._bsimpl_1_Strategy1__global_book_rank(expected_alpha, mem),
+        )
+        if chosen is None:
+            return float('-1e9')
+        return float(chosen)
 
     def _bsimpl_3_Strategy1_Research__is_compactable_dust(self, net_base: float) -> bool:
         if not self.research_dust_compact_enabled or not self._is_dust_qty(net_base):
@@ -4094,6 +4461,345 @@ class BaseStrategy(FinanceSimulationAgent):
             transition = 'UNCHANGED'
         round_trip_event = transition == 'FLAT' or (transition == 'CROSS' and abs(realized_delta) > 1e-12)
         self._emit('POSITION', tick=getattr(self, '_tick', None), timestamp=getattr(event, 'timestamp', None), book_id=book_id, transition=transition, net_before=before, net_after=after, realized_pnl_delta=realized_delta, realized_book_observations=self._research_realized_observations_by_book.get(book_id, 0), round_trip=round_trip_event, round_trip_total=self._research_round_trip_closes, round_trip_book_samples=self._research_round_trip_samples_by_book.get(book_id, 0), execution_flat_epsilon=eps, reason=self._inventory_reason.get(book_id, 'FLAT' if transition == 'FLAT' else 'UNKNOWN'))
+        self._execution_on_fill(event, book_id=book_id, before=before, after=after)
+
+    def _execution_field(self, obj: Any, *names: str) -> Any:
+        if obj is None:
+            return None
+        for name in names:
+            if isinstance(obj, dict) and name in obj:
+                return obj[name]
+            if hasattr(obj, name):
+                return getattr(obj, name)
+        return None
+
+    def _execution_ttl_ms(self) -> float:
+        ttl = sim_delta_ms(0, int(getattr(self, 'mm_expiry_period', 500000000) or 500000000))
+        return 500.0 if ttl is None else float(ttl)
+
+    def _execution_profile_for_book(self, book_id: int | None):
+        if book_id is None:
+            return None
+        selection = getattr(self, '_last_selection', None)
+        for profile in list(getattr(selection, 'profiles', None) or []):
+            try:
+                if int(getattr(profile, 'book_id')) == int(book_id):
+                    return profile
+            except (TypeError, ValueError, AttributeError):
+                continue
+        return None
+
+    def _execution_features(self, *, side: str, book_id: int | None, mid: float, spread: float, trade_rate: float, quote_price: float) -> HazardFeatures:
+        touch = mid - 0.5 * spread if str(side).lower() == 'buy' else mid + 0.5 * spread
+        dist_bps = None
+        if mid > 0.0:
+            if str(side).lower() == 'buy':
+                dist_bps = ((touch - quote_price) / mid) * 10000.0
+            else:
+                dist_bps = ((quote_price - touch) / mid) * 10000.0
+        profile = self._execution_profile_for_book(book_id)
+        spread_bps = (spread / mid) * 10000.0 if mid > 0.0 else None
+        return HazardFeatures.from_snapshot(
+            side=side,
+            distance_from_touch_bps=dist_bps,
+            spread_bps=spread_bps,
+            volatility=None if profile is None else getattr(profile, 'volatility', None),
+            trade_rate=trade_rate,
+            imbalance=None if profile is None else getattr(profile, 'imbalance', None),
+            market_regime=getattr(self, '_market_regime', None),
+            ttl_ms=self._execution_ttl_ms(),
+        )
+
+    def _bsimpl_3_Strategy1_Research_estimate_fill_probability(self, book: Book, mid: float, spread: float, trade_rate: float, buy_price: float, sell_price: float, book_id: int | None=None) -> FillProbabilityEstimate:
+        old = self._bsimpl_1_Strategy1_estimate_fill_probability(book, mid, spread, trade_rate, buy_price, sell_price, book_id=book_id)
+        if not getattr(self, 'execution_hazard_enabled', True):
+            if book_id is not None:
+                self._execution_last[int(book_id)] = {
+                    'legacy': old,
+                    'buy': None,
+                    'sell': None,
+                    'fallback_reason': 'POLICY_DISABLED',
+                    'model_confidence': 0.0,
+                }
+            return old
+        try:
+            model = self._execution_hazard
+            buy_feat = self._execution_features(side='buy', book_id=book_id, mid=mid, spread=spread, trade_rate=trade_rate, quote_price=buy_price)
+            sell_feat = self._execution_features(side='sell', book_id=book_id, mid=mid, spread=spread, trade_rate=trade_rate, quote_price=sell_price)
+            pred_buy = model.predict(buy_feat)
+            pred_sell = model.predict(sell_feat)
+            use_policy = bool(getattr(self, 'execution_hazard_use_for_policy', True))
+            buy, buy_reason, buy_conf = model.apply_policy_fill(old.buy, pred_buy, use_for_policy=use_policy)
+            sell, sell_reason, sell_conf = model.apply_policy_fill(old.sell, pred_sell, use_for_policy=use_policy)
+            fallback_reason = buy_reason or sell_reason
+            if book_id is not None:
+                self._execution_last[int(book_id)] = {
+                    'legacy': old,
+                    'buy': pred_buy,
+                    'sell': pred_sell,
+                    'buy_feat': buy_feat,
+                    'sell_feat': sell_feat,
+                    'fallback_reason': fallback_reason,
+                    'model_confidence': min(buy_conf, sell_conf),
+                }
+            return FillProbabilityEstimate(buy=buy, sell=sell)
+        except Exception:
+            if book_id is not None:
+                self._execution_last[int(book_id)] = {
+                    'legacy': old,
+                    'buy': None,
+                    'sell': None,
+                    'fallback_reason': 'UNSUPPORTED_FEATURES',
+                    'model_confidence': 0.0,
+                }
+            return old
+
+    def _execution_observe_quote_end(self, record: QuoteRecord, *, filled: bool, timestamp: int | None, fill_class: str | None=None) -> None:
+        if not getattr(self, 'execution_hazard_enabled', True):
+            return
+        if getattr(record, 'hazard_closed', False):
+            return
+        if filled is False and record.fill_ts is not None:
+            return
+        model = getattr(self, '_execution_hazard', None)
+        if model is None or int(getattr(model, 'observations', 0) or 0) >= int(self._execution_observe_cap):
+            record.hazard_closed = True
+            return
+        stored = getattr(record, 'hazard_features', None) or {}
+        try:
+            feat = HazardFeatures(
+                side=str(stored.get('side') or record.side or 'buy'),
+                dist_bucket=int(stored.get('dist_bucket', 1)),
+                spread_bucket=int(stored.get('spread_bucket', 1)),
+                vol_bucket=int(stored.get('vol_bucket', 1)),
+                trade_bucket=int(stored.get('trade_bucket', 1)),
+                imb_bucket=int(stored.get('imb_bucket', 1)),
+                regime_group=str(stored.get('regime_group') or 'NORMAL'),
+                ttl_bucket=int(stored.get('ttl_bucket', 1)),
+                ttl_ms=float(stored.get('ttl_ms') or record.configured_ttl_ms or 500.0),
+            )
+        except Exception:
+            feat = HazardFeatures.from_snapshot(
+                side=record.side,
+                distance_from_touch_bps=(record.snapshot or {}).get('distance_from_touch_bps'),
+                spread_bps=(record.snapshot or {}).get('spread_bps'),
+                volatility=(record.snapshot or {}).get('volatility'),
+                trade_rate=(record.snapshot or {}).get('trade_rate'),
+                imbalance=(record.snapshot or {}).get('imbalance'),
+                market_regime=record.market_regime,
+                ttl_ms=record.configured_ttl_ms,
+            )
+        age_ms = sim_delta_ms(record.submit_ts, timestamp)
+        if age_ms is None:
+            age_ms = 0.0 if filled else float(feat.ttl_ms)
+        predicted = None
+        if record.predicted_any_fill_probability is not None:
+            predicted = HazardPrediction(
+                any_fill=float(record.predicted_any_fill_probability),
+                actionable_fill=float(record.predicted_actionable_fill_probability or 0.0),
+                dust=float(record.predicted_dust_probability or 0.0),
+                source=str(record.hazard_source or 'fallback'),
+                usable=str(record.hazard_source or '') not in {'', 'fallback'},
+                n_at_risk=0,
+                ttl_ms=feat.ttl_ms,
+            )
+        model.observe(feat, age_ms=age_ms, filled=filled, fill_class=fill_class, predicted=predicted)
+        record.hazard_closed = True
+
+    def _execution_register_submitted(self, response: FinanceAgentResponse, state: MarketSimulationStateUpdate) -> None:
+        store = getattr(self, '_execution_quotes', None)
+        if store is None:
+            return
+        now = getattr(state, 'timestamp', None)
+        ttl_ms = self._execution_ttl_ms()
+        for instruction in list(getattr(response, 'instructions', None) or []):
+            kind = type(instruction).__name__.upper()
+            if 'LIMIT' not in kind:
+                continue
+            book_id = self._execution_field(instruction, 'bookId', 'book_id')
+            client_id = self._execution_field(instruction, 'clientOrderId', 'client_order_id')
+            if book_id is None:
+                continue
+            try:
+                book_id = int(book_id)
+            except (TypeError, ValueError):
+                continue
+            try:
+                client_id = int(client_id) if client_id is not None else None
+            except (TypeError, ValueError):
+                client_id = None
+            direction = self._execution_field(instruction, 'direction', 'side')
+            side = 'buy'
+            try:
+                token = str(getattr(direction, 'name', direction)).lower()
+                if token in {'1', 'sell', 'ask', 's'}:
+                    side = 'sell'
+            except Exception:
+                side = 'buy'
+            quantity = self._execution_field(instruction, 'quantity', 'volume')
+            quote_price = self._execution_field(instruction, 'price')
+            expiry = self._execution_field(instruction, 'expiryPeriod', 'expiry_period')
+            inst_ttl = ttl_ms
+            try:
+                if expiry is not None:
+                    inst_ttl = sim_delta_ms(0, int(expiry)) or ttl_ms
+            except (TypeError, ValueError):
+                inst_ttl = ttl_ms
+            last = self._execution_last.get(book_id, {})
+            pred = last.get(side)
+            feat = last.get(f'{side}_feat')
+            snap = dict((getattr(self, '_quote_submit_snapshot', {}) or {}).get(book_id, {}) or {})
+            record = QuoteRecord(
+                quote_id=store.next_quote_id(),
+                client_id=client_id,
+                book=book_id,
+                side=side,
+                decision_ts=None if now is None else int(now),
+                submit_ts=None if now is None else int(now),
+                requested_quantity=None if quantity is None else float(quantity),
+                remaining_quantity=None if quantity is None else float(quantity),
+                quote_price=None if quote_price is None else float(quote_price),
+                configured_ttl_ms=inst_ttl,
+                predicted_fill_probability=None if pred is None else float(pred.any_fill),
+                predicted_any_fill_probability=None if pred is None else float(pred.any_fill),
+                predicted_actionable_fill_probability=None if pred is None else float(pred.actionable_fill),
+                predicted_dust_probability=None if pred is None else float(pred.dust),
+                hazard_source=None if pred is None else str(pred.source),
+                hazard_features=None if feat is None else {
+                    'side': feat.side,
+                    'dist_bucket': feat.dist_bucket,
+                    'spread_bucket': feat.spread_bucket,
+                    'vol_bucket': feat.vol_bucket,
+                    'trade_bucket': feat.trade_bucket,
+                    'imb_bucket': feat.imb_bucket,
+                    'regime_group': feat.regime_group,
+                    'ttl_bucket': feat.ttl_bucket,
+                    'ttl_ms': feat.ttl_ms,
+                },
+                market_regime=getattr(self, '_market_regime', None),
+                score_regime=getattr(self, '_score_regime', None),
+                snapshot=snap,
+            )
+            store.register_quote(record)
+            replaced = getattr(store, 'last_replaced', None)
+            if replaced is not None:
+                self._execution_observe_quote_end(replaced, filled=False, timestamp=record.submit_ts)
+
+    def _execution_close_from_notices(self, state: MarketSimulationStateUpdate) -> None:
+        store = getattr(self, '_execution_quotes', None)
+        if store is None:
+            return
+        notices = (getattr(state, 'notices', None) or {}).get(self.uid, []) or []
+        timestamp = getattr(state, 'timestamp', None)
+        for notice in notices:
+            phase = type(notice).__name__.upper()
+            if not any(token in phase for token in ('CANCEL', 'EXPIRE', 'REJECT')):
+                continue
+            book_id = self._execution_field(notice, 'bookId', 'book_id')
+            client_id = self._execution_field(notice, 'clientOrderId', 'client_order_id')
+            if book_id is None:
+                continue
+            try:
+                book_id = int(book_id)
+            except (TypeError, ValueError):
+                continue
+            try:
+                client_id = int(client_id) if client_id is not None else None
+            except (TypeError, ValueError):
+                client_id = None
+            record = store.lookup(book_id, client_id)
+            if record is None or not record.open:
+                continue
+            ts = timestamp if timestamp is None else int(timestamp)
+            quote_age = sim_delta_ms(record.submit_ts, ts)
+            cancel_reason = 'EXPIRE' if 'EXPIRE' in phase else 'CANCEL'
+            store.close_quote(record, cancel_ts=ts)
+            self._execution_observe_quote_end(record, filled=False, timestamp=ts)
+            if getattr(self, 'debug_enabled', False) or getattr(self, 'research_enabled', False):
+                self._emit(
+                    'QUOTE',
+                    force=True,
+                    tick=getattr(self, '_tick', None),
+                    book_id=int(book_id),
+                    cancel_reason=cancel_reason,
+                    quote_age=quote_age,
+                    chosen_ttl=record.configured_ttl_ms,
+                    dust_probability=record.predicted_dust_probability,
+                )
+
+    def _execution_on_fill(self, event, *, book_id: int, before: float, after: float) -> None:
+        store = getattr(self, '_execution_quotes', None)
+        if store is None:
+            return
+        is_maker = getattr(event, 'makerAgentId', None) == getattr(self, 'uid', None)
+        client_id = getattr(event, 'clientOrderId', None)
+        try:
+            client_id = int(client_id) if client_id is not None else None
+        except (TypeError, ValueError):
+            client_id = None
+        fill_qty = abs(float(getattr(event, 'quantity', 0.0) or 0.0))
+        fill_ts = getattr(event, 'timestamp', None)
+        fill_ts = None if fill_ts is None else int(fill_ts)
+        eps = self._execution_flat_epsilon()
+        min_size = max(0.0, float(getattr(self, '_research_exchange_min_order_size', 0.0) or 0.0))
+        record = store.lookup(int(book_id), client_id)
+        if record is None:
+            side_token = str(getattr(event, 'side', '')).lower()
+            record = store.live_for_book_side(int(book_id), 'buy' if side_token in {'0', 'buy', 'bid'} else 'sell')
+        requested = None if record is None else record.requested_quantity
+        filled_cum = fill_qty
+        remaining = None
+        if record is not None:
+            filled_cum = store.apply_fill(record, fill_qty=fill_qty, fill_ts=fill_ts, flat_eps=eps)
+            requested = record.requested_quantity
+            remaining = record.remaining_quantity
+        fill_class = classify_fill(
+            inventory_before=before,
+            inventory_after=after,
+            fill_quantity=fill_qty,
+            requested_quantity=requested,
+            filled_quantity=filled_cum,
+            min_order_size=min_size,
+            flat_eps=eps,
+        )
+        self._execution_fills_classified += 1
+        if fill_class in {'DUST_PARTIAL', 'CROSS_DUST'}:
+            self._dust_creation_count += 1
+        pred_any = None if record is None else record.predicted_any_fill_probability
+        pred_act = None if record is None else record.predicted_actionable_fill_probability
+        pred_dust = None if record is None else record.predicted_dust_probability
+        last = self._execution_last.get(int(book_id), {})
+        fallback_reason = last.get('fallback_reason', '')
+        confidence = last.get('model_confidence', 0.0)
+        if record is not None:
+            fallback_reason = '' if record.hazard_source not in {None, 'fallback'} else (fallback_reason or 'INSUFFICIENT_SAMPLES')
+            if is_maker:
+                self._execution_observe_quote_end(record, filled=True, timestamp=fill_ts, fill_class=str(fill_class))
+            if remaining is not None and remaining <= eps or fill_class in {'FLAT', 'FULL', 'CROSS_DUST'}:
+                store.close_quote(record, fill_ts=fill_ts)
+        if getattr(self, 'debug_enabled', False) or getattr(self, 'research_enabled', False):
+            self._emit(
+                'EXECUTION',
+                force=True,
+                tick=getattr(self, '_tick', None),
+                book_id=int(book_id),
+                actual_fill_class=fill_class,
+                predicted_any_fill_probability=pred_any,
+                predicted_actionable_fill_probability=pred_act,
+                predicted_dust_probability=pred_dust,
+                model_confidence=confidence,
+                fallback_reason=fallback_reason or '',
+                min_order_size=min_size,
+            )
+
+    def _bsimpl_3_Strategy1_Research_handle(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
+        self._execution_close_from_notices(state)
+        return self._bsimpl_2_Strategy1_Debug_handle(state)
+
+    def _bsimpl_3_Strategy1_Research_respond(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
+        response = self._bsimpl_2_Strategy1_Debug_respond(state)
+        self._execution_register_submitted(response, state)
+        return response
 
     def _bsimpl_3_Strategy1_Research_dynamic_order_size(self, base_size: float, profile: BookProfile, regime_params: RegimeParamSet, inventory: InventorySnapshot, vol_dec: int, mid: float | None=None) -> float:
         predict_score = float(getattr(profile, 'predict_score', 0.0) or 0.0)
@@ -4131,6 +4837,166 @@ class BaseStrategy(FinanceSimulationAgent):
             record['min_order_size'] = min_size
             record['size_promoted_to_min'] = promoted
         return size
+
+    def _quote_tick_size(self, state) -> float:
+        try:
+            decimals = int(getattr(getattr(state, 'config', None), 'priceDecimals', 0) or 0)
+            return 10.0 ** (-decimals) if decimals >= 0 else 0.01
+        except (TypeError, ValueError):
+            return 0.01
+
+    def _live_quote(self, book_id: int, side: str):
+        store = getattr(self, '_execution_quotes', None)
+        if store is None:
+            return None
+        rec = store.live_for_book_side(int(book_id), side)
+        if rec is None or not rec.open:
+            return None
+        return rec
+
+    def _predicted_dust(self, book_id: int) -> tuple[float, bool]:
+        ev = (getattr(self, '_score_ev_last', {}) or {}).get(int(book_id))
+        if ev is not None:
+            return float(getattr(ev, 'dust_prob', 0.0) or 0.0), True
+        last = (getattr(self, '_execution_last', {}) or {}).get(int(book_id), {})
+        preds = [p for p in (last.get('buy'), last.get('sell')) if p is not None]
+        if not preds:
+            return 0.0, False
+        usable = any(bool(getattr(p, 'usable', False)) for p in preds)
+        dust = sum(float(getattr(p, 'dust', 0.0) or 0.0) for p in preds) / len(preds)
+        return dust, usable
+
+    def _choose_quote_ttl(self, book_id: int, profile, state, *, baseline_ns: int) -> tuple[float | None, str, float | None]:
+        baseline = sim_delta_ms(0, int(baseline_ns)) or 500.0
+        last = (getattr(self, '_execution_last', {}) or {}).get(int(book_id), {})
+        preds = [p for p in (last.get('buy'), last.get('sell')) if p is not None]
+        fill_hazard = None
+        if preds:
+            fill_hazard = sum(float(p.any_fill) for p in preds) / len(preds)
+        imb = None if profile is None else getattr(profile, 'imbalance', None)
+        vol = None if profile is None else getattr(profile, 'volatility', None)
+        toxic = str(getattr(self, '_market_regime', '') or '').upper() in {'TOXIC', 'STRESSED'}
+        ttl, reason, _info = choose_ttl_ms(
+            baseline_ms=float(baseline),
+            min_ms=float(self.ttl_min_ms),
+            max_ms=float(self.ttl_max_ms),
+            fill_hazard=fill_hazard,
+            volatility=None if vol is None else float(vol),
+            imbalance=None if imb is None else float(imb),
+            toxicity=toxic,
+            market_regime=getattr(self, '_market_regime', None),
+            stale_velocity_ticks=8.0,
+        )
+        return ttl, reason, fill_hazard
+
+    def _hysteresis_hold_sides(
+        self,
+        state,
+        book_id: int,
+        book,
+        profile,
+        prediction,
+        inventory,
+        regime_params,
+        edge_bias: float,
+    ) -> set[str]:
+        hold: set[str] = set()
+        if book is None or not getattr(book, 'bids', None) or not getattr(book, 'asks', None):
+            return hold
+        try:
+            tick_size = self._quote_tick_size(state)
+            now = getattr(state, 'timestamp', None)
+            price_dec = int(getattr(getattr(state, 'config', None), 'priceDecimals', 2) or 2)
+            prices = self.skewed_quote_prices(
+                float(book.bids[0].price),
+                float(book.asks[0].price),
+                float(getattr(prediction, 'score', 0.0) or 0.0),
+                float(getattr(inventory, 'inventory_ratio', 0.0) or 0.0),
+                regime_params,
+                price_dec,
+                edge_bias=float(edge_bias or 0.0),
+            )
+            if not prices:
+                return hold
+            new_buy, new_sell = prices
+            alpha = float(getattr(prediction, 'score', 0.0) or 0.0)
+            imb = None if profile is None else getattr(profile, 'imbalance', None)
+            regime = getattr(self, '_market_regime', None)
+            try:
+                util = float(self._inventory_util(inventory))
+            except Exception:
+                util = 0.0
+            toxic = str(regime or '').upper() in {'TOXIC'} or int(book_id) in (getattr(self, '_research_parked_dust', {}) or {})
+            ev_row = (getattr(self, '_score_ev_last', {}) or {}).get(int(book_id))
+            new_ev = None if ev_row is None else getattr(ev_row, 'trading_ev', None)
+            hard = toxic or str(getattr(inventory, 'band', '')).upper() in {'MAX_LONG', 'MAX_SHORT'}
+            if ev_row is not None and not bool(getattr(ev_row, 'eligible', True)):
+                hard = True
+            for side, new_px in (('buy', new_buy), ('sell', new_sell)):
+                rec = self._live_quote(book_id, side)
+                snap = {} if rec is None else dict(rec.snapshot or {})
+                age_ms = None if rec is None else sim_delta_ms(rec.submit_ts, now)
+                decision = should_replace_quote(
+                    old_price=None if rec is None else rec.quote_price,
+                    new_price=float(new_px),
+                    tick_size=float(tick_size),
+                    min_price_ticks=float(self.hysteresis_min_price_ticks),
+                    old_alpha=snap.get('alpha'),
+                    new_alpha=alpha,
+                    old_imbalance=snap.get('imbalance'),
+                    new_imbalance=None if imb is None else float(imb),
+                    old_regime=None if rec is None else rec.market_regime,
+                    new_regime=regime,
+                    old_inventory_util=snap.get('inventory_util'),
+                    new_inventory_util=util,
+                    old_toxic=bool(snap.get('toxic')),
+                    new_toxic=toxic,
+                    order_age_ms=age_ms,
+                    ttl_ms=None if rec is None else rec.configured_ttl_ms,
+                    old_ev=snap.get('quote_ev'),
+                    new_ev=new_ev,
+                    ev_improve_threshold=float(self.hysteresis_ev_threshold),
+                    hard_safety=hard,
+                )
+                if getattr(self, 'debug_enabled', False) or getattr(self, 'research_enabled', False):
+                    self._emit(
+                        'QUOTE',
+                        force=True,
+                        tick=getattr(self, '_tick', None),
+                        book_id=int(book_id),
+                        side=side,
+                        cancel_reason=decision.reason,
+                        quote_age=decision.order_age_ms,
+                        chosen_ttl=None if rec is None else rec.configured_ttl_ms,
+                        dust_probability=(getattr(self, '_quote_submit_snapshot', {}) or {}).get(int(book_id), {}).get('dust_probability'),
+                    )
+                if decision.cancel:
+                    self._hysteresis_replaces += 1
+                else:
+                    self._hysteresis_holds += 1
+                    hold.add(side)
+        except Exception:
+            return set()
+        return hold
+
+    def _dust_prevent_skip_sides(self, inventory, buy_size: float, sell_size: float, book_id: int) -> set[str]:
+        skip: set[str] = set()
+        if not getattr(self, 'dust_prevent_enabled', True):
+            return skip
+        min_size = max(0.0, float(getattr(self, '_research_exchange_min_order_size', 0.0) or 0.0))
+        eps = self._execution_flat_epsilon()
+        before = float(getattr(inventory, 'net_base', 0.0) or 0.0)
+        dust_prob, usable = self._predicted_dust(int(book_id))
+        target = float(getattr(self, 'score_ev_dust_target', 0.15))
+        if would_create_dust(inventory_before=before, signed_fill_qty=float(buy_size), min_order_size=min_size, eps=eps):
+            skip.add('buy')
+        if would_create_dust(inventory_before=before, signed_fill_qty=-float(sell_size), min_order_size=min_size, eps=eps):
+            skip.add('sell')
+        if predicted_dust_blocks_increase(dust_prob=dust_prob, dust_target=target, inventory_before=before, signed_qty=float(buy_size), usable=usable):
+            skip.add('buy')
+        if predicted_dust_blocks_increase(dust_prob=dust_prob, dust_target=target, inventory_before=before, signed_qty=-float(sell_size), usable=usable):
+            skip.add('sell')
+        return skip
 
     def _bsimpl_3_Strategy1_Research__place_skewed_quotes(self, response: FinanceAgentResponse, state: MarketSimulationStateUpdate, book_id: int, book, profile: BookProfile, prediction: DirectionForecast, inventory: InventorySnapshot, regime_params: RegimeParamSet, size: float, edge_bias: float, stats: dict | None=None) -> int:
         """Quote with isolated NORMAL and KAPPA_COMPLETION scheduler lanes.
@@ -4199,14 +5065,91 @@ class BaseStrategy(FinanceSimulationAgent):
             record['completion_success_cap'] = self.research_kappa_completion_success_cap
             record['kappa_completion_candidate'] = completion_candidate
             record['kappa_completion_samples'] = completion_samples
-            record['kappa_completion_target'] = self.research_kappa_completion_target
+            record['kappa_completion_target'] = self._required_observation_count()
             record['kappa_completion_fill_relaxed'] = allow_relaxed_fill
             record['kappa_completion_min_fill_original'] = old_min_fill
             record['kappa_completion_min_fill_effective'] = float(regime_params.min_fill_prob)
+        old_expiry = int(self.mm_expiry_period)
+        hold_sides: set[str] = set()
+        ttl_reason = 'BASELINE'
+        fill_hazard = None
+        chosen_ttl = None
+        if getattr(self, 'adaptive_ttl_enabled', True):
+            chosen_ttl, ttl_reason, fill_hazard = self._choose_quote_ttl(
+                book_id, profile, state, baseline_ns=old_expiry,
+            )
+            if chosen_ttl is None:
+                self._ttl_stale_skips += 1
+                if self.debug_enabled:
+                    record = self._book_record(book_id)
+                    record['action'] = 'SKIP'
+                    record['reason'] = 'TTL_STALE'
+                    record['ttl_reason'] = ttl_reason
+                regime_params.min_fill_prob = old_min_fill
+                return 0
+            self.mm_expiry_period = ms_to_ns(chosen_ttl)
+        if getattr(self, 'quote_hysteresis_enabled', True):
+            hold_sides = self._hysteresis_hold_sides(
+                state, book_id, book, profile, prediction, inventory, regime_params, edge_bias,
+            )
+        dust_prob, _usable = self._predicted_dust(int(book_id))
+        self._quote_submit_snapshot[int(book_id)] = {
+            'alpha': float(getattr(prediction, 'score', 0.0) or 0.0),
+            'imbalance': None if profile is None else getattr(profile, 'imbalance', None),
+            'inventory_util': float(getattr(inventory, 'inventory_ratio', 0.0) or 0.0),
+            'toxic': str(getattr(self, '_market_regime', '') or '').upper() in {'TOXIC'} or int(book_id) in (getattr(self, '_research_parked_dust', {}) or {}),
+            'quote_ev': None if (getattr(self, '_score_ev_last', {}) or {}).get(int(book_id)) is None else getattr(self._score_ev_last[int(book_id)], 'trading_ev', None),
+            'chosen_ttl': chosen_ttl if chosen_ttl is not None else (sim_delta_ms(0, int(self.mm_expiry_period)) or 500.0),
+            'ttl_reason': ttl_reason,
+            'dust_probability': dust_prob,
+        }
+        qty_hint = float(size)
+        buy_size = qty_hint
+        sell_size = qty_hint
+        band = str(getattr(inventory, 'band', '') or '').upper()
+        if band == 'LONG':
+            buy_size = qty_hint * 0.5
+        elif band == 'SHORT':
+            sell_size = qty_hint * 0.5
+        skip_dust = self._dust_prevent_skip_sides(inventory, buy_size, sell_size, int(book_id))
+        if skip_dust:
+            self._dust_prevent_skips += len(skip_dust)
+            hold_sides = set(hold_sides) | skip_dust
+        orig_limit = getattr(response, 'limit_order', None)
+        orig_record_fill = self._record_fill_quote
+        if hold_sides and orig_limit is not None:
+            def _gated_limit_order(*args, **kwargs):
+                direction = kwargs.get('direction')
+                if direction is None and len(args) >= 2:
+                    direction = args[1]
+                token = str(getattr(direction, 'name', direction)).upper()
+                side = 'buy' if token in {'0', 'BUY', 'BID', 'ORDERDIRECTION.BUY'} else 'sell'
+                if side in hold_sides:
+                    return None
+                return orig_limit(*args, **kwargs)
+
+            def _gated_record_fill(mem, side, dist_from_touch):
+                if str(side).lower() in hold_sides:
+                    return None
+                return orig_record_fill(mem, side, dist_from_touch)
+
+            response.limit_order = _gated_limit_order
+            self._record_fill_quote = _gated_record_fill
+        if self.debug_enabled:
+            record = self._book_record(book_id)
+            record['chosen_ttl'] = self._quote_submit_snapshot[int(book_id)]['chosen_ttl']
+            record['ttl_reason'] = ttl_reason
+            record['dust_probability'] = dust_prob
+            record['hysteresis_hold_buy'] = 'buy' in hold_sides
+            record['hysteresis_hold_sell'] = 'sell' in hold_sides
         try:
             placed = self._bsimpl_2_Strategy1_Debug__place_skewed_quotes(response, state, book_id, book, profile, prediction, inventory, regime_params, size, edge_bias, stats=stats)
         finally:
+            if hold_sides and orig_limit is not None:
+                response.limit_order = orig_limit
+                self._record_fill_quote = orig_record_fill
             regime_params.min_fill_prob = old_min_fill
+            self.mm_expiry_period = old_expiry
         if self._research_backfill_active and placed:
             self._research_quote_successes += 1
             if completion_candidate:
@@ -4272,6 +5215,12 @@ class BaseStrategy(FinanceSimulationAgent):
                 stats['research_dust_compact_attempts'] = self._research_dust_compact_attempts
                 stats['research_dust_compact_orders'] = self._research_dust_compact_orders
                 stats['research_dust_compact_fills'] = self._research_dust_compact_fills
+                stats['dust_creation_count'] = getattr(self, '_dust_creation_count', 0)
+                stats['dust_cleanup_attempts'] = self._research_dust_compact_attempts
+                stats['dust_cleanup_successes'] = self._research_dust_compact_fills
+                stats['hysteresis_holds'] = getattr(self, '_hysteresis_holds', 0)
+                stats['hysteresis_replaces'] = getattr(self, '_hysteresis_replaces', 0)
+                stats['dust_prevent_skips'] = getattr(self, '_dust_prevent_skips', 0)
                 stats['research_quote_attempts'] = self._research_quote_attempts
                 stats['research_normal_quote_attempts'] = self._research_normal_quote_attempts
                 stats['research_normal_quote_successes'] = self._research_normal_quote_successes
@@ -4404,7 +5353,7 @@ class BaseStrategy(FinanceSimulationAgent):
 
     def _bsimpl_3_Strategy1_Research__console_allowed(self, r: dict[str, Any]) -> bool:
         typ = str(r.get('type', ''))
-        if typ in {'ERROR', 'RUN_SUMMARY', 'RESEARCH_CONFIG', 'DEBUG_CONFIG', 'POSITION', 'POSITION_GUARD', 'SLOW_REQUEST'}:
+        if typ in {'ERROR', 'RUN_SUMMARY', 'RESEARCH_CONFIG', 'DEBUG_CONFIG', 'POSITION', 'POSITION_GUARD', 'SLOW_REQUEST', 'REGIME'}:
             return True
         if typ == 'ORDER_LIFECYCLE':
             phase = str(r.get('phase', '')).upper()
@@ -4425,7 +5374,7 @@ class BaseStrategy(FinanceSimulationAgent):
         if typ == 'DEBUG_CONFIG':
             return f"[S1R_CONFIG] debug_enabled={int(bool(r.get('enabled')))} debug_every_n={r.get('every_n')} debug_book={r.get('book_filter')} slow_request_ms={self._fmt(r.get('slow_request_ms'))}"
         if typ == 'REGIME':
-            return f"[S1R_REGIME] tick={r.get('tick')} mode={self._short(r.get('mode'))} overlay={self._short(r.get('overlay'))} book_count={r.get('book_count')} active={r.get('active')} inactive={r.get('inactive')} spread_med={self._fmt(r.get('spread_med'))} spread_p90={self._fmt(r.get('spread_p90'))} spread_max={self._fmt(r.get('spread_max'))} stress_cut={self._fmt(r.get('stress_spread_bps'))} toxic_cut={self._fmt(r.get('toxic_spread_bps'))} vol_med={self._fmt(r.get('vol_med'))} vol_p90={self._fmt(r.get('vol_p90'))} trade_rate_med={self._fmt(r.get('trade_rate_med'))} liquid_ratio={self._fmt(r.get('liquid_ratio'))} low_trade_ratio={self._fmt(r.get('low_trade_ratio'))} stressed_ratio={self._fmt(r.get('stressed_ratio'))} trend_up_ratio={self._fmt(r.get('trend_up_ratio'))} trend_down_ratio={self._fmt(r.get('trend_down_ratio'))} min_order={self._fmt(r.get('min_order_size'))} trigger={self._short(r.get('trigger'))} threshold={self._short(r.get('threshold'))}"
+            return f"[S1R_REGIME] tick={r.get('tick')} market={self._short(r.get('market_regime'))} score={self._short(r.get('score_regime'))} mode={self._short(r.get('mode'))} overlay={self._short(r.get('overlay'))} books={r.get('book_count')} inactive={r.get('inactive')} stressed={self._fmt(r.get('stressed_ratio'))} liquid={self._fmt(r.get('liquid_ratio'))} spread_med={self._fmt(r.get('spread_med'))} trade_med={self._fmt(r.get('trade_rate_med'))} pending_kappa={self._fmt(r.get('pending_kappa_frac'))} m_trig={self._short(r.get('market_trigger'))} s_trig={self._short(r.get('score_trigger'))}"
         if typ == 'TIMING':
             return f"[S1R_REQ] tick={r.get('tick')} sim_ts={r.get('timestamp')} instructions={r.get('instructions', 0)} notices={r.get('notices', 0)} update_ms={self._fmt(r.get('update_ms'))} respond_ms={self._fmt(r.get('respond_ms'))} report_ms={self._fmt(r.get('report_ms'))} total_ms={self._fmt(r.get('total_ms'))}"
         if typ == 'SLOW_REQUEST':
@@ -4693,13 +5642,13 @@ class BaseStrategy(FinanceSimulationAgent):
     classify_market_regime_from_profiles = _bsimpl_3_Strategy1_Research_classify_market_regime_from_profiles
     coverage_priority = _bsimpl_1_Strategy1_coverage_priority
     dynamic_order_size = _bsimpl_3_Strategy1_Research_dynamic_order_size
-    estimate_fill_probability = _bsimpl_1_Strategy1_estimate_fill_probability
+    estimate_fill_probability = _bsimpl_3_Strategy1_Research_estimate_fill_probability
     estimate_realized_pnl = _bsimpl_0_DetailedTemplateAgent_estimate_realized_pnl
     estimate_round_trip_pnl = _bsimpl_0_DetailedTemplateAgent_estimate_round_trip_pnl
     expected_alpha_score = _bsimpl_2_Strategy1_Debug_expected_alpha_score
     get_archetype_edge_bias = _bsimpl_1_Strategy1_get_archetype_edge_bias
     get_regime_params = _bsimpl_3_Strategy1_Research_get_regime_params
-    handle = _bsimpl_2_Strategy1_Debug_handle
+    handle = _bsimpl_3_Strategy1_Research_handle
     initialize = _bsimpl_3_Strategy1_Research_initialize
     is_toxic_book = _bsimpl_3_Strategy1_Research_is_toxic_book
     merge_regime_and_archetype_params = _bsimpl_1_Strategy1_merge_regime_and_archetype_params
@@ -4714,7 +5663,7 @@ class BaseStrategy(FinanceSimulationAgent):
     predict_direction = _bsimpl_1_Strategy1_predict_direction
     rank_books_for_trading = _bsimpl_0_DetailedTemplateAgent_rank_books_for_trading
     report = _bsimpl_0_DetailedTemplateAgent_report
-    respond = _bsimpl_2_Strategy1_Debug_respond
+    respond = _bsimpl_3_Strategy1_Research_respond
     select_books_for_trading = _bsimpl_2_Strategy1_Debug_select_books_for_trading
     skewed_quote_prices = _bsimpl_3_Strategy1_Research_skewed_quote_prices
     update = _bsimpl_0_DetailedTemplateAgent_update

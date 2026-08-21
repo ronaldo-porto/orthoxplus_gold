@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Internal runner: run_miner_multi.sh
-# SN79 testnet launcher for Strategy1_Research V4.2 Strict (Miner 1).
+# SN79 testnet launcher for Strategy1_Research V4.3 Phase 6 (Miner 1).
 # Default PM2 name: sn79-m1 | Default Axon port: 8091
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,8 +36,8 @@ done
 
 [[ -f "$REPO_ROOT/run_miner_multi.sh" ]] || { echo "run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research.py" ]] || { echo "Strategy1_Research.py missing" >&2; exit 1; }
-grep -q 'RESEARCH_POLICY_VERSION = "dust_actionable_v4_2_strict"' "$AGENT_PATH/Strategy1_Research.py" || {
-  echo "ERROR: Strategy1_Research.py is not V4.2 Strict dust/actionable version" >&2
+grep -q 'RESEARCH_POLICY_VERSION = "dust_actionable_v4_3_screen"' "$AGENT_PATH/Strategy1_Research.py" || {
+  echo "ERROR: Strategy1_Research.py is not V4.3 Phase 6 screen version" >&2
   exit 1
 }
 [[ -f "$AGENT_PATH/Strategy1_Debug.py" ]] || { echo "Strategy1_Debug.py missing" >&2; exit 1; }
@@ -57,9 +57,8 @@ export STRATEGY1_RESEARCH_QUEUE="$RESEARCH_QUEUE"
 export STRATEGY1_RESEARCH_DIR="$RESEARCH_DIR"
 mkdir -p "$RESEARCH_DIR"
 
-# V4.2 Strict preserves V4.1 risk/economic invariants while learning whether maker
-# opening fills become actionable inventory or stranded dust. It adds only bounded
-# ranking/liveness controls; no unsafe dust top-up/rescue behavior is enabled.
+# V4.3 Phase 5 hysteresis + adaptive TTL. Dust escape stays experimental/off.
+# Hard dust/Kappa invariants and Phase 4 Score-EV ranking are unchanged.
 PARAMS="enable_mm_strategy=1 enable_kappa_strategy=0 lazy_load=1 \
 fast_update=1 sync_event_csv=0 history_len=0 \
 mm_base_size=0.25 max_inventory_base=1.20 inventory_close_threshold=0.25 \
@@ -103,14 +102,18 @@ research_partial_fill_hold_enabled=1 research_partial_fill_hold_min_dust_prob=0.
 research_partial_fill_hold_one_away_only=0 research_partial_fill_hold_max_ns=750000000 \
 research_force_mm_post_only=1 research_dust_compact_adaptive=1 \
 research_dust_compact_cooldown_ticks=100 research_dust_compact_max_cooldown_ticks=600 \
-research_dust_compact_prior_fill=0.02 research_dust_compact_prior_strength=8.0"
+research_dust_compact_prior_fill=0.02 research_dust_compact_prior_strength=8.0 \
+research_enable_fill_hazard=1 research_use_fill_hazard_for_policy=0 \
+research_enable_score_ev=1 research_enable_quote_hysteresis=1 \
+research_enable_adaptive_ttl=1 research_enable_dust_escape=0 \
+research_enable_fast_candidate_screen=1 research_candidate_count=20"
 
 echo "[Strategy1_Research] pm2_name=$PM2_NAME"
 echo "[Strategy1_Research] wallet=$WALLET_NAME"
 echo "[Strategy1_Research] hotkey=$HOTKEY_NAME"
 echo "[Strategy1_Research] netuid=$NETUID"
 echo "[Strategy1_Research] axon_port=$AXON_PORT"
-echo "[Strategy1_Research] version=dust_actionable_v4_2_strict"
+echo "[Strategy1_Research] version=dust_actionable_v4_3_screen"
 echo "[Strategy1_Research] log_dir=$RESEARCH_DIR"
 
 exec "$REPO_ROOT/run_miner_multi.sh" \
