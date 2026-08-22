@@ -10,9 +10,17 @@ HAZARD = (ROOT / "agents" / "strategy" / "execution_hazard.py").read_text(encodi
 LIFECYCLE = (ROOT / "agents" / "strategy" / "execution_lifecycle.py").read_text(encoding="utf-8")
 
 
-def test_base_imports_production_execution_modules_not_research():
-    assert "from execution_lifecycle import" in BASE
-    assert "from execution_hazard import" in BASE
+def test_base_inlines_execution_model_and_does_not_import_research():
+    assert "from execution_lifecycle import" not in BASE
+    assert "from execution_hazard import" not in BASE
+    assert "import execution_lifecycle" not in BASE
+    assert "import execution_hazard" not in BASE
+    assert "class QuoteLifecycleStore" in BASE
+    assert "class QuoteRecord" in BASE
+    assert "def classify_fill" in BASE
+    assert "class FillHazardModel" in BASE
+    assert "class HazardFeatures" in BASE
+    assert "class HazardPrediction" in BASE
     assert "research_quote_lifecycle" not in BASE
     assert "research_fill_hazard" not in BASE
     assert "from Strategy1_Research import" not in BASE

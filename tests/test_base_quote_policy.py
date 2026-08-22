@@ -9,8 +9,13 @@ ADAPTIVE = (ROOT / "agents" / "strategy" / "AdaptiveAgent.py").read_text(encodin
 HYST = (ROOT / "agents" / "strategy" / "quote_hysteresis.py").read_text(encoding="utf-8")
 
 
-def test_base_imports_production_hysteresis_not_research():
-    assert "from quote_hysteresis import" in BASE
+def test_base_inlines_hysteresis_and_does_not_import_research():
+    assert "from quote_hysteresis import" not in BASE
+    assert "import quote_hysteresis" not in BASE
+    assert "def should_replace_quote" in BASE
+    assert "def choose_ttl_ms" in BASE
+    assert "def would_create_dust" in BASE
+    assert "def predicted_dust_blocks_increase" in BASE
     assert "research_quote_hysteresis" not in BASE
     assert "from Strategy1_Research import" not in BASE
     assert "import Strategy1_Research" not in BASE

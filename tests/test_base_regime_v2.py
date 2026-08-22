@@ -8,11 +8,22 @@ BASE = (ROOT / "agents" / "strategy" / "BaseStrategy.py").read_text(encoding="ut
 ADAPTIVE = (ROOT / "agents" / "strategy" / "AdaptiveAgent.py").read_text(encoding="utf-8")
 
 
-def test_base_imports_production_regime_module_not_research():
-    assert "from regime_v2 import" in BASE
+def test_base_inlines_regime_v2_and_does_not_import_research():
+    assert "from regime_v2 import" not in BASE
+    assert "import regime_v2" not in BASE
+    assert "class DebounceState" in BASE
+    assert "class RegimeV2Thresholds" in BASE
+    assert "def classify_regime_v2" in BASE
+    assert "stressed_ratio_enter: float = 0.35" in BASE
     assert "research_regime_v2" not in BASE
     assert "from Strategy1_Research import" not in BASE
     assert "import Strategy1_Research" not in BASE
+
+
+def test_base_does_not_bootstrap_sys_path_for_sibling_modules():
+    """Standalone Base must not rely on agents/strategy being on sys.path."""
+    assert "sys.path.insert" not in BASE
+    assert "_agent_dir" not in BASE
 
 
 def test_base_classifier_does_not_call_parent_5bps_path():

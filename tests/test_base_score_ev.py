@@ -9,8 +9,12 @@ ADAPTIVE = (ROOT / "agents" / "strategy" / "AdaptiveAgent.py").read_text(encodin
 SCORE_EV = (ROOT / "agents" / "strategy" / "score_ev.py").read_text(encoding="utf-8")
 
 
-def test_base_imports_production_score_ev_not_research():
-    assert "from score_ev import" in BASE
+def test_base_inlines_score_ev_and_does_not_import_research():
+    assert "from score_ev import" not in BASE
+    assert "import score_ev" not in BASE
+    assert "def compute_score_ev" in BASE
+    assert "def required_observation_count" in BASE
+    assert "def select_rank" in BASE
     assert "research_score_ev" not in BASE
     assert "from Strategy1_Research import" not in BASE
     assert "import Strategy1_Research" not in BASE

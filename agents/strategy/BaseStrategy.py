@@ -15,10 +15,10 @@ import os
 import queue
 import threading
 import time
-from collections import Counter, defaultdict, deque
+from collections import Counter, OrderedDict, defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Deque, Literal, TypeVar
+from typing import Any, Callable, Deque, Iterable, Literal, Mapping, TypeVar
 
 import bittensor as bt
 from taos.common.agents import launch
@@ -43,18 +43,1847 @@ from taos.im.protocol.models import (
 from taos.im.utils import duration_from_timestamp
 from taos.im.utils.kappa import kappa_3
 
-from regime_v2 import DebounceState, RegimeV2Thresholds, classify_regime_v2
-from execution_lifecycle import QuoteLifecycleStore, QuoteRecord, classify_fill, sim_delta_ms, ms_to_ns
-from execution_hazard import FillHazardModel, HazardFeatures, HazardPrediction
-from score_ev import compute_score_ev, required_observation_count, select_rank
-from quote_hysteresis import (
-    choose_ttl_ms,
-    predicted_dust_blocks_increase,
-    should_replace_quote,
-    would_create_dust,
+T = TypeVar("T")
+
+
+# ---------------------------------------------------------------------------
+# Inlined production helpers. BaseStrategy is loaded by miner.py via
+# importlib.util.spec_from_file_location + exec_module, which does not put
+# agents/strategy on sys.path. These definitions must live in this file.
+# Behavior and thresholds match the former standalone helper modules.
+# Dust escape is intentionally not included.
+# ---------------------------------------------------------------------------
+
+MARKET_REGIMES = (
+    "QUIET",
+    "NORMAL",
+    "LIQUID",
+    "TREND_UP",
+    "TREND_DOWN",
+    "STRESSED",
+    "TOXIC",
+)
+SCORE_REGIMES = (
+    "NORMAL",
+    "COVERAGE_PRESSURE",
+    "COMPLETION_PRESSURE",
 )
 
-T = TypeVar("T")
+# Map Research V2 market labels onto the inherited Strategy1 MarketRegime.mode
+# vocabulary used by get_regime_params / merge_regime_and_archetype_params.
+PARENT_MARKET_MODE = {
+    "QUIET": "QUIET",
+    "NORMAL": "MIXED",
+    "LIQUID": "BROAD_LIQUID",
+    "TREND_UP": "TRENDING_UP",
+    "TREND_DOWN": "TRENDING_DOWN",
+    "STRESSED": "STRESSED",
+    "TOXIC": "STRESSED",
+}
+
+
+@dataclass(frozen=True)
+class RegimeV2Thresholds:
+    stressed_ratio_enter: float = 0.35
+    stressed_ratio_exit: float = 0.25
+    toxic_ratio_enter: float = 0.50
+    toxic_ratio_exit: float = 0.38
+    quiet_trade_rate: float = 0.10
+    liquid_ratio_enter: float = 0.55
+    liquid_ratio_exit: float = 0.45
+    trend_frac_enter: float = 0.45
+    trend_frac_exit: float = 0.35
+    debounce_ticks: int = 3
+    coverage_inactive_ratio: float = 0.375
+    completion_pending_ratio: float = 0.20
+    completion_pending_exit: float = 0.12
+
+
+@dataclass(frozen=True)
+class DebounceState:
+    current: str
+    pending: str
+    hold: int = 0
+
+
+@dataclass(frozen=True)
+class RegimeV2Decision:
+    market_regime: str
+    score_regime: str
+    market_trigger: str
+    market_threshold: str
+    score_trigger: str
+    score_threshold: str
+    parent_mode: str
+    scoring_overlay: str | None
+    market_debounce: DebounceState
+    score_debounce: DebounceState
+
+
+def percentile(values: list[float], q: float) -> float | None:
+    if not values:
+        return None
+    xs = sorted(float(v) for v in values)
+    if len(xs) == 1:
+        return xs[0]
+    pos = (len(xs) - 1) * min(1.0, max(0.0, q))
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+
+def apply_debounce(state: DebounceState, candidate: str, debounce_ticks: int) -> DebounceState:
+    debounce_ticks = max(1, int(debounce_ticks))
+    if candidate == state.current:
+        return DebounceState(current=state.current, pending=state.current, hold=0)
+    if candidate == state.pending:
+        hold = state.hold + 1
+    else:
+        hold = 1
+    if hold >= debounce_ticks:
+        return DebounceState(current=candidate, pending=candidate, hold=0)
+    return DebounceState(current=state.current, pending=candidate, hold=hold)
+
+
+def _ratio_high(value: float, current: str, label: str, enter: float, exit_: float) -> bool:
+    threshold = exit_ if current == label else enter
+    return value + 1e-12 >= threshold
+
+
+def propose_market_regime(
+    stats: Mapping[str, Any],
+    current: str,
+    thresholds: RegimeV2Thresholds,
+) -> tuple[str, str, str]:
+    """Return (regime, trigger, threshold) from cross-section stats only.
+
+    `parent_mode` / `parent_trigger` on stats are ignored. Missing parent
+    fields must never become STRESSED.
+    """
+    n = int(stats.get("book_count", 0) or 0)
+    if n <= 0:
+        return "NORMAL", "EMPTY_CROSS_SECTION", "book_count=0"
+
+    stressed_ratio = float(stats.get("stressed_ratio", 0.0) or 0.0)
+    liquid_ratio = float(stats.get("liquid_ratio", 0.0) or 0.0)
+    trend_up = float(stats.get("trend_up_ratio", 0.0) or 0.0)
+    trend_down = float(stats.get("trend_down_ratio", 0.0) or 0.0)
+    trade_med = stats.get("trade_rate_med")
+    spread_med = stats.get("spread_med")
+    vol_med = stats.get("vol_med")
+    stress_cut = float(stats.get("stress_spread_bps", 0.0) or 0.0)
+    toxic_cut = float(stats.get("toxic_spread_bps", 0.0) or 0.0)
+
+    toxic_ratio_hit = _ratio_high(
+        stressed_ratio, current, "TOXIC",
+        thresholds.toxic_ratio_enter, thresholds.toxic_ratio_exit,
+    )
+    toxic_spread_hit = (
+        spread_med is not None
+        and toxic_cut > 0.0
+        and float(spread_med) + 1e-12 >= toxic_cut
+    )
+    high_vol = vol_med is not None and float(vol_med) >= 0.006
+    if toxic_ratio_hit and (toxic_spread_hit or high_vol):
+        return (
+            "TOXIC",
+            "TOXIC_STRESSED_RATIO",
+            f"stressed_ratio>={thresholds.toxic_ratio_enter:g}",
+        )
+
+    stressed_ratio_hit = _ratio_high(
+        stressed_ratio, current, "STRESSED",
+        thresholds.stressed_ratio_enter, thresholds.stressed_ratio_exit,
+    )
+    median_stress_hit = (
+        spread_med is not None
+        and stress_cut > 0.0
+        and float(spread_med) + 1e-12 >= stress_cut
+    )
+    if current == "STRESSED":
+        # Exit only when both ratio and median are clearly below the cut.
+        stay = stressed_ratio + 1e-12 >= thresholds.stressed_ratio_exit or (
+            spread_med is not None
+            and stress_cut > 0.0
+            and float(spread_med) + 1e-12 >= stress_cut * 0.90
+        )
+        if stay:
+            return (
+                "STRESSED",
+                "STRESSED_HYSTERESIS",
+                f"stressed_ratio>={thresholds.stressed_ratio_exit:g}",
+            )
+    elif stressed_ratio_hit or median_stress_hit:
+        trigger = "STRESSED_RATIO" if stressed_ratio_hit else "MEDIAN_SPREAD"
+        threshold = (
+            f"stressed_ratio>={thresholds.stressed_ratio_enter:g}"
+            if stressed_ratio_hit
+            else f"spread_med>={stress_cut:g}"
+        )
+        return "STRESSED", trigger, threshold
+
+    quiet_hit = (
+        trade_med is not None
+        and float(trade_med) + 1e-12 < thresholds.quiet_trade_rate
+        and stressed_ratio < thresholds.stressed_ratio_exit
+    )
+    if quiet_hit:
+        return (
+            "QUIET",
+            "LOW_TRADE_RATE",
+            f"trade_rate_med<{thresholds.quiet_trade_rate:g}",
+        )
+
+    trend_enter = (
+        thresholds.trend_frac_exit
+        if current in {"TREND_UP", "TREND_DOWN"}
+        else thresholds.trend_frac_enter
+    )
+    if trend_up >= trend_enter and trend_up > trend_down + 1e-12:
+        return "TREND_UP", "TREND_UP_RATIO", f"trend_up_ratio>={trend_enter:g}"
+    if trend_down >= trend_enter and trend_down > trend_up + 1e-12:
+        return "TREND_DOWN", "TREND_DOWN_RATIO", f"trend_down_ratio>={trend_enter:g}"
+
+    liquid_hit = _ratio_high(
+        liquid_ratio, current, "LIQUID",
+        thresholds.liquid_ratio_enter, thresholds.liquid_ratio_exit,
+    )
+    if liquid_hit and stressed_ratio < thresholds.stressed_ratio_exit:
+        return (
+            "LIQUID",
+            "LIQUID_RATIO",
+            f"liquid_ratio>={thresholds.liquid_ratio_enter:g}",
+        )
+
+    return "NORMAL", "DEFAULT_NORMAL", "cross_section_unexceptional"
+
+
+def propose_score_regime(
+    stats: Mapping[str, Any],
+    current: str,
+    thresholds: RegimeV2Thresholds,
+) -> tuple[str, str, str]:
+    """Kappa / inactive coverage only. Independent of MarketRegime."""
+    n = int(stats.get("book_count", 0) or 0)
+    if n <= 0:
+        return "NORMAL", "EMPTY_SCORE_UNIVERSE", "book_count=0"
+
+    if stats.get("inactive") is not None:
+        inactive = int(stats.get("inactive") or 0)
+    else:
+        inactive = int(round(float(stats.get("inactive_frac", 0.0) or 0.0) * n))
+    pending_frac = float(stats.get("pending_kappa_frac", 0.0) or 0.0)
+
+    # Match DetailedTemplateAgent: inactive_count >= max(int(ratio*n)-1, 1).
+    max_inactive = int(float(thresholds.coverage_inactive_ratio) * n)
+    enter_count = max(max_inactive - 1, 1)
+    exit_count = max(enter_count - 1, 1)
+    coverage_hit = inactive >= (exit_count if current == "COVERAGE_PRESSURE" else enter_count)
+    if coverage_hit:
+        return (
+            "COVERAGE_PRESSURE",
+            "INACTIVE_COVERAGE",
+            f"inactive>={enter_count}",
+        )
+
+    completion_hit = _ratio_high(
+        pending_frac,
+        current,
+        "COMPLETION_PRESSURE",
+        thresholds.completion_pending_ratio,
+        thresholds.completion_pending_exit,
+    )
+    if completion_hit:
+        return (
+            "COMPLETION_PRESSURE",
+            "KAPPA_PENDING",
+            f"pending_kappa_frac>={thresholds.completion_pending_ratio:g}",
+        )
+    return "NORMAL", "SCORE_NORMAL", "coverage_and_completion_clear"
+
+
+def classify_regime_v2(
+    stats: Mapping[str, Any],
+    *,
+    market_state: DebounceState | None = None,
+    score_state: DebounceState | None = None,
+    thresholds: RegimeV2Thresholds | None = None,
+) -> RegimeV2Decision:
+    thr = thresholds or RegimeV2Thresholds()
+    market_state = market_state or DebounceState("NORMAL", "NORMAL", 0)
+    score_state = score_state or DebounceState("NORMAL", "NORMAL", 0)
+
+    market_raw, market_trigger, market_threshold = propose_market_regime(
+        stats, market_state.current, thr,
+    )
+    score_raw, score_trigger, score_threshold = propose_score_regime(
+        stats, score_state.current, thr,
+    )
+    market_next = apply_debounce(market_state, market_raw, thr.debounce_ticks)
+    score_next = apply_debounce(score_state, score_raw, thr.debounce_ticks)
+
+    overlay = (
+        "SCORING_PRESSURE" if score_next.current == "COVERAGE_PRESSURE" else None
+    )
+    return RegimeV2Decision(
+        market_regime=market_next.current,
+        score_regime=score_next.current,
+        market_trigger=market_trigger,
+        market_threshold=market_threshold,
+        score_trigger=score_trigger,
+        score_threshold=score_threshold,
+        parent_mode=PARENT_MARKET_MODE[market_next.current],
+        scoring_overlay=overlay,
+        market_debounce=market_next,
+        score_debounce=score_next,
+    )
+
+
+FILL_CLASSES = (
+    "FULL",
+    "ACTIONABLE_PARTIAL",
+    "DUST_PARTIAL",
+    "FLAT",
+    "CROSS_DUST",
+)
+MARKOUT_HORIZONS_MS = (100, 250, 500, 1000)
+NS_PER_MS = 1_000_000
+
+
+def sim_delta_ms(start: float | int | None, end: float | int | None) -> float | None:
+    """Simulator timestamps are nanoseconds."""
+    if start is None or end is None:
+        return None
+    return (float(end) - float(start)) / NS_PER_MS
+
+
+def ms_to_ns(ms: float | int) -> int:
+    return int(float(ms) * NS_PER_MS)
+
+
+def is_flat(qty: float, eps: float) -> bool:
+    return abs(float(qty)) < max(float(eps), 1e-12)
+
+
+def is_dust(qty: float, min_order_size: float, eps: float) -> bool:
+    """Sub-minimum but not execution-flat. Uses the runtime min, never a hardcoded 0.25."""
+    abs_qty = abs(float(qty))
+    min_size = max(0.0, float(min_order_size))
+    if min_size <= 0.0:
+        return False
+    return abs_qty >= max(float(eps), 1e-12) and abs_qty + 1e-12 < min_size
+
+
+def is_actionable(qty: float, min_order_size: float, eps: float) -> bool:
+    min_size = max(0.0, float(min_order_size))
+    if min_size <= 0.0:
+        return not is_flat(qty, eps)
+    return abs(float(qty)) + max(float(eps), 1e-12) >= min_size
+
+
+def remaining_quantity(
+    requested: float | None,
+    filled_cum: float | None,
+    eps: float,
+) -> float | None:
+    if requested is None:
+        return None
+    filled = 0.0 if filled_cum is None else max(0.0, float(filled_cum))
+    left = max(0.0, float(requested) - filled)
+    return 0.0 if left <= max(float(eps), 1e-12) else left
+
+
+def classify_fill(
+    *,
+    inventory_before: float,
+    inventory_after: float,
+    fill_quantity: float,
+    requested_quantity: float | None,
+    filled_quantity: float | None,
+    min_order_size: float,
+    flat_eps: float,
+) -> str:
+    """One label per fill from inventory + fill + runtime min size.
+
+    Priority:
+      CROSS_DUST — sign flip that leaves dust on the far side
+      FLAT — post-fill inventory is execution-flat
+      DUST_PARTIAL — post-fill inventory is sub-minimum
+      FULL — resting quote remaining is ~0 and leftover is tradable
+      ACTIONABLE_PARTIAL — leftover is tradable and the quote still has size
+    """
+    del fill_quantity  # used by callers for remaining via filled_quantity
+    eps = max(float(flat_eps), 1e-12)
+    before = float(inventory_before)
+    after = float(inventory_after)
+    min_size = max(0.0, float(min_order_size))
+
+    crossed = (
+        (not is_flat(before, eps))
+        and (not is_flat(after, eps))
+        and (before * after < 0.0)
+    )
+    if crossed and is_dust(after, min_size, eps):
+        return "CROSS_DUST"
+    if is_flat(after, eps):
+        return "FLAT"
+    if is_dust(after, min_size, eps):
+        return "DUST_PARTIAL"
+
+    remaining = remaining_quantity(requested_quantity, filled_quantity, eps)
+    quote_complete = remaining is not None and remaining <= eps
+    if quote_complete:
+        return "FULL"
+    if is_actionable(after, min_size, eps):
+        return "ACTIONABLE_PARTIAL"
+    return "DUST_PARTIAL"
+
+
+def side_markout_bps(
+    side: str,
+    fill_price: float,
+    future_mid: float | None,
+) -> float | None:
+    """Maker side-adjusted markout in bps of fill price.
+
+    BUY:  (future_mid - fill_price) / fill_price * 1e4
+    SELL: (fill_price - future_mid) / fill_price * 1e4
+    Positive is favorable for the maker.
+    """
+    if future_mid is None:
+        return None
+    px = float(fill_price)
+    if px <= 0.0:
+        return None
+    mid = float(future_mid)
+    raw = (mid - px) / px * 10_000.0
+    token = str(side).lower()
+    if token in {"sell", "ask", "s", "1"}:
+        return -raw
+    return raw
+
+
+def actual_microprice(
+    bid: float | None,
+    ask: float | None,
+    bid_qty: float | None,
+    ask_qty: float | None,
+) -> float | None:
+    if bid is None or ask is None:
+        return None
+    bq = 0.0 if bid_qty is None else float(bid_qty)
+    aq = 0.0 if ask_qty is None else float(ask_qty)
+    denom = bq + aq
+    if denom <= 0.0:
+        return None
+    return (float(ask) * bq + float(bid) * aq) / denom
+
+
+def touch_distance(
+    side: str,
+    quote_price: float,
+    best_bid: float | None,
+    best_ask: float | None,
+    mid: float | None,
+    tick_size: float | None,
+) -> tuple[float | None, float | None]:
+    token = str(side).lower()
+    if token in {"buy", "bid", "b", "0"}:
+        touch = best_bid
+        delta = None if touch is None else float(touch) - float(quote_price)
+    else:
+        touch = best_ask
+        delta = None if touch is None else float(quote_price) - float(touch)
+    ticks = None
+    bps = None
+    if delta is not None and tick_size is not None and float(tick_size) > 0.0:
+        ticks = delta / float(tick_size)
+    if delta is not None and mid is not None and float(mid) > 0.0:
+        bps = delta / float(mid) * 10_000.0
+    return ticks, bps
+
+
+def optional_queue_metrics(
+    *,
+    level_quantity: float | None,
+    orders: Iterable[Mapping[str, Any]] | None,
+) -> dict[str, float]:
+    """Return queue fields only from genuine book data. Never infer missing orders."""
+    out: dict[str, float] = {}
+    if level_quantity is not None:
+        out["queue_depth_at_price"] = float(level_quantity)
+    if not orders:
+        return out
+    ahead = 0.0
+    saw = False
+    for order in orders:
+        try:
+            ahead += float(order.get("quantity", 0.0) or 0.0)
+            saw = True
+        except (TypeError, ValueError, AttributeError):
+            continue
+    if saw:
+        out["queue_ahead"] = ahead
+    return out
+
+
+@dataclass
+class PendingMarkout:
+    quote_id: int
+    book: int
+    side: str
+    fill_price: float
+    fill_ts: int
+    horizon_ms: int
+
+
+@dataclass
+class MarkoutResult:
+    quote_id: int
+    book: int
+    side: str
+    horizon_ms: int
+    fill_price: float
+    future_mid: float | None
+    markout_bps: float | None
+    status: str = "OK"
+
+
+@dataclass
+class QuoteRecord:
+    quote_id: int
+    client_id: int | None
+    book: int
+    side: str
+    decision_ts: int | None = None
+    submit_ts: int | None = None
+    cancel_ts: int | None = None
+    fill_ts: int | None = None
+    requested_quantity: float | None = None
+    filled_quantity: float = 0.0
+    remaining_quantity: float | None = None
+    quote_price: float | None = None
+    configured_ttl_ms: float | None = None
+    predicted_fill_probability: float | None = None
+    predicted_any_fill_probability: float | None = None
+    predicted_actionable_fill_probability: float | None = None
+    predicted_dust_probability: float | None = None
+    hazard_source: str | None = None
+    hazard_features: dict[str, Any] | None = None
+    hazard_closed: bool = False
+    market_regime: str | None = None
+    score_regime: str | None = None
+    book_archetype: str | None = None
+    snapshot: dict[str, Any] = field(default_factory=dict)
+    open: bool = True
+
+
+class QuoteLifecycleStore:
+    """Bounded live-quote + pending-markout store. No full-history scan."""
+
+    def __init__(
+        self,
+        *,
+        horizons_ms: tuple[int, ...] = MARKOUT_HORIZONS_MS,
+        max_live: int = 1024,
+        max_pending_markouts: int = 2048,
+        missing_after_ms: int = 2500,
+    ) -> None:
+        self.horizons_ms = tuple(int(h) for h in horizons_ms)
+        self.max_live = max(8, int(max_live))
+        self.max_pending_markouts = max(16, int(max_pending_markouts))
+        self.missing_after_ns = ms_to_ns(missing_after_ms)
+        self._seq = 0
+        self.live: OrderedDict[tuple[int, int], QuoteRecord] = OrderedDict()
+        self.by_id: dict[int, QuoteRecord] = {}
+        self.pending: deque[PendingMarkout] = deque()
+        self.last_replaced: QuoteRecord | None = None
+
+    def next_quote_id(self) -> int:
+        self._seq += 1
+        return self._seq
+
+    def _client_key(self, book: int, client_id: int | None) -> tuple[int, int] | None:
+        if client_id is None:
+            return None
+        return (int(book), int(client_id))
+
+    def _evict_live(self) -> None:
+        while len(self.live) > self.max_live:
+            key, rec = self.live.popitem(last=False)
+            rec.open = False
+            self.by_id.pop(rec.quote_id, None)
+
+    def register_quote(self, record: QuoteRecord) -> QuoteRecord:
+        self.last_replaced = None
+        key = self._client_key(record.book, record.client_id)
+        if key is not None and key in self.live:
+            prev = self.live.pop(key)
+            prev.open = False
+            prev.cancel_ts = prev.cancel_ts or record.submit_ts
+            self.by_id.pop(prev.quote_id, None)
+            self.last_replaced = prev
+        if key is not None:
+            self.live[key] = record
+            self.live.move_to_end(key)
+        self.by_id[record.quote_id] = record
+        self._evict_live()
+        return record
+
+    def lookup(self, book: int, client_id: int | None) -> QuoteRecord | None:
+        key = self._client_key(book, client_id)
+        if key is None:
+            return None
+        return self.live.get(key)
+
+    def live_for_book_side(self, book: int, side: str) -> QuoteRecord | None:
+        want = str(side).lower()
+        target = int(book)
+        for rec in reversed(self.live.values()):
+            if rec.open and rec.book == target and str(rec.side).lower() == want:
+                return rec
+        return None
+
+    def close_quote(
+        self,
+        record: QuoteRecord,
+        *,
+        cancel_ts: int | None = None,
+        fill_ts: int | None = None,
+    ) -> None:
+        record.open = False
+        if cancel_ts is not None:
+            record.cancel_ts = cancel_ts
+        if fill_ts is not None:
+            record.fill_ts = fill_ts
+        key = self._client_key(record.book, record.client_id)
+        if key is not None:
+            self.live.pop(key, None)
+        self.by_id.pop(record.quote_id, None)
+
+    def apply_fill(
+        self,
+        record: QuoteRecord,
+        *,
+        fill_qty: float,
+        fill_ts: int | None,
+        flat_eps: float,
+    ) -> float:
+        record.filled_quantity = float(record.filled_quantity) + abs(float(fill_qty))
+        record.fill_ts = fill_ts
+        record.remaining_quantity = remaining_quantity(
+            record.requested_quantity, record.filled_quantity, flat_eps,
+        )
+        return record.filled_quantity
+
+    def schedule_markouts(
+        self,
+        *,
+        quote_id: int,
+        book: int,
+        side: str,
+        fill_price: float,
+        fill_ts: int,
+    ) -> None:
+        for horizon in self.horizons_ms:
+            self.pending.append(
+                PendingMarkout(
+                    quote_id=int(quote_id),
+                    book=int(book),
+                    side=str(side),
+                    fill_price=float(fill_price),
+                    fill_ts=int(fill_ts),
+                    horizon_ms=int(horizon),
+                )
+            )
+        return self._cap_pending(now_ts=int(fill_ts))
+
+    def _cap_pending(self, now_ts: int) -> list[MarkoutResult]:
+        dropped: list[MarkoutResult] = []
+        while len(self.pending) > self.max_pending_markouts:
+            item = self.pending.popleft()
+            dropped.append(
+                MarkoutResult(
+                    quote_id=item.quote_id,
+                    book=item.book,
+                    side=item.side,
+                    horizon_ms=item.horizon_ms,
+                    fill_price=item.fill_price,
+                    future_mid=None,
+                    markout_bps=None,
+                    status="MISSING_FUTURE",
+                )
+            )
+        return dropped
+
+    def evaluate(
+        self,
+        *,
+        now_ts: int,
+        mids: Mapping[int, float | None],
+    ) -> list[MarkoutResult]:
+        """Emit due markouts. O(pending), not O(all books / history)."""
+        due: list[MarkoutResult] = []
+        kept: deque[PendingMarkout] = deque()
+        now = int(now_ts)
+        for item in self.pending:
+            age_ns = now - int(item.fill_ts)
+            if age_ns < 0:
+                kept.append(item)
+                continue
+            ready = age_ns >= ms_to_ns(item.horizon_ms)
+            missing = age_ns >= self.missing_after_ns
+            if not ready and not missing:
+                kept.append(item)
+                continue
+            future_mid = mids.get(int(item.book))
+            if ready and future_mid is not None:
+                due.append(
+                    MarkoutResult(
+                        quote_id=item.quote_id,
+                        book=item.book,
+                        side=item.side,
+                        horizon_ms=item.horizon_ms,
+                        fill_price=item.fill_price,
+                        future_mid=float(future_mid),
+                        markout_bps=side_markout_bps(
+                            item.side, item.fill_price, float(future_mid),
+                        ),
+                        status="OK",
+                    )
+                )
+                continue
+            if missing:
+                due.append(
+                    MarkoutResult(
+                        quote_id=item.quote_id,
+                        book=item.book,
+                        side=item.side,
+                        horizon_ms=item.horizon_ms,
+                        fill_price=item.fill_price,
+                        future_mid=None,
+                        markout_bps=None,
+                        status="MISSING_FUTURE",
+                    )
+                )
+                continue
+            kept.append(item)
+        self.pending = kept
+        return due
+
+
+AGE_EDGES_MS = (100, 250, 500, 1000)
+N_AGE_BINS = len(AGE_EDGES_MS) + 1
+CAL_BUCKETS = (
+    ("0.00_0.05", 0.00, 0.05),
+    ("0.05_0.10", 0.05, 0.10),
+    ("0.10_0.20", 0.10, 0.20),
+    ("0.20_0.40", 0.20, 0.40),
+    ("0.40_1.00", 0.40, 1.01),
+)
+DIST_EDGES_BPS = (0.5, 2.0)
+SPREAD_EDGES = (5.0, 12.0)
+VOL_EDGES = (0.002, 0.006)
+TRADE_EDGES = (0.2, 1.0)
+IMB_EDGES = (-0.15, 0.15)
+TTL_EDGES_MS = (200.0, 600.0)
+REGIME_GROUPS = {
+    "QUIET": "QUIET",
+    "NORMAL": "NORMAL",
+    "LIQUID": "NORMAL",
+    "TREND_UP": "TREND",
+    "TREND_DOWN": "TREND",
+    "STRESSED": "STRESS",
+    "TOXIC": "STRESS",
+    "MIXED": "NORMAL",
+    "BROAD_LIQUID": "NORMAL",
+    "TRENDING_UP": "TREND",
+    "TRENDING_DOWN": "TREND",
+    "CHOP": "QUIET",
+    "DISPERSED": "NORMAL",
+}
+
+
+FROZEN_MIN_SAMPLES = 12
+FROZEN_PRIOR_STRENGTH = 8.0
+FROZEN_PRIOR_ANY = 0.12
+FROZEN_PRIOR_ACTIONABLE_GIVEN_FILL = 0.55
+FROZEN_P_MIN = 0.01
+FROZEN_P_MAX = 0.95
+FROZEN_FEATURE_LOGIT_WEIGHT = 0.0
+
+
+def _clip(p: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, float(p)))
+
+
+def _logit(p: float) -> float:
+    x = _clip(p, 1e-6, 1.0 - 1e-6)
+    return math.log(x / (1.0 - x))
+
+
+def _sigmoid(z: float) -> float:
+    if z >= 30.0:
+        return 1.0
+    if z <= -30.0:
+        return 0.0
+    return 1.0 / (1.0 + math.exp(-z))
+
+
+def _bucket(value: float | None, edges: tuple[float, ...]) -> int:
+    if value is None:
+        return 1
+    x = float(value)
+    for i, edge in enumerate(edges):
+        if x < edge:
+            return i
+    return len(edges)
+
+
+def age_bin(age_ms: float) -> int:
+    age = max(0.0, float(age_ms))
+    for i, edge in enumerate(AGE_EDGES_MS):
+        if age < float(edge):
+            return i
+    return len(AGE_EDGES_MS)
+
+
+def bins_for_ttl(ttl_ms: float) -> range:
+    """Bins whose left edge is strictly before TTL (P(T < TTL) via discrete hazard)."""
+    ttl = max(0.0, float(ttl_ms))
+    last = 0
+    left = 0.0
+    for i, edge in enumerate(AGE_EDGES_MS):
+        if left < ttl:
+            last = i
+        left = float(edge)
+    if left < ttl:
+        last = len(AGE_EDGES_MS)
+    return range(0, last + 1)
+
+
+def cal_bucket(p: float) -> str:
+    x = max(0.0, min(1.0, float(p)))
+    for name, lo, hi in CAL_BUCKETS:
+        if lo <= x < hi:
+            return name
+    return CAL_BUCKETS[-1][0]
+
+
+def outcome_from_fill_class(fill_class: str | None) -> Literal["actionable", "dust", "other"]:
+    token = str(fill_class or "").upper()
+    if token in {"DUST_PARTIAL", "CROSS_DUST", "DUST"}:
+        return "dust"
+    if token in {"FULL", "ACTIONABLE_PARTIAL", "FLAT", "ACTIONABLE"}:
+        return "actionable"
+    return "other"
+
+
+@dataclass
+class HazardFeatures:
+    side: str
+    dist_bucket: int
+    spread_bucket: int
+    vol_bucket: int
+    trade_bucket: int
+    imb_bucket: int
+    regime_group: str
+    ttl_bucket: int
+    ttl_ms: float
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        *,
+        side: str,
+        distance_from_touch_bps: float | None,
+        spread_bps: float | None,
+        volatility: float | None,
+        trade_rate: float | None,
+        imbalance: float | None,
+        market_regime: str | None,
+        ttl_ms: float | None,
+    ) -> "HazardFeatures":
+        ttl = 500.0 if ttl_ms is None else max(1.0, float(ttl_ms))
+        regime = REGIME_GROUPS.get(str(market_regime or "NORMAL").upper(), "NORMAL")
+        return cls(
+            side="buy" if str(side).lower() in {"buy", "bid", "b", "0"} else "sell",
+            dist_bucket=_bucket(distance_from_touch_bps, DIST_EDGES_BPS),
+            spread_bucket=_bucket(spread_bps, SPREAD_EDGES),
+            vol_bucket=_bucket(volatility, VOL_EDGES),
+            trade_bucket=_bucket(trade_rate, TRADE_EDGES),
+            imb_bucket=_bucket(imbalance, IMB_EDGES),
+            regime_group=regime,
+            ttl_bucket=_bucket(ttl, TTL_EDGES_MS),
+            ttl_ms=ttl,
+        )
+
+
+@dataclass
+class _Counts:
+    at_risk: list[int] = field(default_factory=lambda: [0] * N_AGE_BINS)
+    fills: list[int] = field(default_factory=lambda: [0] * N_AGE_BINS)
+    censored: list[int] = field(default_factory=lambda: [0] * N_AGE_BINS)
+    actionable: list[int] = field(default_factory=lambda: [0] * N_AGE_BINS)
+    dust: list[int] = field(default_factory=lambda: [0] * N_AGE_BINS)
+
+    def observe(self, bin_idx: int, filled: bool, outcome: str | None) -> None:
+        idx = max(0, min(N_AGE_BINS - 1, int(bin_idx)))
+        for k in range(0, idx):
+            self.at_risk[k] += 1
+        self.at_risk[idx] += 1
+        if filled:
+            self.fills[idx] += 1
+            if outcome == "actionable":
+                self.actionable[idx] += 1
+            elif outcome == "dust":
+                self.dust[idx] += 1
+        else:
+            self.censored[idx] += 1
+
+    def n0(self) -> int:
+        return int(self.at_risk[0])
+
+
+@dataclass
+class HazardPrediction:
+    any_fill: float
+    actionable_fill: float
+    dust: float
+    source: str
+    usable: bool
+    n_at_risk: int
+    ttl_ms: float
+
+
+@dataclass
+class CalBucket:
+    predicted_sum: float = 0.0
+    observed_sum: float = 0.0
+    brier_sum: float = 0.0
+    sample_count: int = 0
+
+    def add(self, predicted: float, observed: float) -> None:
+        p = _clip(predicted, 0.0, 1.0)
+        y = 1.0 if float(observed) >= 0.5 else 0.0
+        self.predicted_sum += p
+        self.observed_sum += y
+        self.brier_sum += (p - y) ** 2
+        self.sample_count += 1
+
+    def snapshot(self) -> dict[str, float | int]:
+        n = max(1, self.sample_count)
+        return {
+            "predicted_mean": self.predicted_sum / n if self.sample_count else 0.0,
+            "observed_rate": self.observed_sum / n if self.sample_count else 0.0,
+            "sample_count": self.sample_count,
+            "brier_component": self.brier_sum / n if self.sample_count else 0.0,
+        }
+
+
+class FillHazardModel:
+    """Bounded empirical hazard: primary (side, dist) plus shrunk global/side priors."""
+
+    def __init__(
+        self,
+        *,
+        min_samples: int = FROZEN_MIN_SAMPLES,
+        prior_strength: float = FROZEN_PRIOR_STRENGTH,
+        prior_any: float = FROZEN_PRIOR_ANY,
+        prior_actionable_given_fill: float = FROZEN_PRIOR_ACTIONABLE_GIVEN_FILL,
+        p_min: float = FROZEN_P_MIN,
+        p_max: float = FROZEN_P_MAX,
+        feature_logit_weight: float = FROZEN_FEATURE_LOGIT_WEIGHT,
+    ) -> None:
+        self.min_samples = max(1, int(min_samples))
+        self.prior_strength = max(0.0, float(prior_strength))
+        self.prior_any = _clip(prior_any, 0.01, 0.5)
+        self.prior_actionable_given_fill = _clip(prior_actionable_given_fill, 0.05, 0.95)
+        self.p_min = max(0.0, float(p_min))
+        self.p_max = min(1.0, float(p_max))
+        self.feature_logit_weight = max(0.0, min(1.0, float(feature_logit_weight)))
+        self.global_counts = _Counts()
+        self.side_counts: dict[str, _Counts] = {"buy": _Counts(), "sell": _Counts()}
+        self.cells: dict[tuple[str, int], _Counts] = {}
+        self.feature_counts: dict[tuple[str, str | int], _Counts] = {}
+        self.calibration: dict[tuple[str, str, str], CalBucket] = {}
+        self.brier_any_sum = 0.0
+        self.brier_any_n = 0
+        self.brier_act_sum = 0.0
+        self.brier_act_n = 0
+        self.brier_dust_sum = 0.0
+        self.brier_dust_n = 0
+        self.observations = 0
+        self.events = 0
+        self.censored = 0
+
+    def _cell(self, side: str, dist_bucket: int) -> _Counts:
+        key = (side, int(dist_bucket))
+        return self.cells.setdefault(key, _Counts())
+
+    def _feat(self, name: str, bucket: str | int) -> _Counts:
+        return self.feature_counts.setdefault((name, bucket), _Counts())
+
+    def observe(
+        self,
+        features: HazardFeatures,
+        *,
+        age_ms: float,
+        filled: bool,
+        fill_class: str | None = None,
+        predicted: HazardPrediction | None = None,
+        include_in_calibration: bool = True,
+    ) -> None:
+        idx = age_bin(age_ms)
+        outcome = outcome_from_fill_class(fill_class) if filled else None
+        self.global_counts.observe(idx, filled, outcome)
+        self.side_counts[features.side].observe(idx, filled, outcome)
+        self._cell(features.side, features.dist_bucket).observe(idx, filled, outcome)
+        self._feat("spread", features.spread_bucket).observe(idx, filled, outcome)
+        self._feat("vol", features.vol_bucket).observe(idx, filled, outcome)
+        self._feat("trade", features.trade_bucket).observe(idx, filled, outcome)
+        self._feat("imb", features.imb_bucket).observe(idx, filled, outcome)
+        self._feat("regime", features.regime_group).observe(idx, filled, outcome)
+        self._feat("ttl", features.ttl_bucket).observe(idx, filled, outcome)
+        self.observations += 1
+        if filled:
+            self.events += 1
+        else:
+            self.censored += 1
+        if include_in_calibration and predicted is not None:
+            self._calibrate(features, filled, outcome, predicted, age_ms)
+
+    def _calibrate(
+        self,
+        features: HazardFeatures,
+        filled: bool,
+        outcome: str | None,
+        predicted: HazardPrediction,
+        age_ms: float,
+    ) -> None:
+        ttl = max(1.0, float(features.ttl_ms))
+        if (not filled) and age_ms + 1e-9 < ttl:
+            return
+        y_any = 1.0 if filled and age_ms <= ttl + 1e-9 else 0.0
+        y_act = 1.0 if y_any >= 0.5 and outcome == "actionable" else 0.0
+        y_dust = 1.0 if y_any >= 0.5 and outcome == "dust" else 0.0
+        self._add_cal("ANY", features.side, predicted.any_fill, y_any)
+        self._add_cal("ACTIONABLE", features.side, predicted.actionable_fill, y_act)
+        self._add_cal("DUST", features.side, predicted.dust, y_dust)
+        self.brier_any_sum += (predicted.any_fill - y_any) ** 2
+        self.brier_any_n += 1
+        self.brier_act_sum += (predicted.actionable_fill - y_act) ** 2
+        self.brier_act_n += 1
+        self.brier_dust_sum += (predicted.dust - y_dust) ** 2
+        self.brier_dust_n += 1
+
+    def _add_cal(self, kind: str, side: str, predicted: float, observed: float) -> None:
+        key = (kind, side.upper(), cal_bucket(predicted))
+        bucket = self.calibration.setdefault(key, CalBucket())
+        bucket.add(predicted, observed)
+
+    def _hazard_path(self, counts: _Counts, ttl_ms: float) -> tuple[float, float, float, int]:
+        alpha = self.prior_strength
+        n_bins = max(1, len(tuple(bins_for_ttl(ttl_ms))))
+        h0 = 1.0 - (1.0 - self.prior_any) ** (1.0 / n_bins)
+        surv = 1.0
+        act_cif = 0.0
+        dust_cif = 0.0
+        for k in bins_for_ttl(ttl_ms):
+            n = counts.at_risk[k]
+            d = counts.fills[k]
+            h = (d + alpha * h0) / (n + alpha) if (n + alpha) > 0 else h0
+            h = _clip(h, 0.0, 0.999)
+            fills = max(d, 0)
+            p_act_g = (
+                (counts.actionable[k] + alpha * self.prior_actionable_given_fill)
+                / (fills + alpha)
+                if (fills + alpha) > 0
+                else self.prior_actionable_given_fill
+            )
+            p_dust_g = (
+                (counts.dust[k] + alpha * (1.0 - self.prior_actionable_given_fill))
+                / (fills + alpha)
+                if (fills + alpha) > 0
+                else (1.0 - self.prior_actionable_given_fill)
+            )
+            act_cif += surv * h * p_act_g
+            dust_cif += surv * h * p_dust_g
+            surv *= (1.0 - h)
+        p_any = 1.0 - surv
+        return p_any, act_cif, dust_cif, counts.n0()
+
+    def predict(self, features: HazardFeatures) -> HazardPrediction:
+        ttl = features.ttl_ms
+        p_g, a_g, d_g, n_g = self._hazard_path(self.global_counts, ttl)
+        p_s, a_s, d_s, n_s = self._hazard_path(self.side_counts[features.side], ttl)
+        p_c, a_c, d_c, n_c = self._hazard_path(
+            self._cell(features.side, features.dist_bucket), ttl,
+        )
+        k = self.prior_strength
+        p0 = self.prior_any
+        a0 = p0 * self.prior_actionable_given_fill
+        d0 = p0 * (1.0 - self.prior_actionable_given_fill)
+        denom = n_c + n_s + n_g + k
+        p_any = (n_c * p_c + n_s * p_s + n_g * p_g + k * p0) / denom
+        p_act = (n_c * a_c + n_s * a_s + n_g * a_g + k * a0) / denom
+        p_dust = (n_c * d_c + n_s * d_s + n_g * d_g + k * d0) / denom
+        if n_g >= self.min_samples and self.feature_logit_weight > 0.0:
+            adj = 0.0
+            extras = (
+                ("spread", features.spread_bucket),
+                ("vol", features.vol_bucket),
+                ("trade", features.trade_bucket),
+                ("imb", features.imb_bucket),
+                ("regime", features.regime_group),
+                ("ttl", features.ttl_bucket),
+            )
+            used = 0
+            for name, bucket in extras:
+                counts = self.feature_counts.get((name, bucket))
+                if counts is None or counts.n0() < max(4, self.min_samples // 2):
+                    continue
+                p_f, _, _, _ = self._hazard_path(counts, ttl)
+                adj += _logit(p_f) - _logit(max(p_g, 1e-6))
+                used += 1
+            if used:
+                p_any = _sigmoid(_logit(p_any) + self.feature_logit_weight * adj / used)
+
+        usable = n_g >= self.min_samples or n_c >= max(4, self.min_samples // 2)
+        if n_c >= self.min_samples:
+            source = "cell"
+        elif n_s >= self.min_samples:
+            source = "side"
+        elif n_g >= self.min_samples:
+            source = "global"
+        else:
+            source = "fallback"
+            usable = False
+
+        p_any = _clip(p_any, self.p_min, self.p_max)
+        p_act = _clip(p_act, 0.0, self.p_max)
+        p_dust = _clip(p_dust, 0.0, self.p_max)
+        cap = max(p_any, 1e-9)
+        if p_act + p_dust > cap:
+            scale = cap / (p_act + p_dust)
+            p_act *= scale
+            p_dust *= scale
+        return HazardPrediction(
+            any_fill=p_any,
+            actionable_fill=p_act,
+            dust=p_dust,
+            source=source,
+            usable=usable,
+            n_at_risk=n_c if n_c > 0 else n_s if n_s > 0 else n_g,
+            ttl_ms=ttl,
+        )
+
+    def select_policy_probability(
+        self,
+        old_prob: float,
+        predicted: HazardPrediction,
+        *,
+        use_for_policy: bool,
+    ) -> float:
+        prob, _, _ = self.apply_policy_fill(old_prob, predicted, use_for_policy=use_for_policy)
+        return prob
+
+    def model_confidence(self, predicted: HazardPrediction) -> float:
+        if predicted.source == "global":
+            n = self.global_counts.n0()
+        else:
+            n = max(0, int(predicted.n_at_risk))
+        return _clip(float(n) / max(1, self.min_samples), 0.0, 1.0)
+
+    def calibration_fallback_reason(self) -> str:
+        min_cal = max(self.min_samples * 2, 24)
+        if self.brier_any_n < min_cal:
+            return ""
+        pred_sum = 0.0
+        obs_sum = 0.0
+        n = 0
+        for bucket in self.calibration.values():
+            if bucket.sample_count <= 0:
+                continue
+            pred_sum += bucket.predicted_sum
+            obs_sum += bucket.observed_sum
+            n += int(bucket.sample_count)
+        if n < min_cal:
+            return ""
+        if abs(pred_sum / n - obs_sum / n) > 0.40:
+            return "LOW_CONFIDENCE"
+        return ""
+
+    def apply_policy_fill(
+        self,
+        old_prob: float,
+        predicted: HazardPrediction | None,
+        *,
+        use_for_policy: bool,
+    ) -> tuple[float, str, float]:
+        """Return (probability, fallback_reason, confidence).
+
+        fallback_reason is '' when the frozen hazard is used for policy.
+        """
+        legacy = _clip(old_prob, 0.0, 1.0)
+        if not use_for_policy:
+            return legacy, "POLICY_DISABLED", 0.0
+        if predicted is None:
+            return legacy, "UNSUPPORTED_FEATURES", 0.0
+        conf = self.model_confidence(predicted)
+        any_fill = predicted.any_fill
+        if any_fill is None or any_fill != any_fill:
+            return legacy, "INVALID_OUTPUT", conf
+        try:
+            any_fill = float(any_fill)
+        except (TypeError, ValueError):
+            return legacy, "INVALID_OUTPUT", conf
+        if any_fill < 0.0 or any_fill > 1.0:
+            return legacy, "INVALID_OUTPUT", conf
+        if predicted.source == "fallback" or not predicted.usable:
+            return legacy, "INSUFFICIENT_SAMPLES", conf
+        if conf + 1e-12 < 0.5:
+            return legacy, "LOW_CONFIDENCE", conf
+        cal_reason = self.calibration_fallback_reason()
+        if cal_reason:
+            return legacy, cal_reason, conf
+        return _clip(any_fill, 0.0, 1.0), "", conf
+
+    def brier_overall(self) -> dict[str, float | int]:
+        return {
+            "ANY": (self.brier_any_sum / self.brier_any_n) if self.brier_any_n else 0.0,
+            "ACTIONABLE": (self.brier_act_sum / self.brier_act_n) if self.brier_act_n else 0.0,
+            "DUST": (self.brier_dust_sum / self.brier_dust_n) if self.brier_dust_n else 0.0,
+            "n": self.brier_any_n,
+        }
+
+    def calibration_rows(self, kind: str, side: str) -> list[dict[str, Any]]:
+        rows = []
+        overall = self.brier_overall()
+        for name, _, _ in CAL_BUCKETS:
+            key = (kind, side.upper(), name)
+            snap = self.calibration.get(key, CalBucket()).snapshot()
+            rows.append(
+                {
+                    "kind": kind,
+                    "side": side.upper(),
+                    "bucket": name,
+                    **snap,
+                    "brier_overall": overall.get(kind, 0.0),
+                }
+            )
+        return rows
+
+
+PROTOCOL_DEFAULT_MIN_REALIZED_OBSERVATIONS = 3
+
+
+def required_observation_count(
+    *,
+    kappa_min_observations: int | None = None,
+    research_target: int | None = None,
+) -> int:
+    """Runtime Kappa qualification threshold.
+
+    Prefer an explicit Research scheduler target, else the miner-configured
+    ``kappa_min_observations`` (mirrors validator
+    ``scoring.kappa.min_realized_observations``). The protocol default of 3 is
+    used only when nothing is configured.
+    """
+    for value in (research_target, kappa_min_observations):
+        if value is None:
+            continue
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            continue
+        if n >= 1:
+            return n
+    return PROTOCOL_DEFAULT_MIN_REALIZED_OBSERVATIONS
+
+
+def observation_progress(
+    realized_observation_count: int,
+    required: int,
+) -> tuple[int, int, int]:
+    req = max(1, int(required))
+    realized = max(0, int(realized_observation_count))
+    remaining = max(0, req - realized)
+    return realized, req, remaining
+
+
+def completion_value(
+    *,
+    observations_remaining: int,
+    required_observation_count: int,
+    one_away_weight: float = 0.18,
+    two_away_weight: float = 0.06,
+    new_book_weight: float = 0.0,
+) -> float:
+    """Scheduler bonus: 1 remaining >> 2 remaining > new book.
+
+    Already-qualified books (remaining 0) get no completion pressure.
+    """
+    remaining = max(0, int(observations_remaining))
+    required = max(1, int(required_observation_count))
+    if remaining <= 0:
+        return 0.0
+    if remaining == 1:
+        return max(0.0, float(one_away_weight))
+    if remaining == 2:
+        return max(0.0, float(two_away_weight))
+    if remaining >= required:
+        return max(0.0, float(new_book_weight))
+    decay = max(0.0, float(two_away_weight)) * (2.0 / float(remaining))
+    return decay
+
+
+def conservative_actionable_probability(
+    *,
+    hazard_p: float | None,
+    hazard_usable: bool,
+    learned_p: float | None,
+    learned_samples: int,
+    fill_prob_old: float,
+    min_samples: int = 8,
+    prior: float = 0.55,
+    p_min: float = 0.05,
+    p_max: float = 0.90,
+) -> float:
+    """Do not blindly trust sparse hazard or learned actionable-fill data."""
+    if hazard_usable and hazard_p is not None:
+        return max(p_min, min(p_max, float(hazard_p)))
+    n = max(0, int(learned_samples))
+    fallback = max(p_min, min(p_max, float(fill_prob_old) * float(prior)))
+    if learned_p is None or n <= 0:
+        return fallback
+    learned = max(p_min, min(p_max, float(learned_p)))
+    if n >= max(1, int(min_samples)):
+        return learned
+    strength = float(max(1, int(min_samples)))
+    blended = (n * learned + strength * fallback) / (n + strength)
+    return max(p_min, min(p_max, blended))
+
+
+def conservative_markout_bps(
+    *,
+    mean_bps: float | None,
+    samples: int,
+    min_samples: int = 8,
+    fallback_bps: float = 0.0,
+    prior_strength: float = 8.0,
+    clip_abs: float = 20.0,
+) -> float:
+    """Sparse markout shrinks toward 0 rather than an optimistic mean."""
+    n = max(0, int(samples))
+    fb = float(fallback_bps)
+    if mean_bps is None or n <= 0:
+        return fb
+    mean = max(-clip_abs, min(clip_abs, float(mean_bps)))
+    strength = max(0.0, float(prior_strength))
+    if n >= max(1, int(min_samples)):
+        return mean
+    blended = (n * mean + strength * fb) / (n + strength)
+    return max(-clip_abs, min(clip_abs, blended))
+
+
+def trading_ev(
+    *,
+    actionable_fill_prob: float,
+    spread_capture_bps: float,
+    expected_markout_bps: float,
+    fees_bps: float,
+    edge_scale_bps: float = 8.0,
+) -> float:
+    """P(actionable fill) * tanh((spread capture + markout - fees) / scale)."""
+    p = max(0.0, min(1.0, float(actionable_fill_prob)))
+    edge = float(spread_capture_bps) + float(expected_markout_bps) - float(fees_bps)
+    scale = max(1e-6, float(edge_scale_bps))
+    return p * math.tanh(edge / scale)
+
+
+def dust_cost(
+    dust_prob: float,
+    *,
+    target: float = 0.15,
+    weight: float = 0.25,
+) -> float:
+    return max(0.0, float(weight)) * max(0.0, float(dust_prob) - float(target))
+
+
+def inventory_cost(inventory_util: float, *, weight: float = 0.08) -> float:
+    util = max(0.0, min(1.0, float(inventory_util)))
+    return max(0.0, float(weight)) * util * util
+
+
+def latency_cost(latency_ms: float | None, *, weight: float = 0.04, ref_ms: float = 50.0) -> float:
+    if latency_ms is None:
+        return 0.0
+    frac = max(0.0, min(1.0, float(latency_ms) / max(1.0, float(ref_ms))))
+    return max(0.0, float(weight)) * frac
+
+
+def hard_safety_blocks(
+    *,
+    toxic: bool = False,
+    inventory_blocked: bool = False,
+    unsafe: bool = False,
+    trading_ev_value: float = 0.0,
+    min_trading_ev: float = 0.0,
+) -> str | None:
+    """Hard gates beat completion value. Returns a reject reason or None."""
+    if toxic:
+        return "TOXIC"
+    if inventory_blocked:
+        return "INVENTORY_BLOCKED"
+    if unsafe:
+        return "UNSAFE"
+    if float(trading_ev_value) < float(min_trading_ev):
+        return "NEGATIVE_EV"
+    return None
+
+
+def legacy_global_rank(expected_alpha: float, specialization: float = 0.0) -> float:
+    """Parent Strategy1 rank, kept for A/B when Score-EV is off."""
+    spec = max(0.0, min(1.0, float(specialization)))
+    return float(expected_alpha) * (0.72 + 0.28 * spec) + 0.12 * spec
+
+
+@dataclass(frozen=True)
+class ScoreEVBreakdown:
+    book: int
+    side: str
+    alpha: float
+    fill_prob_old: float
+    fill_prob_hazard: float | None
+    actionable_fill_prob: float
+    dust_prob: float
+    spread_capture_bps: float
+    expected_markout_bps: float
+    fees_bps: float
+    trading_ev: float
+    observation_count: int
+    required_observation_count: int
+    observations_remaining: int
+    completion_value: float
+    dust_cost: float
+    inventory_cost: float
+    latency_cost: float
+    final_score: float
+    eligible: bool
+    reject_reason: str | None
+
+    def as_log(self) -> dict[str, Any]:
+        return {
+            "book": self.book,
+            "side": self.side,
+            "alpha": self.alpha,
+            "fill_prob_old": self.fill_prob_old,
+            "fill_prob_hazard": self.fill_prob_hazard,
+            "actionable_fill_prob": self.actionable_fill_prob,
+            "dust_prob": self.dust_prob,
+            "spread_capture_bps": self.spread_capture_bps,
+            "expected_markout_bps": self.expected_markout_bps,
+            "fees_bps": self.fees_bps,
+            "trading_ev": self.trading_ev,
+            "observation_count": self.observation_count,
+            "required_observation_count": self.required_observation_count,
+            "observations_remaining": self.observations_remaining,
+            "completion_value": self.completion_value,
+            "dust_cost": self.dust_cost,
+            "inventory_cost": self.inventory_cost,
+            "latency_cost": self.latency_cost,
+            "final_score": (
+                self.final_score if math.isfinite(self.final_score) else None
+            ),
+            "eligible": self.eligible,
+            "reject_reason": self.reject_reason,
+        }
+
+
+def compute_score_ev(
+    *,
+    book: int,
+    side: str = "MM",
+    alpha: float = 0.0,
+    fill_prob_old: float = 0.0,
+    fill_prob_hazard: float | None = None,
+    actionable_fill_hazard: float | None = None,
+    hazard_usable: bool = False,
+    learned_actionable_p: float | None = None,
+    learned_actionable_samples: int = 0,
+    dust_prob: float = 0.0,
+    spread_capture_bps: float = 0.0,
+    markout_mean_bps: float | None = None,
+    markout_samples: int = 0,
+    fees_bps: float = 0.5,
+    realized_observation_count: int = 0,
+    required: int = PROTOCOL_DEFAULT_MIN_REALIZED_OBSERVATIONS,
+    inventory_util: float = 0.0,
+    latency_ms: float | None = None,
+    toxic: bool = False,
+    inventory_blocked: bool = False,
+    unsafe: bool = False,
+    min_trading_ev: float = 0.0,
+    min_fill_samples: int = 8,
+    min_markout_samples: int = 8,
+    one_away_weight: float = 0.18,
+    two_away_weight: float = 0.06,
+    new_book_weight: float = 0.0,
+    dust_target: float = 0.15,
+    dust_weight: float = 0.25,
+    inventory_weight: float = 0.08,
+    latency_weight: float = 0.04,
+) -> ScoreEVBreakdown:
+    realized, req, remaining = observation_progress(realized_observation_count, required)
+    p_act = conservative_actionable_probability(
+        hazard_p=actionable_fill_hazard,
+        hazard_usable=hazard_usable,
+        learned_p=learned_actionable_p,
+        learned_samples=learned_actionable_samples,
+        fill_prob_old=fill_prob_old,
+        min_samples=min_fill_samples,
+    )
+    markout = conservative_markout_bps(
+        mean_bps=markout_mean_bps,
+        samples=markout_samples,
+        min_samples=min_markout_samples,
+    )
+    t_ev = trading_ev(
+        actionable_fill_prob=p_act,
+        spread_capture_bps=spread_capture_bps,
+        expected_markout_bps=markout,
+        fees_bps=fees_bps,
+    )
+    c_val = completion_value(
+        observations_remaining=remaining,
+        required_observation_count=req,
+        one_away_weight=one_away_weight,
+        two_away_weight=two_away_weight,
+        new_book_weight=new_book_weight,
+    )
+    d_cost = dust_cost(dust_prob, target=dust_target, weight=dust_weight)
+    i_cost = inventory_cost(inventory_util, weight=inventory_weight)
+    l_cost = latency_cost(latency_ms, weight=latency_weight)
+    reason = hard_safety_blocks(
+        toxic=toxic,
+        inventory_blocked=inventory_blocked,
+        unsafe=unsafe,
+        trading_ev_value=t_ev,
+        min_trading_ev=min_trading_ev,
+    )
+    eligible = reason is None
+    final = t_ev + c_val - d_cost - i_cost - l_cost if eligible else float("-inf")
+    return ScoreEVBreakdown(
+        book=int(book),
+        side=str(side),
+        alpha=float(alpha),
+        fill_prob_old=float(fill_prob_old),
+        fill_prob_hazard=None if fill_prob_hazard is None else float(fill_prob_hazard),
+        actionable_fill_prob=p_act,
+        dust_prob=max(0.0, min(1.0, float(dust_prob))),
+        spread_capture_bps=float(spread_capture_bps),
+        expected_markout_bps=markout,
+        fees_bps=float(fees_bps),
+        trading_ev=t_ev,
+        observation_count=realized,
+        required_observation_count=req,
+        observations_remaining=remaining,
+        completion_value=c_val,
+        dust_cost=d_cost,
+        inventory_cost=i_cost,
+        latency_cost=l_cost,
+        final_score=final,
+        eligible=eligible,
+        reject_reason=reason,
+    )
+
+
+def select_rank(
+    *,
+    enable_score_ev: bool,
+    score_ev: ScoreEVBreakdown | None,
+    legacy_rank: float,
+) -> float | None:
+    """Feature flag: Score-EV ranking or inherited global rank. None = reject."""
+    if not enable_score_ev:
+        return float(legacy_rank)
+    if score_ev is None or not score_ev.eligible:
+        return None
+    return float(score_ev.final_score)
+
+
+def scheduler_bucket_counts(
+    observation_counts: dict[int, int],
+    required: int,
+    *,
+    eligible_ids: set[int] | None = None,
+) -> dict[str, int]:
+    req = max(1, int(required))
+    zero = 0
+    rem1 = 0
+    rem2 = 0
+    for _book, n in observation_counts.items():
+        realized, _, remaining = observation_progress(int(n), req)
+        if realized <= 0:
+            zero += 1
+        if remaining == 1:
+            rem1 += 1
+        elif remaining == 2:
+            rem2 += 1
+    return {
+        "books_zero_obs": zero,
+        "books_one_remaining": rem1,
+        "books_two_remaining": rem2,
+        "eligible_books": len(eligible_ids) if eligible_ids is not None else 0,
+        "tracked_books": len(observation_counts),
+        "required_observation_count": req,
+    }
+
+
+HARD_SAFETY_REASONS = frozenset(
+    {"HARD_SAFETY", "TOXIC", "INVENTORY_BLOCKED", "UNSAFE", "TTL_EXPIRED"}
+)
+
+
+def price_delta_ticks(old_price: float | None, new_price: float | None, tick_size: float) -> float:
+    if old_price is None or new_price is None:
+        return float("inf")
+    tick = max(float(tick_size), 1e-12)
+    return abs(float(new_price) - float(old_price)) / tick
+
+
+def _sign(x: float, eps: float = 1e-9) -> int:
+    if x > eps:
+        return 1
+    if x < -eps:
+        return -1
+    return 0
+
+
+def imbalance_reversed(old_imb: float | None, new_imb: float | None, *, min_abs: float = 0.15) -> bool:
+    if old_imb is None or new_imb is None:
+        return False
+    old = float(old_imb)
+    new = float(new_imb)
+    if abs(old) < min_abs or abs(new) < min_abs:
+        return False
+    return _sign(old) != 0 and _sign(new) != 0 and _sign(old) != _sign(new)
+
+
+def alpha_reversed(old_alpha: float | None, new_alpha: float | None, *, min_abs: float = 0.08) -> bool:
+    if old_alpha is None or new_alpha is None:
+        return False
+    old = float(old_alpha)
+    new = float(new_alpha)
+    if abs(old) < min_abs and abs(new) < min_abs:
+        return False
+    if _sign(old) != 0 and _sign(new) != 0 and _sign(old) != _sign(new):
+        return abs(new - old) >= min_abs
+    return abs(new - old) >= max(0.15, 2.0 * min_abs)
+
+
+@dataclass(frozen=True)
+class CancelDecision:
+    cancel: bool
+    reason: str
+    old_price: float | None
+    new_price: float | None
+    price_delta_ticks: float
+    old_ev: float | None
+    new_ev: float | None
+    ev_delta: float
+    order_age_ms: float | None
+
+    def as_log(self, *, book: int, side: str) -> dict[str, Any]:
+        return {
+            "book": int(book),
+            "side": str(side),
+            "cancel": int(bool(self.cancel)),
+            "reason": self.reason,
+            "old_price": self.old_price,
+            "new_price": self.new_price,
+            "price_delta_ticks": self.price_delta_ticks,
+            "old_ev": self.old_ev,
+            "new_ev": self.new_ev,
+            "ev_delta": self.ev_delta,
+            "order_age_ms": self.order_age_ms,
+        }
+
+
+def should_replace_quote(
+    *,
+    old_price: float | None,
+    new_price: float | None,
+    tick_size: float,
+    min_price_ticks: float = 1.0,
+    old_alpha: float | None = None,
+    new_alpha: float | None = None,
+    old_imbalance: float | None = None,
+    new_imbalance: float | None = None,
+    old_regime: str | None = None,
+    new_regime: str | None = None,
+    old_inventory_util: float | None = None,
+    new_inventory_util: float | None = None,
+    inventory_util_delta: float = 0.15,
+    old_toxic: bool = False,
+    new_toxic: bool = False,
+    order_age_ms: float | None = None,
+    ttl_ms: float | None = None,
+    ttl_replace_frac: float = 0.85,
+    old_ev: float | None = None,
+    new_ev: float | None = None,
+    ev_improve_threshold: float = 0.04,
+    hard_safety: bool = False,
+) -> CancelDecision:
+    """HOLD unless a listed replacement rule fires. Hard safety is immediate."""
+    ticks = price_delta_ticks(old_price, new_price, tick_size)
+    ev_delta = 0.0
+    if old_ev is not None and new_ev is not None:
+        ev_delta = float(new_ev) - float(old_ev)
+    age = None if order_age_ms is None else max(0.0, float(order_age_ms))
+
+    def _dec(cancel: bool, reason: str) -> CancelDecision:
+        return CancelDecision(
+            cancel=cancel,
+            reason=reason,
+            old_price=old_price,
+            new_price=new_price,
+            price_delta_ticks=ticks if ticks != float("inf") else -1.0,
+            old_ev=old_ev,
+            new_ev=new_ev,
+            ev_delta=ev_delta,
+            order_age_ms=age,
+        )
+
+    if old_price is None:
+        return _dec(True, "NEW")
+    if hard_safety or new_toxic:
+        return _dec(True, "HARD_SAFETY")
+    if ttl_ms is not None and age is not None and float(ttl_ms) > 0:
+        if age + 1e-9 >= float(ttl_ms) * max(0.0, min(1.0, float(ttl_replace_frac))):
+            return _dec(True, "TTL_EXPIRED")
+    if ticks >= max(1e-9, float(min_price_ticks)):
+        return _dec(True, "PRICE")
+    if alpha_reversed(old_alpha, new_alpha):
+        return _dec(True, "ALPHA")
+    if imbalance_reversed(old_imbalance, new_imbalance):
+        return _dec(True, "OFI")
+    old_r = str(old_regime or "").upper()
+    new_r = str(new_regime or "").upper()
+    if old_r and new_r and old_r != new_r:
+        return _dec(True, "REGIME")
+    if (
+        old_inventory_util is not None
+        and new_inventory_util is not None
+        and abs(float(new_inventory_util) - float(old_inventory_util))
+            >= max(0.0, float(inventory_util_delta))
+    ):
+        return _dec(True, "INVENTORY")
+    if bool(old_toxic) != bool(new_toxic):
+        return _dec(True, "TOXICITY")
+    if ev_delta >= max(0.0, float(ev_improve_threshold)):
+        return _dec(True, "EV")
+    return _dec(False, "HOLD")
+
+
+def clamp_ttl_ms(ttl_ms: float, min_ms: float, max_ms: float) -> float:
+    lo = max(1.0, float(min_ms))
+    hi = max(lo, float(max_ms))
+    return max(lo, min(hi, float(ttl_ms)))
+
+
+def choose_ttl_ms(
+    *,
+    baseline_ms: float,
+    min_ms: float,
+    max_ms: float,
+    fill_hazard: float | None = None,
+    volatility: float | None = None,
+    imbalance: float | None = None,
+    microprice_velocity: float | None = None,
+    toxicity: bool = False,
+    market_regime: str | None = None,
+    queue_ahead: float | None = None,
+    vol_high: float = 0.006,
+    hazard_high: float = 0.35,
+    imb_adverse: float = 0.35,
+    stale_velocity_ticks: float | None = None,
+) -> tuple[float | None, str, dict[str, Any]]:
+    """Bounded TTL. Returns (None, STALE, ...) to skip submit."""
+    regime = str(market_regime or "NORMAL").upper()
+    vol = 0.0 if volatility is None else float(volatility)
+    haz = 0.0 if fill_hazard is None else max(0.0, min(1.0, float(fill_hazard)))
+    imb = 0.0 if imbalance is None else float(imbalance)
+    vel = 0.0 if microprice_velocity is None else abs(float(microprice_velocity))
+    info = {
+        "fill_hazard": haz,
+        "toxicity": int(bool(toxicity)),
+        "volatility": vol,
+        "imbalance": imb,
+        "microprice_velocity": vel,
+        "queue_ahead": queue_ahead,
+        "market_regime": regime,
+    }
+    if stale_velocity_ticks is not None and vel >= float(stale_velocity_ticks):
+        return None, "STALE", info
+    if toxicity or regime in {"TOXIC", "STRESSED"}:
+        ttl = clamp_ttl_ms(float(baseline_ms) * 0.50, min_ms, max_ms)
+        return ttl, "TOXIC_SHORT", info
+    if vol >= float(vol_high) or abs(imb) >= float(imb_adverse):
+        ttl = clamp_ttl_ms(float(baseline_ms) * 0.70, min_ms, max_ms)
+        return ttl, "ADVERSE_SHORT", info
+    if haz >= float(hazard_high) and vol < 0.5 * float(vol_high) and abs(imb) < 0.5 * float(imb_adverse):
+        stretch = 1.35
+        if queue_ahead is not None and float(queue_ahead) > 0.0:
+            stretch = 1.20
+        ttl = clamp_ttl_ms(float(baseline_ms) * stretch, min_ms, max_ms)
+        return ttl, "STABLE_LONG", info
+    ttl = clamp_ttl_ms(float(baseline_ms), min_ms, max_ms)
+    return ttl, "BASELINE", info
+
+
+def would_create_dust(
+    *,
+    inventory_before: float,
+    signed_fill_qty: float,
+    min_order_size: float,
+    eps: float = 1e-12,
+) -> bool:
+    """True when a fill would create dust or fail to reduce existing dust."""
+    before = float(inventory_before)
+    after = before + float(signed_fill_qty)
+    min_size = max(0.0, float(min_order_size))
+    e = max(float(eps), 1e-12)
+
+    def _dust(qty: float) -> bool:
+        aq = abs(float(qty))
+        return min_size > 0.0 and aq >= e and aq + 1e-12 < min_size
+
+    if not _dust(after):
+        return False
+    if abs(before) < e:
+        return True
+    return abs(after) + e >= abs(before)
+
+
+def predicted_dust_blocks_increase(
+    *,
+    dust_prob: float,
+    dust_target: float,
+    inventory_before: float,
+    signed_qty: float,
+    usable: bool,
+    eps: float = 1e-12,
+) -> bool:
+    """Skip exposure-increasing quotes when predicted dust exceeds the verified target."""
+    if not usable:
+        return False
+    if float(dust_prob) <= float(dust_target):
+        return False
+    after = float(inventory_before) + float(signed_qty)
+    return abs(after) > abs(float(inventory_before)) + max(float(eps), 1e-12)
 
 
 @dataclass
