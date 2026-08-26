@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taosim"
+version = "0.0.2"
+description = "τaos.im Simulator"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "τaos.im"}]
+classifiers = ["Programming Langauge :: Python :: 3"]
+dependencies = [
+    "click",
+    "click-option-group",
+    "fastapi",
+    "pydantic",
+    "pydantic-settings",
+    "pytest",
+    "uvicorn",
+    "pandas",
+    "numpy",
+    "scipy",
+    "statsmodels",
+    "matplotlib",
+    "arch",
+    "pystable",
+    "TexSoup"
+]
+
+[tool.setuptools.packages.find]
+include = ["src/python"]

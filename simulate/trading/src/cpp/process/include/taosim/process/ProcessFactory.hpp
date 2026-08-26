@@ -1,0 +1,50 @@
+/*
+ * SPDX-FileCopyrightText: 2025 Rayleigh Research <to@rayleigh.re>
+ * SPDX-License-Identifier: MIT
+ */
+#pragma once
+
+#include <pugixml.hpp>
+#include <rapidcsv.h>
+
+#include <taosim/simulation/ISimulation.hpp>
+#include <taosim/simulation/SharedResources.hpp>
+#include "Process.hpp"
+
+//-------------------------------------------------------------------------
+
+namespace taosim::exchange
+{
+
+class ExchangeConfig;
+
+}  // namespace taosim::exchange
+
+//-------------------------------------------------------------------------
+
+namespace taosim::process
+{
+
+//-------------------------------------------------------------------------
+
+class ProcessFactory
+{
+public:
+    ProcessFactory(
+        taosim::simulation::ISimulation* simulation,
+        taosim::exchange::ExchangeConfig* exchangeConfig,
+        const taosim::simulation::SharedResources* sharedResources) noexcept;
+
+    [[nodiscard]] std::unique_ptr<Process> createFromXML(pugi::xml_node node, uint64_t seedShift = 0);
+
+private:
+    taosim::simulation::ISimulation* m_simulation;
+    taosim::exchange::ExchangeConfig* m_exchangeConfig;
+    const taosim::simulation::SharedResources* m_shared;
+};
+
+//-------------------------------------------------------------------------
+
+}  // namespace taosim::process
+
+//-------------------------------------------------------------------------

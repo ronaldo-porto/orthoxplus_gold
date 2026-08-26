@@ -1,0 +1,206 @@
+{
+    "books": [
+        {
+            "ask": [
+                {
+                    "orders": [
+                        {
+                            "clientOrderId": null,
+                            "direction": 1,
+                            "orderId": 5,
+                            "timestamp": 0,
+                            "volume": 1.98666141
+                        }
+                    ],
+                    "price": 6.877729,
+                    "volume": 1.98666141
+                },
+                {
+                    "orders": [
+                        {
+                            "clientOrderId": null,
+                            "direction": 1,
+                            "orderId": 7,
+                            "timestamp": 0,
+                            "volume": 1.36620942
+                        }
+                    ],
+                    "price": 7.92259436,
+                    "volume": 1.36620942
+                }
+            ],
+            "bid": [
+                {
+                    "orders": [
+                        {
+                            "clientOrderId": null,
+                            "direction": 0,
+                            "orderId": 6,
+                            "timestamp": 0,
+                            "volume": 1.96507293
+                        }
+                    ],
+                    "price": 3.44433255,
+                    "volume": 1.96507293
+                },
+                {
+                    "orders": [
+                        {
+                            "clientOrderId": null,
+                            "direction": 0,
+                            "orderId": 0,
+                            "timestamp": 0,
+                            "volume": 1.70691027
+                        }
+                    ],
+                    "price": 3.06007282,
+                    "volume": 1.70691027
+                }
+            ],
+            "bookId": 0,
+            "record": [
+                {
+                    "agentId": 0,
+                    "clientOrderId": null,
+                    "direction": 0,
+                    "event": "place",
+                    "orderId": 0,
+                    "price": 3.06007282,
+                    "timestamp": 0,
+                    "volume": 1.70691027
+                },
+                {
+                    "agentId": 1,
+                    "clientOrderId": null,
+                    "direction": 1,
+                    "event": "place",
+                    "orderId": 5,
+                    "price": 6.877729,
+                    "timestamp": 0,
+                    "volume": 1.98666141
+                },
+                {
+                    "agentId": 1,
+                    "clientOrderId": null,
+                    "direction": 0,
+                    "event": "place",
+                    "orderId": 6,
+                    "price": 3.44433255,
+                    "timestamp": 0,
+                    "volume": 1.96507293
+                },
+                {
+                    "agentId": 0,
+                    "clientOrderId": null,
+                    "direction": 1,
+                    "event": "place",
+                    "orderId": 7,
+                    "price": 7.92259436,
+                    "timestamp": 0,
+                    "volume": 1.36620942
+                }
+            ]
+        },
+        {
+            "ask": [
+                {
+                    "orders": [
+                        {
+                            "clientOrderId": null,
+                            "direction": 1,
+                            "orderId": 1,
+                            "timestamp": 0,
+                            "volume": 1.07582773
+                        }
+                    ],
+                    "price": 7.65181183,
+                    "volume": 1.07582773
+                },
+                {
+                    "orders": [
+                        {
+                            "clientOrderId": null,
+                            "direction": 1,
+                            "orderId": 4,
+                            "timestamp": 0,
+                            "volume": 1.4636315
+                        }
+                    ],
+                    "price": 7.96013072,
+                    "volume": 1.4636315
+                }
+            ],
+            "bid": [
+                {
+                    "orders": [
+                        {
+                            "clientOrderId": null,
+                            "direction": 0,
+                            "orderId": 2,
+                            "timestamp": 0,
+                            "volume": 1.03173518
+                        }
+                    ],
+                    "price": 0.86308184,
+                    "volume": 1.03173518
+                },
+                {
+                    "orders": [
+                        {
+                            "clientOrderId": null,
+                            "direction": 0,
+                            "orderId": 3,
+                            "timestamp": 0,
+                            "volume": 1.74204756
+                        }
+                    ],
+                    "price": 0.76726651,
+                    "volume": 1.74204756
+                }
+            ],
+            "bookId": 1,
+            "record": [
+                {
+                    "agentId": 1,
+                    "clientOrderId": null,
+                    "direction": 1,
+                    "event": "place",
+                    "orderId": 1,
+                    "price": 7.65181183,
+                    "timestamp": 0,
+                    "volume": 1.07582773
+                },
+                {
+                    "agentId": 1,
+                    "clientOrderId": null,
+                    "direction": 0,
+                    "event": "place",
+                    "orderId": 2,
+                    "price": 0.86308184,
+                    "timestamp": 0,
+                    "volume": 1.03173518
+                },
+                {
+                    "agentId": 0,
+                    "clientOrderId": null,
+                    "direction": 0,
+                    "event": "place",
+                    "orderId": 3,
+                    "price": 0.76726651,
+                    "timestamp": 0,
+                    "volume": 1.74204756
+                },
+                {
+                    "agentId": 0,
+                    "clientOrderId": null,
+                    "direction": 1,
+                    "event": "place",
+                    "orderId": 4,
+                    "price": 7.96013072,
+                    "timestamp": 0,
+                    "volume": 1.4636315
+                }
+            ]
+        }
+    ]
+}

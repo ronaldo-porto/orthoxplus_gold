@@ -1,0 +1,124 @@
+/*
+ * SPDX-FileCopyrightText: 2025 Rayleigh Research <to@rayleigh.re>
+ * SPDX-License-Identifier: MIT
+ */
+#pragma once
+
+#include <Simulation.hpp>
+#include <taosim/checkpoint/CheckpointToken.hpp>
+#include <taosim/checkpoint/CheckpointManager.hpp>
+#include <taosim/ipc/ipc.hpp>
+#include <taosim/net/net.hpp>
+#include <taosim/replay/ReplayManager.hpp>
+#include <taosim/simulation/SharedResources.hpp>
+
+#include <boost/asio.hpp>
+#include <pugixml.hpp>
+
+#include <cstdlib>
+#include <memory>
+#include <string>
+#include <vector>
+
+//-------------------------------------------------------------------------
+
+
+//-------------------------------------------------------------------------
+
+namespace taosim::simulation
+{
+
+//-------------------------------------------------------------------------
+
+struct SimulationBlockInfo
+{
+    uint32_t count;
+    uint32_t dimension;
+};
+
+//-------------------------------------------------------------------------
+
+class SimulationManager
+{
+public:
+
+    void runSimulations();
+    void runReplay();
+    void runReplayAdvanced();
+    void publishStartInfo();
+    void publishEndInfo();
+    void publishState();
+    
+    [[nodiscard]] SimulationBlockInfo blockInfo() const noexcept { return m_blockInfo; }
+    [[nodiscard]] auto&& threadPool(this auto&& self) noexcept { return self.m_threadPool; }
+    [[nodiscard]] auto&& simulations(this auto&& self) noexcept { return self.m_simulations; }
+    [[nodiscard]] const fs::path& logDir() const noexcept { return m_logDir; }
+    [[nodiscard]] auto&& stepSignal(this auto&& self) noexcept { return self.m_stepSignal; }
+    [[nodiscard]] auto&& checkpointManager(this auto&& self) noexcept { return self.m_checkpointManager; }
+    [[nodiscard]] auto&& measurements(this auto&& self) noexcept { return self.m_measurements; }
+    [[nodiscard]] auto&& sharedResources(this auto&& self) noexcept { return self.m_sharedResources; }
+
+    [[nodiscard]] bool online() const noexcept;
+    [[nodiscard]] bool warmingUp() const noexcept;
+
+    static std::unique_ptr<SimulationManager> fromConfig(const fs::path& configPath, const fs::path& baseDir);
+    static std::unique_ptr<SimulationManager> fromCheckpoint(const checkpoint::CheckpointToken& ckptToken);
+    static std::unique_ptr<SimulationManager> fromReplay(const replay::ReplayDesc& desc);
+
+    // IPC object names, optionally suffixed by the TAOSIM_IPC_SUFFIX env var so
+    // multiple taosim runs can share one host with private, non-colliding POSIX
+    // IPC (the namespace/unshare route needs privileges this host's AppArmor
+    // policy denies). Empty/unset suffix => names unchanged (backward compatible).
+    // The Python side (simbo/ipc.py) reads the SAME env var and applies the
+    // SAME suffix, so the two processes agree on the object names.
+    static std::string makeIpcName(std::string_view base)
+    {
+        const char* suffix = std::getenv("TAOSIM_IPC_SUFFIX");
+        return suffix ? std::string{base} + suffix : std::string{base};
+    }
+    inline static const std::string s_validatorReqMessageQueueName = makeIpcName("taosim-req");
+    inline static const std::string s_validatorResMessageQueueName = makeIpcName("taosim-res");
+    inline static const std::string s_statePublishShmName = makeIpcName("state");
+    inline static const std::string s_remoteResponsesShmName = makeIpcName("responses");
+
+private:
+    void setupLogDir(pugi::xml_node simuNode, const fs::path& logPath);
+    void publishStateJson();
+    void publishStateMessagePack();
+
+    [[nodiscard]] rapidjson::Document makeStateJson() const;
+    [[nodiscard]] rapidjson::Document makeCollectiveBookStateJson() const;
+
+    SimulationBlockInfo m_blockInfo;
+    boost::asio::io_context m_io;
+    std::unique_ptr<boost::asio::thread_pool> m_threadPool;
+    SharedResources m_sharedResources;
+    std::vector<std::unique_ptr<Simulation>> m_simulations;
+    fs::path m_logDir;
+    Timestamp m_gracePeriod;
+    taosim::net::NetworkingInfo m_netInfo;
+    std::string m_bookStateEndpoint, m_generalMsgEndpoint;
+    UnsyncSignal<void()> m_stepSignal;
+    std::unique_ptr<ipc::PosixMessageQueue> m_validatorReqMessageQueue;
+    std::unique_ptr<ipc::PosixMessageQueue> m_validatorResMessageQueue;
+    bool m_useMessagePack{};
+    bool m_replayMode{};
+    std::unique_ptr<replay::ReplayManager> m_replayManager;
+    std::unique_ptr<checkpoint::CheckpointManager> m_checkpointManager;
+    bool m_measureStepWallClockTime{};
+    struct {
+        using Measurement = decltype(std::chrono::high_resolution_clock::now());
+        std::optional<Measurement>
+            t0parse, t1parse,
+            t0proc, t1proc,
+            t0state, t1state,
+            t0ckptSave, t1ckptSave,
+            t0ckptLoad, t1ckptLoad;
+    } m_measurements;
+};
+
+//-------------------------------------------------------------------------
+
+}  // namespace taosim::simulation
+
+//-------------------------------------------------------------------------

@@ -1,0 +1,80 @@
+{
+  "date": "2026-08-26",
+  "verdict": "STATIC_PASS_RUNTIME_PENDING",
+  "ready_for_research_test": true,
+  "ready_for_base_promotion": false,
+  "ready_for_realnet": false,
+  "research": {
+    "live_source": "agents/strategy/Strategy1_Research.py",
+    "policy_marker": "authoritative_l1_guard_v4_12_14",
+    "contract_guard_marker": "authoritative_l1_contract_guard_v4_12_14",
+    "one_away_ttl_marker": "one_away_stale_ttl_v4_12_11",
+    "unified_exit_marker": "bounded_stale_bridge_v4_12_10",
+    "archive_source": "agents/strategy/__ver_st1_log__/Strategy1_Research_v4_12_14.py",
+    "archive_contract_helper": "agents/strategy/__ver_st1_log__/research_contract_guard_v4_12_14.py",
+    "versioned_launcher": "agents/strategy/__ver_st1_log__/run_strategy1_research_v4_12_14_test.sh",
+    "live_sha256": "a7a7cdb2af06291bfab3c1a4be853e3232be7eaf2ab44423793d0c95d373f8bd",
+    "archive_sha256": "a7a7cdb2af06291bfab3c1a4be853e3232be7eaf2ab44423793d0c95d373f8bd",
+    "hashes_equal": true,
+    "contract_helper_sha256": "e3e61783d2a17f370dad62255bc468e23d7ae7ce42f20b9a7cd1846145cdf1d0",
+    "launcher": "run_strategy1_research_test_multi.sh",
+    "launcher_sha256": "c8196607f56c4df08b4a508e051d7d71aa8e7b8eaeb6f87ab245b1933d6238c9",
+    "tests": "378 passed / 0 failed",
+    "syntax": "PASS",
+    "authoritative_l1": {
+      "lazy_books_mapping_supported": true,
+      "builtin_dict_only_gate_removed": true,
+      "quote_snapshot_mapping_fixed": true,
+      "telemetry_price_fallback": false
+    },
+    "contract_guard": {
+      "base_cooldown_ticks": 1,
+      "max_cooldown_ticks": 8,
+      "max_cushion_ticks": 3,
+      "hard_lifetime_ticks": 512,
+      "no_touch_preserves_pending": true,
+      "lifecycle_clear_on_flat_cross": true,
+      "market_taker_untouched": true
+    },
+    "preserved": {
+      "one_away_safe_fraction_floor": 0.15,
+      "one_away_exit_capacity_fraction_floor": 0.2,
+      "one_away_stale_ttl_ms": 250,
+      "hard_roundtrip_bridge_floor_bps": -12.0,
+      "candidate_count": 10,
+      "max_open_books": 6,
+      "score_target_books": 88,
+      "p95_target_ms": 120
+    }
+  },
+  "base": {
+    "live_source": "agents/strategy/BaseStrategy.py",
+    "policy_marker": "base_v4_4_champion",
+    "sha256": "13a56d355558eec24df86dc34ea888524eeced8a575b19fcb3b27bffc55a3bf1",
+    "status": "UNCHANGED"
+  },
+  "adaptive": {
+    "live_source": "agents/strategy/AdaptiveAgent.py",
+    "policy_marker": "adaptive_v3_hjb_shadow",
+    "sha256": "3e75e6abce4d6a678f4976f10e4b30b5fa8be35f57a8743226a795f841c53448",
+    "status": "UNCHANGED"
+  },
+  "regression": {
+    "research": "378 passed / 0 failed",
+    "base_adaptive": "126 passed / 0 failed",
+    "shared_strategy": "93 passed / 0 failed",
+    "total_strategy_focused": "597 passed / 0 failed",
+    "launcher_preflight": "PASS"
+  },
+  "runtime_gate": {
+    "duration": "30-45 real minutes; extend to 60 only if no contract reject occurs",
+    "primary": "guarded retry uses authoritative LazyBooks L1 and reaches reprice/clear",
+    "target_reject_rate": "<0.5% of limit placements",
+    "require_reprice_retry_when_guarded_l1_exists": true,
+    "require_touch_source": "STATE_BOOKS_MAPPING",
+    "preserve_one_away_and_taker": true
+  },
+  "environment_limits": [
+    "bittensor absent for validator-dependent tests"
+  ]
+}

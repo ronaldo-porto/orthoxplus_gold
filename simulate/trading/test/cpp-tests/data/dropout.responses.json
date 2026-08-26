@@ -1,0 +1,100 @@
+{
+    "responses": [
+        {
+            "agentId": 0,
+            "delay": 0,
+            "payload": {
+                "bookId": 0,
+                "clientOrderId": null,
+                "direction": 0,
+                "price": 3.06007282,
+                "volume": 1.70691027
+            },
+            "type": "PLACE_ORDER_LIMIT"
+        },
+        {
+            "agentId": 1,
+            "delay": 0,
+            "payload": {
+                "bookId": 1,
+                "clientOrderId": null,
+                "direction": 1,
+                "price": 7.65181183,
+                "volume": 1.07582773
+            },
+            "type": "PLACE_ORDER_LIMIT"
+        },
+        {
+            "agentId": 1,
+            "delay": 0,
+            "payload": {
+                "bookId": 1,
+                "clientOrderId": null,
+                "direction": 0,
+                "price": 0.86308184,
+                "volume": 1.03173518
+            },
+            "type": "PLACE_ORDER_LIMIT"
+        },
+        {
+            "agentId": 0,
+            "delay": 0,
+            "payload": {
+                "bookId": 1,
+                "clientOrderId": null,
+                "direction": 0,
+                "price": 0.76726651,
+                "volume": 1.74204756
+            },
+            "type": "PLACE_ORDER_LIMIT"
+        },
+        {
+            "agentId": 0,
+            "delay": 0,
+            "payload": {
+                "bookId": 1,
+                "clientOrderId": null,
+                "direction": 1,
+                "price": 7.96013072,
+                "volume": 1.4636315
+            },
+            "type": "PLACE_ORDER_LIMIT"
+        },
+        {
+            "agentId": 1,
+            "delay": 0,
+            "payload": {
+                "bookId": 0,
+                "clientOrderId": null,
+                "direction": 1,
+                "price": 6.877729,
+                "volume": 1.98666141
+            },
+            "type": "PLACE_ORDER_LIMIT"
+        },
+        {
+            "agentId": 1,
+            "delay": 0,
+            "payload": {
+                "bookId": 0,
+                "clientOrderId": null,
+                "direction": 0,
+                "price": 3.44433255,
+                "volume": 1.96507293
+            },
+            "type": "PLACE_ORDER_LIMIT"
+        },
+        {
+            "agentId": 0,
+            "delay": 0,
+            "payload": {
+                "bookId": 0,
+                "clientOrderId": null,
+                "direction": 1,
+                "price": 7.92259436,
+                "volume": 1.36620942
+            },
+            "type": "PLACE_ORDER_LIMIT"
+        }
+    ]
+}
