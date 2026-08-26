@@ -77,7 +77,9 @@ def test_raw_trade_timestamp_is_not_inserted_into_kappa_authority():
 
 def test_open_inventory_cap_is_enforced_in_screen_and_order_build():
     assert 'research_max_open_books", 6' in SRC
-    assert 'trigger="OPEN_BOOK_CAP"' in SRC
+    assert '"ACTIVE_OPEN_BOOK_CAP"' in SRC
+    assert '"TOTAL_OPEN_BOOK_CAP"' in SRC
+    assert '"TOTAL_ABS_BASE_CAP"' in SRC
     assert "open_cap_saturated" in SRC
     assert "planned_open_books" in SRC
 
@@ -98,4 +100,4 @@ def test_v412_runtime_is_concentrated():
 
 
 def test_policy_version_is_v412():
-    assert 'RESEARCH_POLICY_VERSION = "authoritative_l1_guard_v4_12_14"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "inventory_liveness_v4_12_15"' in SRC

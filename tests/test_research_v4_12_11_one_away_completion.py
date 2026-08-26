@@ -39,7 +39,7 @@ def _admit(**overrides):
 
 
 def test_release_contract_and_runner_values():
-    assert 'RESEARCH_POLICY_VERSION = "authoritative_l1_guard_v4_12_14"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "inventory_liveness_v4_12_15"' in SRC
     assert ONE_AWAY_STALE_TTL_VERSION == "one_away_stale_ttl_v4_12_11"
     assert "research_one_away_exact_min_safe_fraction=0.15" in LAUNCHER
     assert "research_one_away_exact_min_exit_fraction=0.20" in LAUNCHER

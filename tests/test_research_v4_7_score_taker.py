@@ -19,7 +19,7 @@ from research_realization_ladder import (
 
 
 def test_v47_policy_and_phantom_inventory_contract():
-    assert 'RESEARCH_POLICY_VERSION = "authoritative_l1_guard_v4_12_14"' in RESEARCH_SRC
+    assert 'RESEARCH_POLICY_VERSION = "inventory_liveness_v4_12_15"' in RESEARCH_SRC
     screen = RESEARCH_SRC.split("def _research_fast_screen(self, state)", 1)[1].split(
         "def _research_full_predictions", 1
     )[0]

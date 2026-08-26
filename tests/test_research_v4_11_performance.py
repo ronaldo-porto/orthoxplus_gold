@@ -17,7 +17,7 @@ LAUNCHER = (ROOT / "run_strategy1_research_test_multi.sh").read_text(encoding="u
 
 
 def test_v411_contract_is_enabled():
-    assert 'RESEARCH_POLICY_VERSION = "authoritative_l1_guard_v4_12_14"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "inventory_liveness_v4_12_15"' in SRC
     assert ("research_candidate_count=12" in LAUNCHER or "research_candidate_count=10" in LAUNCHER)
     assert ("research_cohort_size=10" in LAUNCHER or "research_cohort_size=8" in LAUNCHER)
     assert ("research_positive_ev_min_order_override=1" in LAUNCHER or "research_positive_ev_min_order_override=0" in LAUNCHER)
