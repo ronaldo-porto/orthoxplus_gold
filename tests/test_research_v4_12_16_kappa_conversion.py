@@ -39,19 +39,20 @@ def _gate(**overrides):
     return rows, apply_kappa_conversion_pressure_gate(rows, **args)
 
 
-def test_park_pressure_suppresses_only_fresh_coverage():
+def test_v417_park_labels_do_not_create_pressure_and_exploration_survives():
     rows, (gated, suppressed, productive, reason) = _gate()
     by_id = {row.book_id: row for row in gated}
-    assert reason == "PARKED_CAP"
-    assert suppressed == {4}
+    assert reason == "TOTAL_HEADROOM"
+    # One fresh exploration slot remains fail-open even under tight headroom.
+    assert suppressed == set()
     assert productive == 3
     assert by_id[1].entry_feasible and by_id[2].entry_feasible
-    assert by_id[3].entry_feasible and by_id[5].entry_feasible
+    assert by_id[3].entry_feasible and by_id[4].entry_feasible and by_id[5].entry_feasible
 
 
 def test_total_headroom_pressure_and_no_progress_fail_safe():
     _, (_, suppressed, _, reason) = _gate(parked_open_books=2)
-    assert reason == "TOTAL_HEADROOM" and suppressed == {4}
+    assert reason == "TOTAL_HEADROOM" and suppressed == set()
     rows = [LaneBook(book_id=7, observations_remaining=3, is_uncovered=True)]
     gated, suppressed, productive, reason = apply_kappa_conversion_pressure_gate(
         rows, parked_open_books=6, max_parked_open_books=6,
@@ -67,16 +68,16 @@ def test_score_ready_one_away_leads_equal_completion_cost():
     assert completion_sort_key(positive) < completion_sort_key(negative)
 
 
-def test_one_away_conversion_ttl_is_longer_but_sub_publish():
+def test_v417_one_away_velocity_stale_ttl_is_short():
     ttl, reason, used = one_away_stale_completion_ttl(
         chosen_ttl_ms=None, ttl_reason="STALE",
         completion_candidate=True, completion_samples=2, completion_target=3,
         trading_ev=0.05, market_regime="QUIET",
         min_ttl_ms=250.0, stale_ttl_ms=900.0,
     )
-    assert ONE_AWAY_CONVERSION_TTL_VERSION == "one_away_conversion_ttl_v4_12_16"
-    assert used and ttl == 900.0
-    assert reason == "ONE_AWAY_STALE_CONVERSION"
+    assert ONE_AWAY_CONVERSION_TTL_VERSION == "one_away_velocity_stale_ttl_v4_12_17"
+    assert used and ttl == 250.0
+    assert reason == "ONE_AWAY_VELOCITY_STALE_SHORT"
 
 
 def test_conversion_ttl_keeps_bad_ev_and_stress_fail_closed():
@@ -90,7 +91,7 @@ def test_conversion_ttl_keeps_bad_ev_and_stress_fail_closed():
         assert ttl is None and not used
 
 
-def test_predeploy_contract_keeps_v415_loss_floors_and_park_precedence():
-    assert 'RESEARCH_POLICY_VERSION = "kappa_conversion_v4_12_16_predeploy"' in SRC
-    assert 'RESEARCH_LANES_VERSION = "execution_lanes_v5_kappa_pressure"' in SRC
+def test_v417_contract_keeps_park_precedence_and_new_flywheel_lanes():
+    assert 'RESEARCH_POLICY_VERSION = "kappa_flywheel_v4_12_17"' in SRC
+    assert 'RESEARCH_LANES_VERSION = "execution_lanes_v6_kappa_flywheel"' in SRC
     assert "UNIFIED_KEEP_MAKER and not liveness_parked_now" in SRC

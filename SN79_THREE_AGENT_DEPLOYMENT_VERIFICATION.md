@@ -2,42 +2,55 @@
 
 ## Verdict
 
-**Research V4.12.15: STATIC PASS / runtime inventory-liveness verification pending.** BaseStrategy and AdaptiveAgent are unchanged.
+**Research V4.12.17: STATIC PASS / runtime Kappa-flywheel verification pending.** BaseStrategy and AdaptiveAgent are unchanged.
 
-## Exact V4.12.15 fix
+## Research V4.12.17
 
-V4.12.14 contract/L1 correctness is retained. V4.12.15 addresses the tick-600 failure where six stale positions saturated the six-book cap and a score-state zero-loss veto kept TWO_AWAY/uncovered inventory in `EMERGENCY` rather than using bounded early rescue.
+V4.12.17 is the Kappa Flywheel Foundation candidate. It keeps the successful V4.12.14 contract guard and V4.12.10 bounded stale bridge while correcting the inventory/scheduler defects exposed by V4.12.15/V4.12.16.
 
-The new Research-only authority:
+Key release contracts:
 
-- protects QUALIFIED and ONE_AWAY books from the new loss subsidy;
-- uses touch-defined aggressive Maker rescue after 3 failed exits / 8 ticks;
-- permits TWO_AWAY/uncovered bounded Taker rescue after 8 failed exits / 16 ticks only when adverse evidence exists and Taker EV beats WaitEV;
-- applies soft/hard floors of `-8 / -12 bps` and cannot widen the absolute floor;
-- parks a position when the active rescue window is missed instead of letting it consume an active acquisition slot;
-- keeps parked positions inside total book/exposure risk limits and refreshes them on a bounded cadence.
+- PARKED is a state classification; six parked labels cannot veto book #7+.
+- Total risk remains bounded by 12 open books / 3.0 absolute BASE by default.
+- TWO_AWAY/UNCOVERED rescue uses `-8 bps` normal floor and an event-driven `-12 bps` hard window.
+- ONE_AWAY/QUALIFIED remain loss-subsidy protected.
+- Aggressive Maker is the actual post-only touch price; if that price violates its floor, the strategy uses separately authorized bounded Taker rescue or PARK.
+- Kappa scheduling now has BOOTSTRAP/BREADTH/DENSITY phases and continues cycling qualified low-density/core books.
+- One fresh exploration slot survives Kappa conversion pressure while total headroom remains.
+- Rolling per-book realized-PnL evidence is persisted across restart.
+- Stable ONE_AWAY 1.5 bps tightening remains; velocity-STALE override is capped at 250 ms.
+- Maker fee/rebate is used as a scheduler tie-breaker on otherwise comparable opportunities.
 
-## Capacity contract
+## Frozen components
 
-- Active open books: 6
-- Parked books: 6
-- Total open books: 12
-- Total absolute BASE: 3.0
-
-Parked inventory releases active acquisition capacity but never disappears from total risk accounting.
+- `BaseStrategy.py`: byte-for-byte unchanged from V4.12.16 input.
+- `AdaptiveAgent.py`: byte-for-byte unchanged from V4.12.16 input.
+- `research_contract_guard.py`: unchanged, V4.12.14 authoritative-L1 guard.
+- `research_unified_exit.py`: unchanged, V4.12.10 bounded stale bridge.
 
 ## Regression
 
-- Research: 391 passed
-- Base/Adaptive: 126 passed
-- Shared strategy: 93 passed
-- **610 passed / 0 failed**
-- V4.12.15 focused tests: 13 passed
-- Root preflight: PASS
-- Base SHA-256 unchanged: `13a56d355558eec24df86dc34ea888524eeced8a575b19fcb3b27bffc55a3bf1`
-- Adaptive SHA-256 unchanged: `3e75e6abce4d6a678f4976f10e4b30b5fa8be35f57a8743226a795f841c53448`
-- V4.12.14 contract guard SHA-256 unchanged: `e3e61783d2a17f370dad62255bc468e23d7ae7ce42f20b9a7cd1846145cdf1d0`
+- Research: **409 passed**
+- Base/Adaptive: **133 passed**
+- Shared strategy: **86 passed**
+- **628 passed / 0 failed**
+- Focused V4.12.17 tests: **12 passed**
+- root launcher `bash -n`: PASS
+- archived launcher `bash -n`: PASS
+- `RESEARCH_PREFLIGHT_ONLY=1`: PASS
 
 ## Runtime gate
 
-Run Research for 45–60 real minutes / roughly 600–900 ticks. Do not promote until logs prove that parked stale inventory no longer collapses acquisition, bounded rescue respects the logged floor, actionable realization tail improves, and ONE_AWAY/normal Taker economics do not regress.
+Do not promote to BaseStrategy until live logs prove:
+
+- no parking-cap liveness veto;
+- acquisition continues with >6 parked books when total exposure permits;
+- hard rescue is triggered inside the actual `-8 .. -12 bps` price window;
+- no liveness Taker below -12 bps;
+- touch-defined Maker exits materially reduce exit distance/churn;
+- a fresh exploration slot survives completion pressure;
+- score-qualified books continue accumulating observations beyond three;
+- contract rejection and ONE_AWAY behavior do not regress;
+- marked inventory economics improve.
+
+Latency is intentionally not claimed fixed by this release.

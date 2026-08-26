@@ -6,21 +6,52 @@
   "ready_for_realnet": false,
   "research": {
     "live_source": "agents/strategy/Strategy1_Research.py",
-    "policy_marker": "inventory_liveness_v4_12_15",
-    "inventory_liveness_marker": "inventory_liveness_v4_12_15",
+    "policy_marker": "kappa_flywheel_v4_12_17",
+    "lanes_marker": "execution_lanes_v6_kappa_flywheel",
+    "kappa_flywheel_marker": "kappa_flywheel_v4_12_17",
+    "inventory_liveness_marker": "inventory_liveness_v4_12_17",
     "contract_guard_marker": "authoritative_l1_contract_guard_v4_12_14",
-    "one_away_ttl_marker": "one_away_stale_ttl_v4_12_11",
+    "one_away_base_ttl_marker": "one_away_stale_ttl_v4_12_11",
+    "one_away_velocity_ttl_marker": "one_away_velocity_stale_ttl_v4_12_17",
     "unified_exit_marker": "bounded_stale_bridge_v4_12_10",
-    "archive_source": "agents/strategy/__ver_st1_log__/Strategy1_Research_v4_12_15.py",
-    "archive_liveness_helper": "agents/strategy/__ver_st1_log__/research_inventory_liveness_v4_12_15.py",
-    "versioned_launcher": "agents/strategy/__ver_st1_log__/run_strategy1_research_v4_12_15_test.sh",
-    "live_sha256": "2007ef93a9ba75b319721c8ac339f30b5a8372748d03523c58c95af68b602d6d",
-    "liveness_helper_sha256": "36d9a96fca1b2b7a8486125189f241f3d3f495f0357d633b95366abac02832ea",
+    "archive_source": "agents/strategy/__ver_st1_log__/Strategy1_Research_v4_12_17.py",
+    "archive_flywheel_helper": "agents/strategy/__ver_st1_log__/research_kappa_flywheel_v4_12_17.py",
+    "archive_liveness_helper": "agents/strategy/__ver_st1_log__/research_inventory_liveness_v4_12_17.py",
+    "archive_lanes_helper": "agents/strategy/__ver_st1_log__/research_execution_lanes_v4_12_17.py",
+    "archive_hysteresis_helper": "agents/strategy/__ver_st1_log__/research_quote_hysteresis_v4_12_17.py",
+    "versioned_launcher": "agents/strategy/__ver_st1_log__/run_strategy1_research_v4_12_17_test.sh",
+    "live_sha256": "cb529f1201ae73e44486ab54f49cf2be4ec0a817445ae229a0be194b2e3342fa",
+    "flywheel_helper_sha256": "d79fe9598391b95fd1229931dd4769a6470f62c298736603ac5e688d7aa41737",
+    "liveness_helper_sha256": "9414a40d8a63df592ede13ee68e5e9d00f0c03565ab467a46efaa852e979b637",
+    "lanes_helper_sha256": "54effb609aa6a92659e4cca931731a17eabae81a16ce2d90739a6f250653e37c",
+    "hysteresis_helper_sha256": "9683c2c82347b0f43e3b312bac1795754deaf0dbb79771a71d000feb048b6179",
     "contract_helper_sha256": "e3e61783d2a17f370dad62255bc468e23d7ae7ce42f20b9a7cd1846145cdf1d0",
+    "unified_exit_sha256": "da815ca6e2e8f4909d84f5fcdb77d3ab71d2475b0b044ccf73c12ca92644837a",
     "launcher": "run_strategy1_research_test_multi.sh",
-    "launcher_sha256": "6ce9a34c7a145b7c964f96e4727c818b5682b75ec50dbce677486bd8c1593d3a",
-    "tests": "391 passed / 0 failed",
+    "launcher_sha256": "2c1a82da1a45c0879624c933517af259a5be1d81699356f48ab10004dbb75be6",
+    "runner_sha256": "a5d2b63b2402835bd06f231677f4ba5679549529fc0521b7f62599076d88c98d",
+    "tests": "409 passed / 0 failed",
     "syntax": "PASS",
+    "kappa_flywheel": {
+      "phases": {
+        "BOOTSTRAP": "0-40",
+        "BREADTH": "41-79",
+        "DENSITY": "80+"
+      },
+      "density_targets": {
+        "BOOTSTRAP": 6,
+        "BREADTH": 12,
+        "DENSITY": 50
+      },
+      "core_limits": {
+        "BOOTSTRAP": 8,
+        "BREADTH": 24,
+        "DENSITY": 48
+      },
+      "exploration_slots": 1,
+      "rolling_pnl_persisted": true,
+      "maker_fee_rebate_tiebreak": true
+    },
     "inventory_liveness": {
       "eligible_score_states": [
         "TWO_AWAY",
@@ -33,17 +64,12 @@
       "maker_failed_exits": 3,
       "maker_min_age_ticks": 8,
       "maker_floor_bps": -4.0,
-      "taker_failed_exits": 8,
-      "taker_min_age_ticks": 16,
       "soft_taker_floor_bps": -8.0,
-      "hard_failed_exits": 12,
-      "hard_min_age_ticks": 24,
       "hard_taker_floor_bps": -12.0,
-      "min_ev_advantage_bps": 0.5,
-      "parked_refresh_ticks": 20,
-      "parked_touch_move_bps": 8.0,
+      "event_driven_hard_window": true,
+      "parked_cap_is_warning_only": true,
+      "parked_warning_threshold": 6,
       "max_active_open_books": 6,
-      "max_parked_open_books": 6,
       "max_total_open_books": 12,
       "max_total_abs_base": 3.0
     },
@@ -51,7 +77,8 @@
       "contract_guard_version": "authoritative_l1_contract_guard_v4_12_14",
       "one_away_safe_fraction_floor": 0.15,
       "one_away_exit_capacity_fraction_floor": 0.2,
-      "one_away_stale_ttl_ms": 250,
+      "stable_one_away_touch_cap_bps": 1.5,
+      "velocity_stale_one_away_ttl_ms": 250,
       "hard_roundtrip_bridge_floor_bps": -12.0,
       "candidate_count": 10,
       "score_target_books": 88,
@@ -71,23 +98,24 @@
     "status": "UNCHANGED"
   },
   "regression": {
-    "research": "391 passed / 0 failed",
-    "base_adaptive": "126 passed / 0 failed",
-    "shared_strategy": "93 passed / 0 failed",
-    "total_strategy_focused": "610 passed / 0 failed",
+    "research": "409 passed / 0 failed",
+    "base_adaptive": "133 passed / 0 failed",
+    "shared_strategy": "86 passed / 0 failed",
+    "total_strategy_focused": "628 passed / 0 failed",
+    "focused_v4_12_17": "12 passed / 0 failed",
     "launcher_preflight": "PASS"
   },
   "runtime_gate": {
-    "duration": "45-60 real minutes / roughly 600-900 ticks",
-    "primary": "parked stale inventory releases active acquisition capacity while bounded rescue never exceeds its hard floor",
-    "target_contract_reject_rate": "<0.5% of limit placements",
-    "target_actionable_cycle_p90": "<150 ticks",
-    "target_final_interval_placements_per_fill": "<40",
-    "require_acquisition_not_blocked_by_parked_inventory": true,
+    "duration": "45-60 real minutes / roughly 600-900 ticks for first decision gate",
+    "require_no_park_cap_block": true,
+    "require_exploration_survives_headroom_pressure": true,
+    "require_event_driven_hard_rescue": true,
     "require_no_liveness_taker_below_bps": -12.0,
-    "preserve_one_away_and_normal_taker": true
+    "require_density_growth_after_qualification": true,
+    "require_marked_inventory_economics_improve": true,
+    "latency_fixed": false
   },
   "environment_limits": [
-    "validator/runtime behavior requires live SN79 testnet"
+    "validator/runtime behavior requires live SN79 testnet or RealNet-equivalent simulation"
   ]
 }

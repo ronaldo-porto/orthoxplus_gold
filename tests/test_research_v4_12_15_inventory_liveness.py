@@ -122,13 +122,14 @@ def test_rescue_requires_taker_utility_to_beat_wait():
     assert decision.reason == "WAIT_EV_BETTER"
 
 
-def test_soft_window_does_not_use_hard_minus_twelve_floor():
+def test_v417_price_crossing_uses_hard_minus_twelve_floor_immediately():
     stage = _stage(2, failed=8, age=16)
     assert not stage.hard_window
     decision = _rescue(stage, taker=-9.0, wait=-20.0)
-    assert not decision.authorized
-    assert decision.park
-    assert decision.reason == "LOSS_BEYOND_CURRENT_RESCUE_FLOOR"
+    assert decision.authorized
+    assert not decision.park
+    assert decision.allowed_loss_floor_bps == -12.0
+    assert decision.reason == "PRICE_HARD_WINDOW_RESCUE"
 
 
 def test_park_refresh_is_bounded_by_interval_touch_and_hard_risk():
@@ -178,7 +179,7 @@ def test_strategy_contract_freezes_v41214_guard_and_other_engines():
     root = Path(__file__).parents[1]
     src = (root / "agents" / "strategy" / "Strategy1_Research.py").read_text()
     guard = (root / "agents" / "strategy" / "research_contract_guard.py").read_text()
-    assert 'RESEARCH_POLICY_VERSION = "kappa_conversion_v4_12_16_predeploy"' in src
+    assert 'RESEARCH_POLICY_VERSION = "kappa_flywheel_v4_12_17"' in src
     assert 'RESEARCH_INVENTORY_LIVENESS_VERSION = INVENTORY_LIVENESS_VERSION' in src
     assert 'CONTRACT_GUARD_VERSION = "authoritative_l1_contract_guard_v4_12_14"' in guard
     assert 'research_max_active_open_books' in src
@@ -187,4 +188,4 @@ def test_strategy_contract_freezes_v41214_guard_and_other_engines():
     assert 'INVENTORY_LIVENESS_BOUNDED_RESCUE' in src
     assert 'PARK_POSITION' in src and 'UNPARK_POSITION' in src
     assert 'park_hard_risk = bool((qty / max_inv) >= close_thr)' in src
-    assert INVENTORY_LIVENESS_VERSION == "inventory_liveness_v4_12_15"
+    assert INVENTORY_LIVENESS_VERSION == "inventory_liveness_v4_12_17"
