@@ -36,8 +36,8 @@ def _positive(book_id: int, remaining: int, **kwargs) -> LaneBook:
 
 def test_v4136_version_contract():
     assert COMPLETION_ECONOMICS_VERSION == "completion_density_v4_13_6"
-    assert KAPPA_PRODUCTIVITY_VERSION == "simplified_kappa_productivity_v4_13_8"
-    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_8"' in SRC
+    assert KAPPA_PRODUCTIVITY_VERSION == "simplified_kappa_productivity_v4_13_9"
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_9"' in SRC
     assert "research_completion_ev_cache_ticks=20" in LAUNCHER
     assert "research_density_priority_enabled=1" in LAUNCHER
 

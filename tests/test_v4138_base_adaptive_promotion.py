@@ -21,8 +21,8 @@ def _sig(src: str, name: str) -> tuple[str, ...]:
 
 def test_base_is_frozen_v4138_promotion():
     assert 'class BaseStrategy(Strategy1_Research)' in BASE
-    assert 'DEPLOY_POLICY_VERSION = "base_v4_13_8_champion"' in BASE
-    assert 'BASE_CHAMPION_PARENT = "simplified_kappa_productivity_v4_13_8"' in BASE
+    assert 'DEPLOY_POLICY_VERSION = "base_v4_13_9_champion"' in BASE
+    assert 'BASE_CHAMPION_PARENT = "simplified_kappa_productivity_v4_13_9"' in BASE
     assert 'PROFITABLE_EXIT_PERSISTENCE_VERSION = "profitable_maker_exit_persistence_v4_13_8"' in BASE
 
 
@@ -43,7 +43,7 @@ def test_adaptive_rebased_on_v4138_base_only():
     assert 'class AdaptiveAgent(BaseStrategy)' in ADAPTIVE
     assert 'from BaseStrategy import' in ADAPTIVE
     assert 'from Strategy1_Research import' not in ADAPTIVE
-    assert 'ADAPTIVE_VERSION = "adaptive_v4_13_8_realtime"' in ADAPTIVE
+    assert 'ADAPTIVE_VERSION = "adaptive_v4_13_9_realtime"' in ADAPTIVE
     assert '_research_hazard_last' in ADAPTIVE
     assert '_research_score_ev_last' in ADAPTIVE
     assert '_research_market_regime' in ADAPTIVE
@@ -70,8 +70,8 @@ def test_adaptive_contract_hooks_match_research_signatures():
 
 def test_realtime_launcher_has_full_base_and_adaptive_contracts():
     for token in (
-        'base_v4_13_8_champion',
-        'adaptive_v4_13_8_realtime',
+        'base_v4_13_9_champion',
+        'adaptive_v4_13_9_realtime',
         'research_density_priority_enabled=1',
         'research_profitable_exit_persistence_enabled=1',
         'adaptive_observe_requests=100',

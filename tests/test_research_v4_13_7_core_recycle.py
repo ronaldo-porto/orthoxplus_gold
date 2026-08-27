@@ -41,7 +41,7 @@ def _core_admit(**overrides):
 def test_v4137_versions():
     assert QUALIFIED_CORE_EXACT_MIN_VERSION == "qualified_core_exact_min_v4_13_7"
     assert QUALIFIED_CORE_STALE_TTL_VERSION == "qualified_core_velocity_stale_ttl_v4_13_7"
-    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_8"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_9"' in SRC
 
 
 def test_book67_shape_gets_exact_minimum_core_recycle():
