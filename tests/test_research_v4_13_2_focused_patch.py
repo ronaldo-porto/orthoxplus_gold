@@ -5,6 +5,7 @@ from research_execution_lanes import (
     LaneBook,
     LaneBudgets,
     apply_kappa_conversion_pressure_gate,
+    authoritative_execution_lane,
     execution_completion_candidate,
     select_lane_candidates,
 )
@@ -81,10 +82,10 @@ def _unknown_snapshot(*, fresh_rt=0, fresh_pos=0, fresh_neg=0):
     )
 
 
-def test_v4133_version_contract():
-    assert KAPPA_PRODUCTIVITY_VERSION == "simplified_kappa_productivity_v4_13_3"
+def test_v4134_version_contract():
+    assert KAPPA_PRODUCTIVITY_VERSION == "simplified_kappa_productivity_v4_13_4"
     assert FRESH_MAKER_GRACE_VERSION == "fresh_maker_grace_v4_13_2"
-    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_3"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_4"' in SRC
     assert "research_core_probe_enabled" in SRC
     assert "research_fresh_maker_grace_enabled" in SRC
 
@@ -295,8 +296,79 @@ def test_core_probe_lane_identity_survives_execution_reclassification():
     )
 
 
-def test_launcher_explicitly_enables_v4133_patch():
-    assert 'simplified_kappa_productivity_v4_13_3' in LAUNCHER
+def test_launcher_explicitly_enables_v4134_patch():
+    assert 'simplified_kappa_productivity_v4_13_4' in LAUNCHER
     assert 'research_fresh_maker_grace_enabled=1' in LAUNCHER
     assert 'research_fresh_maker_grace_ticks=3' in LAUNCHER
     assert 'research_core_probe_enabled=1' in LAUNCHER
+
+
+def test_v4134_authoritative_completion_grant_survives_eligible_core_reclassification():
+    # Exact Book122 failure: screening granted COMPLETION to a profitable CORE
+    # book, but the legacy predicate is False because the book is already Kappa
+    # eligible.  Execution must keep the granted lane.
+    allocation = select_lane_candidates(
+        [
+            LaneBook(
+                book_id=122,
+                observations_remaining=0,
+                core_candidate=True,
+                economics_ok=True,
+                entry_feasible=True,
+            )
+        ],
+        LaneBudgets(coverage_slots=0, completion_slots=1, realization_slots=0, shared_overflow_slots=0),
+        max_candidates=1,
+    )
+    assert allocation.by_lane[LANE_COMPLETION] == [122]
+    lane = authoritative_execution_lane(
+        122,
+        inventory_flat=True,
+        allocation=allocation,
+        fallback_lane="COVERAGE",  # legacy recomputation in V4.13.3
+    )
+    assert lane == LANE_COMPLETION
+
+
+def test_v4134_authoritative_lane_covers_recycling_density_probe_and_coverage():
+    rows = [
+        LaneBook(book_id=10, observations_remaining=0, recycling_candidate=True, economics_ok=True),
+        LaneBook(book_id=11, observations_remaining=0, density_due=True, economics_ok=True),
+        LaneBook(book_id=12, observations_remaining=0, core_probe_candidate=True, economics_ok=True),
+        LaneBook(book_id=14, observations_remaining=1, economics_ok=True),
+        LaneBook(book_id=13, observations_remaining=3, economics_ok=True),
+    ]
+    allocation = select_lane_candidates(
+        rows,
+        LaneBudgets(coverage_slots=1, completion_slots=4, realization_slots=0, shared_overflow_slots=0),
+        max_candidates=5,
+    )
+    for bid in (10, 11, 12, 14):
+        assert authoritative_execution_lane(
+            bid, inventory_flat=True, allocation=allocation, fallback_lane="COVERAGE"
+        ) == LANE_COMPLETION
+    assert authoritative_execution_lane(
+        13, inventory_flat=True, allocation=allocation, fallback_lane=LANE_COMPLETION
+    ) == "COVERAGE"
+
+
+def test_v4134_nonflat_inventory_keeps_realization_priority_over_stale_grant():
+    allocation = select_lane_candidates(
+        [LaneBook(book_id=122, observations_remaining=0, core_candidate=True, economics_ok=True)],
+        LaneBudgets(coverage_slots=0, completion_slots=1, realization_slots=0, shared_overflow_slots=0),
+        max_candidates=1,
+    )
+    assert authoritative_execution_lane(
+        122, inventory_flat=False, allocation=allocation, fallback_lane="COVERAGE"
+    ) == "REALIZATION"
+
+
+def test_v4134_falls_back_only_when_book_has_no_current_lane_grant():
+    allocation = select_lane_candidates(
+        [LaneBook(book_id=1, observations_remaining=3, economics_ok=True)],
+        LaneBudgets(coverage_slots=1, completion_slots=0, realization_slots=0, shared_overflow_slots=0),
+        max_candidates=1,
+    )
+    assert authoritative_execution_lane(
+        999, inventory_flat=True, allocation=allocation, fallback_lane=LANE_COMPLETION
+    ) == LANE_COMPLETION
