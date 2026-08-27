@@ -71,8 +71,8 @@ def _book98():
 
 
 def test_v413_version_and_phase_contract():
-    assert KAPPA_PRODUCTIVITY_VERSION == "simplified_kappa_productivity_v4_13_6"
-    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_6"' in SRC
+    assert KAPPA_PRODUCTIVITY_VERSION == "simplified_kappa_productivity_v4_13_7"
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_7"' in SRC
     assert scheduler_phase(0) == PHASE_BOOTSTRAP
     assert scheduler_phase(40) == PHASE_BOOTSTRAP
     assert scheduler_phase(41) == PHASE_BALANCED
@@ -315,7 +315,7 @@ def test_v413_source_wiring_keeps_v41218_safety_and_adds_two_tick_guard():
 
 def test_launcher_enables_v413_without_removing_v41218_contracts():
     assert "V4.12.18 Inventory-State Decoupling API OK" in LAUNCHER
-    assert "V4.13.6 density scheduler + V4.13.5 exit authority + V4.13.4 authoritative lanes OK" in LAUNCHER
+    assert "V4.13.7 CORE recycle + V4.13.6 density + V4.13.5 exit authority + V4.13.4 authoritative lanes OK" in LAUNCHER
     assert "research_kappa_productivity_enabled=1" in LAUNCHER
     assert "research_persistent_maker_enabled=1" in LAUNCHER
     assert "research_hysteresis_min_price_ticks=3" in LAUNCHER
