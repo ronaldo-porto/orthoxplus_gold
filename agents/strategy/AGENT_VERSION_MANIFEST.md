@@ -72,3 +72,10 @@
 | `agents/strategy/BaseStrategy.py` | `13a56d355558eec24df86dc34ea888524eeced8a575b19fcb3b27bffc55a3bf1` |
 | `agents/strategy/AdaptiveAgent.py` | `3e75e6abce4d6a678f4976f10e4b30b5fa8be35f57a8743226a795f841c53448` |
 | `run_strategy1_research_test_multi.sh` | `fb68e7caf011183def867a9f5d23b772d9057f418d8ca7e751d32894edbdbf3e` |
+
+## St6.4 emergency promotion — 2026-08-27
+
+- Research: `simplified_kappa_productivity_v4_13_8` (frozen)
+- Base champion: `base_v4_13_8_champion`
+- Adaptive: `adaptive_v4_13_8_realtime`
+- Promotion: Research V4.13.8 -> Base V4.13.8 -> Adaptive realtime

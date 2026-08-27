@@ -102,7 +102,7 @@ from adaptive_persistence import (
 class AdaptiveAgent(BaseStrategy):
     """Bounded adaptive execution layer over the verified standalone BaseStrategy."""
 
-    ADAPTIVE_VERSION = "adaptive_v4_13_8_realtime"
+    ADAPTIVE_VERSION = "adaptive_v3_hjb_shadow"
     ADAPTIVE_INHERIT_BASE = True
     ADAPTIVE_STATE_SCHEMA = CURRENT_SCHEMA
 
@@ -121,11 +121,11 @@ class AdaptiveAgent(BaseStrategy):
         # Learning phases.  These are request-count based so they are stable
         # across simulation-speed changes.
         self.adaptive_observe_requests = max(
-            100, int(float(getattr(cfg, "adaptive_observe_requests", 100)))
+            100, int(float(getattr(cfg, "adaptive_observe_requests", 1000)))
         )
         self.adaptive_normal_after_requests = max(
             self.adaptive_observe_requests + 100,
-            int(float(getattr(cfg, "adaptive_normal_after_requests", 400))),
+            int(float(getattr(cfg, "adaptive_normal_after_requests", 3000))),
         )
 
         # Fill calibration.  Learned probabilities are shrunk toward the
@@ -526,11 +526,11 @@ class AdaptiveAgent(BaseStrategy):
             1.20, max(0.0, float(getattr(self, "max_inventory_base", 1.20) or 1.20))
         )
         self.max_mm_books_per_tick = min(
-            6, max(1, int(getattr(self, "max_mm_books_per_tick", 6) or 6))
+            4, max(1, int(getattr(self, "max_mm_books_per_tick", 4) or 4))
         )
         if hasattr(self, "max_managed_books_per_tick"):
             self.max_managed_books_per_tick = min(
-                10, max(1, int(self.max_managed_books_per_tick or 10))
+                8, max(1, int(self.max_managed_books_per_tick or 8))
             )
         self.mm_force_post_only = True
         if hasattr(self, "score_ev_new_book_weight"):
@@ -870,7 +870,7 @@ class AdaptiveAgent(BaseStrategy):
 
     def _adaptive_mean_inventory_age(self) -> float | None:
         ages: list[float] = []
-        for decision in (getattr(self, "_research_realization_last", {}) or {}).values():
+        for decision in (getattr(self, "_realization_last", {}) or {}).values():
             try:
                 age = float(getattr(decision, "inventory_age", 0.0) or 0.0)
             except (TypeError, ValueError, AttributeError):
@@ -902,7 +902,7 @@ class AdaptiveAgent(BaseStrategy):
         actionables: list[float] = []
         dusts: list[float] = []
         markouts: list[float] = []
-        last = getattr(self, "_research_hazard_last", {}) or {}
+        last = getattr(self, "_execution_last", {}) or {}
         for row in last.values():
             if not isinstance(row, dict):
                 continue
@@ -916,7 +916,7 @@ class AdaptiveAgent(BaseStrategy):
                     actionables.append(actionable)
                 if dust is not None:
                     dusts.append(dust)
-        for ev in (getattr(self, "_research_score_ev_last", {}) or {}).values():
+        for ev in (getattr(self, "_score_ev_last", {}) or {}).values():
             try:
                 markout = getattr(ev, "expected_markout_bps", None)
                 if markout is None:
@@ -1099,26 +1099,85 @@ class AdaptiveAgent(BaseStrategy):
     # ------------------------------------------------------------------
 
     def _adaptive_apply_phase_controls(self) -> tuple:
-        """Apply bounded intensity control without disabling Base Kappa policy.
-
-        V4.13.8 density, completion weights and lane budgets remain authoritative.
-        Adaptive may reduce book concurrency under DRIFT but never disables
-        completion during OBSERVE/BOOTSTRAP and never rewrites Base Score-EV
-        weights.
-        """
-        old = (int(self.max_mm_books_per_tick),)
+        """Apply temporary scheduler / Score-EV weight overlays; return restore tuple."""
+        old = (
+            int(self.max_mm_books_per_tick),
+            bool(self.research_kappa_completion_enabled),
+            float(self.research_kappa_completion_rank_bonus),
+            int(self.research_kappa_completion_relaxed_success_cap),
+            float(getattr(self, "score_ev_one_away_weight", self._adaptive_base_score_ev_one_away)),
+            float(getattr(self, "score_ev_two_away_weight", self._adaptive_base_score_ev_two_away)),
+        )
         phase = self._adaptive_phase()
-        if phase == "DRIFT":
+        one = self._adaptive_base_score_ev_one_away
+        two = self._adaptive_base_score_ev_two_away
+
+        if phase == "OBSERVE":
             self.max_mm_books_per_tick = min(
                 self._adaptive_base_max_mm_books,
-                max(4, int(self.adaptive_observe_max_mm_books)),
+                self.adaptive_observe_max_mm_books,
             )
+            self.research_kappa_completion_enabled = False
+            self.research_kappa_completion_rank_bonus = 0.0
+            self.research_kappa_completion_relaxed_success_cap = 0
+            self.score_ev_one_away_weight = 0.0
+            self.score_ev_two_away_weight = 0.0
+        elif phase == "BOOTSTRAP":
+            self.max_mm_books_per_tick = min(
+                self._adaptive_base_max_mm_books,
+                self.adaptive_bootstrap_max_mm_books,
+            )
+            self.research_kappa_completion_enabled = (
+                self._adaptive_base_kappa_completion_enabled
+            )
+            self.research_kappa_completion_rank_bonus = (
+                self._adaptive_base_kappa_rank_bonus
+                * self.adaptive_bootstrap_kappa_rank_scale
+            )
+            self.research_kappa_completion_relaxed_success_cap = min(
+                self._adaptive_base_kappa_relaxed_success_cap, 1
+            )
+            scale = self.adaptive_bootstrap_kappa_rank_scale
+            self.score_ev_one_away_weight = one * scale
+            self.score_ev_two_away_weight = two * scale
+        elif phase == "DRIFT":
+            self.max_mm_books_per_tick = min(
+                self._adaptive_base_max_mm_books,
+                self.adaptive_observe_max_mm_books,
+            )
+            self.research_kappa_completion_enabled = (
+                self._adaptive_base_kappa_completion_enabled
+            )
+            self.research_kappa_completion_rank_bonus = min(
+                self._adaptive_base_kappa_rank_bonus, 0.15
+            )
+            self.research_kappa_completion_relaxed_success_cap = 0
+            self.score_ev_one_away_weight = one * 0.25
+            self.score_ev_two_away_weight = two * 0.25
         else:
             self.max_mm_books_per_tick = self._adaptive_base_max_mm_books
+            self.research_kappa_completion_enabled = (
+                self._adaptive_base_kappa_completion_enabled
+            )
+            self.research_kappa_completion_rank_bonus = (
+                self._adaptive_base_kappa_rank_bonus
+            )
+            self.research_kappa_completion_relaxed_success_cap = (
+                self._adaptive_base_kappa_relaxed_success_cap
+            )
+            self.score_ev_one_away_weight = one
+            self.score_ev_two_away_weight = two
         return old
 
     def _adaptive_restore_phase_controls(self, old: tuple) -> None:
-        (self.max_mm_books_per_tick,) = old
+        (
+            self.max_mm_books_per_tick,
+            self.research_kappa_completion_enabled,
+            self.research_kappa_completion_rank_bonus,
+            self.research_kappa_completion_relaxed_success_cap,
+            self.score_ev_one_away_weight,
+            self.score_ev_two_away_weight,
+        ) = old
 
     def handle(self, state):
         if self.adaptive_enabled:
@@ -1183,10 +1242,10 @@ class AdaptiveAgent(BaseStrategy):
                     kappa_pending_2=sum(1 for v in obs.values() if v == 2),
                     kappa_eligible=sum(1 for v in obs.values() if v >= target),
                     parked_dust=len(getattr(self, "_research_parked_dust", {})),
-                    market_regime=getattr(self, "_research_market_regime", None),
-                    score_regime=getattr(self, "_research_score_regime", None),
-                    ttl_min_ms=getattr(self, "research_ttl_min_ms", None),
-                    ttl_max_ms=getattr(self, "research_ttl_max_ms", None),
+                    market_regime=getattr(self, "_market_regime", None),
+                    score_regime=getattr(self, "_score_regime", None),
+                    ttl_min_ms=getattr(self, "ttl_min_ms", None),
+                    ttl_max_ms=getattr(self, "ttl_max_ms", None),
                     persistence_reason=getattr(self, "_adaptive_load_reason", None),
                     drift_until_request=self._adaptive_drift_until_request,
                     recovery_until_request=self._adaptive_recovery_until_request,
@@ -1201,9 +1260,9 @@ class AdaptiveAgent(BaseStrategy):
     def _completion_observation_count(self, book_id: int) -> int:
         # Episode-only Adaptive Kappa memory. Load and sim-reset zero
         # session_realized_obs so a prior simulation cannot inflate Base.
-        # V4.13.8 Base rolling Kappa state is authoritative. Adaptive session
-        # memory is telemetry/learning only and must not inflate eligibility.
-        return int(super()._completion_observation_count(book_id))
+        local = int(super()._completion_observation_count(book_id))
+        episode = int(self._adaptive_book(book_id).get("session_realized_obs", 0))
+        return max(local, episode)
 
     # ------------------------------------------------------------------
     # Maker fill-learning hooks
@@ -1321,19 +1380,19 @@ class AdaptiveAgent(BaseStrategy):
     def _adaptive_base_outputs(self, book_id: int | None = None) -> dict[str, Any]:
         """Read BaseStrategy engine outputs. Never recompute them here."""
         out: dict[str, Any] = {
-            "market_regime": getattr(self, "_research_market_regime", None),
-            "score_regime": getattr(self, "_research_score_regime", None),
-            "ttl_min_ms": getattr(self, "research_ttl_min_ms", None),
-            "ttl_max_ms": getattr(self, "research_ttl_max_ms", None),
+            "market_regime": getattr(self, "_market_regime", None),
+            "score_regime": getattr(self, "_score_regime", None),
+            "ttl_min_ms": getattr(self, "ttl_min_ms", None),
+            "ttl_max_ms": getattr(self, "ttl_max_ms", None),
         }
         if book_id is None:
             return out
         bid = int(book_id)
-        last = (getattr(self, "_research_hazard_last", {}) or {}).get(bid, {}) or {}
+        last = (getattr(self, "_execution_last", {}) or {}).get(bid, {}) or {}
         buy_pred = last.get("buy")
         sell_pred = last.get("sell")
-        ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(bid)
-        snap = (getattr(self, "_research_book_micro", {}) or {}).get(bid, {}) or {}
+        ev = (getattr(self, "_score_ev_last", {}) or {}).get(bid)
+        snap = (getattr(self, "_quote_submit_snapshot", {}) or {}).get(bid, {}) or {}
         acts = [
             v
             for v in (
@@ -1429,7 +1488,7 @@ class AdaptiveAgent(BaseStrategy):
         ):
             return base
 
-        last = (getattr(self, "_research_hazard_last", {}) or {}).get(int(book_id), {}) or {}
+        last = (getattr(self, "_execution_last", {}) or {}).get(int(book_id), {}) or {}
         fallback_reason = str(last.get("fallback_reason") or "")
         if not fallback_reason:
             return base
@@ -1575,7 +1634,7 @@ class AdaptiveAgent(BaseStrategy):
         bid = int(book_id)
         outputs = self._adaptive_base_outputs(bid)
         conf, fill_rate, maker_pnl = self._adaptive_execution_quality(bid)
-        ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(bid)
+        ev = (getattr(self, "_score_ev_last", {}) or {}).get(bid)
         reject = "" if ev is None else str(getattr(ev, "reject_reason", "") or "")
         if reject in {"TOXIC", "UNSAFE", "INVENTORY_BLOCKED"}:
             conf = 0.0
@@ -1601,7 +1660,7 @@ class AdaptiveAgent(BaseStrategy):
             spec = 0.0
         learned_spec = 0.5 * (1.0 + math.tanh(maker_pnl / max(self.adaptive_pnl_scale, 1e-6)))
         spec = (1.0 - 0.35 * conf) * spec + (0.35 * conf) * learned_spec
-        last_real = (getattr(self, "_research_realization_last", {}) or {}).get(bid)
+        last_real = (getattr(self, "_realization_last", {}) or {}).get(bid)
         exit_u = 0.0
         if last_real is not None:
             try:
@@ -1845,21 +1904,21 @@ class AdaptiveAgent(BaseStrategy):
             outputs = self._adaptive_base_outputs(int(book_id))
             buy_h = outputs.get("fill_hazard_any_buy")
             sell_h = outputs.get("fill_hazard_any_sell")
-            last = (getattr(self, "_research_hazard_last", {}) or {}).get(int(book_id), {}) or {}
+            last = (getattr(self, "_execution_last", {}) or {}).get(int(book_id), {}) or {}
             act_buy = self._adaptive_pred_field(last.get("buy"), "actionable_fill")
             act_sell = self._adaptive_pred_field(last.get("sell"), "actionable_fill")
             markout = outputs.get("markout_estimate")
             if markout is None:
-                ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(int(book_id))
+                ev = (getattr(self, "_score_ev_last", {}) or {}).get(int(book_id))
                 markout = None if ev is None else getattr(ev, "expected_markout_bps", 0.0)
-            snap = (getattr(self, "_research_book_micro", {}) or {}).get(int(book_id), {}) or {}
+            snap = (getattr(self, "_quote_submit_snapshot", {}) or {}).get(int(book_id), {}) or {}
             ofi = outputs.get("ofi")
             if ofi is None and snap.get("ofi_supported"):
                 ofi = snap.get("ofi_fast")
             latency_ms = outputs.get("chosen_ttl")
             if latency_ms is None:
                 latency_ms = snap.get("chosen_ttl")
-            regime = str(getattr(self, "_research_market_regime", "") or "")
+            regime = str(getattr(self, "_market_regime", "") or "")
             parked = int(book_id) in (getattr(self, "_research_parked_dust", {}) or {})
             toxicity = 1.0 if regime.upper() in {"TOXIC"} or parked or bool(snap.get("toxic")) else 0.0
             try:
@@ -1941,7 +2000,7 @@ class AdaptiveAgent(BaseStrategy):
                 "adverse_penalty": quote.adverse_penalty,
                 "inventory_term": quote.inventory_term,
                 "market_regime": regime,
-                "score_regime": str(getattr(self, "_research_score_regime", "") or ""),
+                "score_regime": str(getattr(self, "_score_regime", "") or ""),
                 "estimated_base_ev": base_ev,
                 "estimated_hjb_ev": quote.estimated_ev,
                 "policy_activated": 0,
