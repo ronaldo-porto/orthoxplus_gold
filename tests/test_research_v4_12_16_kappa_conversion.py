@@ -92,6 +92,6 @@ def test_conversion_ttl_keeps_bad_ev_and_stress_fail_closed():
 
 
 def test_v417_contract_keeps_park_precedence_and_new_flywheel_lanes():
-    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_2"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_3"' in SRC
     assert 'RESEARCH_LANES_VERSION = "execution_lanes_v7_inventory_decoupled"' in SRC
     assert "UNIFIED_KEEP_MAKER and not liveness_parked_now" in SRC

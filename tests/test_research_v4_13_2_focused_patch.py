@@ -5,6 +5,7 @@ from research_execution_lanes import (
     LaneBook,
     LaneBudgets,
     apply_kappa_conversion_pressure_gate,
+    execution_completion_candidate,
     select_lane_candidates,
 )
 from research_inventory_liveness import (
@@ -80,10 +81,10 @@ def _unknown_snapshot(*, fresh_rt=0, fresh_pos=0, fresh_neg=0):
     )
 
 
-def test_v4132_version_contract():
-    assert KAPPA_PRODUCTIVITY_VERSION == "simplified_kappa_productivity_v4_13_2"
+def test_v4133_version_contract():
+    assert KAPPA_PRODUCTIVITY_VERSION == "simplified_kappa_productivity_v4_13_3"
     assert FRESH_MAKER_GRACE_VERSION == "fresh_maker_grace_v4_13_2"
-    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_2"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_3"' in SRC
     assert "research_core_probe_enabled" in SRC
     assert "research_fresh_maker_grace_enabled" in SRC
 
@@ -268,8 +269,34 @@ def test_core_probe_survives_tight_conversion_pressure_when_headroom_exists():
     assert 83 not in suppressed
 
 
-def test_launcher_explicitly_enables_v4132_patch():
-    assert 'simplified_kappa_productivity_v4_13_2' in LAUNCHER
+def test_core_probe_lane_identity_survives_execution_reclassification():
+    # Exact V4.13.2 runtime failure: a CORE_PROBE is already Kappa eligible, so
+    # the legacy completion predicate is False.  The probe flag must still keep
+    # the execution lane as KAPPA_COMPLETION.
+    assert execution_completion_candidate(
+        inventory_flat=True,
+        core_probe_candidate=True,
+        legacy_completion_candidate=False,
+    )
+    assert not execution_completion_candidate(
+        inventory_flat=True,
+        core_probe_candidate=False,
+        legacy_completion_candidate=False,
+    )
+    assert execution_completion_candidate(
+        inventory_flat=True,
+        core_probe_candidate=False,
+        legacy_completion_candidate=True,
+    )
+    assert not execution_completion_candidate(
+        inventory_flat=False,
+        core_probe_candidate=True,
+        legacy_completion_candidate=False,
+    )
+
+
+def test_launcher_explicitly_enables_v4133_patch():
+    assert 'simplified_kappa_productivity_v4_13_3' in LAUNCHER
     assert 'research_fresh_maker_grace_enabled=1' in LAUNCHER
     assert 'research_fresh_maker_grace_ticks=3' in LAUNCHER
     assert 'research_core_probe_enabled=1' in LAUNCHER
