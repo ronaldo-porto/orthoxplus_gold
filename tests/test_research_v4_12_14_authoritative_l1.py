@@ -76,7 +76,7 @@ def test_missing_mapping_book_fails_closed():
 
 def test_strategy_no_longer_requires_builtin_dict_for_guard_touch():
     src = (Path(__file__).parents[1] / "agents" / "strategy" / "Strategy1_Research.py").read_text()
-    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_1"' in src
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_2"' in src
     assert 'resolve_book_from_state_mapping(books, book_id)' in src
     assert 'books.get(book_id) if isinstance(books, dict) else None' not in src
     # Same bug also existed in submitted-quote L1 snapshot registration.
