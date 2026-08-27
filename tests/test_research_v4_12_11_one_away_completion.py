@@ -39,7 +39,7 @@ def _admit(**overrides):
 
 
 def test_release_contract_and_runner_values():
-    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_7"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_8"' in SRC
     assert ONE_AWAY_STALE_TTL_VERSION == "one_away_stale_ttl_v4_12_11"
     assert "research_one_away_exact_min_safe_fraction=0.15" in LAUNCHER
     assert "research_one_away_exact_min_exit_fraction=0.20" in LAUNCHER
