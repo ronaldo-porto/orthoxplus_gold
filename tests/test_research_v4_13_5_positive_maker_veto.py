@@ -35,7 +35,7 @@ def test_v4135_version_and_wiring_contract():
     assert "and not positive_maker_veto_active" in SRC
     assert "research_positive_maker_veto_enabled=1" in LAUNCHER
     assert "research_positive_maker_veto_floor_bps=1.0" in LAUNCHER
-    assert "research_positive_maker_veto_max_failed_exits=3" in LAUNCHER
+    assert "research_positive_maker_veto_max_failed_exits=6" in LAUNCHER
 
 
 def test_exact_v4134_negative_taker_over_positive_maker_failures_are_vetoed():
