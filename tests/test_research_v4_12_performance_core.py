@@ -100,4 +100,4 @@ def test_v412_runtime_is_concentrated():
 
 
 def test_policy_version_is_v412():
-    assert 'RESEARCH_POLICY_VERSION = "inventory_state_decoupling_v4_12_18"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13"' in SRC

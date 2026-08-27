@@ -28,7 +28,7 @@ SRC = (STRATEGY_DIR / "Strategy1_Research.py").read_text(encoding="utf-8")
 def test_v418_version_contract():
     assert INVENTORY_LIVENESS_VERSION == "inventory_state_decoupling_v4_12_18"
     assert KAPPA_FLYWHEEL_VERSION == "kappa_flywheel_v4_12_18"
-    assert 'RESEARCH_POLICY_VERSION = "inventory_state_decoupling_v4_12_18"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13"' in SRC
     assert 'RESEARCH_LANES_VERSION = "execution_lanes_v7_inventory_decoupled"' in SRC
 
 
@@ -133,8 +133,8 @@ def test_migrated_kappa_history_uses_confidence_not_false_pnl():
 
 
 def test_flywheel_core_uses_kappa_eligibility_not_full_pnl_history():
-    assert 'if bool(getattr(row, "kappa_eligible", False))' in SRC
-    assert "fly_phase = flywheel_phase(len(kappa_eligible_ids))" in SRC
+    assert 'bool(getattr(row, "kappa_eligible", False))' in SRC
+    assert "productivity_phase = productivity_scheduler_phase(len(kappa_eligible_ids))" in SRC
     assert "pnl_confidence=str(pnl_conf)" in SRC
     assert "pnl_confidence_mult=float(pnl_conf_mult)" in SRC
 
