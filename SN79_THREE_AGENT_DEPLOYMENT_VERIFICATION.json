@@ -6,24 +6,41 @@
   "ready_for_realnet": false,
   "research": {
     "live_source": "agents/strategy/Strategy1_Research.py",
-    "policy_marker": "simplified_kappa_productivity_v4_13",
-    "productivity_marker": "simplified_kappa_productivity_v4_13",
-    "archive_source": "agents/strategy/__ver_st1_log__/Strategy1_Research_v4_13.py",
-    "archive_productivity": "agents/strategy/__ver_st1_log__/research_kappa_productivity_v4_13.py",
-    "archive_lanes": "agents/strategy/__ver_st1_log__/research_execution_lanes_v4_13.py",
+    "policy_marker": "simplified_kappa_productivity_v4_13_1",
+    "productivity_marker": "simplified_kappa_productivity_v4_13_1",
+    "archive_source": "agents/strategy/__ver_st1_log__/Strategy1_Research_v4_13_1.py",
+    "archive_productivity": "agents/strategy/__ver_st1_log__/research_kappa_productivity_v4_13_1.py",
+    "archive_lanes": "agents/strategy/__ver_st1_log__/research_execution_lanes_v4_13_1.py",
     "archive_candidate_screen": "agents/strategy/__ver_st1_log__/research_candidate_screen_v4_13.py",
     "archive_hysteresis": "agents/strategy/__ver_st1_log__/research_quote_hysteresis_v4_13.py",
-    "versioned_launcher": "agents/strategy/__ver_st1_log__/run_strategy1_research_v4_13_test.sh",
-    "kappa_states": ["NEW", "BUILDING", "QUALIFIED", "CORE"],
+    "versioned_launcher": "agents/strategy/__ver_st1_log__/run_strategy1_research_v4_13_1_test.sh",
+    "kappa_states": [
+      "NEW",
+      "BUILDING",
+      "QUALIFIED",
+      "CORE"
+    ],
     "scheduler_phases": {
       "BOOTSTRAP": "0-40",
       "BALANCED": "41-79",
       "DENSITY": "80+"
     },
     "phase_weights": {
-      "BOOTSTRAP": {"breadth": 0.60, "completion": 0.25, "density": 0.15},
-      "BALANCED": {"breadth": 0.30, "completion": 0.35, "density": 0.35},
-      "DENSITY": {"breadth": 0.15, "completion": 0.20, "density": 0.65}
+      "BOOTSTRAP": {
+        "breadth": 0.6,
+        "completion": 0.25,
+        "density": 0.15
+      },
+      "BALANCED": {
+        "breadth": 0.3,
+        "completion": 0.35,
+        "density": 0.35
+      },
+      "DENSITY": {
+        "breadth": 0.15,
+        "completion": 0.2,
+        "density": 0.65
+      }
     },
     "core_requires_fresh_v413_execution_evidence": true,
     "inefficient_cohort_is_demoted": true,
@@ -40,7 +57,10 @@
       "soft_taker_floor_bps": -8.0,
       "hard_taker_floor_bps": -12.0,
       "min_cycle_base": 0.25
-    }
+    },
+    "zero_rt_order_sink_early_demotion": true,
+    "single_recycling_bootstrap_slot": true,
+    "core_requires_three_fresh_nonzero_rts": true
   },
   "base": {
     "policy_marker": "base_v4_4_champion",
@@ -51,13 +71,13 @@
     "status": "UNCHANGED"
   },
   "regression": {
-    "research": "431 passed / 0 failed",
+    "research": "434 passed / 0 failed",
     "base_adaptive": "133 passed / 0 failed",
     "shared_strategy": "90 passed / 0 failed",
-    "total_strategy_focused": "654 passed / 0 failed",
-    "focused_v4_13": "11 passed / 0 failed",
+    "total_strategy_focused": "657 passed / 0 failed",
     "compile": "PASS",
-    "launcher_preflight": "PASS"
+    "launcher_preflight": "PASS",
+    "focused_v4_13_1": "14 passed / 0 failed"
   },
   "runtime_gate": {
     "first_run": "600-900 simulation ticks",
@@ -67,6 +87,8 @@
     "require_core_recycling_beyond_three_observations": true,
     "require_inefficient_book_demotion": true,
     "require_inventory_liveness_no_regression": true,
-    "require_breadth_and_density_growth": true
+    "require_breadth_and_density_growth": true,
+    "require_zero_rt_sink_demotion": true,
+    "require_recycling_bootstrap_after_first_clean_rt": true
   }
 }

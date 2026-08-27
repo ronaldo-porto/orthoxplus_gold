@@ -2,7 +2,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from research_candidate_screen import book_touch_fingerprint
-from research_execution_lanes import LaneBook, completion_sort_key, coverage_sort_key
+from research_execution_lanes import (
+    LaneBook, LaneBudgets, completion_sort_key, coverage_sort_key, select_lane_candidates,
+)
 from research_kappa_productivity import (
     KAPPA_PRODUCTIVITY_VERSION,
     PHASE_BALANCED,
@@ -41,6 +43,9 @@ def _book115():
         fill_rate_hint=0.20,
         raw_kappa=0.5,
         ticks_since_last_rt=1,
+        fresh_round_trips=3,
+        fresh_positive_round_trips=3,
+        fresh_negative_round_trips=0,
     )
 
 
@@ -59,12 +64,15 @@ def _book98():
         fill_rate_hint=0.03,
         raw_kappa=0.2,
         ticks_since_last_rt=20,
+        fresh_round_trips=2,
+        fresh_positive_round_trips=2,
+        fresh_negative_round_trips=0,
     )
 
 
 def test_v413_version_and_phase_contract():
-    assert KAPPA_PRODUCTIVITY_VERSION == "simplified_kappa_productivity_v4_13"
-    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13"' in SRC
+    assert KAPPA_PRODUCTIVITY_VERSION == "simplified_kappa_productivity_v4_13_1"
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_1"' in SRC
     assert scheduler_phase(0) == PHASE_BOOTSTRAP
     assert scheduler_phase(40) == PHASE_BOOTSTRAP
     assert scheduler_phase(41) == PHASE_BALANCED
@@ -91,6 +99,73 @@ def test_book115_becomes_core_and_book98_is_demoted():
     assert priority_for_state(good, phase=PHASE_DENSITY) > priority_for_state(
         bad, phase=PHASE_DENSITY
     )
+
+
+
+
+def test_v4131_zero_rt_order_sink_is_demoted_before_sparse_unknown_gate():
+    book92 = ProductivitySnapshot(
+        book_id=92,
+        observations=1,
+        round_trips=0,
+        maker_quotes=70,
+        maker_fills=1,
+        contract_rejects=0,
+        realized_pnl=0.0,
+        positive_count=0,
+        negative_count=0,
+        maker_fee_bps=-10.0,
+        fill_rate_hint=0.02,
+        fresh_round_trips=0,
+    )
+    assert book92.execution_tier == TIER_INEFFICIENT
+    assert book92.placements_per_rt == 70.0
+
+
+def test_v4131_first_clean_fresh_rt_bootstraps_recycling_not_full_core():
+    bridge = ProductivitySnapshot(
+        book_id=115,
+        observations=3,
+        round_trips=1,
+        maker_quotes=8,
+        maker_fills=2,
+        contract_rejects=0,
+        realized_pnl=0.20,
+        positive_count=1,
+        negative_count=0,
+        maker_fee_bps=-10.0,
+        fill_rate_hint=0.20,
+        raw_kappa=0.3,
+        ticks_since_last_rt=1,
+        fresh_round_trips=1,
+        fresh_positive_round_trips=1,
+        fresh_negative_round_trips=0,
+    )
+    assert bridge.recycling_candidate
+    assert not bridge.core_candidate
+    assert bridge.execution_tier == "PRODUCTIVE"
+
+
+def test_v4131_completion_selection_reserves_one_recycling_bridge_slot():
+    rows = [
+        LaneBook(
+            book_id=i, observations_remaining=1, density_due=False,
+            kappa_productivity_tier="PRODUCTIVE", kappa_productivity_score=0.8 - i * 0.01,
+        )
+        for i in range(1, 5)
+    ]
+    bridge = LaneBook(
+        book_id=115, observations_remaining=0, density_due=True, recycling_candidate=True,
+        kappa_productivity_tier="PRODUCTIVE", kappa_productivity_score=0.55,
+    )
+    rows.append(bridge)
+    allocation = select_lane_candidates(
+        rows,
+        LaneBudgets(coverage_slots=0, completion_slots=2, realization_slots=0, shared_overflow_slots=0),
+        max_candidates=2,
+    )
+    assert 115 in allocation.by_lane["KAPPA_COMPLETION"]
+    assert len(allocation.by_lane["KAPPA_COMPLETION"]) == 2
 
 
 def test_completion_lane_core_recycling_outranks_inefficient_one_away():
@@ -240,7 +315,7 @@ def test_v413_source_wiring_keeps_v41218_safety_and_adds_two_tick_guard():
 
 def test_launcher_enables_v413_without_removing_v41218_contracts():
     assert "V4.12.18 Inventory-State Decoupling API OK" in LAUNCHER
-    assert "V4.13 simplified Kappa productivity API OK" in LAUNCHER
+    assert "V4.13.1 Kappa productivity scheduler correction API OK" in LAUNCHER
     assert "research_kappa_productivity_enabled=1" in LAUNCHER
     assert "research_persistent_maker_enabled=1" in LAUNCHER
     assert "research_hysteresis_min_price_ticks=3" in LAUNCHER
