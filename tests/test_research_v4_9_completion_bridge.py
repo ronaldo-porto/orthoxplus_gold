@@ -26,7 +26,7 @@ LAUNCHER_SRC = (ROOT / "run_strategy1_research_test_multi.sh").read_text(encodin
 
 
 def test_policy_version_and_lane_defaults_are_v410():
-    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_5"' in RESEARCH_SRC
+    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_6"' in RESEARCH_SRC
     budgets = normalize_lane_budgets()
     assert budgets.coverage_slots == 6
     assert budgets.completion_slots == 6

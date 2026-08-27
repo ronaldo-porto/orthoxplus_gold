@@ -148,7 +148,8 @@ def test_fill_hazard_compare_flag_restores_holding_cost_gate():
 def test_research_wires_flag_gates():
     assert "_research_lanes_on(" in RESEARCH_SRC
     assert "research_enable_aggressive_coverage" in RESEARCH_SRC
-    assert "coverage_slots=0" in RESEARCH_SRC
+    lanes_src = (ROOT / "agents" / "strategy" / "research_execution_lanes.py").read_text()
+    assert "coverage_slots=0" in lanes_src
     assert "use_exit_urgency_v2" in RESEARCH_SRC
     assert "use_fill_hazard_ev" in RESEARCH_SRC
     assert "allow_economic_taker" in RESEARCH_SRC
