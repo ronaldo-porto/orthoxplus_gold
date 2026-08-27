@@ -6,32 +6,56 @@
   "ready_for_realnet": false,
   "research": {
     "live_source": "agents/strategy/Strategy1_Research.py",
-    "policy_marker": "kappa_flywheel_v4_12_17",
-    "lanes_marker": "execution_lanes_v6_kappa_flywheel",
-    "kappa_flywheel_marker": "kappa_flywheel_v4_12_17",
-    "inventory_liveness_marker": "inventory_liveness_v4_12_17",
+    "policy_marker": "inventory_state_decoupling_v4_12_18",
+    "lanes_marker": "execution_lanes_v7_inventory_decoupled",
+    "kappa_flywheel_marker": "kappa_flywheel_v4_12_18",
+    "inventory_liveness_marker": "inventory_state_decoupling_v4_12_18",
     "contract_guard_marker": "authoritative_l1_contract_guard_v4_12_14",
     "one_away_base_ttl_marker": "one_away_stale_ttl_v4_12_11",
     "one_away_velocity_ttl_marker": "one_away_velocity_stale_ttl_v4_12_17",
     "unified_exit_marker": "bounded_stale_bridge_v4_12_10",
-    "archive_source": "agents/strategy/__ver_st1_log__/Strategy1_Research_v4_12_17.py",
-    "archive_flywheel_helper": "agents/strategy/__ver_st1_log__/research_kappa_flywheel_v4_12_17.py",
-    "archive_liveness_helper": "agents/strategy/__ver_st1_log__/research_inventory_liveness_v4_12_17.py",
-    "archive_lanes_helper": "agents/strategy/__ver_st1_log__/research_execution_lanes_v4_12_17.py",
-    "archive_hysteresis_helper": "agents/strategy/__ver_st1_log__/research_quote_hysteresis_v4_12_17.py",
-    "versioned_launcher": "agents/strategy/__ver_st1_log__/run_strategy1_research_v4_12_17_test.sh",
-    "live_sha256": "cb529f1201ae73e44486ab54f49cf2be4ec0a817445ae229a0be194b2e3342fa",
-    "flywheel_helper_sha256": "d79fe9598391b95fd1229931dd4769a6470f62c298736603ac5e688d7aa41737",
-    "liveness_helper_sha256": "9414a40d8a63df592ede13ee68e5e9d00f0c03565ab467a46efaa852e979b637",
-    "lanes_helper_sha256": "54effb609aa6a92659e4cca931731a17eabae81a16ce2d90739a6f250653e37c",
+    "archive_source": "agents/strategy/__ver_st1_log__/Strategy1_Research_v4_12_18.py",
+    "archive_flywheel_helper": "agents/strategy/__ver_st1_log__/research_kappa_flywheel_v4_12_18.py",
+    "archive_liveness_helper": "agents/strategy/__ver_st1_log__/research_inventory_liveness_v4_12_18.py",
+    "archive_lanes_helper": "agents/strategy/__ver_st1_log__/research_execution_lanes_v4_12_18.py",
+    "archive_hysteresis_helper": "agents/strategy/__ver_st1_log__/research_quote_hysteresis_v4_12_18.py",
+    "versioned_launcher": "agents/strategy/__ver_st1_log__/run_strategy1_research_v4_12_18_test.sh",
+    "live_sha256": "c7ec182f2b49680d4bd9385e28ff0664b18cdc5983a10df50481e04fe8ca377d",
+    "flywheel_helper_sha256": "8cbc57d0989b82d26d6e083d21d9c39c154f32e5764141734330441bfbcf7942",
+    "liveness_helper_sha256": "c9f24d624171e028a4d2c215aea5fea2cffcb9390d79ccfda44b8b4dbaa86596",
+    "lanes_helper_sha256": "70ae62d3d2a72c1fd842b6ad675e33885b7d6764dc7405e8b2b4c361960c3c29",
     "hysteresis_helper_sha256": "9683c2c82347b0f43e3b312bac1795754deaf0dbb79771a71d000feb048b6179",
     "contract_helper_sha256": "e3e61783d2a17f370dad62255bc468e23d7ae7ce42f20b9a7cd1846145cdf1d0",
     "unified_exit_sha256": "da815ca6e2e8f4909d84f5fcdb77d3ab71d2475b0b044ccf73c12ca92644837a",
     "launcher": "run_strategy1_research_test_multi.sh",
-    "launcher_sha256": "2c1a82da1a45c0879624c933517af259a5be1d81699356f48ab10004dbb75be6",
+    "launcher_sha256": "76aa009298a7fd9374b7c3fdff58641c2a5aa215d6211f556d01df7c83dfc920",
     "runner_sha256": "a5d2b63b2402835bd06f231677f4ba5679549529fc0521b7f62599076d88c98d",
-    "tests": "409 passed / 0 failed",
+    "tests": "420 passed / 0 failed",
     "syntax": "PASS",
+    "inventory_state_decoupling": {
+      "loss_rescue_eligible": [
+        "TWO_AWAY",
+        "UNCOVERED"
+      ],
+      "park_eligible": [
+        "QUALIFIED",
+        "ONE_AWAY",
+        "TWO_AWAY",
+        "UNCOVERED"
+      ],
+      "protected_park_states": [
+        "QUALIFIED",
+        "ONE_AWAY"
+      ],
+      "protected_park_failed_exits": 4,
+      "protected_park_min_age_ticks": 8,
+      "parked_refresh_ticks": 25,
+      "protected_refresh_requires_floor": true,
+      "cancel_resting_on_new_park": true,
+      "max_active_open_books": 6,
+      "max_total_open_books": 12,
+      "max_total_abs_base": 3.0
+    },
     "kappa_flywheel": {
       "phases": {
         "BOOTSTRAP": "0-40",
@@ -49,11 +73,18 @@
         "DENSITY": 48
       },
       "exploration_slots": 1,
+      "core_uses_kappa_eligibility": true,
+      "pnl_confidence": {
+        "FULL": 1.0,
+        "PARTIAL": 0.85,
+        "UNKNOWN": 0.7
+      },
+      "missing_pnl_history_is_not_fabricated": true,
       "rolling_pnl_persisted": true,
       "maker_fee_rebate_tiebreak": true
     },
     "inventory_liveness": {
-      "eligible_score_states": [
+      "bounded_loss_score_states": [
         "TWO_AWAY",
         "UNCOVERED"
       ],
@@ -68,10 +99,7 @@
       "hard_taker_floor_bps": -12.0,
       "event_driven_hard_window": true,
       "parked_cap_is_warning_only": true,
-      "parked_warning_threshold": 6,
-      "max_active_open_books": 6,
-      "max_total_open_books": 12,
-      "max_total_abs_base": 3.0
+      "parked_warning_threshold": 6
     },
     "preserved": {
       "contract_guard_version": "authoritative_l1_contract_guard_v4_12_14",
@@ -98,21 +126,24 @@
     "status": "UNCHANGED"
   },
   "regression": {
-    "research": "409 passed / 0 failed",
+    "research": "420 passed / 0 failed",
     "base_adaptive": "133 passed / 0 failed",
-    "shared_strategy": "86 passed / 0 failed",
-    "total_strategy_focused": "628 passed / 0 failed",
-    "focused_v4_12_17": "12 passed / 0 failed",
+    "shared_strategy": "90 passed / 0 failed",
+    "total_strategy_focused": "643 passed / 0 failed",
+    "focused_v4_12_18": "11 passed / 0 failed",
     "launcher_preflight": "PASS"
   },
   "runtime_gate": {
     "duration": "45-60 real minutes / roughly 600-900 ticks for first decision gate",
-    "require_no_park_cap_block": true,
-    "require_exploration_survives_headroom_pressure": true,
-    "require_event_driven_hard_rescue": true,
-    "require_no_liveness_taker_below_bps": -12.0,
+    "require_protected_parking_releases_active_capacity": true,
+    "require_no_protected_loss_subsidy": true,
+    "require_no_parked_maker_below_protected_floor": true,
+    "require_exploration_survives_when_hard_headroom_exists": true,
+    "max_zero_acquisition_streak_with_headroom_ticks": 20,
+    "require_migrated_kappa_eligible_core_candidates": true,
     "require_density_growth_after_qualification": true,
-    "require_marked_inventory_economics_improve": true,
+    "require_no_liveness_taker_below_bps": -12.0,
+    "contract_reject_rate_target_lt": 0.005,
     "latency_fixed": false
   },
   "environment_limits": [

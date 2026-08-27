@@ -21,7 +21,7 @@ from research_taker_economics import evaluate_taker_economics
 
 
 def test_policy_version_and_session_sync_fail_closed_contract():
-    assert 'RESEARCH_POLICY_VERSION = "kappa_flywheel_v4_12_17"' in RESEARCH_SRC
+    assert 'RESEARCH_POLICY_VERSION = "inventory_state_decoupling_v4_12_18"' in RESEARCH_SRC
     handle = RESEARCH_SRC.split("def handle(self, state:", 1)[1].split("def respond(", 1)[0]
     assert "except Exception as exc:" in handle
     assert '"FAIL_CLOSED_QUARANTINE"' in handle

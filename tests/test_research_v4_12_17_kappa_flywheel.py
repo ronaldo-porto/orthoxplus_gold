@@ -36,9 +36,9 @@ LAUNCHER = (ROOT / "run_strategy1_research_test_multi.sh").read_text(encoding="u
 
 
 def test_version_contract_and_linux_launcher_are_v417():
-    assert KAPPA_FLYWHEEL_VERSION == "kappa_flywheel_v4_12_17"
-    assert 'RESEARCH_POLICY_VERSION = "kappa_flywheel_v4_12_17"' in SRC
-    assert 'RESEARCH_LANES_VERSION = "execution_lanes_v6_kappa_flywheel"' in SRC
+    assert KAPPA_FLYWHEEL_VERSION == "kappa_flywheel_v4_12_18"
+    assert 'RESEARCH_POLICY_VERSION = "inventory_state_decoupling_v4_12_18"' in SRC
+    assert 'RESEARCH_LANES_VERSION = "execution_lanes_v7_inventory_decoupled"' in SRC
     assert "\r" not in LAUNCHER
 
 
