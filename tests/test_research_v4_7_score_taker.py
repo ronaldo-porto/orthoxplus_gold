@@ -19,7 +19,7 @@ from research_realization_ladder import (
 
 
 def test_v47_policy_and_phantom_inventory_contract():
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_2"' in RESEARCH_SRC
+    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in RESEARCH_SRC
     screen = RESEARCH_SRC.split("def _research_fast_screen(self, state)", 1)[1].split(
         "def _research_full_predictions", 1
     )[0]

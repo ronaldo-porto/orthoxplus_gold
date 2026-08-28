@@ -36,7 +36,7 @@ def _econ_take() -> TakerEconomicsDecision:
 
 
 def test_v410_project_contract_uses_zero_loss_score_defaults():
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_2"' in RESEARCH_SRC
+    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in RESEARCH_SRC
     assert "research_allow_score_loss_subsidy=0" in LAUNCHER_SRC
     assert "research_economic_direct_max_loss_bps=0.0" in LAUNCHER_SRC
     assert "research_enable_risk_taker_direct=0" in LAUNCHER_SRC

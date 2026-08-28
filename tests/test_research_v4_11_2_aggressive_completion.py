@@ -206,7 +206,7 @@ def test_one_away_exact_min_rejects_negative_ev_or_insufficient_exit_capacity():
 
 
 def test_v4112_wiring_and_launcher_contract():
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_2"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in SRC
     assert "research_enable_aggressive_positive_ev_taker=1" in LAUNCHER
     assert "research_aggressive_positive_ev_min_net_bps=0.0" in LAUNCHER
     assert "research_one_away_exact_min_enabled=1" in LAUNCHER

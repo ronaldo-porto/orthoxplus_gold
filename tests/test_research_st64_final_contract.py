@@ -17,7 +17,7 @@ def _hazard():
     return HazardPrediction(any_fill=0.02, actionable_fill=0.01, dust=0.0, source="cell", usable=True, n_at_risk=40, ttl_ms=500.0, remaining_any_fill=0.02)
 
 def test_st64_policy_and_operational_breadth_target():
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_2"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in SRC
     assert 'research_score_target_books", 88' in SRC
     assert 'and score_deficit > 0' in SRC
     assert 'research_score_target_books=88' in RUNNER
