@@ -615,34 +615,14 @@ done
 
 [[ -f "$REPO_ROOT/run_miner_multi.sh" ]] || { echo "run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research.py" ]] || { echo "Strategy1_Research.py missing" >&2; exit 1; }
-grep -q 'RESEARCH_POLICY_VERSION = "long_run_recycling_v4_14_1"' "$AGENT_PATH/Strategy1_Research.py" || {
-  echo "ERROR: Strategy1_Research.py is not long_run_recycling_v4_14_1" >&2
+grep -q 'RESEARCH_POLICY_VERSION = "long_run_recycling_v4_14_0"' "$AGENT_PATH/Strategy1_Research.py" || {
+  echo "ERROR: Strategy1_Research.py is not long_run_recycling_v4_14_0" >&2
   exit 1
 }
 [[ -f "$AGENT_PATH/Strategy1_Debug.py" ]] || { echo "Strategy1_Debug.py missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/research_fill_hazard.py" ]] || { echo "research_fill_hazard.py missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/research_unified_exit.py" ]] || { echo "research_unified_exit.py missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/research_entry_size.py" ]] || { echo "research_entry_size.py missing" >&2; exit 1; }
-[[ -f "$REPO_ROOT/taos/im/validator/trade.py" ]] || { echo "validator trade.py missing" >&2; exit 1; }
-grep -q 'Preserve EVERY timestamp' "$REPO_ROOT/taos/im/validator/trade.py" || {
-  echo "ERROR: validator trade.py missing restart empty-timestamp preservation fix" >&2
-  exit 1
-}
-
-PYTHONPATH="$AGENT_PATH${PYTHONPATH:+:$PYTHONPATH}" python - <<'PYV4141HISTORY'
-from research_session_state import (
-    VALIDATOR_HISTORY_ALIGNMENT_VERSION,
-    rebase_observation_timestamps,
-)
-if VALIDATOR_HISTORY_ALIGNMENT_VERSION != "validator_history_alignment_v4_14_1":
-    raise SystemExit("ERROR: V4.14.1 validator-history alignment helper missing")
-probe = rebase_observation_timestamps(
-    {7: [600, 800, 1000]}, old_ts=1000, new_ts=0, lookback_ns=500
-)
-if probe != {7: [-400, -200, 0]}:
-    raise SystemExit(f"ERROR: V4.14.1 validator-history rebase mismatch: {probe}")
-print("V4.14.1 validator history alignment API OK")
-PYV4141HISTORY
 
 # V4.12.4 deployment guard: require completion exact-min admission API.
 PYTHONPATH="$AGENT_PATH${PYTHONPATH:+:$PYTHONPATH}" python - <<'PYV4124ENTRY'
@@ -921,11 +901,11 @@ grep -q 'PROFITABLE_EXIT_PERSISTENCE_VERSION = "profitable_maker_exit_persistenc
   echo "ERROR: V4.13.8 profitable Maker exit persistence helper missing" >&2
   exit 1
 }
-echo "[Strategy1_Research] version=long_run_recycling_v4_14_1"
+echo "[Strategy1_Research] version=long_run_recycling_v4_14_0"
 echo "[Strategy1_Research] log_dir=$RESEARCH_DIR"
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
-  echo "V4.14.1 validator-aligned long-run recycling launcher preflight-only PASS"
+  echo "V4.14.0 long-run recycling launcher preflight-only PASS"
   exit 0
 fi
 

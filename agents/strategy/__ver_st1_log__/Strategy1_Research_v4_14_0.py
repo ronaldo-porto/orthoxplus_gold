@@ -402,8 +402,6 @@ from research_session_state import (
     ACTION_RESTORE,
     CURRENT_SCHEMA as RESEARCH_SESSION_SCHEMA,
     DEFAULT_TRANSITION_QUARANTINE_TICKS,
-    REASON_SIM_ID_CHANGE,
-    VALIDATOR_HISTORY_ALIGNMENT_VERSION,
     SessionIdentity,
     build_payload,
     clear_stale_session_runtime,
@@ -416,9 +414,6 @@ from research_session_state import (
     infer_network,
     observation_total,
     reconcile_account_base,
-    rebase_observation_timestamps,
-    rebase_realized_pnl_events,
-    rebase_sparse_pnl_history,
     resolve_netuid,
     session_requires_transition_quarantine,
     state_filename,
@@ -427,7 +422,7 @@ from research_session_state import (
 
 
 class Strategy1_Research(Strategy1_Debug):
-    RESEARCH_POLICY_VERSION = "long_run_recycling_v4_14_1"
+    RESEARCH_POLICY_VERSION = "long_run_recycling_v4_14_0"
     RESEARCH_HYBRID_VERSION = "early_escape_guard_v4_12_6"
     RESEARCH_EXIT_HAZARD_EV_VERSION = EXIT_HAZARD_EV_VERSION
     RESEARCH_VELOCITY_VERSION = VELOCITY_VERSION
@@ -456,7 +451,6 @@ class Strategy1_Research(Strategy1_Debug):
     RESEARCH_DUST_ECON_VERSION = "dust_economics_v1"
     RESEARCH_SAME_SIDE_VERSION = "same_side_v2_effective_exposure"
     RESEARCH_SESSION_SCHEMA = RESEARCH_SESSION_SCHEMA
-    RESEARCH_VALIDATOR_HISTORY_ALIGNMENT_VERSION = VALIDATOR_HISTORY_ALIGNMENT_VERSION
     REASON_ALIAS = {
         "LOW_EXPECTED_ALPHA": "ALPHA",
         "ZERO_ORDER_SIZE": "SIZE_ZERO",
@@ -2401,8 +2395,8 @@ class Strategy1_Research(Strategy1_Debug):
                     ts = int(value)
                 except (TypeError, ValueError):
                     continue
-                # Negative timestamps are valid after validator simulation-history rebasing.
-                rows.append(ts)
+                if ts >= 0:
+                    rows.append(ts)
             if rows:
                 out[bid] = sorted(set(rows))
         return out
@@ -2565,88 +2559,9 @@ class Strategy1_Research(Strategy1_Debug):
             flush=True,
         )
 
-    def _research_rebase_validator_scoring_evidence(self, state) -> dict[str, Any]:
-        """Carry validator-scored Kappa evidence across a simulation restart.
-
-        Validator trade.shift_simulation_histories rebases retained lookback
-        history onto the new simulation clock instead of resetting score state.
-        Mirror only that scoring evidence here; execution/inventory state is
-        still reset/quarantined normally.
-        """
-        old_ts = int(getattr(self, "_research_last_sim_ts", 0) or 0)
-        new_ts = int(getattr(state, "timestamp", 0) or 0)
-        lookback = int(getattr(self, "research_kappa_lookback_ns", 10_800_000_000_000))
-        observations = rebase_observation_timestamps(
-            getattr(self, "_research_persisted_observation_timestamps", {}),
-            old_ts=old_ts, new_ts=new_ts, lookback_ns=lookback,
-        )
-        pnl_events = rebase_realized_pnl_events(
-            getattr(self, "_research_realized_pnl_events_by_book", {}),
-            old_ts=old_ts, new_ts=new_ts, lookback_ns=lookback,
-        )
-        pnl_history = rebase_sparse_pnl_history(
-            getattr(self, "realized_pnl_history", {}),
-            old_ts=old_ts, new_ts=new_ts, lookback_ns=lookback,
-        )
-        return {
-            "old_ts": old_ts, "new_ts": new_ts,
-            "observations": observations, "pnl_events": pnl_events,
-            "pnl_history": pnl_history,
-        }
-
-    def onStart(self, event) -> None:
-        preserve = bool(getattr(self, "_research_preserve_validator_pnl_history_on_start", False))
-        saved_history = dict(getattr(self, "realized_pnl_history", {}) or {}) if preserve else None
-        saved_totals = dict(getattr(self, "total_realized_pnl_by_book", {}) or {}) if preserve else None
-        super().onStart(event)
-        if preserve:
-            self.realized_pnl_history = saved_history or {}
-            self.total_realized_pnl_by_book.clear()
-            self.total_realized_pnl_by_book.update(saved_totals or {})
-            self._research_preserve_validator_pnl_history_on_start = False
-            self._research_local_kappa_cache_value = None
-            self._research_local_kappa_source_sig = None
-            bt.logging.info(
-                f"Simulation start — retained validator-aligned Kappa/PnL history "
-                f"({self.RESEARCH_VALIDATOR_HISTORY_ALIGNMENT_VERSION})"
-            )
-
     def _research_apply_session_transition(self, decision, state=None) -> None:
-        preserve_scoring = bool(
-            state is not None and str(getattr(decision, "reason", "") or "") == REASON_SIM_ID_CHANGE
-        )
-        carried = self._research_rebase_validator_scoring_evidence(state) if preserve_scoring else None
         self._research_clear_session_observations()
         clear_stale_session_runtime(self)
-        if carried is not None:
-            observations = carried["observations"]
-            pnl_events = carried["pnl_events"]
-            pnl_history = carried["pnl_history"]
-            self._research_persisted_observation_timestamps = observations
-            self._research_realized_pnl_events_by_book = pnl_events
-            self._research_realized_observations_by_book = {
-                int(book): len(rows) for book, rows in observations.items()
-            }
-            self._research_session_obs_high_water = dict(self._research_realized_observations_by_book)
-            self.realized_pnl_history = pnl_history
-            self.total_realized_pnl_by_book.clear()
-            for books in pnl_history.values():
-                for book, pnl in books.items():
-                    self.total_realized_pnl_by_book[int(book)] += float(pnl)
-            self._research_kappa_roll_cache_key = None
-            self._research_kappa_roll_ts_cache = {}
-            self._research_kappa_roll_count_cache = {}
-            self._research_kappa_roll_next_expiry_ts = None
-            self._research_local_kappa_cache_value = None
-            self._research_local_kappa_source_sig = None
-            self._research_preserve_validator_pnl_history_on_start = True
-            self._emit(
-                "VALIDATOR_HISTORY_CARRY", force=True, tick=getattr(self, "_tick", None),
-                old_ts=carried["old_ts"], new_ts=carried["new_ts"],
-                books=len(observations), observations=sum(len(rows) for rows in observations.values()),
-                pnl_events=sum(len(rows) for rows in pnl_events.values()),
-                alignment_version=self.RESEARCH_VALIDATOR_HISTORY_ALIGNMENT_VERSION,
-            )
         # Rejection guards are request-local execution state and must never leak
         # across simulation/session identity changes.
         self._research_contract_reject_state.clear()

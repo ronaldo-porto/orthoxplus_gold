@@ -63,7 +63,7 @@ def test_nonpositive_exit_never_held():
 def test_strategy_wires_profitable_exit_persistence_contract():
     from pathlib import Path
     src = Path("agents/strategy/Strategy1_Research.py").read_text(encoding="utf-8")
-    assert 'RESEARCH_POLICY_VERSION = "simplified_kappa_productivity_v4_13_9"' in src
+    assert 'RESEARCH_POLICY_VERSION = "long_run_recycling_v4_14_1"' in src
     assert 'research_profitable_exit_ttl_ms' in src
     assert 'PROFITABLE_EXIT_HOLD' in src
     assert 'PROFITABLE_EXIT_PERSIST' in src
