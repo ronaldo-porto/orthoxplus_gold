@@ -83,9 +83,9 @@ def _unknown_snapshot(*, fresh_rt=0, fresh_pos=0, fresh_neg=0):
 
 
 def test_v4134_version_contract():
-    assert KAPPA_PRODUCTIVITY_VERSION == "simplified_kappa_productivity_v4_13_9"
+    assert KAPPA_PRODUCTIVITY_VERSION == "wide_kappa_productivity_v4_14_2"
     assert FRESH_MAKER_GRACE_VERSION == "fresh_maker_grace_v4_13_2"
-    assert 'RESEARCH_POLICY_VERSION = "long_run_recycling_v4_14_1"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_2"' in SRC
     assert "research_core_probe_enabled" in SRC
     assert "research_fresh_maker_grace_enabled" in SRC
 
@@ -297,7 +297,7 @@ def test_core_probe_lane_identity_survives_execution_reclassification():
 
 
 def test_launcher_explicitly_enables_v4134_patch():
-    assert 'simplified_kappa_productivity_v4_13_9' in LAUNCHER
+    assert 'wide_kappa_productivity_v4_14_2' in LAUNCHER
     assert 'research_fresh_maker_grace_enabled=1' in LAUNCHER
     assert 'research_fresh_maker_grace_ticks=3' in LAUNCHER
     assert 'research_core_probe_enabled=1' in LAUNCHER

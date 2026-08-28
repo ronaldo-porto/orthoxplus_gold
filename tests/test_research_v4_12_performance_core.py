@@ -100,4 +100,4 @@ def test_v412_runtime_is_concentrated():
 
 
 def test_policy_version_is_v412():
-    assert 'RESEARCH_POLICY_VERSION = "long_run_recycling_v4_14_1"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_2"' in SRC

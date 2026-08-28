@@ -79,7 +79,7 @@ def test_market_and_normal_maker_logic_not_part_of_pure_guard_contract():
 def test_strategy_source_wires_pending_guard_and_lifecycle_clear():
     from pathlib import Path
     source = (Path(__file__).parents[1] / "agents" / "strategy" / "Strategy1_Research.py").read_text()
-    assert 'RESEARCH_POLICY_VERSION = "long_run_recycling_v4_14_1"' in source
+    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_2"' in source
     assert 'def onOrderRejected(self, event)' in source
     assert 'reason != "CONTRACT_VIOLATION"' in source
     assert 'contract_guard = self._research_apply_contract_reject_guard(response, state)' in source

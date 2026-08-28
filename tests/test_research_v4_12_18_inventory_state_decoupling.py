@@ -28,7 +28,7 @@ SRC = (STRATEGY_DIR / "Strategy1_Research.py").read_text(encoding="utf-8")
 def test_v418_version_contract():
     assert INVENTORY_LIVENESS_VERSION == "inventory_state_decoupling_v4_12_18"
     assert KAPPA_FLYWHEEL_VERSION == "kappa_flywheel_v4_12_18"
-    assert 'RESEARCH_POLICY_VERSION = "long_run_recycling_v4_14_1"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_2"' in SRC
     assert 'RESEARCH_LANES_VERSION = "execution_lanes_v7_inventory_decoupled"' in SRC
 
 
