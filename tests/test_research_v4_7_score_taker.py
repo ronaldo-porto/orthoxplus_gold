@@ -19,7 +19,7 @@ from research_realization_ladder import (
 
 
 def test_v47_policy_and_phantom_inventory_contract():
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in RESEARCH_SRC
+    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in RESEARCH_SRC
     screen = RESEARCH_SRC.split("def _research_fast_screen(self, state)", 1)[1].split(
         "def _research_full_predictions", 1
     )[0]
@@ -88,7 +88,6 @@ def test_score_utility_can_execute_taker_at_low_urgency():
         maker_fill_hazard=0.02,
         enable_hybrid=True,
         enable_sn79_action_utility=True,
-        sn79_max_score_subsidy_loss_bps=-2.0,
         ladder_bands=None,
     )
     assert decision.action_utility is not None
@@ -119,7 +118,6 @@ def test_score_taker_direct_is_feature_gated():
         allow_score_taker_direct=False,
         allow_economic_taker_direct=False,
         allow_aggressive_positive_ev_taker=False,
-        sn79_max_score_subsidy_loss_bps=-2.0,
     )
     assert decision.action_utility is not None
     assert decision.action_utility.take is True

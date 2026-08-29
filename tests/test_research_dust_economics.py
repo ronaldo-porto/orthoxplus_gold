@@ -16,10 +16,6 @@ MANAGE = RESEARCH_SRC.split("def _manage_inventory(")[1].split(
 SKEWED = RESEARCH_SRC.split("def _place_skewed_quotes(")[1].split(
     "def _place_directional_round_trip("
 )[0]
-ESCAPE = RESEARCH_SRC.split("def _research_try_dust_escape(")[1].split(
-    "def _dust_fill_matches_recent_compaction("
-)[0]
-
 from research_dust_economics import (
     ACTION_COMPETITIVE_MAKER,
     ACTION_PASSIVE_MAKER,
@@ -202,4 +198,5 @@ def test_research_wires_dust_economics_and_prevention():
     assert "quote_would_create_dust(" in SKEWED
     assert "[S1R_DUST_ECON]" in RESEARCH_SRC
     assert "DUST_ECON" in RESEARCH_SRC
-    assert "_research_dust_econ_on(" in ESCAPE or "research_enable_dust_economics" in ESCAPE
+    assert "_research_try_dust_escape" not in RESEARCH_SRC
+    assert "research_enable_dust_escape" not in RESEARCH_SRC

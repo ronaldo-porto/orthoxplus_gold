@@ -11,7 +11,7 @@ RESEARCH_SRC = (ROOT / "agents" / "strategy" / "Strategy1_Research.py").read_tex
     encoding="utf-8"
 )
 MANAGE = RESEARCH_SRC.split("def _research_manage_realization(")[1].split(
-    "def _research_try_dust_escape("
+    "def _research_dust_age_ticks("
 )[0]
 
 from research_exit_quantity import (

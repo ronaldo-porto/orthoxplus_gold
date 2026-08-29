@@ -26,7 +26,7 @@ def _fresh(book_id: int) -> LaneBook:
 
 def test_v4142_policy_and_two_exploration_paths_are_wired():
     assert KAPPA_PRODUCTIVITY_VERSION == "wide_kappa_productivity_v4_14_2"
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
     assert "research_cohort_exploration_slots=2" in LAUNCHER
     assert "research_kappa_exploration_slots=2" in LAUNCHER
     assert "research_wide_kappa_min_density_observations=6" in LAUNCHER

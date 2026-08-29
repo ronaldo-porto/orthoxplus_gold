@@ -36,11 +36,11 @@ def _econ_take() -> TakerEconomicsDecision:
 
 
 def test_v410_project_contract_uses_zero_loss_score_defaults():
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in RESEARCH_SRC
-    assert "research_allow_score_loss_subsidy=0" in LAUNCHER_SRC
+    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in RESEARCH_SRC
+    assert "research_allow_score_loss_subsidy" not in LAUNCHER_SRC
     assert "research_economic_direct_max_loss_bps=0.0" in LAUNCHER_SRC
-    assert "research_enable_risk_taker_direct=0" in LAUNCHER_SRC
-    assert "research_sn79_one_away_loss_floor_bps=0.0" in LAUNCHER_SRC
+    assert "research_enable_risk_taker_direct" not in LAUNCHER_SRC
+    assert "research_sn79_one_away_loss_floor_bps" not in LAUNCHER_SRC
     assert ("research_candidate_count=12" in LAUNCHER_SRC or "research_candidate_count=10" in LAUNCHER_SRC)
 
 
@@ -54,7 +54,6 @@ def test_no_authority_none_taker_when_economic_floor_rejects():
         crossing_cost_bps=2.0,
         enable_sn79_action_utility=False,
         economic_direct_max_loss_bps=0.0,
-        allow_risk_taker_direct=False,
     )
     assert d.economic_authorized is False
     assert d.direct_authorized is False

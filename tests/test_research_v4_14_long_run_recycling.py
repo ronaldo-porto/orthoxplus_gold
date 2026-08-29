@@ -60,7 +60,7 @@ def test_escape_can_be_disabled():
 
 def test_v4140_wiring_and_long_run_capacity_profile():
     assert BOUNDED_LOSS_ESCAPE_VERSION == "two_stage_bounded_loss_escape_v4_14_3"
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
     assert 'reason="BOUNDED_LOSS_ESCAPE"' in SRC
     assert 'pressure_reason = "PARKED_RECYCLE"' not in SRC
     assert "research_max_total_open_books=8" in LAUNCHER

@@ -17,7 +17,7 @@ def _hazard():
     return HazardPrediction(any_fill=0.02, actionable_fill=0.01, dust=0.0, source="cell", usable=True, n_at_risk=40, ttl_ms=500.0, remaining_any_fill=0.02)
 
 def test_st64_policy_and_operational_breadth_target():
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
     assert 'research_score_target_books", 88' in SRC
     assert 'and score_deficit > 0' in SRC
     assert 'research_score_target_books=88' in RUNNER
@@ -37,20 +37,20 @@ def test_score_taker_requires_in_progress_kappa_and_maker_evidence():
     cold = hybrid_taker_decision(
         unrealized_pnl_bps=8.0, maker_exit_ev=-10.0, crossing_cost_bps=2.0,
         observations_remaining=3, required_observations=3, maker_fill_hazard=0.02,
-        allow_economic_taker=False, allow_economic_taker_direct=False, allow_risk_taker_direct=False,
+        allow_economic_taker=False, allow_economic_taker_direct=False,
     )
     assert cold.score_authorized is False
     no_evidence = hybrid_taker_decision(
         unrealized_pnl_bps=-4.0, maker_exit_ev=-10.0, crossing_cost_bps=2.0,
         observations_remaining=1, required_observations=3, maker_fill_hazard=None, hazard=None,
-        allow_economic_taker=False, allow_economic_taker_direct=False, allow_risk_taker_direct=False,
+        allow_economic_taker=False, allow_economic_taker_direct=False,
     )
     assert no_evidence.score_authorized is False
     one_away = hybrid_taker_decision(
         unrealized_pnl_bps=5.0, maker_exit_ev=1.9, crossing_cost_bps=4.0,
         observations_remaining=1, required_observations=3, maker_fill_hazard=0.02,
         allow_economic_taker=False, allow_economic_taker_direct=False,
-        allow_aggressive_positive_ev_taker=False, allow_risk_taker_direct=False,
+        allow_aggressive_positive_ev_taker=False,
     )
     assert one_away.score_authorized is True
     assert one_away.direct_authorized is True

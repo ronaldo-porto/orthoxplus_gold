@@ -377,26 +377,26 @@ if QUALIFIED_CORE_EXACT_MIN_VERSION != "qualified_core_exact_min_v4_13_7":
 if QUALIFIED_CORE_STALE_TTL_VERSION != "qualified_core_velocity_stale_ttl_v4_13_7":
     raise SystemExit("ERROR: stale V4.13.7 qualified-Core stale-TTL helper")
 if BOUNDED_LOSS_ESCAPE_VERSION != "two_stage_bounded_loss_escape_v4_14_3":
-    raise SystemExit("ERROR: stale V4.14.3 two-stage bounded-loss helper")
+    raise SystemExit("ERROR: stale V4.14.4 two-stage bounded-loss helper")
 if bounded_loss_escape_reason(
     taker_net_bps=-14.17, peak_taker_net_bps=-5.0, inventory_age=2.0,
     maker_net_bps=84.98, failed_exit_count=1, soft_floor_bps=-8.0,
     hard_trigger_bps=-18.0, hard_floor_bps=-25.0, min_drawdown_bps=2.0,
 ) != "SOFT_MAKER_HOLD":
-    raise SystemExit("ERROR: V4.14.3 profitable-Maker soft hold contract failed")
+    raise SystemExit("ERROR: V4.14.4 profitable-Maker soft hold contract failed")
 if not bounded_loss_escape_applies(
     taker_net_bps=-21.72, peak_taker_net_bps=-5.0, inventory_age=2.0,
     maker_net_bps=72.35, failed_exit_count=1, soft_floor_bps=-8.0,
     hard_trigger_bps=-18.0, hard_floor_bps=-25.0, min_drawdown_bps=2.0,
 ):
-    raise SystemExit("ERROR: V4.14.3 hard-stage tail recycle contract failed")
+    raise SystemExit("ERROR: V4.14.4 hard-stage tail recycle contract failed")
 if bounded_loss_escape_applies(
     taker_net_bps=-26.0, peak_taker_net_bps=-11.43, inventory_age=2.0,
     soft_floor_bps=-8.0, hard_trigger_bps=-18.0, hard_floor_bps=-25.0, min_drawdown_bps=2.0,
 ):
-    raise SystemExit("ERROR: V4.14.3 bounded-loss hard corridor widened")
+    raise SystemExit("ERROR: V4.14.4 bounded-loss hard corridor widened")
 if counts_against_productive_open_cap(has_inventory=True, is_liveness_parked=False, is_dust=True):
-    raise SystemExit("ERROR: V4.14.3 dust must not consume productive active slots")
+    raise SystemExit("ERROR: V4.14.4 dust must not consume productive active slots")
 core_admission = admit_minimum_order(
     safe_size=0.08273, min_order=0.25, trading_ev=0.06, inventory_risk=0.12,
     exit_capacity=0.08447, volume_headroom=0.80, remaining_inventory=1.20,
@@ -591,7 +591,7 @@ if authoritative_execution_lane(
 print("V4.13.7 CORE recycle + V4.13.6 density + V4.13.5 exit authority + V4.13.4 authoritative lanes OK")
 PYV413PRODUCTIVITY
 # Internal runner: run_miner_multi.sh
-# SN79 launcher for Strategy1_Research V4.12.18 Inventory-State Decoupling (Miner 1).
+# SN79 launcher for Strategy1_Research V4.14.4 RealNet Defect Fix P1 (Miner 1).
 # Default PM2 name: sn79-m1 | Default Axon port: 8091
 
 WALLET_NAME="${WALLET_NAME:-taos}"
@@ -624,14 +624,46 @@ done
 
 [[ -f "$REPO_ROOT/run_miner_multi.sh" ]] || { echo "run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research.py" ]] || { echo "Strategy1_Research.py missing" >&2; exit 1; }
-grep -q 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' "$AGENT_PATH/Strategy1_Research.py" || {
-  echo "ERROR: Strategy1_Research.py is not wide_kappa_wave_v4_14_3" >&2
+grep -q 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' "$AGENT_PATH/Strategy1_Research.py" || {
+  echo "ERROR: Strategy1_Research.py is not realnet_authority_rotation_v4_14_4" >&2
   exit 1
 }
 [[ -f "$AGENT_PATH/Strategy1_Debug.py" ]] || { echo "Strategy1_Debug.py missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/research_fill_hazard.py" ]] || { echo "research_fill_hazard.py missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/research_unified_exit.py" ]] || { echo "research_unified_exit.py missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/research_entry_size.py" ]] || { echo "research_entry_size.py missing" >&2; exit 1; }
+[[ -f "$AGENT_PATH/research_realnet_exit_authority.py" ]] || { echo "research_realnet_exit_authority.py missing" >&2; exit 1; }
+[[ -f "$AGENT_PATH/research_scheduler_retry.py" ]] || { echo "research_scheduler_retry.py missing" >&2; exit 1; }
+PYTHONPATH="$AGENT_PATH${PYTHONPATH:+:$PYTHONPATH}" python - <<'PYV4144REALNET'
+from research_realnet_exit_authority import (
+    ACTION_PARK, ACTION_TAKER_ESCAPE, REALNET_EXIT_AUTHORITY_VERSION, arbitrate_realnet_exit,
+)
+from research_scheduler_retry import SCHEDULER_RETRY_VERSION, SchedulerRetryGuard
+if REALNET_EXIT_AUTHORITY_VERSION != "realnet_exit_authority_v4_14_4":
+    raise SystemExit("ERROR: stale V4.14.4 RealNet exit-authority helper")
+if SCHEDULER_RETRY_VERSION != "scheduler_retry_rotation_v4_14_4":
+    raise SystemExit("ERROR: stale V4.14.4 scheduler retry helper")
+hard = arbitrate_realnet_exit(
+    taker_net_bps=-20.0, maker_net_bps=3.0, maker_executable=True,
+    failed_exit_count=0, inventory_age=0, liveness_park=True, liveness_floor_bps=-12.0,
+)
+if hard.action != ACTION_TAKER_ESCAPE:
+    raise SystemExit("ERROR: V4.14.4 -18..-25 hard exit authority contract failed")
+park = arbitrate_realnet_exit(
+    taker_net_bps=-25.01, maker_net_bps=-5.0, maker_executable=True,
+    failed_exit_count=100, inventory_age=100, adverse_evidence=True,
+)
+if park.action != ACTION_PARK:
+    raise SystemExit("ERROR: V4.14.4 absolute bounded-loss floor contract failed")
+g = SchedulerRetryGuard(negative_ev_base_ticks=8, toxic_base_ticks=16, max_cooldown_ticks=64)
+d = g.record_reject(7, tick=100, reason="NEGATIVE_EV", fingerprint=("NEGATIVE_EV", -3.0))
+if not d.blocked or not g.should_skip(7, tick=101, fingerprint=("NEGATIVE_EV", -3.0)).blocked:
+    raise SystemExit("ERROR: V4.14.4 scheduler quarantine contract failed")
+g.reset()
+if g.should_skip(7, tick=0, fingerprint=("NEGATIVE_EV", -3.0)).blocked:
+    raise SystemExit("ERROR: V4.14.4 scheduler session reset contract failed")
+print("V4.14.4 RealNet exit authority + scheduler retry rotation API OK")
+PYV4144REALNET
 [[ -f "$REPO_ROOT/taos/im/validator/trade.py" ]] || { echo "validator trade.py missing" >&2; exit 1; }
 grep -q 'Preserve EVERY timestamp' "$REPO_ROOT/taos/im/validator/trade.py" || {
   echo "ERROR: validator trade.py missing restart empty-timestamp preservation fix" >&2
@@ -832,14 +864,14 @@ mkdir -p "$RESEARCH_DIR"
 
 # V4.3 Phase 5 hysteresis + adaptive TTL. Dust escape stays experimental/off.
 # Hard dust/Kappa invariants and Phase 4 Score-EV ranking are unchanged.
-PARAMS="enable_mm_strategy=1 enable_kappa_strategy=0 lazy_load=1 \
+PARAMS="enable_mm_strategy=1 lazy_load=1 \
 fast_update=1 sync_event_csv=0 history_len=0 \
 mm_base_size=0.25 max_inventory_base=1.20 inventory_close_threshold=0.25 \
 max_mm_books_per_tick=6 max_managed_books_per_tick=10 \
 min_expected_alpha=0.18 min_expected_realized_pnl=0.0 \
 mm_expiry_period_ns=500000000 maintenance_size_mult=0.25 \
 passive_exit_only=1 aggressive_close_min_ticks=300 position_max_ticks=300 \
-mm_skip_inactive_tier=1 toxic_loss_streak=4 enable_auto_tuning=0 allow_tuning_config=0 \
+mm_skip_inactive_tier=1 toxic_loss_streak=4 \
 verbose_log=0 log_every_n=100 log_mm_strategy=0 log_direction=0 log_book_profile=0 \
 log_regime=0 log_momentum_pnl=0 log_book_memory=0 \
 debug_enabled=1 debug_every_n=${RESEARCH_EVERY_N} debug_jsonl=0 debug_book_id=${RESEARCH_BOOK} \
@@ -872,17 +904,17 @@ research_actionable_fill_prior_strength=6.0 research_actionable_fill_prior_actio
 research_actionable_fill_rank_weight=0.10 research_dust_risk_rank_penalty=0.18 \
 research_dust_risk_target=0.15 research_kappa_one_away_bonus=0.10 \
 research_partial_fill_hold_enabled=1 research_partial_fill_hold_min_dust_prob=0.12 \
-research_partial_fill_hold_one_away_only=0 research_partial_fill_hold_max_ns=750000000 \
+research_partial_fill_hold_max_ns=750000000 \
 research_force_mm_post_only=1 research_dust_compact_adaptive=1 \
 research_dust_compact_cooldown_ticks=100 research_dust_compact_max_cooldown_ticks=600 \
 research_dust_compact_prior_fill=0.02 research_dust_compact_prior_strength=8.0 \
-research_enable_fill_hazard=1 research_use_fill_hazard_for_policy=0 \
-research_enable_score_ev=1 research_completion_ev_cache_ticks=20 research_density_priority_enabled=1 research_density_priority_min_candidates=1 research_enable_score_velocity=1 research_score_velocity_weight=0.08 research_enable_quote_hysteresis=1 \
-research_enable_adaptive_ttl=1 research_enable_dust_escape=0 research_ttl_min_ms=250 research_ttl_max_ms=1500 research_quiet_ttl_ms=1000 research_quiet_exit_ttl_ms=950 research_one_away_exit_ttl_ms=975 \
+research_enable_fill_hazard=1 \
+research_completion_ev_cache_ticks=20 research_density_priority_enabled=1 research_density_priority_min_candidates=1 research_enable_score_velocity=1 research_score_velocity_weight=0.08 research_enable_quote_hysteresis=1 \
+research_enable_adaptive_ttl=1 research_ttl_min_ms=250 research_ttl_max_ms=1500 research_quiet_ttl_ms=1000 research_quiet_exit_ttl_ms=950 research_one_away_exit_ttl_ms=975 \
 research_enable_fast_candidate_screen=1 research_candidate_count=10 research_cohort_size=8 research_cohort_exploration_slots=2 research_max_open_books=6 research_max_active_open_books=6 research_max_total_open_books=8 research_max_parked_open_books=4 research_max_total_abs_base=2.0 research_kappa_conversion_pressure_enabled=1 research_kappa_conversion_reserve_slots=3 research_kappa_exploration_slots=2 research_kappa_flywheel_enabled=1 research_kappa_productivity_enabled=1 research_wide_kappa_min_density_observations=6 research_wide_kappa_preferred_density_observations=8 research_wide_kappa_raw_target=0.35 research_core_probe_enabled=1 research_persistent_maker_enabled=1 research_hysteresis_min_price_ticks=3 research_post_only_safety_ticks=2 \
 research_enable_lane_scheduler=1 research_enable_aggressive_coverage=1 research_coverage_slots=3 research_completion_slots=5 research_realization_slots=3 research_shared_overflow_slots=1 \
 research_lifecycle_taker_exit_prob=0.30 research_lifecycle_slippage_bps=0.75 research_lifecycle_holding_bps=0.50 \
-research_positive_ev_min_order_override=0 research_positive_ev_min_safe_fraction=0.35 research_positive_ev_min_exit_fraction=0.45 research_positive_ev_min_trading_ev=0.05 \
+\
 research_one_away_exact_min_enabled=1 research_one_away_exact_min_ev_bps=0.0 research_one_away_exact_min_safe_fraction=0.15 research_one_away_exact_min_exit_fraction=0.20 \
 research_two_away_exact_min_enabled=1 research_two_away_exact_min_ev=0.0 research_two_away_exact_min_max_inventory_risk=0.35 research_two_away_exact_min_exit_fraction=0.20 research_two_away_exact_min_min_headroom=0.25 \
 research_qualified_core_exact_min_enabled=1 research_qualified_core_exact_min_ev=0.0 research_qualified_core_exact_min_max_inventory_risk=0.35 research_qualified_core_exact_min_exit_fraction=0.20 research_qualified_core_exact_min_min_headroom=0.25 research_qualified_core_stale_ttl_enabled=1 research_qualified_core_stale_ttl_ms=250  research_profitable_exit_persistence_enabled=1 research_profitable_exit_ttl_ms=3000 research_profitable_exit_min_net_bps=0.0 research_profitable_exit_reprice_ticks=3 \
@@ -891,7 +923,7 @@ research_enable_inventory_state_v2=1 research_enable_exit_urgency_v2=1 \
 research_enable_hybrid_realization_v2=1 research_enable_economic_taker=1 \
 research_enable_precise_reduction_qty=1 research_enable_dust_economic_gate=1 \
 research_enable_authoritative_kappa_state=1 research_enable_markout_v2=1 \
-research_inventory_liveness_enabled=1 research_fresh_maker_grace_enabled=1 research_fresh_maker_grace_ticks=3 research_positive_maker_veto_enabled=1 research_positive_maker_veto_floor_bps=1.0 research_positive_maker_veto_max_failed_exits=4 research_liveness_maker_failed_exits=3 research_liveness_maker_min_age_ticks=8 research_liveness_maker_floor_bps=-4.0 research_liveness_taker_failed_exits=8 research_liveness_taker_min_age_ticks=16 research_liveness_hard_failed_exits=12 research_liveness_hard_min_age_ticks=24 research_protected_park_failed_exits=4 research_protected_park_min_age_ticks=8 research_liveness_soft_taker_floor_bps=-8.0 research_liveness_hard_taker_floor_bps=-12.0 research_bounded_loss_escape_enabled=1 research_bounded_loss_escape_min_age_ticks=2 research_bounded_loss_escape_floor_bps=-25.0 research_bounded_loss_escape_hard_trigger_bps=-18.0 research_bounded_loss_escape_drawdown_bps=2.0 research_liveness_min_ev_advantage_bps=0.50 research_liveness_adverse_markout_bps=1.0 research_liveness_adverse_risk_floor=0.25 research_parked_refresh_ticks=25 research_parked_touch_move_bps=8.0 research_enable_fill_hazard_exit_compare=1 research_enable_sn79_action_utility=1 research_enable_score_taker_direct=1 research_enable_economic_taker_direct=1 research_economic_direct_max_loss_bps=0.0 research_enable_aggressive_positive_ev_taker=1 research_aggressive_positive_ev_min_net_bps=0.0 research_aggressive_positive_ev_switch_margin_bps=0.50 research_aggressive_positive_ev_one_away_margin_bps=0.0 research_aggressive_positive_ev_failed_exit_count=8 research_aggressive_positive_ev_min_age_ticks=16 research_aggressive_positive_ev_max_maker_fill=0.08 research_aggressive_positive_ev_min_urgency=0.30 research_maker_escalate_failed_exit_count=8 research_one_away_maker_escalate_failed_exit_count=3 research_enable_risk_taker_direct=0 research_risk_direct_max_loss_bps=-10.0 research_risk_direct_min_age_ticks=24 research_risk_direct_failed_exit_count=3 research_risk_direct_min_ev_advantage_bps=1.0 research_failed_exit_penalty_bps=0.75 research_exit_age_penalty_bps_per_tick=0.03 research_cancel_before_taker=1 research_sn79_pnl_scale_bps=8.0 research_sn79_pnl_weight=1.0 research_sn79_round_trip_weight=0.30 research_sn79_kappa_weight=0.35 research_sn79_coverage_weight=0.15 research_sn79_capital_release_weight=0.15 research_sn79_risk_reduction_weight=0.20 research_sn79_velocity_weight=0.25 research_sn79_downside_weight=0.45 research_sn79_min_utility_margin=0.03 research_sn79_max_score_subsidy_loss_bps=0.0 research_sn79_one_away_loss_floor_bps=0.0 research_sn79_two_away_loss_floor_bps=0.0 research_sn79_uncovered_loss_floor_bps=0.0 research_allow_score_loss_subsidy=0 research_kappa_lookback_ns=10800000000000 research_kappa_expiry_warning_frac=0.20 research_kappa_expiry_rank_bonus=0.20 research_suppress_qualified_acquisition=1 research_qualified_suppression_min_incomplete=1 research_deadline_scheduler_enabled=1 research_deadline_critical_urgency=0.50 research_deadline_rank_bonus=0.25 research_score_target_books=88 research_stale_maker_rescue_enabled=1 research_stale_maker_rescue_failed_exits=4 research_stale_maker_rescue_critical_failed_exits=1 research_stale_maker_rescue_floor_bps=-1.0 research_entry_recheck_ticks=12 research_hybrid_partial_frac_cap=0.90 research_ladder_passive_max=0.15 research_ladder_competitive_max=0.30 research_ladder_aggressive_max=0.45 research_enable_unified_exit=1 research_unified_maker_net_floor_bps=0.0 research_unified_stale_bridge_roundtrip_floor_bps=-12.0 research_unified_profit_lock_min_bps=1.0 research_unified_profit_lock_drawdown_bps=2.0 research_unified_switch_margin_bps=0.50 research_enable_protective_taker=1 research_protective_taker_loss_floor_bps=-2.0 research_protective_taker_ev_advantage_bps=1.0 research_protective_taker_failed_exits=6 research_protective_taker_min_age_ticks=8 research_protective_taker_adverse_bps=2.0 research_early_escape_enabled=1 research_early_escape_failed_exits=3 research_early_escape_min_age_ticks=5 research_early_escape_drawdown_bps=1.5 research_early_escape_floor_headroom_bps=0.75 research_early_escape_ev_advantage_bps=0.50 research_session_save_every_n=100"
+research_inventory_liveness_enabled=1 research_fresh_maker_grace_enabled=1 research_fresh_maker_grace_ticks=3 research_positive_maker_veto_enabled=1 research_positive_maker_veto_floor_bps=1.0 research_positive_maker_veto_max_failed_exits=4 research_liveness_maker_failed_exits=3 research_liveness_maker_min_age_ticks=8 research_liveness_maker_floor_bps=-4.0 research_liveness_taker_failed_exits=8 research_liveness_taker_min_age_ticks=16 research_liveness_hard_failed_exits=12 research_liveness_hard_min_age_ticks=24 research_protected_park_failed_exits=4 research_protected_park_min_age_ticks=8 research_liveness_soft_taker_floor_bps=-8.0 research_liveness_hard_taker_floor_bps=-12.0 research_bounded_loss_escape_enabled=1 research_bounded_loss_escape_min_age_ticks=2 research_bounded_loss_escape_floor_bps=-25.0 research_bounded_loss_escape_hard_trigger_bps=-18.0 research_bounded_loss_escape_drawdown_bps=2.0 research_liveness_min_ev_advantage_bps=0.50 research_liveness_adverse_markout_bps=1.0 research_liveness_adverse_risk_floor=0.25 research_parked_refresh_ticks=25 research_parked_touch_move_bps=8.0 research_enable_fill_hazard_exit_compare=1 research_enable_sn79_action_utility=1 research_enable_score_taker_direct=1 research_enable_economic_taker_direct=1 research_economic_direct_max_loss_bps=0.0 research_enable_aggressive_positive_ev_taker=1 research_aggressive_positive_ev_min_net_bps=0.0 research_aggressive_positive_ev_switch_margin_bps=0.50 research_aggressive_positive_ev_one_away_margin_bps=0.0 research_aggressive_positive_ev_failed_exit_count=8 research_aggressive_positive_ev_min_age_ticks=16 research_aggressive_positive_ev_max_maker_fill=0.08 research_aggressive_positive_ev_min_urgency=0.30 research_maker_escalate_failed_exit_count=8 research_one_away_maker_escalate_failed_exit_count=3 research_risk_direct_max_loss_bps=-10.0 research_failed_exit_penalty_bps=0.75 research_exit_age_penalty_bps_per_tick=0.03 research_cancel_before_taker=1 research_sn79_pnl_scale_bps=8.0 research_sn79_pnl_weight=1.0 research_sn79_round_trip_weight=0.30 research_sn79_kappa_weight=0.35 research_sn79_coverage_weight=0.15 research_sn79_capital_release_weight=0.15 research_sn79_risk_reduction_weight=0.20 research_sn79_velocity_weight=0.25 research_sn79_downside_weight=0.45 research_sn79_min_utility_margin=0.03 research_kappa_lookback_ns=10800000000000 research_kappa_expiry_warning_frac=0.20 research_kappa_expiry_rank_bonus=0.20 research_suppress_qualified_acquisition=1 research_qualified_suppression_min_incomplete=1 research_deadline_scheduler_enabled=1 research_deadline_critical_urgency=0.50 research_deadline_rank_bonus=0.25 research_score_target_books=88 research_stale_maker_rescue_enabled=1 research_stale_maker_rescue_failed_exits=4 research_stale_maker_rescue_critical_failed_exits=1 research_stale_maker_rescue_floor_bps=-1.0 research_entry_recheck_ticks=12 research_hybrid_partial_frac_cap=0.90 research_ladder_passive_max=0.15 research_ladder_competitive_max=0.30 research_ladder_aggressive_max=0.45 research_enable_unified_exit=1 research_unified_maker_net_floor_bps=0.0 research_unified_stale_bridge_roundtrip_floor_bps=-12.0 research_unified_profit_lock_min_bps=1.0 research_unified_profit_lock_drawdown_bps=2.0 research_unified_switch_margin_bps=0.50 research_enable_protective_taker=1 research_protective_taker_loss_floor_bps=-2.0 research_protective_taker_ev_advantage_bps=1.0 research_protective_taker_failed_exits=6 research_protective_taker_min_age_ticks=8 research_protective_taker_adverse_bps=2.0 research_early_escape_enabled=1 research_early_escape_failed_exits=3 research_early_escape_min_age_ticks=5 research_early_escape_drawdown_bps=1.5 research_early_escape_floor_headroom_bps=0.75 research_early_escape_ev_advantage_bps=0.50 research_session_save_every_n=100"
 
 echo "[Strategy1_Research] pm2_name=$PM2_NAME"
 echo "[Strategy1_Research] wallet=$WALLET_NAME"
@@ -930,11 +962,11 @@ grep -q 'PROFITABLE_EXIT_PERSISTENCE_VERSION = "profitable_maker_exit_persistenc
   echo "ERROR: V4.13.8 profitable Maker exit persistence helper missing" >&2
   exit 1
 }
-echo "[Strategy1_Research] version=wide_kappa_wave_v4_14_3"
+echo "[Strategy1_Research] version=realnet_authority_rotation_v4_14_4"
 echo "[Strategy1_Research] log_dir=$RESEARCH_DIR"
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
-  echo "V4.14.3 dust-slot + two-stage-loss launcher preflight-only PASS"
+  echo "V4.14.4 dust-slot + two-stage-loss launcher preflight-only PASS"
   exit 0
 fi
 

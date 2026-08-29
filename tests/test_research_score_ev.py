@@ -16,12 +16,10 @@ from research_score_ev import (
     compute_score_ev,
     completion_value,
     hard_safety_blocks,
-    legacy_global_rank,
     required_observation_count,
     round_trip_velocity,
     scheduler_bucket_counts,
     score_velocity_priority,
-    select_rank,
 )
 
 
@@ -118,21 +116,6 @@ def test_hard_safety_always_wins():
     assert blocked.reject_reason == "INVENTORY_BLOCKED"
     assert unsafe.reject_reason == "UNSAFE"
     assert blocked.final_score == float("-inf")
-    assert select_rank(
-        enable_score_ev=True, score_ev=blocked, legacy_rank=9.0,
-    ) is None
-
-
-def test_feature_flag_restores_legacy_ranking():
-    score = _base(realized_observation_count=2, required=3)
-    legacy = legacy_global_rank(0.30, 0.0)
-    assert select_rank(
-        enable_score_ev=False, score_ev=score, legacy_rank=legacy,
-    ) == legacy
-    assert select_rank(
-        enable_score_ev=True, score_ev=score, legacy_rank=legacy,
-    ) == score.final_score
-    assert abs(legacy - 0.30 * 0.72) < 1e-12 or abs(legacy - 0.216) < 1e-9
 
 
 def test_score_velocity_priority_one_away_beats_two_away_and_coverage():

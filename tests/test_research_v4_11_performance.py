@@ -17,12 +17,12 @@ LAUNCHER = (ROOT / "run_strategy1_research_test_multi.sh").read_text(encoding="u
 
 
 def test_v411_contract_is_enabled():
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
     assert ("research_candidate_count=12" in LAUNCHER or "research_candidate_count=10" in LAUNCHER)
     assert ("research_cohort_size=10" in LAUNCHER or "research_cohort_size=8" in LAUNCHER)
-    assert ("research_positive_ev_min_order_override=1" in LAUNCHER or "research_positive_ev_min_order_override=0" in LAUNCHER)
+    assert "research_positive_ev_min_order_override" not in LAUNCHER
     assert "research_quiet_ttl_ms=1000" in LAUNCHER
-    assert "research_allow_score_loss_subsidy=0" in LAUNCHER
+    assert "research_allow_score_loss_subsidy" not in LAUNCHER
 
 
 def test_lane_scheduler_obeys_hard_global_cap():
@@ -95,7 +95,7 @@ def test_lifecycle_cost_includes_probable_exit_cost():
     assert abs(cost.total_bps - 2.7) < 1e-12
 
 
-def test_positive_lifecycle_ev_can_promote_one_minimum_clip():
+def test_one_away_positive_ev_can_promote_one_minimum_clip():
     d = admit_minimum_order(
         safe_size=0.10,
         min_order=0.25,
@@ -105,18 +105,19 @@ def test_positive_lifecycle_ev_can_promote_one_minimum_clip():
         exit_capacity=0.125,
         volume_headroom=1.0,
         remaining_inventory=1.2,
-        enable_positive_ev_override=True,
-        positive_ev_min_safe_fraction=0.35,
-        positive_ev_min_exit_fraction=0.45,
-        positive_ev_min_trading_ev=0.05,
+        observations_remaining=1,
+        enable_one_away_exact_min=True,
+        one_away_min_safe_fraction=0.15,
+        one_away_min_exit_fraction=0.20,
+        one_away_min_trading_ev=0.0,
     )
     assert d.allow is True
     assert d.band == ADMISSION_NEAR_SAFE
     assert d.size == 0.25
-    assert d.trigger == "POSITIVE_EV_OVERRIDE"
+    assert d.trigger == "ONE_AWAY_EXACT_MIN"
 
 
-def test_negative_ev_never_uses_minimum_clip_override():
+def test_negative_ev_never_uses_one_away_exact_min():
     d = admit_minimum_order(
         safe_size=0.10,
         min_order=0.25,
@@ -125,8 +126,11 @@ def test_negative_ev_never_uses_minimum_clip_override():
         exit_capacity=0.125,
         volume_headroom=1.0,
         remaining_inventory=1.2,
-        enable_positive_ev_override=True,
-        positive_ev_min_trading_ev=0.05,
+        observations_remaining=1,
+        enable_one_away_exact_min=True,
+        one_away_min_safe_fraction=0.15,
+        one_away_min_exit_fraction=0.20,
+        one_away_min_trading_ev=0.0,
     )
     assert d.allow is False
 
@@ -136,4 +140,6 @@ def test_v411_lifecycle_and_quiet_ttl_are_wired_before_execution():
     assert "needs_refresh=needs_refresh" in SRC
     assert "max_candidates=cap" in SRC
     assert 'reason = "QUIET_LONG"' in SRC
-    assert "POSITIVE_EV_OVERRIDE" in (STRATEGY_DIR / "research_entry_size.py").read_text(encoding="utf-8")
+    entry_src = (STRATEGY_DIR / "research_entry_size.py").read_text(encoding="utf-8")
+    assert "POSITIVE_EV_OVERRIDE" not in entry_src
+    assert "ONE_AWAY_EXACT_MIN" in entry_src

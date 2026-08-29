@@ -146,14 +146,14 @@ fi
 
 # BaseStrategy V4.1 policy remains frozen. Adaptive parameters are bounded
 # execution-calibration overlays, not replacements for risk invariants.
-PARAMS="enable_mm_strategy=1 enable_kappa_strategy=0 lazy_load=1 \
+PARAMS="enable_mm_strategy=1 lazy_load=1 \
 fast_update=1 sync_event_csv=0 history_len=0 log_latency=0 \
 mm_base_size=0.25 max_inventory_base=1.20 inventory_close_threshold=0.25 \
 max_mm_books_per_tick=4 max_managed_books_per_tick=8 \
 min_expected_alpha=0.18 min_expected_realized_pnl=0.0 \
 mm_expiry_period_ns=500000000 maintenance_size_mult=0.25 \
 passive_exit_only=1 aggressive_close_min_ticks=300 position_max_ticks=300 \
-mm_skip_inactive_tier=1 toxic_loss_streak=4 enable_auto_tuning=0 allow_tuning_config=0 \
+mm_skip_inactive_tier=1 toxic_loss_streak=4 \
 verbose_log=0 log_every_n=100 log_mm_strategy=0 log_direction=0 log_book_profile=0 \
 log_regime=0 log_momentum_pnl=0 log_book_memory=0 \
 debug_enabled=${LOG_ENABLED} debug_every_n=${LOG_EVERY_N} debug_jsonl=0 debug_book_id=${LOG_BOOK} \

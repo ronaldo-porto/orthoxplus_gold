@@ -305,10 +305,6 @@ def admit_minimum_order(
     min_trading_ev: float = DEFAULT_NEAR_SAFE_MIN_EV,
     max_inventory_risk: float = DEFAULT_NEAR_SAFE_MAX_INVENTORY_RISK,
     min_headroom: float = DEFAULT_NEAR_SAFE_MIN_HEADROOM,
-    enable_positive_ev_override: bool = False,
-    positive_ev_min_safe_fraction: float = 0.35,
-    positive_ev_min_exit_fraction: float = 0.45,
-    positive_ev_min_trading_ev: float = 0.05,
     observations_remaining: int | None = None,
     enable_one_away_exact_min: bool = False,
     one_away_min_trading_ev: float = 0.0,
@@ -457,37 +453,7 @@ def admit_minimum_order(
                 promoted=True,
             )
 
-        # V4.11 performance override: the multiplicative risk model can shrink
-        # a fundamentally executable 0.25 clip to ~0.09-0.15.  Permit exactly
-        # one exchange-minimum clip only when lifecycle EV is strongly positive,
-        # inventory risk/headroom remain healthy, and modeled exit capacity is
-        # still a meaningful fraction of the minimum. Hard inventory room wins.
-        safe_frac = 0.0 if floor <= 1e-12 else safe / floor
-        exit_frac = 0.0 if floor <= 1e-12 else max(0.0, _finite(exit_capacity)) / floor
-        override_ok = (
-            bool(enable_positive_ev_override)
-            and floor > 1e-12
-            and safe_frac + 1e-12 >= max(0.0, _finite(positive_ev_min_safe_fraction, 0.35))
-            and exit_frac + 1e-12 >= max(0.0, _finite(positive_ev_min_exit_fraction, 0.45))
-            and _finite(trading_ev) >= _finite(positive_ev_min_trading_ev, 0.05)
-            and _finite(inventory_risk) <= _finite(max_inventory_risk) + 1e-12
-            and _finite(volume_headroom) + 1e-12 >= _finite(min_headroom)
-        )
-        if not override_ok:
-            return _reject("UNSAFE")
-        size = floor if room is None else min(floor, room)
-        if size + 1e-12 < floor:
-            return _reject("INVENTORY_ROOM")
-        return MinOrderAdmission(
-            band=ADMISSION_NEAR_SAFE,
-            allow=True,
-            size=size,
-            safe_size=safe,
-            min_order=floor,
-            tolerance=tol,
-            trigger="POSITIVE_EV_OVERRIDE",
-            promoted=True,
-        )
+        return _reject("UNSAFE")
 
     if band == ADMISSION_SAFE:
         size = safe

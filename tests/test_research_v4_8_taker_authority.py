@@ -11,10 +11,8 @@ from research_exit_hazard_ev import compare_maker_taker_exit
 from research_fill_hazard import HazardPrediction
 from research_hybrid import (
     TAKER_AUTH_ECONOMIC,
-    TAKER_AUTH_RISK,
     TAKER_AUTH_SCORE,
     hybrid_taker_decision,
-    score_loss_floor_bps,
 )
 from research_realization import ACTION_TAKER, evaluate_realization
 from research_realization_ladder import apply_realization_ladder, classify_realization_rung
@@ -53,14 +51,7 @@ def _econ(*, take: bool, holding: float = 8.0, taker: float = 2.0) -> TakerEcono
     )
 
 
-def test_kappa_aware_score_loss_floors():
-    assert score_loss_floor_bps(observations_remaining=1) == -8.0
-    assert score_loss_floor_bps(observations_remaining=2) == -6.0
-    assert score_loss_floor_bps(observations_remaining=3) == -5.0
-    assert score_loss_floor_bps(observations_remaining=0) == -2.0
-
-
-def test_one_away_score_taker_accepts_bounded_six_bps_concession():
+def test_score_taker_loss_subsidy_is_removed():
     decision = hybrid_taker_decision(
         economics=_econ(take=False),
         unrealized_pnl_bps=-4.0,
@@ -73,14 +64,31 @@ def test_one_away_score_taker_accepts_bounded_six_bps_concession():
         urgency=0.20,
         allow_economic_taker=False,
         allow_economic_taker_direct=False,
-        allow_risk_taker_direct=False,
+    )
+    assert decision.allowed_loss_floor_bps == 0.0
+    assert decision.score_authorized is False
+    assert decision.direct_authorized is False
+
+
+def test_one_away_score_taker_rejects_negative_six_bps_concession():
+    decision = hybrid_taker_decision(
+        economics=_econ(take=False),
+        unrealized_pnl_bps=-4.0,
+        maker_exit_ev=-10.0,
+        crossing_cost_bps=2.0,
+        hazard=_pred(),
+        observations_remaining=1,
+        required_observations=3,
+        inventory_ratio=0.20,
+        urgency=0.20,
+        allow_economic_taker=False,
+        allow_economic_taker_direct=False,
     )
     assert decision.maker_taker_ev is not None
     assert decision.maker_taker_ev.expected_taker_exit_value == -6.0
-    assert decision.score_authorized is True
-    assert decision.direct_authorized is True
-    assert decision.taker_authority == TAKER_AUTH_SCORE
-    assert decision.allowed_loss_floor_bps == -8.0
+    assert decision.score_authorized is False
+    assert decision.direct_authorized is False
+    assert decision.allowed_loss_floor_bps == 0.0
 
 
 def test_one_away_score_taker_rejects_beyond_eight_bps_floor():
@@ -96,7 +104,6 @@ def test_one_away_score_taker_rejects_beyond_eight_bps_floor():
         urgency=0.20,
         allow_economic_taker=False,
         allow_economic_taker_direct=False,
-        allow_risk_taker_direct=False,
     )
     assert decision.maker_taker_ev is not None
     assert decision.maker_taker_ev.expected_taker_exit_value == -9.0
@@ -135,7 +142,6 @@ def test_economic_direct_hard_loss_bound_prevents_direct_bypass():
         hazard=_pred(),
         enable_sn79_action_utility=False,
         economic_direct_max_loss_bps=-20.0,
-        allow_risk_taker_direct=False,
     )
     assert decision.maker_taker_ev is not None
     assert decision.maker_taker_ev.prefer_taker is True
@@ -157,7 +163,7 @@ def test_economic_direct_hard_loss_bound_prevents_direct_bypass():
     assert action != ACTION_TAKER
 
 
-def test_risk_taker_after_repeated_failed_exits():
+def test_legacy_direct_risk_authority_is_removed():
     decision = hybrid_taker_decision(
         economics=_econ(take=False, holding=20.0, taker=2.0),
         unrealized_pnl_bps=-10.0,
@@ -168,17 +174,14 @@ def test_risk_taker_after_repeated_failed_exits():
         allow_economic_taker=False,
         allow_economic_taker_direct=False,
         allow_score_taker_direct=False,
-        allow_risk_taker_direct=True,
         inventory_state="CAUTION",
         failed_exit_count=3,
         time_since_first_exit_attempt=20.0,
         inventory_age=20.0,
     )
-    assert decision.risk_authorized is True
-    assert decision.direct_authorized is True
-    assert decision.taker_authority == TAKER_AUTH_RISK
-    assert decision.take is True
-
+    assert decision.risk_authorized is False
+    assert decision.direct_authorized is False
+    assert decision.take is False
 
 def test_failed_exit_and_age_penalty_reduce_wait_ev():
     baseline = compare_maker_taker_exit(

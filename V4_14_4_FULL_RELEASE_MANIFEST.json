@@ -1,0 +1,55 @@
+{
+  "artifact": "SN79 St6.5 Research V4.14.4 RealNet Defect Fix P1 FULL PROJECT",
+  "baseline": "sn-79_St6.4_RESEARCH_v4.14.3_ENGINE_CLEANUP_P1",
+  "baseline_policy": "wide_kappa_wave_v4_14_3",
+  "policy": "realnet_authority_rotation_v4_14_4",
+  "engine_revision": "lean_engine_p1_realnet_fix_v4_14_4",
+  "scope": [
+    "single non-catastrophic exit authority for -8/-18/-25 bounded-loss corridor",
+    "cross-tick TOXIC/NEGATIVE_EV/AVOID scheduler quarantine before lane allocation",
+    "session reset of retry quarantine",
+    "fail-closed launcher preflight for V4.14.4 helper modules"
+  ],
+  "validation": {
+    "active_research_suite": "509/509 PASS",
+    "python_compile": "PASS",
+    "strategy_compileall": "PASS",
+    "launcher_bash_syntax": "PASS",
+    "launcher_preflight": "PASS",
+    "repository_wide_pytest": "NOT ACCEPTANCE GATE: baseline optional dependencies/archive shadowing"
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research.py": {
+      "bytes": 639611,
+      "sha256": "83d3d5ea47d6d752b440e95b715f0ad8e5b6eba0cef20d3697a068516c056248"
+    },
+    "agents/strategy/research_realnet_exit_authority.py": {
+      "bytes": 8229,
+      "sha256": "52828a8acf0578e05eda5afdfc097ca4903678f7d22987d490032b425c4f9e01"
+    },
+    "agents/strategy/research_scheduler_retry.py": {
+      "bytes": 6529,
+      "sha256": "40568ee72d5fe14ce7188ea5b9f82c3935ac9681d73e9fdb9a5c840b529b69ae"
+    },
+    "run_strategy1_research_test_multi.sh": {
+      "bytes": 56392,
+      "sha256": "70b7c8f0a9e2041a03fca6cac651884e5bfae8e8b1f0f9dd24b4190ac3a113d0"
+    },
+    "tests/test_research_v4_14_4_realnet_defects.py": {
+      "bytes": 4891,
+      "sha256": "2b2f4125abf7af50853570453b9e88ce0d871e5b3b0f7ad51d6e7f87eb48721e"
+    },
+    "tests/test_research_v4_14_4_integration_contract.py": {
+      "bytes": 1969,
+      "sha256": "560c2a919507bc5e2003db9e3a6b02634c5329c767a6ba3fee3115388fb1ecd3"
+    },
+    "SN79_ST65_RESEARCH_V4_14_4_REALNET_DEFECT_FIX_P1.md": {
+      "bytes": 5074,
+      "sha256": "3e05dfaecbfa3477b67477a824b2355b5db0b85798b9644d7a82a238b13f2bb9"
+    },
+    "V4_14_4_RESEARCH_SHA256SUMS.txt": {
+      "bytes": 783,
+      "sha256": "a9143da5b225ba6203c6a676a6c74fd2b0150e90c3ed426e3faf3838bc0c4e24"
+    }
+  }
+}

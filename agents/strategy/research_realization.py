@@ -52,7 +52,6 @@ from research_realization_ladder import (
     classify_realization_rung,
 )
 from research_inventory_state import (
-    INVENTORY_STATES,
     apply_exit_action_for_state,
     classify_inventory_state,
 )
@@ -516,11 +515,7 @@ def evaluate_realization(
     allow_score_taker_direct: bool = True,
     allow_economic_taker_direct: bool = True,
     economic_direct_max_loss_bps: float = -20.0,
-    allow_risk_taker_direct: bool = True,
     risk_direct_max_loss_bps: float = -25.0,
-    risk_direct_min_age_ticks: float = 24.0,
-    risk_direct_failed_exit_count: int = 3,
-    risk_direct_min_ev_advantage_bps: float = 1.0,
     allow_aggressive_positive_ev_taker: bool = True,
     aggressive_positive_ev_min_net_bps: float = 0.0,
     aggressive_positive_ev_switch_margin_bps: float = 0.50,
@@ -545,10 +540,6 @@ def evaluate_realization(
     sn79_velocity_weight: float = 0.25,
     sn79_downside_weight: float = 0.45,
     sn79_min_utility_margin: float = 0.03,
-    sn79_max_score_subsidy_loss_bps: float = -2.0,
-    sn79_one_away_loss_floor_bps: float = -8.0,
-    sn79_two_away_loss_floor_bps: float = -6.0,
-    sn79_uncovered_loss_floor_bps: float = -5.0,
 ) -> RealizationDecision:
     sign = _finite(inventory_sign, 0.0)
     if sign == 0.0:
@@ -712,11 +703,7 @@ def evaluate_realization(
         allow_score_taker_direct=bool(allow_score_taker_direct),
         allow_economic_taker_direct=bool(allow_economic_taker_direct),
         economic_direct_max_loss_bps=economic_direct_max_loss_bps,
-        allow_risk_taker_direct=bool(allow_risk_taker_direct),
         risk_direct_max_loss_bps=risk_direct_max_loss_bps,
-        risk_direct_min_age_ticks=risk_direct_min_age_ticks,
-        risk_direct_failed_exit_count=risk_direct_failed_exit_count,
-        risk_direct_min_ev_advantage_bps=risk_direct_min_ev_advantage_bps,
         allow_aggressive_positive_ev_taker=bool(allow_aggressive_positive_ev_taker),
         aggressive_positive_ev_min_net_bps=aggressive_positive_ev_min_net_bps,
         aggressive_positive_ev_switch_margin_bps=aggressive_positive_ev_switch_margin_bps,
@@ -741,10 +728,6 @@ def evaluate_realization(
         sn79_velocity_weight=sn79_velocity_weight,
         sn79_downside_weight=sn79_downside_weight,
         sn79_min_utility_margin=sn79_min_utility_margin,
-        sn79_max_score_subsidy_loss_bps=sn79_max_score_subsidy_loss_bps,
-        sn79_one_away_loss_floor_bps=sn79_one_away_loss_floor_bps,
-        sn79_two_away_loss_floor_bps=sn79_two_away_loss_floor_bps,
-        sn79_uncovered_loss_floor_bps=sn79_uncovered_loss_floor_bps,
     )
     # V4.8: bounded SCORE / ECONOMIC / RISK authorities are independent of
     # maker-rung urgency. The ladder is now fallback maker aggressiveness.

@@ -539,26 +539,6 @@ class FillHazardModel:
             hazard_rates=rates,
         )
 
-    def select_policy_probability(
-        self,
-        old_prob: float,
-        predicted: HazardPrediction,
-        *,
-        use_for_policy: bool,
-    ) -> float:
-        old = _clip(old_prob, 0.0, 1.0)
-        if not use_for_policy:
-            return old
-        if predicted.usable:
-            return predicted.any_fill
-        # Sparse data: blend rather than replacing the legacy estimator. This
-        # allows the continuous distance prior to influence policy immediately
-        # while keeping most weight on the existing Strategy1 estimator.
-        w = self.fallback_policy_weight
-        if w <= 0.0:
-            return old
-        return _clip((1.0 - w) * old + w * predicted.any_fill, 0.0, 1.0)
-
     def brier_overall(self) -> dict[str, float | int]:
         return {
             "ANY": (self.brier_any_sum / self.brier_any_n) if self.brier_any_n else 0.0,

@@ -36,7 +36,6 @@ def _maker_only(**overrides):
         enable_sn79_action_utility=False,
         allow_score_taker_direct=False,
         allow_economic_taker_direct=False,
-        allow_risk_taker_direct=False,
         allow_aggressive_positive_ev_taker=False,
     )
     params.update(overrides)
@@ -86,7 +85,7 @@ def test_open_inventory_cap_is_enforced_in_screen_and_order_build():
 
 def test_generic_positive_ev_min_order_override_is_off_but_one_away_stays_on():
     for launcher in (LAUNCHER, MULTI):
-        assert "research_positive_ev_min_order_override=0" in launcher
+        assert "research_positive_ev_min_order_override" not in launcher
         assert "research_one_away_exact_min_enabled=1" in launcher
 
 
@@ -100,4 +99,4 @@ def test_v412_runtime_is_concentrated():
 
 
 def test_policy_version_is_v412():
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC

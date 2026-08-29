@@ -442,36 +442,3 @@ def choose_ttl_ms(
     ttl = clamp_ttl_ms(float(baseline_ms), min_ms, max_ms)
     info["chosen_ttl"] = ttl
     return ttl, "BASELINE", info
-
-
-def projected_inventory_after(inventory_before: float, reduce_qty: float) -> float:
-    """Always flatten: subtract sign(before) * qty. Never flips the reduce direction."""
-    before = float(inventory_before)
-    qty = max(0.0, float(reduce_qty))
-    if abs(before) <= 1e-18:
-        return 0.0
-    return before - (1.0 if before > 0.0 else -1.0) * qty
-
-
-def dust_escape_allowed(
-    *,
-    inventory_before: float,
-    reduce_qty: float,
-    age_ticks: int,
-    min_age_ticks: int,
-    benefit_bps: float,
-    cost_bps: float,
-    eps: float = 1e-12,
-) -> tuple[bool, float, str]:
-    """Experimental old-dust reducer. Must strictly cut absolute exposure."""
-    before = float(inventory_before)
-    after = projected_inventory_after(before, reduce_qty)
-    if abs(before) <= max(float(eps), 1e-18):
-        return False, after, "FLAT"
-    if int(age_ticks) < max(1, int(min_age_ticks)):
-        return False, after, "TOO_YOUNG"
-    if abs(after) + max(float(eps), 1e-18) >= abs(before):
-        return False, after, "EXPOSURE_INCREASE"
-    if float(benefit_bps) <= float(cost_bps):
-        return False, after, "UNECONOMIC"
-    return True, after, "ESCAPE"

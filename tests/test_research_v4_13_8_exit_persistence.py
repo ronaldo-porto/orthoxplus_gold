@@ -63,7 +63,7 @@ def test_nonpositive_exit_never_held():
 def test_strategy_wires_profitable_exit_persistence_contract():
     from pathlib import Path
     src = Path("agents/strategy/Strategy1_Research.py").read_text(encoding="utf-8")
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in src
+    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in src
     assert 'research_profitable_exit_ttl_ms' in src
     assert 'PROFITABLE_EXIT_HOLD' in src
     assert 'PROFITABLE_EXIT_PERSIST' in src

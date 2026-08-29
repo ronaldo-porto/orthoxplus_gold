@@ -62,7 +62,7 @@ def test_soft_hold_is_bounded_by_existing_age_and_failure_knobs():
 
 def test_v4143_wiring_is_minimal_and_keeps_hard_caps():
     assert BOUNDED_LOSS_ESCAPE_VERSION == "two_stage_bounded_loss_escape_v4_14_3"
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
     assert "research_bounded_loss_escape_hard_trigger_bps=-18.0" in LAUNCHER
     assert "research_max_active_open_books=6" in LAUNCHER
     assert "research_max_total_open_books=8" in LAUNCHER

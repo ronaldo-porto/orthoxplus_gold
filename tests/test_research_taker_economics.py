@@ -222,12 +222,7 @@ def test_economic_take_still_needs_ladder_eligibility():
         band="LONG",
         ladder_bands=clamp_ladder_bands(0.90, 0.93, 0.96),
         economic_direct_max_loss_bps=0.0,
-        allow_risk_taker_direct=False,
         risk_direct_max_loss_bps=-10.0,
-        sn79_max_score_subsidy_loss_bps=0.0,
-        sn79_one_away_loss_floor_bps=0.0,
-        sn79_two_away_loss_floor_bps=0.0,
-        sn79_uncovered_loss_floor_bps=0.0,
     )
     assert cheap.taker_economics.take is True
     assert cheap.taker_eligible is False

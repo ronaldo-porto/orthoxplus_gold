@@ -51,7 +51,6 @@ def test_one_away_positive_taker_bypasses_legacy_econ_gate_but_keeps_zero_loss_f
         urgency=0.10,
         enable_sn79_action_utility=False,
         allow_score_taker_direct=False,
-        allow_risk_taker_direct=False,
         allow_economic_taker_direct=True,
         economic_direct_max_loss_bps=0.0,
         allow_aggressive_positive_ev_taker=True,
@@ -86,7 +85,6 @@ def test_aggressive_positive_taker_requires_explicit_realization_trigger():
         failed_exit_count=0,
         enable_sn79_action_utility=False,
         allow_score_taker_direct=False,
-        allow_risk_taker_direct=False,
         allow_economic_taker_direct=True,
         allow_aggressive_positive_ev_taker=True,
         aggressive_positive_ev_min_age_ticks=16.0,
@@ -113,7 +111,6 @@ def test_aggressive_positive_taker_never_subsidizes_negative_taker_ev_even_one_a
         failed_exit_count=20,
         enable_sn79_action_utility=False,
         allow_score_taker_direct=False,
-        allow_risk_taker_direct=False,
         allow_economic_taker_direct=True,
         economic_direct_max_loss_bps=0.0,
         allow_aggressive_positive_ev_taker=True,
@@ -139,7 +136,6 @@ def test_failed_exits_activate_positive_ev_taker_when_it_beats_wait():
         failed_exit_count=8,
         enable_sn79_action_utility=False,
         allow_score_taker_direct=False,
-        allow_risk_taker_direct=False,
         allow_economic_taker_direct=True,
         allow_aggressive_positive_ev_taker=True,
         aggressive_positive_ev_switch_margin_bps=0.50,
@@ -206,7 +202,7 @@ def test_one_away_exact_min_rejects_negative_ev_or_insufficient_exit_capacity():
 
 
 def test_v4112_wiring_and_launcher_contract():
-    assert 'RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
     assert "research_enable_aggressive_positive_ev_taker=1" in LAUNCHER
     assert "research_aggressive_positive_ev_min_net_bps=0.0" in LAUNCHER
     assert "research_one_away_exact_min_enabled=1" in LAUNCHER

@@ -17,8 +17,6 @@ from typing import Any
 from research_taker_economics import (
     REASON_CATASTROPHIC,
     REASON_HOLDING_EXCEEDS_COST,
-    REASON_REJECT_ECONOMICS,
-    REASON_REJECT_NET_FLOOR,
     TakerEconomicsDecision,
     evaluate_taker_economics,
 )
@@ -48,7 +46,6 @@ REASON_REJECT_CAP = "TAKER_REJECTED_VOLUME_CAP"
 REASON_REJECT_DUST = "TAKER_REJECTED_DUST"
 REASON_REJECT_TRANSITION = "TAKER_REJECTED_TRANSITION"
 REASON_REJECT_LADDER = "TAKER_REJECTED_LADDER"
-REASON_RISK_TAKER = "TAKER_RISK_DIRECT"
 REASON_AGGRESSIVE_POSITIVE_EV = "TAKER_AGGRESSIVE_POSITIVE_EV"
 
 TAKER_AUTH_NONE = "NONE"
@@ -151,30 +148,6 @@ def hybrid_taker_qty_frac(
     if token == REASON_AVOID_ADVERSE:
         return _clip01(0.55 + 0.35 * _clip01(urgency))
     return 0.0
-
-
-def score_loss_floor_bps(
-    *,
-    observations_remaining: int,
-    required_observations: int = 3,
-    base_floor_bps: float = -2.0,
-    one_away_floor_bps: float = -8.0,
-    two_away_floor_bps: float = -6.0,
-    uncovered_floor_bps: float = -5.0,
-) -> float:
-    """Return the bounded SCORE_TAKER loss floor for the Kappa state."""
-    remaining = max(0, int(observations_remaining))
-    required = max(1, int(required_observations))
-    base = min(0.0, _finite(base_floor_bps, -2.0))
-    if remaining <= 0:
-        return base
-    if remaining == 1:
-        return min(0.0, _finite(one_away_floor_bps, -8.0))
-    if remaining == 2:
-        return min(0.0, _finite(two_away_floor_bps, -6.0))
-    if remaining >= required:
-        return min(0.0, _finite(uncovered_floor_bps, -5.0))
-    return min(0.0, _finite(uncovered_floor_bps, -5.0))
 
 
 @dataclass(frozen=True)
@@ -315,18 +288,10 @@ def hybrid_taker_decision(
     sn79_velocity_weight: float = 0.25,
     sn79_downside_weight: float = 0.45,
     sn79_min_utility_margin: float = 0.03,
-    sn79_max_score_subsidy_loss_bps: float = -2.0,
-    sn79_one_away_loss_floor_bps: float = -8.0,
-    sn79_two_away_loss_floor_bps: float = -6.0,
-    sn79_uncovered_loss_floor_bps: float = -5.0,
     allow_score_taker_direct: bool = True,
     allow_economic_taker_direct: bool = True,
     economic_direct_max_loss_bps: float = -20.0,
-    allow_risk_taker_direct: bool = True,
     risk_direct_max_loss_bps: float = -25.0,
-    risk_direct_min_age_ticks: float = 24.0,
-    risk_direct_failed_exit_count: int = 3,
-    risk_direct_min_ev_advantage_bps: float = 1.0,
     allow_aggressive_positive_ev_taker: bool = True,
     aggressive_positive_ev_min_net_bps: float = 0.0,
     aggressive_positive_ev_switch_margin_bps: float = 0.50,
@@ -341,11 +306,11 @@ def hybrid_taker_decision(
     failed_exit_penalty_bps: float = 0.75,
     exit_age_penalty_bps_per_tick: float = 0.03,
 ) -> HybridTakerDecision:
-    """Evaluate bounded SCORE / ECONOMIC / RISK Taker authorities.
+    """Evaluate bounded SCORE / ECONOMIC Taker authorities plus catastrophic hard risk.
 
-    V4.8 separates Taker authorization from maker-rung urgency.  The maker
-    ladder remains useful for passive/competitive/aggressive maker exits, but
-    it cannot veto a bounded direct Taker authorization.
+    Legacy direct RISK_TAKER authority was permanently disabled and is removed.
+    Current risk exits are owned by the unified exit / inventory-liveness layer;
+    catastrophic hard-risk reduction remains here as an unconditional safety path.
     """
     del adverse_allowed, min_lock_bps, maker_ev_gap_bps, stale_age_ticks
     del min_maker_fill, hard_emergency
@@ -397,14 +362,7 @@ def hybrid_taker_decision(
         age_penalty_bps_per_tick=exit_age_penalty_bps_per_tick,
     )
 
-    score_floor = score_loss_floor_bps(
-        observations_remaining=observations_remaining,
-        required_observations=required_observations,
-        base_floor_bps=sn79_max_score_subsidy_loss_bps,
-        one_away_floor_bps=sn79_one_away_loss_floor_bps,
-        two_away_floor_bps=sn79_two_away_loss_floor_bps,
-        uncovered_floor_bps=sn79_uncovered_loss_floor_bps,
-    )
+    score_floor = 0.0
     action_utility = None
     if enable_sn79_action_utility:
         action_utility = evaluate_sn79_action_utility(
@@ -500,24 +458,10 @@ def hybrid_taker_decision(
         and maker_fill_evidence
     )
 
-    state = str(inventory_state or "NORMAL").upper()
-    risk_state = state in {"CAUTION", "DEFENSIVE", "EXIT_ONLY", "EMERGENCY"}
-    risk_age = max(
-        max(0.0, _finite(inventory_age)),
-        max(0.0, _finite(time_since_first_exit_attempt)),
-    )
-    aged_or_failed = bool(
-        risk_age + 1e-12 >= max(0.0, _finite(risk_direct_min_age_ticks, 24.0))
-        or max(0, int(failed_exit_count)) >= max(1, int(risk_direct_failed_exit_count))
-    )
-    risk_floor = min(0.0, _finite(risk_direct_max_loss_bps, -25.0))
-    ev_advantage = comparison.expected_taker_exit_value - comparison.expected_maker_exit_value
-    risk_authorized = bool(
-        risk_state
-        and aged_or_failed
-        and comparison.expected_taker_exit_value + 1e-12 >= risk_floor
-        and ev_advantage + 1e-12 >= max(0.0, _finite(risk_direct_min_ev_advantage_bps, 1.0))
-    )
+    # Direct RISK_TAKER was permanently disabled.  Unified exit / inventory
+    # liveness owns non-catastrophic risk exits, so legacy risk authority is
+    # intentionally false here.
+    risk_authorized = False
 
     # V4.11.2: aggressive positive-EV Taker authority.  This path deliberately
     # does NOT depend on the legacy ``econ.take`` gate, which was tuned for
@@ -576,8 +520,7 @@ def hybrid_taker_decision(
 
     direct_economic = bool(allow_economic_taker_direct and economic_authorized)
     direct_score = bool(allow_score_taker_direct and score_authorized)
-    direct_risk = bool(allow_risk_taker_direct and risk_authorized)
-    direct = bool(direct_economic or direct_score or direct_risk)
+    direct = bool(direct_economic or direct_score)
 
     # Preserve an already-valid SCORE authority when the new aggressive
     # positive-EV path also fires.  The aggressive ECONOMIC authority exists
@@ -603,10 +546,6 @@ def hybrid_taker_decision(
         authority = TAKER_AUTH_SCORE
         reason = REASON_SN79_TAKER
         floor = score_floor
-    elif direct_risk:
-        authority = TAKER_AUTH_RISK
-        reason = REASON_RISK_TAKER
-        floor = risk_floor
     else:
         authority = TAKER_AUTH_NONE
         reason = econ.reason
@@ -620,8 +559,6 @@ def hybrid_taker_decision(
     if direct:
         if authority == TAKER_AUTH_SCORE and action_utility is not None:
             frac = max(0.0, min(1.0, float(action_utility.recommended_qty_frac)))
-        elif authority == TAKER_AUTH_RISK:
-            frac = _clip01(0.70 + 0.20 * _clip01(urgency) + 0.02 * max(0, int(failed_exit_count)))
         else:
             econ_reason = comparison.reason if use_fill_hazard_ev else econ.reason
             frac = hybrid_taker_qty_frac(
@@ -664,7 +601,7 @@ def hybrid_taker_decision(
     reject_reason = econ.reason
     if bool(econ.take) and use_fill_hazard_ev and not bool(comparison.prefer_taker):
         reject_reason = REASON_MAKER_EV
-    elif not allow_economic_taker and not score_authorized and not risk_authorized:
+    elif not allow_economic_taker and not score_authorized:
         reject_reason = REASON_MAKER
     rejected = reject(reject_reason)
     return HybridTakerDecision(

@@ -50,11 +50,10 @@ identified from the testnet research log:
 26. V4.3 Phase 2 records maker-quote lifecycle through fill/cancel/expiry, classifies fills
     against the runtime min order size, and measures delayed maker markout off the request path.
 27. V4.3 Phase 3 learns a discrete fill-hazard at quote TTL with shrinkage and calibration.
-    The inherited fill estimator remains the live policy path unless explicitly enabled.
+    Fill hazard remains telemetry / exit-comparison input; the inherited estimator is the live entry path.
 28. V4.3 Phase 4 ranks books by Score-EV (TradingEV + Kappa completion - dust/inventory/latency)
     using the runtime Kappa observation requirement. Hard safety still beats completion.
-29. V4.3 Phase 5 holds maker quotes through tiny price noise, adapts TTL inside hard bounds,
-    and allows experimental old-dust escape only when absolute exposure strictly falls.
+29. V4.3 Phase 5 holds maker quotes through tiny price noise and adapts TTL inside hard bounds.
 30. V4.3 Phase 6 optionally screens books with a cheap score, then runs full prediction only
     on forced inventory/dust/Kappa/risk books plus a configurable candidate cap.
 31. Session / Kappa observations persist for one simulation. Reset is allowed only on
@@ -84,9 +83,8 @@ identified from the testnet research log:
     sticky 8–12 book cohort, and moves Kappa-expiry pressure into cheap screening.
 38. V4.11 entry ranking prices the full lifecycle (entry fee + expected maker/taker
     realization cost + crossing/slippage + holding risk) rather than maker entry only.
-39. V4.11 allows one minimum executable clip for strongly positive lifecycle EV
-    when the old multiplicative size falls below the near-safe band but hard risk,
-    exit-capacity and headroom gates still pass.
+39. V4.11+ exact-min completion paths are restricted to explicit ONE_AWAY / TWO_AWAY /
+    qualified-CORE cases with hard risk, exit-capacity and headroom checks.
 40. V4.11 tightens safe cohort quotes and lengthens non-adverse QUIET maker TTL,
     while preserving toxic/adverse shortening and all V4.10 hard Taker safety.
 41. V4.11.1 makes rolling timestamp-backed Kappa state the single authority for
@@ -208,13 +206,11 @@ from research_fill_hazard import (
 )
 from research_score_ev import (
     LANE_COMPLETION,
-    LANE_COVERAGE,
     LANE_NORMAL,
     admit_scheduler_candidate,
     required_observation_count,
     round_trip_velocity,
     score_velocity_priority,
-    select_rank,
 )
 from research_kappa_state import (
     KAPPA_STATE_VERSION,
@@ -234,14 +230,11 @@ from research_cohort import CohortCandidate, update_sticky_cohort
 from research_quote_hysteresis import (
     ONE_AWAY_CONVERSION_TTL_VERSION,
     ONE_AWAY_STALE_TTL_VERSION,
-    QUALIFIED_CORE_STALE_TTL_VERSION,
-    PROFITABLE_EXIT_PERSISTENCE_VERSION,
     profitable_maker_exit_ttl_ms,
     hold_existing_profitable_maker_exit,
     choose_ttl_ms,
     one_away_stale_completion_ttl,
     qualified_core_stale_completion_ttl,
-    dust_escape_allowed,
     should_replace_quote,
 )
 from research_inventory_state import (
@@ -314,7 +307,6 @@ from research_execution_lanes import (
     apply_breadth_rotation_gate,
     apply_kappa_conversion_pressure_gate,
     authoritative_execution_lane,
-    classify_execution_lane,
     density_priority_budgets,
     execution_completion_candidate,
     normalize_lane_budgets,
@@ -334,7 +326,6 @@ from research_volume_cap import (
     agent_volume_cap_snapshot,
 )
 from research_candidate_screen import (
-    DEFAULT_CANDIDATE_COUNT,
     FeatureCache,
     P95_TARGET_MS,
     ScreenBook,
@@ -363,7 +354,6 @@ from research_inventory_liveness import (
     InventoryLivenessStage,
     classify_liveness_stage,
     evaluate_bounded_rescue,
-    bounded_loss_escape_applies,
     bounded_loss_escape_reason,
     counts_against_productive_open_cap,
     evaluate_protected_parking,
@@ -377,10 +367,7 @@ from research_kappa_flywheel import (
     PHASE_BREADTH,
     PHASE_DENSITY,
     density_state as flywheel_density_state,
-    flywheel_phase,
     note_realized_pnl_event,
-    phase_core_limit,
-    phase_density_target,
     pnl_confidence,
     pnl_confidence_multiplier,
     rolling_book_economics,
@@ -394,7 +381,6 @@ from research_kappa_productivity import (
     ProductivitySnapshot,
     core_probe_eligible,
     kappa_state as productivity_kappa_state,
-    phase_weights as productivity_phase_weights,
     priority_for_state as kappa_productivity_priority,
     wide_kappa_density_due,
     sanitize_productivity_runtime,
@@ -429,8 +415,27 @@ from research_session_state import (
 )
 
 
+from research_realnet_exit_authority import (
+    ACTION_KEEP_MAKER as REALNET_KEEP_MAKER,
+    ACTION_PARK as REALNET_PARK,
+    ACTION_TAKER_ESCAPE as REALNET_TAKER_ESCAPE,
+    REALNET_EXIT_AUTHORITY_VERSION,
+    arbitrate_realnet_exit,
+)
+from research_scheduler_retry import (
+    SCHEDULER_RETRY_VERSION,
+    SchedulerRetryGuard,
+    is_hard_retry_reason,
+    score_ev_fingerprint,
+)
+
 class Strategy1_Research(Strategy1_Debug):
-    RESEARCH_POLICY_VERSION = "wide_kappa_wave_v4_14_3"
+    RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"
+    RESEARCH_ENGINE_REVISION = "lean_engine_p1_realnet_fix_v4_14_4"
+    RESEARCH_REALNET_EXIT_AUTHORITY_VERSION = REALNET_EXIT_AUTHORITY_VERSION
+    RESEARCH_SCHEDULER_RETRY_VERSION = SCHEDULER_RETRY_VERSION
+    # === V4.14.4 REALNET DEFECT FIX P1 ===
+    RESEARCH_ENGINE_VERSION = "lean_engine_p1_v4_14_3"
     RESEARCH_HYBRID_VERSION = "early_escape_guard_v4_12_6"
     RESEARCH_EXIT_HAZARD_EV_VERSION = EXIT_HAZARD_EV_VERSION
     RESEARCH_VELOCITY_VERSION = VELOCITY_VERSION
@@ -768,9 +773,6 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_partial_fill_hold_enabled = self._as_bool(
             getattr(cfg, "research_partial_fill_hold_enabled", True)
         )
-        self.research_partial_fill_hold_one_away_only = self._as_bool(
-            getattr(cfg, "research_partial_fill_hold_one_away_only", False)
-        )
         self.research_partial_fill_hold_max_ns = max(
             int(self.mm_expiry_period),
             int(getattr(cfg, "research_partial_fill_hold_max_ns", 750_000_000)),
@@ -804,12 +806,10 @@ class Strategy1_Research(Strategy1_Debug):
             0.0, float(getattr(cfg, "research_dust_compact_prior_strength", 8.0))
         )
 
-        # V4.3 Phase 3: learn fill hazard; do not use it for live ranking by default.
+        # Fill hazard remains telemetry / exit-comparison input only.  The obsolete
+        # A/B path that replaced the inherited live entry fill probability is removed.
         self.research_enable_fill_hazard = self._as_bool(
             getattr(cfg, "research_enable_fill_hazard", True)
-        )
-        self.research_use_fill_hazard_for_policy = self._as_bool(
-            getattr(cfg, "research_use_fill_hazard_for_policy", False)
         )
         self.research_fill_hazard_min_samples = max(
             1, int(getattr(cfg, "research_fill_hazard_min_samples", 12))
@@ -821,10 +821,7 @@ class Strategy1_Research(Strategy1_Debug):
             0.01, min(0.5, float(getattr(cfg, "research_fill_hazard_prior_any", 0.12)))
         )
 
-        # V4.3 Phase 4: Score-EV ranking. Legacy _global_book_rank remains when off.
-        self.research_enable_score_ev = self._as_bool(
-            getattr(cfg, "research_enable_score_ev", True)
-        )
+        # Score-EV is the sole ranking path; the obsolete legacy A/B rank is removed.
         self.research_score_ev_min_trading = float(
             getattr(cfg, "research_score_ev_min_trading", 0.0)
         )
@@ -967,15 +964,6 @@ class Strategy1_Research(Strategy1_Debug):
             self.research_ttl_min_ms,
             float(getattr(cfg, "research_ttl_max_ms", max(800.0, baseline_ttl_ms))),
         )
-        self.research_enable_dust_escape = self._as_bool(
-            getattr(cfg, "research_enable_dust_escape", False)
-        )
-        self.research_dust_escape_min_age_ticks = max(
-            1, int(getattr(cfg, "research_dust_escape_min_age_ticks", 400))
-        )
-        self.research_dust_escape_cost_bps = max(
-            0.0, float(getattr(cfg, "research_dust_escape_cost_bps", 2.5))
-        )
         self.research_enable_dust_economics = self._as_bool(
             getattr(cfg, "research_enable_dust_economics", True)
         )
@@ -1031,9 +1019,6 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_economic_direct_max_loss_bps = min(
             0.0, float(getattr(cfg, "research_economic_direct_max_loss_bps", 0.0))
         )
-        self.research_enable_risk_taker_direct = self._as_bool(
-            getattr(cfg, "research_enable_risk_taker_direct", False)
-        )
         # V4.11.2: explicit aggressive positive-EV realization authority.
         # This never subsidizes a losing Taker: the configured net floor is
         # clamped to >= 0 and taking must beat maker WAIT EV.
@@ -1069,15 +1054,6 @@ class Strategy1_Research(Strategy1_Debug):
         )
         self.research_risk_direct_max_loss_bps = min(
             0.0, float(getattr(cfg, "research_risk_direct_max_loss_bps", -10.0))
-        )
-        self.research_risk_direct_min_age_ticks = max(
-            1.0, float(getattr(cfg, "research_risk_direct_min_age_ticks", 24.0))
-        )
-        self.research_risk_direct_failed_exit_count = max(
-            1, int(getattr(cfg, "research_risk_direct_failed_exit_count", 3))
-        )
-        self.research_risk_direct_min_ev_advantage_bps = max(
-            0.0, float(getattr(cfg, "research_risk_direct_min_ev_advantage_bps", 1.0))
         )
         self.research_failed_exit_penalty_bps = max(
             0.0, float(getattr(cfg, "research_failed_exit_penalty_bps", 0.75))
@@ -1180,26 +1156,6 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_sn79_min_utility_margin = max(
             0.0, float(getattr(cfg, "research_sn79_min_utility_margin", 0.03))
         )
-        self.research_sn79_max_score_subsidy_loss_bps = min(
-            0.0, float(getattr(cfg, "research_sn79_max_score_subsidy_loss_bps", 0.0))
-        )
-        self.research_sn79_one_away_loss_floor_bps = min(
-            0.0, float(getattr(cfg, "research_sn79_one_away_loss_floor_bps", 0.0))
-        )
-        self.research_sn79_two_away_loss_floor_bps = min(
-            0.0, float(getattr(cfg, "research_sn79_two_away_loss_floor_bps", 0.0))
-        )
-        self.research_sn79_uncovered_loss_floor_bps = min(
-            0.0, float(getattr(cfg, "research_sn79_uncovered_loss_floor_bps", 0.0))
-        )
-        self.research_allow_score_loss_subsidy = self._as_bool(
-            getattr(cfg, "research_allow_score_loss_subsidy", False)
-        )
-        if not self.research_allow_score_loss_subsidy:
-            self.research_sn79_max_score_subsidy_loss_bps = 0.0
-            self.research_sn79_one_away_loss_floor_bps = 0.0
-            self.research_sn79_two_away_loss_floor_bps = 0.0
-            self.research_sn79_uncovered_loss_floor_bps = 0.0
         self.research_kappa_lookback_ns = max(
             1,
             int(getattr(cfg, "research_kappa_lookback_ns", getattr(self, "pnl_lookback_ns", 10_800_000_000_000))),
@@ -1486,18 +1442,6 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_lifecycle_holding_bps = max(
             0.0, float(getattr(cfg, "research_lifecycle_holding_bps", 0.50))
         )
-        self.research_positive_ev_min_order_override = self._as_bool(
-            getattr(cfg, "research_positive_ev_min_order_override", False)
-        )
-        self.research_positive_ev_min_safe_fraction = max(
-            0.20, min(0.80, float(getattr(cfg, "research_positive_ev_min_safe_fraction", 0.35)))
-        )
-        self.research_positive_ev_min_exit_fraction = max(
-            0.25, min(1.0, float(getattr(cfg, "research_positive_ev_min_exit_fraction", 0.45)))
-        )
-        self.research_positive_ev_min_trading_ev = max(
-            0.0, float(getattr(cfg, "research_positive_ev_min_trading_ev", 0.05))
-        )
         # V4.11.2: ONE_AWAY books get a separate exact-minimum admission path.
         # Soft multiplicative sizing may not veto a hard-safe + positive-EV
         # 0.25 completion clip when modeled exit capacity is near the minimum.
@@ -1730,8 +1674,6 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_hysteresis_holds = 0
         self._research_hysteresis_replaces = 0
         self._research_ttl_stale_skips = 0
-        self._research_dust_escape_attempts = 0
-        self._research_dust_escape_orders = 0
         self._research_dust_econ_last: dict[int, Any] = {}
         self._research_dust_prevent_skips = 0
         self._research_timing: dict[str, float | int] = {}
@@ -1962,6 +1904,7 @@ class Strategy1_Research(Strategy1_Debug):
             "queue_size": self.research_queue_size,
             "output_dir": self.research_output_dir,
             "policy_version": self.RESEARCH_POLICY_VERSION,
+            "engine_version": self.RESEARCH_ENGINE_VERSION,
             "kappa_scheduler_version": self.RESEARCH_KAPPA_SCHEDULER_VERSION,
             "kappa_productivity_version": self.RESEARCH_KAPPA_PRODUCTIVITY_VERSION,
             "completion_economics_version": self.RESEARCH_COMPLETION_ECONOMICS_VERSION,
@@ -2011,7 +1954,6 @@ class Strategy1_Research(Strategy1_Debug):
             "stale_maker_rescue_failed_exits": int(getattr(self, "research_stale_maker_rescue_failed_exits", 4)),
             "stale_maker_rescue_floor_bps": float(getattr(self, "research_stale_maker_rescue_floor_bps", -1.0)),
             "cohort_exploration_slots": int(getattr(self, "research_cohort_exploration_slots", 2)),
-            "positive_ev_min_order_override": bool(getattr(self, "research_positive_ev_min_order_override", False)),
             "one_away_exact_min_enabled": bool(getattr(self, "research_one_away_exact_min_enabled", True)),
             "one_away_exact_min_ev_bps": float(getattr(self, "research_one_away_exact_min_ev_bps", 0.0)),
             "one_away_exact_min_safe_fraction": float(getattr(self, "research_one_away_exact_min_safe_fraction", 0.15)),
@@ -2111,7 +2053,6 @@ class Strategy1_Research(Strategy1_Debug):
             "dust_risk_target": self.research_dust_risk_target,
             "kappa_one_away_bonus": self.research_kappa_one_away_bonus,
             "partial_fill_hold_enabled": self.research_partial_fill_hold_enabled,
-            "partial_fill_hold_one_away_only": self.research_partial_fill_hold_one_away_only,
             "partial_fill_hold_max_ns": self.research_partial_fill_hold_max_ns,
             "partial_fill_hold_min_dust_prob": self.research_partial_fill_hold_min_dust_prob,
             "force_mm_post_only": self.research_force_mm_post_only,
@@ -2126,10 +2067,8 @@ class Strategy1_Research(Strategy1_Debug):
             "quote_lifecycle": True,
             "markout_horizons_ms": (100, 250, 500, 1000),
             "enable_fill_hazard": self.research_enable_fill_hazard,
-            "use_fill_hazard_for_policy": self.research_use_fill_hazard_for_policy,
             "fill_hazard_min_samples": self.research_fill_hazard_min_samples,
             "fill_hazard_prior_any": self.research_fill_hazard_prior_any,
-            "enable_score_ev": self.research_enable_score_ev,
             "enable_realization": self.research_enable_realization,
             "enable_hybrid_taker": self.research_enable_hybrid_taker,
             "hybrid_version": getattr(self, "RESEARCH_HYBRID_VERSION", "hybrid_maker_taker_v3"),
@@ -2157,18 +2096,10 @@ class Strategy1_Research(Strategy1_Debug):
             "sn79_velocity_weight": self.research_sn79_velocity_weight,
             "sn79_downside_weight": self.research_sn79_downside_weight,
             "sn79_min_utility_margin": self.research_sn79_min_utility_margin,
-            "sn79_max_score_subsidy_loss_bps": self.research_sn79_max_score_subsidy_loss_bps,
-            "sn79_one_away_loss_floor_bps": self.research_sn79_one_away_loss_floor_bps,
-            "sn79_two_away_loss_floor_bps": self.research_sn79_two_away_loss_floor_bps,
-            "sn79_uncovered_loss_floor_bps": self.research_sn79_uncovered_loss_floor_bps,
             "enable_score_taker_direct": int(bool(self.research_enable_score_taker_direct)),
             "enable_economic_taker_direct": int(bool(self.research_enable_economic_taker_direct)),
             "economic_direct_max_loss_bps": self.research_economic_direct_max_loss_bps,
-            "enable_risk_taker_direct": int(bool(self.research_enable_risk_taker_direct)),
             "risk_direct_max_loss_bps": self.research_risk_direct_max_loss_bps,
-            "risk_direct_min_age_ticks": self.research_risk_direct_min_age_ticks,
-            "risk_direct_failed_exit_count": self.research_risk_direct_failed_exit_count,
-            "risk_direct_min_ev_advantage_bps": self.research_risk_direct_min_ev_advantage_bps,
             "failed_exit_penalty_bps": self.research_failed_exit_penalty_bps,
             "exit_age_penalty_bps_per_tick": self.research_exit_age_penalty_bps_per_tick,
             "cancel_before_taker": int(bool(self.research_cancel_before_taker)),
@@ -2202,8 +2133,6 @@ class Strategy1_Research(Strategy1_Debug):
             "enable_adaptive_ttl": self.research_enable_adaptive_ttl,
             "ttl_min_ms": self.research_ttl_min_ms,
             "ttl_max_ms": self.research_ttl_max_ms,
-            "enable_dust_escape": self.research_enable_dust_escape,
-            "dust_escape_min_age_ticks": self.research_dust_escape_min_age_ticks,
             "enable_dust_economics": self.research_enable_dust_economics,
             "dust_econ_version": self.RESEARCH_DUST_ECON_VERSION,
             "enable_dust_prevent": self.research_enable_dust_prevent,
@@ -2677,6 +2606,10 @@ class Strategy1_Research(Strategy1_Debug):
         # Rejection guards are request-local execution state and must never leak
         # across simulation/session identity changes.
         self._research_contract_reject_state.clear()
+        retry_guard = getattr(self, "_research_scheduler_retry_guard", None)
+        retry_reset = getattr(retry_guard, "reset", None)
+        if callable(retry_reset):
+            retry_reset()
         parked_inventory = getattr(self, "_research_parked_inventory", None)
         if isinstance(parked_inventory, dict):
             parked_inventory.clear()
@@ -3466,6 +3399,81 @@ class Strategy1_Research(Strategy1_Debug):
             hard_taker_floor_bps=float(getattr(self, "research_liveness_hard_taker_floor_bps", -12.0)),
         )
 
+
+    # === V4.14.4 REALNET DEFECT FIX P1: scheduler retry rotation ===
+    def _research_scheduler_retry_guard_v4144(self) -> SchedulerRetryGuard:
+        guard = getattr(self, "_research_scheduler_retry_guard", None)
+        if not isinstance(guard, SchedulerRetryGuard):
+            guard = SchedulerRetryGuard(
+                negative_ev_base_ticks=int(getattr(self, "research_retry_negative_ev_ticks", 8) or 8),
+                toxic_base_ticks=int(getattr(self, "research_retry_toxic_ticks", 16) or 16),
+                avoid_base_ticks=int(getattr(self, "research_retry_avoid_ticks", 16) or 16),
+                max_cooldown_ticks=int(getattr(self, "research_retry_max_ticks", 64) or 64),
+            )
+            self._research_scheduler_retry_guard = guard
+        return guard
+
+    def _research_scheduler_retry_allows_v4144(
+        self,
+        book_id: int,
+        ev,
+        *,
+        has_inventory: bool = False,
+        is_dust: bool = False,
+        hard_risk: bool = False,
+    ) -> bool:
+        # Inventory/risk exits are never quarantined by an entry retry policy.
+        if has_inventory or is_dust or hard_risk:
+            return True
+        guard = self._research_scheduler_retry_guard_v4144()
+        decision = guard.should_skip(
+            int(book_id),
+            tick=int(getattr(self, "_tick", 0) or 0),
+            fingerprint=score_ev_fingerprint(ev),
+        )
+        if decision.blocked:
+            try:
+                self._emit(
+                    "SCHEDULER_RETRY", force=True,
+                    tick=getattr(self, "_tick", None),
+                    phase="ROTATE_OUT",
+                    **decision.as_log(book_id=int(book_id)),
+                )
+            except Exception:
+                pass
+            return False
+        return True
+
+    def _research_scheduler_note_reject_v4144(self, book_id: int, ev) -> None:
+        reason = str(getattr(ev, "reject_reason", "") or "").upper()
+        if not is_hard_retry_reason(reason):
+            if bool(getattr(ev, "toxic", False)):
+                reason = "TOXIC"
+            else:
+                try:
+                    if float(getattr(ev, "trading_ev", 0.0) or 0.0) < 0.0:
+                        reason = "NEGATIVE_EV"
+                except (TypeError, ValueError):
+                    pass
+        if not is_hard_retry_reason(reason):
+            return
+        guard = self._research_scheduler_retry_guard_v4144()
+        decision = guard.record_reject(
+            int(book_id),
+            tick=int(getattr(self, "_tick", 0) or 0),
+            reason=reason,
+            fingerprint=score_ev_fingerprint(ev),
+        )
+        try:
+            self._emit(
+                "SCHEDULER_RETRY", force=True,
+                tick=getattr(self, "_tick", None),
+                phase="HARD_REJECT",
+                **decision.as_log(book_id=int(book_id)),
+            )
+        except Exception:
+            pass
+
     def _research_fast_screen(self, state) -> ScreenResult:
         parked = getattr(self, "_research_parked_dust", {}) or {}
         parked_inventory = getattr(self, "_research_parked_inventory", {}) or {}
@@ -3785,7 +3793,11 @@ class Strategy1_Research(Strategy1_Debug):
                     economics_ok=(
                         rolling_pnl >= pnl_floor if rolling_econ.nonzero_count > 0 else True
                     ),
-                    entry_feasible=entry_feasible,
+                    entry_feasible=bool(entry_feasible) and (
+                        self._research_scheduler_retry_allows_v4144(
+                        bid, ev, has_inventory=has_inv, is_dust=bool(is_dust), hard_risk=hard,
+                    )
+                    ),
                     needs_refresh=needs_refresh,
                     refresh_urgency=refresh_urgency,
                     deadline_urgency=deadline_urgency,
@@ -5371,15 +5383,7 @@ class Strategy1_Research(Strategy1_Debug):
                     "buy_feat": buy_feat,
                     "sell_feat": sell_feat,
                 }
-            buy = model.select_policy_probability(
-                old.buy, pred_buy,
-                use_for_policy=self.research_use_fill_hazard_for_policy,
-            )
-            sell = model.select_policy_probability(
-                old.sell, pred_sell,
-                use_for_policy=self.research_use_fill_hazard_for_policy,
-            )
-            policy_est = FillProbabilityEstimate(buy=buy, sell=sell)
+            policy_est = FillProbabilityEstimate(buy=old.buy, sell=old.sell)
             if book_id is not None:
                 self._research_hazard_last.setdefault(int(book_id), {})["policy"] = policy_est
             return policy_est
@@ -5613,11 +5617,6 @@ class Strategy1_Research(Strategy1_Debug):
         if not self.research_partial_fill_hold_enabled:
             return base
         if completion_samples >= self._research_required_observation_count():
-            return base
-        if (
-            self.research_partial_fill_hold_one_away_only
-            and completion_samples != self._research_required_observation_count() - 1
-        ):
             return base
         quality = self._actionable_fill_snapshot(int(book_id))
         if float(quality["p_dust"]) + 1e-12 < self.research_partial_fill_hold_min_dust_prob:
@@ -6152,14 +6151,11 @@ class Strategy1_Research(Strategy1_Debug):
         )
 
     def _global_book_rank(self, expected_alpha: float, mem) -> float:
-        """V4.3 Score-EV rank, or V4.2 legacy rank when the feature flag is off."""
+        """Authoritative Score-EV book rank."""
         book_id = getattr(mem, "_research_book_id", None)
         if book_id is None:
             return super()._global_book_rank(expected_alpha, mem)
         book_id = int(book_id)
-
-        if not getattr(self, "research_enable_score_ev", False):
-            return self._research_legacy_book_rank(expected_alpha, mem, book_id)
 
         breakdown = self._research_score_ev_for_book(book_id, expected_alpha, mem)
         self._research_score_ev_last[book_id] = breakdown
@@ -6205,14 +6201,9 @@ class Strategy1_Research(Strategy1_Debug):
             )
         except Exception:
             pass
-        chosen = select_rank(
-            enable_score_ev=True,
-            score_ev=breakdown,
-            legacy_rank=super()._global_book_rank(expected_alpha, mem),
-        )
-        if chosen is None:
+        if not bool(getattr(breakdown, "eligible", True)):
             return float("-1e9")
-        rank = float(chosen)
+        rank = float(getattr(breakdown, "final_score", float("-1e9")))
         try:
             expiry = self._research_kappa_expiry(book_id)
             urgency = float(getattr(expiry, "expiry_urgency", 0.0) or 0.0)
@@ -6230,44 +6221,6 @@ class Strategy1_Research(Strategy1_Debug):
         except Exception:
             pass
         return rank
-
-    def _research_legacy_book_rank(self, expected_alpha: float, mem, book_id: int) -> float:
-        """V4.2 rank kept for A/B when research_enable_score_ev=0."""
-        base_rank = super()._global_book_rank(expected_alpha, mem)
-        target = self._research_required_observation_count()
-        if self.research_kappa_completion_enabled and self._is_kappa_completion_candidate(book_id):
-            samples = self._completion_observation_count(book_id)
-            denom = max(1, target - 1)
-            progress = max(0.0, min(1.0, samples / denom))
-            base_rank += self.research_kappa_completion_rank_bonus * progress
-
-        if not self.research_actionable_fill_enabled:
-            return base_rank
-        quality = self._actionable_fill_snapshot(book_id)
-        samples = int(quality["samples"])
-        confident = samples >= self.research_actionable_fill_min_samples
-        if confident:
-            p_actionable = float(quality["p_actionable"])
-            p_dust = float(quality["p_dust"])
-            quality_adjust = self.research_actionable_fill_rank_weight * (
-                p_actionable - self.research_actionable_fill_prior_actionable
-            )
-            dust_penalty = self.research_dust_risk_rank_penalty * max(
-                0.0, p_dust - self.research_dust_risk_target
-            )
-            base_rank += quality_adjust - dust_penalty
-
-        if (
-            self.research_kappa_completion_enabled
-            and self._is_kappa_completion_candidate(book_id)
-            and self._completion_observation_count(book_id) == target - 1
-        ):
-            quality_scale = (
-                0.50 + 0.50 * float(quality["p_actionable"])
-                if confident else 0.75
-            )
-            base_rank += self.research_kappa_one_away_bonus * quality_scale
-        return base_rank
 
     def _research_emit_scheduler(self, stats: dict, selection) -> None:
         universe = self._research_kappa_universe(getattr(selection, "profiles", None))
@@ -6290,7 +6243,6 @@ class Strategy1_Research(Strategy1_Debug):
             "completion_successes": successes,
             "kappa_completion_success_rate": success_rate,
             "round_trip_velocity": velocity,
-            "enable_score_ev": int(bool(self.research_enable_score_ev)),
             "kappa_scheduler_version": getattr(
                 self, "RESEARCH_KAPPA_SCHEDULER_VERSION", "kappa_completion_v3"
             ),
@@ -7387,11 +7339,6 @@ class Strategy1_Research(Strategy1_Debug):
                     exposure_nonincreasing=True,
                 )
 
-            if self._research_try_dust_escape(
-                response, state, book_id, book, inventory, min_size,
-            ):
-                return 1
-
             if self.debug_enabled:
                 record = self._book_record(book_id)
                 record["dust_position"] = True
@@ -7615,13 +7562,6 @@ class Strategy1_Research(Strategy1_Debug):
         return fee_rate_to_bps(
             rate, fallback_bps=fallback, allow_rebate=bool(is_maker),
         )
-
-    def _research_round_trip_fee_bps(self, book_id: int) -> float:
-        # Maker acquisition + probable taker realization is the conservative
-        # lifecycle fee used for entry ranking. Maker rebates are preserved.
-        maker = self._research_live_fee_bps(book_id, is_maker=True)
-        taker = self._research_live_fee_bps(book_id, is_maker=False)
-        return maker + taker
 
     def _research_lifecycle_entry_cost_bps(self, book_id: int, spread_bps: float) -> float:
         cost = lifecycle_entry_cost_bps(
@@ -8056,7 +7996,102 @@ class Strategy1_Research(Strategy1_Debug):
 
         liveness_override = False
         liveness_parked_now = False
-        if unified.action == UNIFIED_KEEP_MAKER:
+
+        # === V4.14.4 REALNET DEFECT FIX P1: single non-catastrophic loss authority ===
+        realnet_exit_override = False
+        realnet_exit_decision = arbitrate_realnet_exit(
+            taker_net_bps=float(taker_net),
+            maker_net_bps=float(maker_net),
+            maker_executable=not bool(liveness_touch_maker_blocked),
+            failed_exit_count=int(failed_exit_count),
+            inventory_age=max(
+                float(getattr(inventory, "position_ticks", 0) or 0),
+                float(time_since_first_exit_attempt),
+            ),
+            stop_loss_hit=bool(stop_hit),
+            catastrophic_hard_risk=bool(hard_emergency or legacy_risk_authority),
+            adverse_evidence=bool(
+                bool(stop_hit)
+                or float(expected_markout or 0.0) <= -1.0
+                or float(adverse_selection_risk or 0.0) >= 0.25
+            ),
+            wait_ev_bps=float(wait_ev),
+            liveness_authorized=bool(
+                liveness_rescue is not None and getattr(liveness_rescue, "authorized", False)
+            ),
+            liveness_park=bool(
+                liveness_rescue is not None and getattr(liveness_rescue, "park", False)
+            ),
+            liveness_floor_bps=(
+                None if liveness_rescue is None
+                else float(getattr(liveness_rescue, "allowed_loss_floor_bps", -12.0))
+            ),
+            soft_floor_bps=-8.0,
+            hard_trigger_bps=-18.0,
+            absolute_floor_bps=-25.0,
+            bounded_loss_min_age_ticks=float(
+                getattr(self, "research_bounded_loss_escape_min_age_ticks", 2.0) or 2.0
+            ),
+            positive_maker_floor_bps=float(
+                getattr(self, "research_positive_maker_veto_floor_bps", 1.0) or 1.0
+            ),
+            positive_maker_max_failed_exits=int(
+                getattr(self, "research_positive_maker_veto_max_failed_exits", 4) or 4
+            ),
+            positive_maker_max_age_ticks=float(
+                getattr(self, "research_liveness_maker_min_age_ticks", 8.0) or 8.0
+            ),
+        )
+        try:
+            self._emit(
+                "REALNET_EXIT_AUTHORITY", force=True,
+                tick=getattr(self, "_tick", None),
+                book=int(book_id),
+                **realnet_exit_decision.as_log(),
+            )
+        except Exception:
+            pass
+
+        # Suppress the old liveness side effects whenever the V4.14.4 bounded
+        # authority owns this price corridor. This is what removes the -12 bps
+        # floor / V4.14.3 -18..-25 contradiction.
+        if realnet_exit_decision.action == REALNET_KEEP_MAKER:
+            unified = replace(
+                unified, action=UNIFIED_KEEP_MAKER,
+                reason="REALNET_BOUNDED_LOSS_SOFT_HOLD",
+            )
+            liveness_rescue = None
+            maker_grace_active = False
+            liveness_override = False
+        elif realnet_exit_decision.action == REALNET_TAKER_ESCAPE:
+            unified = replace(
+                unified, action=UNIFIED_TAKER_PROTECT,
+                reason="REALNET_BOUNDED_LOSS_" + str(realnet_exit_decision.stage),
+            )
+            liveness_rescue = None
+            maker_grace_active = False
+            liveness_override = False
+            realnet_exit_override = True
+        elif realnet_exit_decision.action == REALNET_PARK:
+            unified = replace(
+                unified, action=UNIFIED_KEEP_MAKER,
+                reason="REALNET_BELOW_ABSOLUTE_FLOOR_PARK",
+            )
+            liveness_rescue = None
+            maker_grace_active = False
+            liveness_override = False
+            liveness_parked_now = self._research_park_inventory(
+                int(book_id), inventory=inventory, book=book,
+                score_state=str(liveness_stage.score_state),
+                taker_net_bps=float(taker_net),
+                rescue_floor_bps=float(realnet_exit_decision.absolute_floor_bps),
+                protected_floor_bps=float(realnet_exit_decision.absolute_floor_bps),
+                loss_rescue_eligible=True, park_eligible=True,
+                park_state="PARKED_REALNET_ABSOLUTE_FLOOR",
+                reason=str(realnet_exit_decision.reason),
+            )
+
+        if not liveness_parked_now and unified.action == UNIFIED_KEEP_MAKER:
             if protected_park_decision is not None and bool(protected_park_decision.park):
                 liveness_parked_now = self._research_park_inventory(
                     int(book_id), inventory=inventory, book=book,
@@ -8261,6 +8296,31 @@ class Strategy1_Research(Strategy1_Debug):
                 )
             except Exception:
                 pass
+
+        # Re-apply the V4.14.4 arbiter after legacy stale-bridge / bounded-loss
+        # transformations. No older non-catastrophic layer may override it.
+        if realnet_exit_decision.action == REALNET_KEEP_MAKER:
+            unified = replace(
+                unified, action=UNIFIED_KEEP_MAKER,
+                reason="REALNET_BOUNDED_LOSS_SOFT_HOLD",
+            )
+            liveness_override = False
+            realnet_exit_override = False
+        elif realnet_exit_decision.action == REALNET_TAKER_ESCAPE:
+            unified = replace(
+                unified, action=UNIFIED_TAKER_PROTECT,
+                reason="REALNET_BOUNDED_LOSS_" + str(realnet_exit_decision.stage),
+            )
+            liveness_override = False
+            realnet_exit_override = True
+        elif realnet_exit_decision.action == REALNET_PARK:
+            unified = replace(
+                unified, action=UNIFIED_KEEP_MAKER,
+                reason="REALNET_BELOW_ABSOLUTE_FLOOR_PARK",
+            )
+            liveness_override = False
+            realnet_exit_override = False
+
         self._research_unified_exit_last[int(book_id)] = unified
         if unified.action == UNIFIED_KEEP_MAKER:
             return replace(
@@ -8273,6 +8333,25 @@ class Strategy1_Research(Strategy1_Debug):
                 taker_authority="NONE", trigger=unified.reason, hybrid_reason=unified.reason,
                 unified_exit=unified,
             )
+
+        if realnet_exit_override:
+            return replace(
+                legacy,
+                action=ACTION_TAKER, selected_action=ACTION_TAKER,
+                maker_exit_ev=maker_net, maker_fill_hazard=p_maker,
+                taker_allowed=True, taker_qty_frac=1.0,
+                direct_taker_authorized=True,
+                economic_taker_authorized=False,
+                score_taker_authorized=False,
+                risk_taker_authorized=True,
+                aggressive_positive_ev_taker_authorized=False,
+                taker_authority="RISK",
+                allowed_loss_floor_bps=float(realnet_exit_decision.absolute_floor_bps),
+                trigger="REALNET_BOUNDED_LOSS_" + str(realnet_exit_decision.stage),
+                hybrid_reason=str(realnet_exit_decision.reason),
+                unified_exit=unified,
+            )
+
         if liveness_override:
             return replace(
                 legacy,
@@ -8474,20 +8553,8 @@ class Strategy1_Research(Strategy1_Debug):
             economic_direct_max_loss_bps=float(
                 getattr(self, "research_economic_direct_max_loss_bps", -20.0)
             ),
-            allow_risk_taker_direct=bool(
-                getattr(self, "research_enable_risk_taker_direct", True)
-            ),
             risk_direct_max_loss_bps=float(
-                getattr(self, "research_risk_direct_max_loss_bps", -25.0)
-            ),
-            risk_direct_min_age_ticks=float(
-                getattr(self, "research_risk_direct_min_age_ticks", 24.0)
-            ),
-            risk_direct_failed_exit_count=int(
-                getattr(self, "research_risk_direct_failed_exit_count", 3)
-            ),
-            risk_direct_min_ev_advantage_bps=float(
-                getattr(self, "research_risk_direct_min_ev_advantage_bps", 1.0)
+                getattr(self, "research_risk_direct_max_loss_bps", -10.0)
             ),
             allow_aggressive_positive_ev_taker=bool(
                 getattr(self, "research_enable_aggressive_positive_ev_taker", True)
@@ -8550,18 +8617,6 @@ class Strategy1_Research(Strategy1_Debug):
             ),
             sn79_min_utility_margin=float(
                 getattr(self, "research_sn79_min_utility_margin", 0.03)
-            ),
-            sn79_max_score_subsidy_loss_bps=float(
-                getattr(self, "research_sn79_max_score_subsidy_loss_bps", -2.0)
-            ),
-            sn79_one_away_loss_floor_bps=float(
-                getattr(self, "research_sn79_one_away_loss_floor_bps", -8.0)
-            ),
-            sn79_two_away_loss_floor_bps=float(
-                getattr(self, "research_sn79_two_away_loss_floor_bps", -6.0)
-            ),
-            sn79_uncovered_loss_floor_bps=float(
-                getattr(self, "research_sn79_uncovered_loss_floor_bps", -5.0)
             ),
         )
         return self._research_apply_unified_exit(
@@ -9356,96 +9411,6 @@ class Strategy1_Research(Strategy1_Debug):
             return 1
         return 0
 
-    def _research_try_dust_escape(
-        self,
-        response,
-        state,
-        book_id: int,
-        book,
-        inventory,
-        min_size: float,
-    ) -> bool:
-        """Experimental old-dust reducer. Passive compact remains the default path."""
-        if self._research_in_transition_quarantine():
-            return False
-        if self._research_dust_econ_on():
-            return False
-        if not getattr(self, "research_enable_dust_escape", False):
-            return False
-        if min_size <= 0.0 or not self._is_dust_qty(inventory.net_base):
-            return False
-        parked = (getattr(self, "_research_parked_dust", {}) or {}).get(int(book_id)) or {}
-        tick = int(getattr(self, "_tick", 0) or 0)
-        first = int(parked.get("first_tick", tick) or tick)
-        age = max(0, tick - first)
-        ctx = (getattr(self, "_research_aggressive_context", {}) or {}).get(int(book_id)) or {}
-        net_touch = ctx.get("net_touch_bps")
-        benefit = 0.0 if net_touch is None else float(net_touch)
-        benefit += min(5.0, 2.0 * (age / max(1.0, float(self.research_dust_escape_min_age_ticks))))
-        cost = float(self.research_dust_escape_cost_bps)
-        ok, after, reason = dust_escape_allowed(
-            inventory_before=float(inventory.net_base),
-            reduce_qty=float(min_size),
-            age_ticks=age,
-            min_age_ticks=int(self.research_dust_escape_min_age_ticks),
-            benefit_bps=benefit,
-            cost_bps=cost,
-            eps=self._execution_flat_epsilon(),
-        )
-        self._research_dust_escape_attempts += 1
-        if not ok:
-            self._emit(
-                "POSITION_GUARD",
-                tick=tick,
-                book_id=book_id,
-                reason="DUST_ESCAPE_BLOCKED",
-                net_base=inventory.net_base,
-                projected_net=after,
-                escape_reason=reason,
-                age_ticks=age,
-                benefit_bps=benefit,
-                cost_bps=cost,
-                exposure_nonincreasing=abs(after) < abs(float(inventory.net_base)),
-            )
-            return False
-        long_pos = float(inventory.net_base) > 0.0
-        placed = self._execute_aggressive_close(
-            response, book_id, book, float(min_size), long_pos,
-        )
-        if not placed:
-            self._emit(
-                "POSITION_GUARD",
-                tick=tick,
-                book_id=book_id,
-                reason="DUST_ESCAPE_BLOCKED",
-                net_base=inventory.net_base,
-                projected_net=after,
-                escape_reason="PLACE_FAIL",
-                age_ticks=age,
-            )
-            return False
-        self._research_dust_escape_orders += 1
-        self._inventory_reason[book_id] = "DUST_ESCAPE"
-        self._emit(
-            "POSITION_GUARD",
-            tick=tick,
-            book_id=book_id,
-            reason="DUST_ESCAPE",
-            net_base=inventory.net_base,
-            projected_net=after,
-            min_order_size=min_size,
-            age_ticks=age,
-            benefit_bps=benefit,
-            cost_bps=cost,
-            exposure_nonincreasing=True,
-        )
-        if self.debug_enabled:
-            record = self._book_record(book_id)
-            record["action"] = "MANAGE"
-            record["reason"] = "DUST_ESCAPE"
-            record["dust_escape"] = True
-        return True
-
     def _dust_fill_matches_recent_compaction(self, book_id: int) -> bool:
         """Telemetry-only attribution guard for DUST_COMPACT fills.
 
@@ -10230,18 +10195,6 @@ class Strategy1_Research(Strategy1_Debug):
                     getattr(self, "research_near_safe_max_inventory_risk", 0.35)
                 ),
                 min_headroom=float(getattr(self, "research_near_safe_min_headroom", 0.25)),
-                enable_positive_ev_override=bool(
-                    getattr(self, "research_positive_ev_min_order_override", False)
-                ),
-                positive_ev_min_safe_fraction=float(
-                    getattr(self, "research_positive_ev_min_safe_fraction", 0.35)
-                ),
-                positive_ev_min_exit_fraction=float(
-                    getattr(self, "research_positive_ev_min_exit_fraction", 0.45)
-                ),
-                positive_ev_min_trading_ev=float(
-                    getattr(self, "research_positive_ev_min_trading_ev", 0.05)
-                ),
                 observations_remaining=kappa_remaining,
                 enable_one_away_exact_min=bool(
                     getattr(self, "research_one_away_exact_min_enabled", True)
@@ -10694,15 +10647,16 @@ class Strategy1_Research(Strategy1_Debug):
         # TTL/hold context) follows the authoritative execution lane as well.
         completion_candidate = lane == EXEC_LANE_COMPLETION
 
-        if getattr(self, "research_enable_score_ev", False):
-            ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(int(book_id))
-            if ev is not None and not bool(getattr(ev, "eligible", True)):
-                if self.debug_enabled:
-                    record = self._book_record(book_id)
-                    record["action"] = "SKIP"
-                    record["reason"] = str(getattr(ev, "reject_reason", None) or "SCORE_EV")
-                    record["scheduler_lane"] = lane
-                return 0
+        ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(int(book_id))
+        if ev is not None and not bool(getattr(ev, "eligible", True)):
+            self._research_scheduler_note_reject_v4144(int(book_id), ev)
+        if ev is not None and not bool(getattr(ev, "eligible", True)):
+            if self.debug_enabled:
+                record = self._book_record(book_id)
+                record["action"] = "SKIP"
+                record["reason"] = str(getattr(ev, "reject_reason", None) or "SCORE_EV")
+                record["scheduler_lane"] = lane
+            return 0
 
         ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(int(book_id))
         expected_mo = self._research_conservative_markout(int(book_id))
@@ -11231,6 +11185,8 @@ class Strategy1_Research(Strategy1_Debug):
         if placed and self.research_force_mm_post_only:
             self._research_forced_maker_quote_books += 1
 
+        if placed:
+            self._research_scheduler_retry_guard_v4144().clear(int(book_id))
         return placed
 
     def _place_directional_round_trip(self, *args, **kwargs) -> int:
@@ -11452,8 +11408,6 @@ class Strategy1_Research(Strategy1_Debug):
                 stats["research_hysteresis_holds"] = getattr(self, "_research_hysteresis_holds", 0)
                 stats["research_hysteresis_replaces"] = getattr(self, "_research_hysteresis_replaces", 0)
                 stats["research_ttl_stale_skips"] = getattr(self, "_research_ttl_stale_skips", 0)
-                stats["research_dust_escape_attempts"] = getattr(self, "_research_dust_escape_attempts", 0)
-                stats["research_dust_escape_orders"] = getattr(self, "_research_dust_escape_orders", 0)
                 stats["research_dust_prevent_skips"] = getattr(self, "_research_dust_prevent_skips", 0)
                 stats["research_dust_compact_cooldown_skips"] = self._research_dust_compact_cooldown_skips
                 stats["research_flat_epsilon"] = self._execution_flat_epsilon()

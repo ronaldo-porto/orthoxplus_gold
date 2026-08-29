@@ -93,9 +93,6 @@ def test_insufficient_data_fallback():
     assert pred.source == "fallback"
     assert pred.usable is False
     assert 0.01 <= pred.any_fill <= 0.95
-    old = 0.42
-    assert model.select_policy_probability(old, pred, use_for_policy=True) == old
-    assert model.select_policy_probability(old, pred, use_for_policy=False) == old
 
 
 def test_probability_bounds():
@@ -187,16 +184,14 @@ def test_calibration_bucket_accounting():
     assert overall["ACTIONABLE"] == hit["brier_component"]
 
 
-def test_policy_flag_keeps_old_estimator_when_off():
+def test_learned_hazard_becomes_usable_for_telemetry_and_exit_compare():
     model = _model()
     feat = _feat()
     for _ in range(20):
         model.observe(feat, age_ms=20.0, filled=True, fill_class="FULL")
     pred = model.predict(feat)
-    old = 0.77
-    assert model.select_policy_probability(old, pred, use_for_policy=False) == old
     assert pred.usable is True
-    assert model.select_policy_probability(old, pred, use_for_policy=True) == pred.any_fill
+    assert 0.0 <= pred.any_fill <= 1.0
 
 
 def test_outcome_mapping():
@@ -289,17 +284,13 @@ def test_remaining_hazard_uses_quote_age():
     assert len(young.hazard_rates) >= 1
 
 
-def test_legacy_estimator_remains_fallback():
+def test_hazard_prediction_transitions_from_fallback_to_learned():
     model = _model(min_samples=12)
     feat = _feat()
     pred = model.predict(feat)
     assert pred.source == "fallback"
     assert pred.usable is False
-    old = 0.33
-    assert model.select_policy_probability(old, pred, use_for_policy=True) == old
     for _ in range(20):
         model.observe(feat, age_ms=30.0, filled=True, fill_class="FULL")
     learned = model.predict(feat)
     assert learned.usable is True
-    assert model.select_policy_probability(old, learned, use_for_policy=False) == old
-    assert model.select_policy_probability(old, learned, use_for_policy=True) == learned.any_fill

@@ -353,10 +353,6 @@ def admit_scheduler_candidate(
     return True, None
 
 
-def legacy_global_rank(expected_alpha: float, specialization: float = 0.0) -> float:
-    """Parent Strategy1 rank, kept for A/B when Score-EV is off."""
-    spec = max(0.0, min(1.0, float(specialization)))
-    return float(expected_alpha) * (0.72 + 0.28 * spec) + 0.12 * spec
 
 
 @dataclass(frozen=True)
@@ -658,18 +654,6 @@ def score_velocity_priority(
     )
 
 
-def select_rank(
-    *,
-    enable_score_ev: bool,
-    score_ev: ScoreEVBreakdown | None,
-    legacy_rank: float,
-) -> float | None:
-    """Feature flag: Score-EV ranking or inherited global rank. None = reject."""
-    if not enable_score_ev:
-        return float(legacy_rank)
-    if score_ev is None or not score_ev.eligible:
-        return None
-    return float(score_ev.final_score)
 
 
 def scheduler_bucket_counts(

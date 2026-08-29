@@ -18,7 +18,6 @@ with:
   - VWAP PositionTracker from FIFO open lots (validator-aligned)
   - Microprice-augmented predict_direction()
   - Pre-submit FIFO expected PnL gate (MM quotes + alpha round-trips)
-  - Sim-time auto-tuning scheduler + optional tuning.json hot-reload
 
 Launch:
   --agent.path agents \\
@@ -174,25 +173,6 @@ class BookMemory:
 
 
 @dataclass
-class TuningMetrics:
-    kappa_med: float
-    win_rate: float
-    skip_neg_rate: float
-    objective: float
-    window_ticks: int
-
-
-TUNING_PARAM_BOUNDS: dict[str, tuple[float, float]] = {
-    "min_expected_alpha": (0.15, 0.45),
-    "min_expected_realized_pnl": (0.0, 0.002),
-    "max_mm_books_per_tick": (4.0, 12.0),
-    "toxic_loss_streak": (2.0, 5.0),
-    "toxic_recent_pnl": (-0.05, -0.001),
-    "coverage_boost_weight": (0.05, 0.30),
-}
-
-
-@dataclass
 class InventorySnapshot:
     net_base: float
     inventory_ratio: float
@@ -313,7 +293,6 @@ class Strategy1(DetailedTemplateAgent):
             MM/alpha orders (default 0.0 — must be strictly positive after fees).
         max_managed_books_per_tick (int): Cap inventory-management books per tick (default 4).
         mm_skip_inactive_tier (bool): Skip MM quotes on INACTIVE tier (maintenance only).
-        enable_auto_tuning (bool): Sim-time param scheduler (default False).
         tuning_interval_ns (int): Sim nanoseconds between tuning steps (default 3600s).
         tuning_config_path (str): Optional JSON overrides; default output_dir/tuning.json.
         log_tuning (bool): Log [TUNING] steps (default True).
@@ -332,7 +311,6 @@ class Strategy1(DetailedTemplateAgent):
         self.log_regime = bool(getattr(cfg, "log_regime", False))
         self.log_momentum_pnl = bool(getattr(cfg, "log_momentum_pnl", False))
         self.enable_mm_strategy = bool(getattr(cfg, "enable_mm_strategy", True))
-        self.enable_kappa_strategy = bool(getattr(cfg, "enable_kappa_strategy", False))
         self.mm_base_size = float(getattr(cfg, "mm_base_size", 0.25))
         self.max_inventory_base = float(getattr(cfg, "max_inventory_base", 1.2))
         self.inventory_skew_strength = float(getattr(cfg, "inventory_skew_strength", 0.35))
@@ -396,17 +374,6 @@ class Strategy1(DetailedTemplateAgent):
         self.min_expected_realized_pnl = float(
             getattr(cfg, "min_expected_realized_pnl", 0.0)
         )
-        self.enable_auto_tuning = bool(getattr(cfg, "enable_auto_tuning", False))
-        self.allow_tuning_config = bool(getattr(cfg, "allow_tuning_config", False))
-        self.tuning_interval_ns = int(getattr(cfg, "tuning_interval_ns", 3_600_000_000_000))
-        self.log_tuning = bool(getattr(cfg, "log_tuning", True))
-        _tuning_path = getattr(cfg, "tuning_config_path", None)
-        self._tuning_config_path = (
-            str(_tuning_path)
-            if _tuning_path
-            else os.path.join(self.output_dir, "tuning.json")
-        )
-
         self._position_ticks: dict[int, int] = {}
         self._inventory_reason: dict[int, InventoryReason] = {}
         self._micro_prev: dict[int, float] = {}
@@ -415,16 +382,8 @@ class Strategy1(DetailedTemplateAgent):
         self._trade_signs_tick: dict[int, int] = {}
         self.book_memory: dict[int, BookMemory] = {}
         self._last_mm_stats: dict = {}
-        self._tuning_window: dict[str, int] = {}
-        self._last_tuning_ts: int = 0
-        self._last_tuning_objective: float = 0.0
-        self._tuning_config_mtime: float = 0.0
         self.monitor_top_miners = bool(getattr(cfg, "monitor_top_miners", False))
         self.monitor_top_n = max(1, int(getattr(cfg, "monitor_top_n", 5)))
-
-        if self.allow_tuning_config and os.path.isfile(self._tuning_config_path):
-            self._reload_tuning_config_if_changed(force=True)
-        self._clamp_tuning_params()
 
         bt.logging.info(
             f"Strategy1: mm={self.enable_mm_strategy} "
@@ -443,7 +402,7 @@ class Strategy1(DetailedTemplateAgent):
             f"w_micro_vel={self.w_micro_vel} w_deep={self.w_deep} w_persist={self.w_persist} "
             f"fill_learn={self.fill_learn_blend} spec_w={self.book_specialization_weight} "
             f"toxic_streak={self.toxic_loss_streak} "
-            f"auto_tune={self.enable_auto_tuning} monitor_top={self.monitor_top_miners}"
+            f"monitor_top={self.monitor_top_miners}"
         )
 
     def handle(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
@@ -631,203 +590,6 @@ class Strategy1(DetailedTemplateAgent):
         self._tuning_window = {}
         self._last_tuning_ts = 0
         self._last_tuning_objective = 0.0
-
-    def _snapshot_tuning_params(self) -> dict[str, float | int]:
-        return {
-            "min_expected_alpha": self.min_expected_alpha,
-            "min_expected_realized_pnl": self.min_expected_realized_pnl,
-            "max_mm_books_per_tick": self.max_mm_books_per_tick,
-            "toxic_loss_streak": self.toxic_loss_streak,
-            "toxic_recent_pnl": self.toxic_recent_pnl,
-            "coverage_boost_weight": self.coverage_boost_weight,
-        }
-
-    def _clamp_tuning_params(self) -> None:
-        for key, (lo, hi) in TUNING_PARAM_BOUNDS.items():
-            val = getattr(self, key)
-            if key in ("max_mm_books_per_tick", "toxic_loss_streak"):
-                setattr(self, key, int(max(lo, min(hi, val))))
-            else:
-                setattr(self, key, max(lo, min(hi, val)))
-
-    def _apply_tuning_overrides(self, overrides: dict) -> list[str]:
-        applied: list[str] = []
-        for key, raw in overrides.items():
-            if key not in TUNING_PARAM_BOUNDS:
-                continue
-            lo, hi = TUNING_PARAM_BOUNDS[key]
-            if key in ("max_mm_books_per_tick", "toxic_loss_streak"):
-                val = int(max(lo, min(hi, float(raw))))
-            else:
-                val = max(lo, min(hi, float(raw)))
-            setattr(self, key, val)
-            applied.append(key)
-        return applied
-
-    def _reload_tuning_config_if_changed(self, force: bool = False) -> list[str]:
-        path = self._tuning_config_path
-        if not path or not os.path.isfile(path):
-            return []
-        try:
-            mtime = os.path.getmtime(path)
-        except OSError:
-            return []
-        if not force and mtime <= self._tuning_config_mtime:
-            return []
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            bt.logging.warning(f"[TUNING] Failed to read {path}: {exc}")
-            return []
-        if not isinstance(data, dict):
-            return []
-        overrides = data.get("params", data)
-        if not isinstance(overrides, dict):
-            return []
-        applied = self._apply_tuning_overrides(overrides)
-        self._tuning_config_mtime = mtime
-        self._clamp_tuning_params()
-        if applied and self.log_tuning:
-            bt.logging.info(
-                f"[TUNING] hot-reload {path} applied={applied} "
-                f"snapshot={json.dumps(self._snapshot_tuning_params())}"
-            )
-        return applied
-
-    def _accumulate_tuning_window(self, stats: dict) -> None:
-        if not self.enable_auto_tuning:
-            return
-        self._tuning_window["ticks"] = self._tuning_window.get("ticks", 0) + 1
-        for key in (
-            "skipped_negative_pnl",
-            "skipped_low_alpha",
-            "skipped_toxic",
-            "quoted",
-            "maintenance",
-            "instructions",
-        ):
-            self._tuning_window[key] = (
-                self._tuning_window.get(key, 0) + int(stats.get(key, 0))
-            )
-
-    def _aggregate_book_memory_win_rate(self) -> float:
-        wins = sum(m.win_count for m in self.book_memory.values())
-        losses = sum(m.loss_count for m in self.book_memory.values())
-        return wins / max(wins + losses, 1)
-
-    def _compute_tuning_metrics(self) -> TuningMetrics:
-        kappa_med = self._estimate_local_normalized_median() or 0.0
-        win_rate = self._aggregate_book_memory_win_rate()
-        ticks = max(1, self._tuning_window.get("ticks", 1))
-        skip_neg = self._tuning_window.get("skipped_negative_pnl", 0)
-        skip_neg_rate = min(1.0, skip_neg / ticks)
-        objective = (
-            0.50 * kappa_med
-            + 0.30 * win_rate
-            - 0.20 * skip_neg_rate
-        )
-        return TuningMetrics(
-            kappa_med=kappa_med,
-            win_rate=win_rate,
-            skip_neg_rate=skip_neg_rate,
-            objective=objective,
-            window_ticks=ticks,
-        )
-
-    def _apply_tuning_rules(self, metrics: TuningMetrics) -> None:
-        if metrics.skip_neg_rate > 0.12:
-            self.min_expected_alpha = min(0.45, self.min_expected_alpha + 0.02)
-            self.min_expected_realized_pnl = min(
-                0.002, self.min_expected_realized_pnl + 0.00005,
-            )
-            self.max_mm_books_per_tick = max(4, self.max_mm_books_per_tick - 1)
-
-        if metrics.win_rate < 0.45:
-            self.min_expected_alpha = min(0.45, self.min_expected_alpha + 0.02)
-            self.toxic_loss_streak = max(2, self.toxic_loss_streak - 1)
-            self.toxic_recent_pnl = min(-0.001, self.toxic_recent_pnl - 0.002)
-
-        if (
-            metrics.kappa_med > 0.55
-            and metrics.win_rate > 0.50
-            and metrics.skip_neg_rate < 0.05
-        ):
-            self.max_mm_books_per_tick = min(12, self.max_mm_books_per_tick + 1)
-            self.min_expected_alpha = max(0.15, self.min_expected_alpha - 0.01)
-
-        if (
-            self._last_tuning_objective > 0.0
-            and metrics.objective < self._last_tuning_objective - 0.04
-        ):
-            self.max_mm_books_per_tick = max(4, self.max_mm_books_per_tick - 1)
-            self.min_expected_alpha = min(0.45, self.min_expected_alpha + 0.03)
-
-        self._clamp_tuning_params()
-
-    def _persist_tuning_state(self, metrics: TuningMetrics) -> None:
-        path = os.path.join(self.output_dir, "tuning_state.json")
-        history: list[dict] = []
-        if os.path.isfile(path):
-            try:
-                with open(path, encoding="utf-8") as f:
-                    payload = json.load(f)
-                history = payload.get("history", [])
-            except (OSError, json.JSONDecodeError):
-                history = []
-        entry = {
-            "objective": round(metrics.objective, 6),
-            "kappa_med": round(metrics.kappa_med, 4),
-            "win_rate": round(metrics.win_rate, 4),
-            "skip_neg_rate": round(metrics.skip_neg_rate, 4),
-            "window_ticks": metrics.window_ticks,
-            "params": self._snapshot_tuning_params(),
-        }
-        history.append(entry)
-        if len(history) > 96:
-            history = history[-96:]
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump({"history": history, "last": entry}, f, indent=2)
-        except OSError as exc:
-            bt.logging.warning(f"[TUNING] Failed to write {path}: {exc}")
-
-    def _maybe_run_tuning_scheduler(
-        self,
-        state: MarketSimulationStateUpdate,
-    ) -> None:
-        if not self.enable_auto_tuning:
-            return
-        now = state.timestamp
-        if self._last_tuning_ts <= 0:
-            self._last_tuning_ts = now
-            return
-        if now - self._last_tuning_ts < self.tuning_interval_ns:
-            return
-
-        self._reload_tuning_config_if_changed()
-        kappa_values = self._compute_local_kappa(state)
-        if kappa_values:
-            self._last_kappa = kappa_values
-
-        metrics = self._compute_tuning_metrics()
-        self._apply_tuning_rules(metrics)
-        self._reload_tuning_config_if_changed()
-        self._persist_tuning_state(metrics)
-
-        if self.log_tuning:
-            bt.logging.info(
-                f"[TUNING] step objective={round(metrics.objective, 4)} "
-                f"kappa_med={round(metrics.kappa_med, 4)} "
-                f"win_rate={round(metrics.win_rate, 4)} "
-                f"skip_neg_rate={round(metrics.skip_neg_rate, 4)} "
-                f"window_ticks={metrics.window_ticks} "
-                f"params={json.dumps(self._snapshot_tuning_params())}"
-            )
-
-        self._last_tuning_objective = metrics.objective
-        self._tuning_window = {}
-        self._last_tuning_ts = now
 
     def _reason_from_client_id(self, client_id: int) -> InventoryReason:
         if client_id >= ALPHA_CLIENT_ID_BASE:
@@ -2124,24 +1886,9 @@ class Strategy1(DetailedTemplateAgent):
                     response, state, selection, predictions, regime,
                     collect_archetypes=collect_archetypes,
                 )
-                self._accumulate_tuning_window(mm_stats)
                 if self.log_mm_strategy and log_tick:
                     self._log_mm_strategy(mm_stats, regime)
-            elif self.enable_kappa_strategy:
-                strategy_stats = self.build_kappa_strategy_instructions(
-                    response, state, selection, predictions, regime,
-                )
-                if self.log_kappa_strategy and (
-                    self._tick == 1 or self._tick % self.log_every_n == 0
-                ):
-                    self._log_kappa_strategy_calibration(
-                        state, selection, regime, strategy_stats,
-                    )
-            elif self.enable_trading:
-                self.build_demo_instructions(response, state, book_id=0)
-        elif state.books and in_grace and (
-            self.enable_mm_strategy or self.enable_kappa_strategy or self.enable_trading
-        ):
+        elif state.books and in_grace and self.enable_mm_strategy:
             bt.logging.info(
                 f"Grace period active (T={state.timestamp} < {summary.grace_period_ns}); "
                 "no orders placed."
@@ -2149,8 +1896,6 @@ class Strategy1(DetailedTemplateAgent):
 
         if self.verbose_log and response.instructions and log_tick:
             self._log_output(self.parse_response(response))
-
-        self._maybe_run_tuning_scheduler(state)
 
         if self.monitor_top_miners:
             try:

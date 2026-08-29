@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Rayleigh Research <to@rayleigh.re>
 # SPDX-License-Identifier: MIT
-"""Research V4.3 Phase 5: hysteresis, adaptive TTL, dust escape."""
+"""Research quote hysteresis and adaptive TTL."""
 from pathlib import Path
 import sys
 
@@ -9,9 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agents" / "strateg
 from research_quote_hysteresis import (
     choose_ttl_ms,
     clamp_ttl_ms,
-    dust_escape_allowed,
     ofi_reversed,
-    projected_inventory_after,
     should_replace_quote,
 )
 
@@ -234,42 +232,3 @@ def test_inventory_regime_toxicity_ttl_and_ev_replace():
         old_ev=0.10, new_ev=0.12, ev_improve_threshold=0.06,
     )
     assert tiny_ev.cancel is False and tiny_ev.reason == "HOLD"
-
-
-def test_dust_escape_reduces_absolute_inventory():
-    ok, after, reason = dust_escape_allowed(
-        inventory_before=0.18,
-        reduce_qty=0.25,
-        age_ticks=800,
-        min_age_ticks=400,
-        benefit_bps=4.0,
-        cost_bps=2.0,
-    )
-    assert ok is True
-    assert reason == "ESCAPE"
-    assert abs(after) < 0.18
-    assert projected_inventory_after(0.18, 0.25) == 0.18 - 0.25
-
-
-def test_unsafe_zero_cross_increasing_exposure_is_rejected():
-    ok, after, reason = dust_escape_allowed(
-        inventory_before=0.08,
-        reduce_qty=0.25,
-        age_ticks=800,
-        min_age_ticks=400,
-        benefit_bps=10.0,
-        cost_bps=2.0,
-    )
-    assert ok is False
-    assert reason == "EXPOSURE_INCREASE"
-    assert abs(after) > abs(0.08)
-    young, _, young_reason = dust_escape_allowed(
-        inventory_before=0.18,
-        reduce_qty=0.25,
-        age_ticks=10,
-        min_age_ticks=400,
-        benefit_bps=10.0,
-        cost_bps=2.0,
-    )
-    assert young is False
-    assert young_reason == "TOO_YOUNG"
