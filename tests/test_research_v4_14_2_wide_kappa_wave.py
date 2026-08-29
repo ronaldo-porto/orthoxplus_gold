@@ -26,11 +26,11 @@ def _fresh(book_id: int) -> LaneBook:
 
 def test_v4142_policy_and_two_exploration_paths_are_wired():
     assert KAPPA_PRODUCTIVITY_VERSION == "wide_kappa_productivity_v4_14_2"
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC
     assert "research_cohort_exploration_slots=2" in LAUNCHER
     assert "research_kappa_exploration_slots=2" in LAUNCHER
-    assert "research_wide_kappa_min_density_observations=6" in LAUNCHER
-    assert "research_wide_kappa_preferred_density_observations=8" in LAUNCHER
+    assert "research_wide_kappa_min_density_observations=3" in LAUNCHER
+    assert "research_wide_kappa_preferred_density_observations=3" in LAUNCHER
     assert "research_wide_kappa_raw_target=0.35" in LAUNCHER
 
 
@@ -99,14 +99,11 @@ def test_weak_quality_extension_is_bounded_and_does_not_feed_bad_books():
     assert not wide_kappa_density_due(observations=6, raw_kappa=None, kappa_eligible=True)
 
 
-def test_density_and_balanced_phases_keep_at_least_two_coverage_slots():
-    # Static source contract keeps the change O(1) and guards against reverting
-    # to the old one-coverage density choke point.
-    density = SRC.split('if phase == PRODUCTIVITY_PHASE_DENSITY:', 1)[1].split(
-        'if phase == PRODUCTIVITY_PHASE_BALANCED:', 1
-    )[0]
-    balanced = SRC.split('if phase == PRODUCTIVITY_PHASE_BALANCED:', 1)[1].split(
-        'return normalize_lane_budgets(', 2
-    )[1]
-    assert "coverage_slots=2" in density
-    assert "coverage_slots=3" in SRC.split('if phase == PRODUCTIVITY_PHASE_BALANCED:', 1)[1][:250]
+def test_v4145_total_score_phases_keep_coverage_floor_and_remove_dynamic_choke():
+    from research_total_score_frontier import (
+        PHASE_IGNITION, PHASE_SURVIVAL, PHASE_FRONTIER, phase_budget_tuple,
+    )
+    assert phase_budget_tuple(PHASE_IGNITION)[0] == 4
+    assert phase_budget_tuple(PHASE_SURVIVAL)[0] == 2
+    assert phase_budget_tuple(PHASE_FRONTIER)[0] == 2
+    assert "density_priority_budgets(" not in SRC[SRC.index("def _research_lane_budgets_for_screen"):SRC.index("def _research_velocity_state")]

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """V4.10 score-up regression tests: rolling Kappa, live fees, hard Taker authority."""
 from pathlib import Path
+import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,12 +37,16 @@ def _econ_take() -> TakerEconomicsDecision:
 
 
 def test_v410_project_contract_uses_zero_loss_score_defaults():
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in RESEARCH_SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in RESEARCH_SRC
     assert "research_allow_score_loss_subsidy" not in LAUNCHER_SRC
     assert "research_economic_direct_max_loss_bps=0.0" in LAUNCHER_SRC
     assert "research_enable_risk_taker_direct" not in LAUNCHER_SRC
     assert "research_sn79_one_away_loss_floor_bps" not in LAUNCHER_SRC
-    assert ("research_candidate_count=12" in LAUNCHER_SRC or "research_candidate_count=10" in LAUNCHER_SRC)
+    # V4.14.5 raised the cap from 10 to 11 so the shared overflow slot can no
+    # longer consume IGNITION's reserved COVERAGE slot. Runtime must still stay
+    # concentrated, so assert the band rather than a single literal.
+    count = int(re.search(r"research_candidate_count=(\d+)", LAUNCHER_SRC).group(1))
+    assert 10 <= count <= 12
 
 
 def test_no_authority_none_taker_when_economic_floor_rejects():

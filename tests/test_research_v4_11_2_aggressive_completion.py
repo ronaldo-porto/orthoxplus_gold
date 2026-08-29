@@ -202,7 +202,7 @@ def test_one_away_exact_min_rejects_negative_ev_or_insufficient_exit_capacity():
 
 
 def test_v4112_wiring_and_launcher_contract():
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC
     assert "research_enable_aggressive_positive_ev_taker=1" in LAUNCHER
     assert "research_aggressive_positive_ev_min_net_bps=0.0" in LAUNCHER
     assert "research_one_away_exact_min_enabled=1" in LAUNCHER

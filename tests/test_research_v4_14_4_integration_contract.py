@@ -13,8 +13,8 @@ RUNNER = (ROOT / "run_strategy1_research_test_multi.sh").read_text(encoding="utf
 
 
 def test_v4144_strategy_wires_single_exit_authority_and_retry_before_lane_allocation():
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
-    assert 'RESEARCH_ENGINE_REVISION = "lean_engine_p1_realnet_fix_v4_14_4"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC
+    assert 'RESEARCH_ENGINE_REVISION = "lean_engine_p1_total_score_frontier_v4_14_5"' in SRC
     assert "arbitrate_realnet_exit(" in SRC
     assert "REALNET_EXIT_AUTHORITY" in SRC
     assert "_research_scheduler_retry_allows_v4144(" in SRC
@@ -36,6 +36,8 @@ def test_v4144_scheduler_retry_is_cleared_on_session_transition():
 def test_v4144_launcher_fails_closed_on_new_helper_versions():
     assert 'research_realnet_exit_authority.py missing' in RUNNER
     assert 'research_scheduler_retry.py missing' in RUNNER
+    assert 'research_total_score_frontier.py missing' in RUNNER
     assert 'REALNET_EXIT_AUTHORITY_VERSION != "realnet_exit_authority_v4_14_4"' in RUNNER
     assert 'SCHEDULER_RETRY_VERSION != "scheduler_retry_rotation_v4_14_4"' in RUNNER
     assert 'V4.14.4 RealNet exit authority + scheduler retry rotation API OK' in RUNNER
+    assert 'V4.14.5 TOTAL_SCORE_FRONTIER API OK' in RUNNER

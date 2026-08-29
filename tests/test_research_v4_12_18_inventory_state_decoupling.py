@@ -28,8 +28,8 @@ SRC = (STRATEGY_DIR / "Strategy1_Research.py").read_text(encoding="utf-8")
 def test_v418_version_contract():
     assert INVENTORY_LIVENESS_VERSION == "inventory_state_decoupling_v4_12_18"
     assert KAPPA_FLYWHEEL_VERSION == "kappa_flywheel_v4_12_18"
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
-    assert 'RESEARCH_LANES_VERSION = "execution_lanes_v7_inventory_decoupled"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC
+    assert 'RESEARCH_LANES_VERSION = "execution_lanes_v8_total_score_single_authority"' in SRC
 
 
 def test_one_away_is_loss_protected_but_park_eligible():
@@ -132,8 +132,9 @@ def test_migrated_kappa_history_uses_confidence_not_false_pnl():
     assert pnl_confidence_multiplier(PNL_CONFIDENCE_UNKNOWN) == 0.70
 
 
-def test_flywheel_core_uses_kappa_eligibility_not_full_pnl_history():
-    assert 'bool(getattr(row, "kappa_eligible", False))' in SRC
+def test_total_score_frontier_uses_kappa_eligibility_and_keeps_pnl_evidence():
+    assert "qualified_books=len(kappa_eligible_ids)" in SRC
+    assert "apply_total_score_frontier(" in SRC
     assert "productivity_phase = productivity_scheduler_phase(len(kappa_eligible_ids))" in SRC
     assert "pnl_confidence=str(pnl_conf)" in SRC
     assert "pnl_confidence_mult=float(pnl_conf_mult)" in SRC

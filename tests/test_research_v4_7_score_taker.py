@@ -19,7 +19,7 @@ from research_realization_ladder import (
 
 
 def test_v47_policy_and_phantom_inventory_contract():
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in RESEARCH_SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in RESEARCH_SRC
     screen = RESEARCH_SRC.split("def _research_fast_screen(self, state)", 1)[1].split(
         "def _research_full_predictions", 1
     )[0]

@@ -72,7 +72,7 @@ def _book98():
 
 def test_v413_version_and_phase_contract():
     assert KAPPA_PRODUCTIVITY_VERSION == "wide_kappa_productivity_v4_14_2"
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC
     assert scheduler_phase(0) == PHASE_BOOTSTRAP
     assert scheduler_phase(40) == PHASE_BOOTSTRAP
     assert scheduler_phase(41) == PHASE_BALANCED

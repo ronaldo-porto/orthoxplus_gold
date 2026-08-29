@@ -85,7 +85,7 @@ def _unknown_snapshot(*, fresh_rt=0, fresh_pos=0, fresh_neg=0):
 def test_v4134_version_contract():
     assert KAPPA_PRODUCTIVITY_VERSION == "wide_kappa_productivity_v4_14_2"
     assert FRESH_MAKER_GRACE_VERSION == "fresh_maker_grace_v4_13_2"
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC
     assert "research_core_probe_enabled" in SRC
     assert "research_fresh_maker_grace_enabled" in SRC
 
@@ -300,7 +300,8 @@ def test_launcher_explicitly_enables_v4134_patch():
     assert 'wide_kappa_productivity_v4_14_2' in LAUNCHER
     assert 'research_fresh_maker_grace_enabled=1' in LAUNCHER
     assert 'research_fresh_maker_grace_ticks=3' in LAUNCHER
-    assert 'research_core_probe_enabled=1' in LAUNCHER
+    assert 'research_core_probe_enabled=0' in LAUNCHER
+    assert 'research_total_score_frontier_enabled=1' in LAUNCHER
 
 
 def test_v4134_authoritative_completion_grant_survives_eligible_core_reclassification():

@@ -17,10 +17,10 @@ def _hazard():
     return HazardPrediction(any_fill=0.02, actionable_fill=0.01, dust=0.0, source="cell", usable=True, n_at_risk=40, ttl_ms=500.0, remaining_any_fill=0.02)
 
 def test_st64_policy_and_operational_breadth_target():
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
-    assert 'research_score_target_books", 88' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC
+    assert 'research_score_target_books", 80' in SRC
     assert 'and score_deficit > 0' in SRC
-    assert 'research_score_target_books=88' in RUNNER
+    assert 'research_score_target_books=80' in RUNNER
     assert 'research_qualified_suppression_min_incomplete=1' in RUNNER
 
 def test_single_productive_incomplete_rotates_stable_qualified():

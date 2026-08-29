@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """V4.11 aggressive-performance regression tests."""
 from pathlib import Path
+import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,8 +18,11 @@ LAUNCHER = (ROOT / "run_strategy1_research_test_multi.sh").read_text(encoding="u
 
 
 def test_v411_contract_is_enabled():
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
-    assert ("research_candidate_count=12" in LAUNCHER or "research_candidate_count=10" in LAUNCHER)
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC
+    # V4.14.5 raised the cap from 10 to 11 so the shared overflow slot can no
+    # longer consume IGNITION's reserved COVERAGE slot.
+    count = int(re.search(r"research_candidate_count=(\d+)", LAUNCHER).group(1))
+    assert 10 <= count <= 12
     assert ("research_cohort_size=10" in LAUNCHER or "research_cohort_size=8" in LAUNCHER)
     assert "research_positive_ev_min_order_override" not in LAUNCHER
     assert "research_quiet_ttl_ms=1000" in LAUNCHER

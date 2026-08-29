@@ -37,9 +37,10 @@ def _positive(book_id: int, remaining: int, **kwargs) -> LaneBook:
 def test_v4136_version_contract():
     assert COMPLETION_ECONOMICS_VERSION == "completion_density_v4_13_6"
     assert KAPPA_PRODUCTIVITY_VERSION == "wide_kappa_productivity_v4_14_2"
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC
     assert "research_completion_ev_cache_ticks=20" in LAUNCHER
-    assert "research_density_priority_enabled=1" in LAUNCHER
+    assert "research_density_priority_enabled=0" in LAUNCHER
+    assert "research_total_score_frontier_enabled=1" in LAUNCHER
 
 
 def test_known_negative_one_away_does_not_consume_completion_lane():

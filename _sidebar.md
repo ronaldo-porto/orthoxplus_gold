@@ -2,6 +2,7 @@
 * **SN-79**
   * [Overview](/README.md)
   * [Agent Development Guide](/agents/README.md)
+  * [Research V4.14.5 TOTAL_SCORE_FRONTIER](/SN79_ST65_RESEARCH_V4_14_5_TOTAL_SCORE_FRONTIER_P1.md)
   * [Research V4.11 Update](/RESEARCH_V4_11_UPDATE.md)
   * [Research V4.11.2 Aggressive Completion](/RESEARCH_V4_11_2_UPDATE.md)
   * [Proxy runner](/agents/proxy/README.md)

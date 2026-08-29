@@ -92,8 +92,8 @@ def test_conversion_ttl_keeps_bad_ev_and_stress_fail_closed():
 
 
 def test_v417_contract_keeps_park_precedence_and_new_flywheel_lanes():
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
-    assert 'RESEARCH_LANES_VERSION = "execution_lanes_v7_inventory_decoupled"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC
+    assert 'RESEARCH_LANES_VERSION = "execution_lanes_v8_total_score_single_authority"' in SRC
     assert "unified.action == UNIFIED_KEEP_MAKER" in SRC
     assert "and not liveness_parked_now" in SRC
     assert "and not positive_maker_veto_active" in SRC

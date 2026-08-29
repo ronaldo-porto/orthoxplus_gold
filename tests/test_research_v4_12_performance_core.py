@@ -90,8 +90,12 @@ def test_generic_positive_ev_min_order_override_is_off_but_one_away_stays_on():
 
 
 def test_v412_runtime_is_concentrated():
+    # The live multi launcher moved to 11 in V4.14.5 so the shared overflow slot
+    # can no longer consume IGNITION's reserved COVERAGE slot. The archived
+    # single-miner launcher is frozen at the V4.12.1 contract.
+    assert "research_candidate_count=10" in LAUNCHER
+    assert "research_candidate_count=11" in MULTI
     for launcher in (LAUNCHER, MULTI):
-        assert "research_candidate_count=10" in launcher
         assert "research_cohort_size=8" in launcher
         assert "research_max_open_books=6" in launcher
         assert "research_maker_escalate_failed_exit_count=8" in launcher
@@ -99,4 +103,4 @@ def test_v412_runtime_is_concentrated():
 
 
 def test_policy_version_is_v412():
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC

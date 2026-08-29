@@ -39,11 +39,12 @@ def _admit(**overrides):
 
 
 def test_release_contract_and_runner_values():
-    assert 'RESEARCH_POLICY_VERSION = "realnet_authority_rotation_v4_14_4"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"' in SRC
     assert ONE_AWAY_STALE_TTL_VERSION == "one_away_stale_ttl_v4_12_11"
     assert "research_one_away_exact_min_safe_fraction=0.15" in LAUNCHER
     assert "research_one_away_exact_min_exit_fraction=0.20" in LAUNCHER
-    assert "research_candidate_count=10" in LAUNCHER
+    # V4.14.5: 11 keeps IGNITION's reserved COVERAGE slot safe from overflow.
+    assert "research_candidate_count=11" in LAUNCHER
     assert "research_max_open_books=6" in LAUNCHER
     assert "research_unified_stale_bridge_roundtrip_floor_bps=-12.0" in LAUNCHER
 
