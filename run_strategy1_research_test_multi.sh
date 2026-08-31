@@ -991,6 +991,71 @@ grep -q 'PROFITABLE_EXIT_PERSISTENCE_VERSION = "profitable_maker_exit_persistenc
   echo "ERROR: V4.13.8 profitable Maker exit persistence helper missing" >&2
   exit 1
 }
+# Round-trip phase timing is measurement-only, but a silently broken module
+# would void the whole run: the throughput attribution it produces is the
+# reason for launching. Fail here instead of after the fact.
+PYTHONPATH="$AGENT_PATH${PYTHONPATH:+:$PYTHONPATH}" python - <<'PYRTPHASE'
+from research_rt_phase_timing import RT_PHASE_VERSION, RoundTripPhaseState
+
+S = 1_000_000_000
+state = RoundTripPhaseState()
+state.note_entry_submit(1, 0)
+state.note_entry_fill(1, 10 * S)
+state.note_exit_submit(1, 100 * S)
+sample = state.note_round_trip(1, 130 * S)
+if (sample["entry_wait_s"], sample["hold_s"], sample["exit_wait_s"]) != (10.0, 90.0, 30.0):
+    raise SystemExit(f"ERROR: rt phase split wrong: {sample}")
+
+snap = state.snapshot(simulation_time=3600.0)
+if snap["rt_phase_version"] != RT_PHASE_VERSION or snap["rt_per_sim_hour"] != 1.0:
+    raise SystemExit(f"ERROR: rt phase snapshot wrong: {snap}")
+if abs(snap["rt_implied_concurrency"] - 130.0 / 3600.0) > 1e-9:
+    raise SystemExit("ERROR: rt implied concurrency (Little's Law) wrong")
+print(f"V4.14.5 round-trip phase timing OK ({RT_PHASE_VERSION})")
+PYRTPHASE
+
+grep -q 'from research_rt_phase_timing import RoundTripPhaseState' agents/strategy/Strategy1_Research.py || {
+  echo "ERROR: Strategy1_Research is not wired to round-trip phase timing" >&2
+  exit 1
+}
+
+# Saturation accounting answers "which cap bound", which round-trip phase timing
+# cannot. Same rationale as above: a silent break voids the measurement run.
+PYTHONPATH="$AGENT_PATH${PYTHONPATH:+:$PYTHONPATH}" python - <<'PYCAPSAT'
+from research_capacity_saturation import (
+    CAP_NONE, CAP_TOTAL, CapacitySaturationState,
+)
+
+capped = CapacitySaturationState()
+for _ in range(90):
+    capped.observe(active_saturated=False, total_saturated=True,
+                   exposure_saturated=False, total_open=8, dust_open=2,
+                   max_active_open_books=6, max_total_open_books=8)
+for _ in range(10):
+    capped.observe(active_saturated=False, total_saturated=False,
+                   exposure_saturated=False, total_open=5,
+                   max_active_open_books=6, max_total_open_books=8)
+snap = capped.snapshot()
+if snap["cap_binding"] != CAP_TOTAL or abs(snap["cap_total_saturated_rate"] - 0.90) > 1e-9:
+    raise SystemExit(f"ERROR: capacity saturation misreports a bound run: {snap}")
+if abs(snap["cap_dust_slot_share"] - (1.8 / 8.0)) > 1e-9:
+    raise SystemExit("ERROR: dust slot share wrong")
+
+starved = CapacitySaturationState()
+for _ in range(100):
+    starved.observe(active_saturated=False, total_saturated=False,
+                    exposure_saturated=False, total_open=2,
+                    max_active_open_books=6, max_total_open_books=8)
+if starved.snapshot()["cap_binding"] != CAP_NONE:
+    raise SystemExit("ERROR: a starved pipeline must not report a binding cap")
+print("V4.14.5 capacity saturation accounting OK")
+PYCAPSAT
+
+grep -q 'from research_capacity_saturation import CapacitySaturationState' agents/strategy/Strategy1_Research.py || {
+  echo "ERROR: Strategy1_Research is not wired to capacity saturation accounting" >&2
+  exit 1
+}
+
 echo "[Strategy1_Research] version=total_score_frontier_v4_14_5"
 echo "[Strategy1_Research] log_dir=$RESEARCH_DIR"
 

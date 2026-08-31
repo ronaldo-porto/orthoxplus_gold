@@ -282,6 +282,8 @@ from research_velocity import (
     VELOCITY_VERSION,
     VelocityState,
 )
+from research_rt_phase_timing import RoundTripPhaseState
+from research_capacity_saturation import CapacitySaturationState
 from research_exit_quantity import choose_reduce_quantity, exchange_min_order_size
 from research_dust_economics import (
     ACTION_COMPETITIVE_MAKER as DUST_ACTION_COMPETITIVE,
@@ -3995,6 +3997,22 @@ class Strategy1_Research(Strategy1_Debug):
         open_cap_saturated = bool(
             active_cap_saturated or total_cap_saturated or exposure_cap_saturated
         )
+        try:
+            self._research_capacity_state().observe(
+                active_saturated=bool(active_cap_saturated),
+                total_saturated=bool(total_cap_saturated),
+                exposure_saturated=bool(exposure_cap_saturated),
+                active_open=active_nonflat,
+                total_open=actual_nonflat,
+                dust_open=dust_nonflat,
+                parked_open=parked_nonflat,
+                abs_base=total_abs_base,
+                max_active_open_books=max_active_open,
+                max_total_open_books=max_total_open,
+                max_total_abs_base=max_total_abs_base,
+            )
+        except Exception:
+            pass
         if open_cap_saturated:
             lane_rows = [
                 replace(row, entry_feasible=False)
@@ -4467,6 +4485,14 @@ class Strategy1_Research(Strategy1_Debug):
             except Exception:
                 inv = decision.get("inventory") or {}
                 inventory_before = inv.get("net_base")
+            try:
+                if (
+                    inventory_before is not None
+                    and abs(float(inventory_before)) < self._execution_flat_epsilon()
+                ):
+                    self._research_rt_phase_state().note_entry_submit(book_id, now)
+            except Exception:
+                pass
             queue = self._research_queue_metrics(book, side, quote_price)
             ttl_ms = self._research_ttl_ms(instruction)
             feat = HazardFeatures.from_snapshot(
@@ -5767,6 +5793,20 @@ class Strategy1_Research(Strategy1_Debug):
             self._research_velocity = state
         return state
 
+    def _research_rt_phase_state(self) -> RoundTripPhaseState:
+        state = getattr(self, "_research_rt_phase", None)
+        if not isinstance(state, RoundTripPhaseState):
+            state = RoundTripPhaseState()
+            self._research_rt_phase = state
+        return state
+
+    def _research_capacity_state(self) -> CapacitySaturationState:
+        state = getattr(self, "_research_capacity", None)
+        if not isinstance(state, CapacitySaturationState):
+            state = CapacitySaturationState()
+            self._research_capacity = state
+        return state
+
     def _research_inventory_ages(self) -> list[float]:
         ages: list[float] = []
         ticks = getattr(self, "_position_ticks", {}) or {}
@@ -5803,6 +5843,18 @@ class Strategy1_Research(Strategy1_Debug):
                 + float(getattr(vel.aggressive_maker, "pnl", 0.0) or 0.0),
             "taker_realized_pnl": float(getattr(vel.taker, "pnl", 0.0) or 0.0),
         })
+        try:
+            payload.update(
+                self._research_rt_phase_state().snapshot(
+                    simulation_time=self._research_simulation_time_s(),
+                )
+            )
+        except Exception:
+            pass
+        try:
+            payload.update(self._research_capacity_state().snapshot())
+        except Exception:
+            pass
         return payload
 
     def _research_emit_hybrid_summary(self, *, force: bool = False) -> None:
@@ -7462,6 +7514,12 @@ class Strategy1_Research(Strategy1_Debug):
             return
         bid = int(book_id)
         token = str(action or "").upper()
+        try:
+            self._research_rt_phase_state().note_exit_submit(
+                bid, getattr(self, "_research_last_sim_ts", None),
+            )
+        except Exception:
+            pass
         now = int(getattr(self, "_tick", 0) or 0)
         table = getattr(self, "_research_exit_attempts", None)
         if not isinstance(table, dict):
@@ -9791,6 +9849,7 @@ class Strategy1_Research(Strategy1_Debug):
                     prow["fresh_negative_round_trips"] = int(
                         prow.get("fresh_negative_round_trips", 0) or 0
                     ) + 1
+        rt_phase_sample = None
         try:
             vel = self._research_velocity_state()
             fill_qty = abs(float(getattr(event, "quantity", 0.0) or 0.0))
@@ -9799,6 +9858,13 @@ class Strategy1_Research(Strategy1_Debug):
             if ts is None:
                 ts = getattr(self, "_research_last_sim_ts", 0) or 0
             ts = float(ts)
+            phases = self._research_rt_phase_state()
+            if transition == "OPEN":
+                phases.note_entry_fill(int(book_id), ts)
+            if round_trip_event:
+                rt_phase_sample = phases.note_round_trip(
+                    int(book_id), ts, reopen=transition == "CROSS",
+                )
             if transition == "OPEN":
                 vel.note_open(int(book_id), ts)
             elif transition in {"FLAT", "REDUCE", "CROSS"}:
@@ -9880,6 +9946,10 @@ class Strategy1_Research(Strategy1_Debug):
             actionable_fill_fraction=(
                 actionable_event.get("fill_fraction") if actionable_event else None
             ),
+            rt_entry_wait_s=(rt_phase_sample or {}).get("entry_wait_s"),
+            rt_hold_s=(rt_phase_sample or {}).get("hold_s"),
+            rt_exit_wait_s=(rt_phase_sample or {}).get("exit_wait_s"),
+            rt_total_s=(rt_phase_sample or {}).get("total_s"),
         )
 
     def _research_book_exit_rate(self, book_id: int | None, inventory) -> float | None:
@@ -12155,7 +12225,30 @@ class Strategy1_Research(Strategy1_Debug):
                 f"auth=e{r.get('economic_taker_auth')}/s{r.get('score_taker_auth')}/r{r.get('risk_taker_auth')}/p{r.get('positive_ev_taker_auth')} "
                 f"taker_orders={r.get('actual_taker_orders')} taker_fills={r.get('actual_taker_fills')} "
                 f"maker_realized={self._fmt(r.get('maker_realized_pnl'))} "
-                f"taker_realized={self._fmt(r.get('taker_realized_pnl'))}"
+                f"taker_realized={self._fmt(r.get('taker_realized_pnl'))} "
+                f"rt_per_h={self._fmt(r.get('rt_per_sim_hour'))} "
+                f"rt_n={r.get('rt_phase_samples')} "
+                f"entry_wait={self._fmt(r.get('rt_entry_wait_s_median'))}s"
+                f"/{self._fmt(r.get('rt_entry_wait_share'))} "
+                f"hold={self._fmt(r.get('rt_hold_s_median'))}s"
+                f"/{self._fmt(r.get('rt_hold_share'))} "
+                f"exit_wait={self._fmt(r.get('rt_exit_wait_s_median'))}s"
+                f"/{self._fmt(r.get('rt_exit_wait_share'))} "
+                f"rt_total={self._fmt(r.get('rt_total_s_median'))}s "
+                f"implied_conc={self._fmt(r.get('rt_implied_concurrency'))} "
+                f"in_flight={r.get('rt_books_in_flight')} "
+                f"unanchored={r.get('rt_missing_entry_submit')}/{r.get('rt_missing_exit_submit')} "
+                f"binding={r.get('cap_binding')} "
+                f"sat_any={self._fmt(r.get('cap_any_saturated_rate'))} "
+                f"sat=a{self._fmt(r.get('cap_active_saturated_rate'))}"
+                f"/t{self._fmt(r.get('cap_total_saturated_rate'))}"
+                f"/x{self._fmt(r.get('cap_exposure_saturated_rate'))} "
+                f"open={self._fmt(r.get('cap_mean_active_open'))}"
+                f"/{self._fmt(r.get('cap_mean_total_open'))}"
+                f" of {r.get('cap_max_active_open_books')}/{r.get('cap_max_total_open_books')} "
+                f"dust_slots={self._fmt(r.get('cap_mean_dust_open'))}"
+                f"({self._fmt(r.get('cap_dust_slot_share'))}) "
+                f"headroom={self._fmt(r.get('cap_total_headroom_mean'))}"
             )
         if typ == "ADVERSE":
             return (

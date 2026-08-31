@@ -37,6 +37,25 @@
       }
     }
   },
+  "instrumentation": {
+    "rt_phase_timing": "rt_phase_timing_v1",
+    "capacity_saturation": "capacity_saturation_v1",
+    "purpose": "attribute the round-trip throughput deficit that holds TOTAL score at exactly 0",
+    "measures": [
+      "entry_wait: first entry quote submitted -> entry fills",
+      "hold: position opens -> first exit order submitted",
+      "exit_wait: first exit order submitted -> position flat",
+      "rt_per_sim_hour and Little's Law implied concurrency",
+      "per-cap saturation rates for active slots, total slots and abs-base exposure",
+      "mean dust slot occupancy against the hard total-open budget"
+    ],
+    "surfaces": [
+      "POSITION event per completed round trip",
+      "HYBRID_SUMMARY aggregate every research_every_n ticks"
+    ],
+    "decision_rule": "high saturation => the named cap is the constraint; low saturation with large headroom => starved pipeline and raising caps changes nothing",
+    "behaviour_change": false
+  },
   "single_authority_contract": [
     "live total_score_due is the sole flat-book score completion authority",
     "legacy CORE/RECYCLING/CORE_PROBE/density_due flags are non-authoritative on live rows",
@@ -52,7 +71,7 @@
     "FIFO/validator accounting unchanged"
   ],
   "validation": {
-    "active_research_suite": "524 PASS / 1 SKIP (525 collected)",
+    "active_research_suite": "553 PASS / 1 SKIP (554 collected)",
     "python_compile": "PASS",
     "strategy_compileall": "PASS",
     "launcher_bash_syntax": "PASS",
@@ -67,8 +86,8 @@
   "validator_trade_sha256": "137a4a7f26de9395a0028539a95411992c6ed0fa16ddd21682c04838121af0b8",
   "files": {
     "agents/strategy/Strategy1_Research.py": {
-      "bytes": 638394,
-      "sha256": "317d0cd3426bf95876cef226c638fae359767db4fc1fdd085d4b1cb5a37c065b"
+      "bytes": 642897,
+      "sha256": "10e0492d14ebac77cfb25ad575b573642b2964858b0d2baadcf2f30560932513"
     },
     "agents/strategy/research_execution_lanes.py": {
       "bytes": 37657,
@@ -86,13 +105,29 @@
       "bytes": 6529,
       "sha256": "40568ee72d5fe14ce7188ea5b9f82c3935ac9681d73e9fdb9a5c840b529b69ae"
     },
+    "agents/strategy/research_rt_phase_timing.py": {
+      "bytes": 8158,
+      "sha256": "0138cc8b467e51431e19728dcb2f0bf83bd7810edd714e864cc6ed62a9b25466"
+    },
+    "agents/strategy/research_capacity_saturation.py": {
+      "bytes": 5821,
+      "sha256": "6c27b384a46b95b19e3b0ea5b6927a319b8aa81f4a6a8a7b8ea4145a8f2dbff3"
+    },
     "run_strategy1_research_test_multi.sh": {
-      "bytes": 59350,
-      "sha256": "7cd208c5a08c06738d23fcba276c9dd6a92e3397cc23de1137a05388bfedc05d"
+      "bytes": 62440,
+      "sha256": "295f392713c4a253fc8cdf5c77cd209ed047069b154d5277d91b9e5e8e8416df"
     },
     "tests/test_research_v4_14_5_total_score_frontier.py": {
       "bytes": 10646,
       "sha256": "8245b7fbdc830cbcb97dc6229769a808906d7e78a045f1ce7fffa5020af366d4"
+    },
+    "tests/test_research_rt_phase_timing.py": {
+      "bytes": 7017,
+      "sha256": "de7f6595b1b5503d28dd3e75c2612438925e1a90d8578247dee5c9ed25616da8"
+    },
+    "tests/test_research_capacity_saturation.py": {
+      "bytes": 5440,
+      "sha256": "6d03a66222215edaa721ca9327dd090df8df5d45ede33167521bca53afe6c340"
     },
     "SN79_ST65_RESEARCH_V4_14_5_TOTAL_SCORE_FRONTIER_P1.md": {
       "bytes": 37796,
@@ -119,8 +154,8 @@
       "sha256": "137a4a7f26de9395a0028539a95411992c6ed0fa16ddd21682c04838121af0b8"
     },
     "agents/strategy/__ver_st1_log__/Strategy1_Research_v4_14_5.py": {
-      "bytes": 638394,
-      "sha256": "317d0cd3426bf95876cef226c638fae359767db4fc1fdd085d4b1cb5a37c065b"
+      "bytes": 642897,
+      "sha256": "10e0492d14ebac77cfb25ad575b573642b2964858b0d2baadcf2f30560932513"
     },
     "agents/strategy/__ver_st1_log__/research_execution_lanes_v4_14_5.py": {
       "bytes": 37657,
@@ -130,9 +165,17 @@
       "bytes": 13565,
       "sha256": "3e47c8f6bf61b878bcd69517db6aad479b7a96276aa0883cd55a1592bc151a1c"
     },
+    "agents/strategy/__ver_st1_log__/research_rt_phase_timing_v4_14_5.py": {
+      "bytes": 8158,
+      "sha256": "0138cc8b467e51431e19728dcb2f0bf83bd7810edd714e864cc6ed62a9b25466"
+    },
+    "agents/strategy/__ver_st1_log__/research_capacity_saturation_v4_14_5.py": {
+      "bytes": 5821,
+      "sha256": "6c27b384a46b95b19e3b0ea5b6927a319b8aa81f4a6a8a7b8ea4145a8f2dbff3"
+    },
     "agents/strategy/__ver_st1_log__/run_strategy1_research_v4_14_5_test.sh": {
-      "bytes": 59350,
-      "sha256": "7cd208c5a08c06738d23fcba276c9dd6a92e3397cc23de1137a05388bfedc05d"
+      "bytes": 62440,
+      "sha256": "295f392713c4a253fc8cdf5c77cd209ed047069b154d5277d91b9e5e8e8416df"
     }
   }
 }
