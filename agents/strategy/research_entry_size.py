@@ -25,7 +25,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-QUALIFIED_CORE_EXACT_MIN_VERSION = "qualified_core_exact_min_v4_13_7"
+TOTAL_SCORE_FRONTIER_EXACT_MIN_VERSION = "total_score_frontier_exact_min_v4_15_1"
 
 from research_realization import inventory_holding_risk
 
@@ -315,12 +315,12 @@ def admit_minimum_order(
     two_away_max_inventory_risk: float = 0.35,
     two_away_min_exit_fraction: float = 0.20,
     two_away_min_headroom: float = 0.25,
-    productive_qualified_core: bool = False,
-    enable_qualified_core_exact_min: bool = False,
-    qualified_core_min_trading_ev: float = 0.0,
-    qualified_core_max_inventory_risk: float = 0.35,
-    qualified_core_min_exit_fraction: float = 0.20,
-    qualified_core_min_headroom: float = 0.25,
+    total_score_due: bool = False,
+    enable_total_score_frontier_exact_min: bool = False,
+    total_score_frontier_min_trading_ev: float = 0.0,
+    total_score_frontier_max_inventory_risk: float = 0.35,
+    total_score_frontier_min_exit_fraction: float = 0.20,
+    total_score_frontier_min_headroom: float = 0.25,
 ) -> MinOrderAdmission:
     """Discrete minimum-order admission. Never blindly promote every clip."""
     safe = max(0.0, _finite(safe_size))
@@ -413,32 +413,30 @@ def admit_minimum_order(
                 promoted=True,
             )
 
-        # V4.13.7 qualified/Core recycle path.  V4.13.6 proved that the
-        # completion scheduler can create productive Kappa-qualified books, but
-        # once observations_remaining reaches zero the ONE_AWAY/TWO_AWAY venue-
-        # quantum exceptions disappear and the same proven books can deadlock at
-        # ZERO_ORDER_SIZE.  Permit exactly one venue-minimum Maker clip only for
-        # a scheduler-proven CORE/RECYCLING book with positive deep EV and the
-        # same hard inventory/headroom/exit-capacity protections.
-        qualified_core_exit_fraction = max(
-            0.0, min(1.0, _finite(qualified_core_min_exit_fraction, 0.20))
+        # V4.15.1 TOTAL_SCORE frontier exact-min path. A qualified book may
+        # still be explicitly score-due (median-frontier repair or expiry
+        # maintenance). Permit one venue-minimum Maker clip only when that same
+        # TOTAL_SCORE authority marks it due and the hard EV / inventory /
+        # headroom / exit-capacity protections all pass.
+        frontier_exit_fraction = max(
+            0.0, min(1.0, _finite(total_score_frontier_min_exit_fraction, 0.20))
         )
-        qualified_core_ok = (
-            bool(enable_qualified_core_exact_min)
-            and bool(productive_qualified_core)
+        frontier_ok = (
+            bool(enable_total_score_frontier_exact_min)
+            and bool(total_score_due)
             and observations_remaining is not None
             and max(0, int(observations_remaining)) == 0
             and floor > 1e-12
             and safe > 1e-12
-            and _finite(trading_ev) > _finite(qualified_core_min_trading_ev, 0.0) + 1e-12
+            and _finite(trading_ev) > _finite(total_score_frontier_min_trading_ev, 0.0) + 1e-12
             and _finite(inventory_risk)
-            <= _finite(qualified_core_max_inventory_risk, 0.35) + 1e-12
+            <= _finite(total_score_frontier_max_inventory_risk, 0.35) + 1e-12
             and _finite(volume_headroom) + 1e-12
-            >= _finite(qualified_core_min_headroom, 0.25)
+            >= _finite(total_score_frontier_min_headroom, 0.25)
             and _finite(exit_capacity) + 1e-12
-            >= floor * qualified_core_exit_fraction
+            >= floor * frontier_exit_fraction
         )
-        if qualified_core_ok:
+        if frontier_ok:
             size = floor if room is None else min(floor, room)
             if size + 1e-12 < floor:
                 return _reject("INVENTORY_ROOM")
@@ -449,7 +447,7 @@ def admit_minimum_order(
                 safe_size=safe,
                 min_order=floor,
                 tolerance=tol,
-                trigger="QUALIFIED_CORE_EXACT_MIN",
+                trigger="TOTAL_SCORE_FRONTIER_EXACT_MIN",
                 promoted=True,
             )
 

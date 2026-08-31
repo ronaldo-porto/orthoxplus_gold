@@ -17,7 +17,7 @@ HARD_SAFETY_REASONS = frozenset(
 
 ONE_AWAY_STALE_TTL_VERSION = "one_away_stale_ttl_v4_12_11"
 ONE_AWAY_CONVERSION_TTL_VERSION = "one_away_velocity_stale_ttl_v4_12_17"
-QUALIFIED_CORE_STALE_TTL_VERSION = "qualified_core_velocity_stale_ttl_v4_13_7"
+TOTAL_SCORE_STALE_TTL_VERSION = "total_score_velocity_stale_ttl_v4_15_1"
 
 PROFITABLE_EXIT_PERSISTENCE_VERSION = "profitable_maker_exit_persistence_v4_13_8"
 
@@ -133,24 +133,24 @@ def one_away_stale_completion_ttl(
     return ttl, reason, True
 
 
-def qualified_core_stale_completion_ttl(
+def total_score_stale_completion_ttl(
     *,
     chosen_ttl_ms: float | None,
     ttl_reason: str,
     completion_candidate: bool,
     completion_samples: int,
     completion_target: int,
-    productive_qualified_core: bool,
+    total_score_due: bool,
     trading_ev: float | None,
     market_regime: str | None,
     min_ttl_ms: float,
     stale_ttl_ms: float | None = None,
 ) -> tuple[float | None, str, bool]:
-    """Bound only a productive qualified/Core velocity-STALE Maker skip.
+    """Bound a velocity-STALE Maker skip for a qualified TOTAL_SCORE-due book.
 
-    V4.13.7 mirrors the existing ONE_AWAY conversion without broadening STALE
-    behavior globally.  The caller must already be in the post-only Maker
-    completion lane and the book must be scheduler-proven CORE/RECYCLING.
+    This is not a second scheduling authority. The caller must already be in
+    the post-only completion lane and the same TOTAL_SCORE authority must mark
+    the qualified book due (frontier repair or expiry maintenance).
     """
     if chosen_ttl_ms is not None:
         return float(chosen_ttl_ms), str(ttl_reason), False
@@ -160,7 +160,7 @@ def qualified_core_stale_completion_ttl(
     samples = max(0, int(completion_samples))
     if (
         not bool(completion_candidate)
-        or not bool(productive_qualified_core)
+        or not bool(total_score_due)
         or samples < target
     ):
         return None, str(ttl_reason), False
@@ -174,13 +174,13 @@ def qualified_core_stale_completion_ttl(
     if regime in {"TOXIC", "STRESSED"}:
         return None, str(ttl_reason), False
     ttl = max(1.0, float(min_ttl_ms))
-    reason = "QUALIFIED_CORE_STALE_SHORT"
+    reason = "TOTAL_SCORE_STALE_SHORT"
     if stale_ttl_ms is not None:
         try:
             desired = float(stale_ttl_ms)
             if math.isfinite(desired):
                 ttl = max(ttl, min(desired, 250.0))
-                reason = "QUALIFIED_CORE_VELOCITY_STALE_SHORT"
+                reason = "TOTAL_SCORE_VELOCITY_STALE_SHORT"
         except (TypeError, ValueError):
             pass
     return ttl, reason, True

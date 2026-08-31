@@ -1,133 +1,13 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1 research V4.3 Phase 1: independent MarketRegime / ScoreRegime.
+"""SN79 Research V4.15.1 lean authority engine.
 
-Requires Strategy1_Debug.py beside this file.
+Current runtime workflow:
+    HARD_SAFETY -> EXECUTABILITY -> LIFECYCLE_EV -> TOTAL_SCORE_VALUE -> EXECUTION_EXIT
 
-The production Strategy1 parent remains untouched. This research subclass keeps the
-existing async [S1R_*] telemetry and intentionally changes only the policy defects
-identified from the testnet research log:
-
-1. Global STRESSED no longer forces every individual book to STRESSED.
-2. Neutral per-book archetype fallback is MM_BOOK rather than TOXIC_BOOK.
-3. Spread stress/toxicity cutoffs adapt cross-sectionally (P95/P99 by default).
-4. INACTIVE books may bootstrap only when selected by COVERAGE/KAPPA_COMPLETION during score acquisition.
-5. Global STRESSED becomes conservative quote mode instead of a total market kill.
-6. The simulator min order size is synchronized per request; sub-minimum dynamic
-   sizes may be promoted only when the remaining base-inventory headroom permits it.
-7. One [S1R_REGIME] record and detailed per-book toxicity decomposition are emitted.
-8. Cold INACTIVE books are not mislabeled DEAD solely from bootstrap trade-rate.
-9. Inventory is represented as signed base utilization (net_base / max_inventory_base).
-10. Quote skew uses a reservation-price shift instead of the legacy sign-confused formula.
-11. Any executable bootstrap position is managed immediately; an optional aggressive close
-    after the age gate requires non-negative estimated close-at-touch economics after buffer.
-12. Dust is quarantined before normal quote selection, exact flatness follows volume precision,
-    and [S1R_POSITION] exposes OPEN/INCREASE/REDUCE/FLAT transitions.
-13. Quote selection backfills failed top-ranked candidates up to a bounded attempt cap while
-    preserving the original successful quote-book cap.
-14. Recent-PnL toxicity requires enough completed samples unless loss crosses a hard floor.
-15. Sparse-tape YELLOW and GREEN books retain a conservative active path instead of reverting
-    to DEAD solely because recent trade_rate is near zero.
-16. Sub-minimum exact inventory remains precisely tracked and parked outside the finite
-    management pool when it is too small to reduce safely with one minimum-size order.
-17. Large dust (> half the exchange minimum) gets bounded passive DUST_COMPACT treatment;
-    every possible partial fill is non-increasing in absolute exposure.
-18. Kappa-completion priority concentrates quote opportunities on books with 1-2 confirmed
-    realized observations so they can reach the 3-observation score-eligibility threshold.
-19. Kappa completion is isolated from normal MM through separate attempt/success
-    budgets; failed completion candidates cannot consume the normal economic lane.
-20. Maker opening fills are classified as ACTIONABLE versus DUST; candidate ranking learns
-    post-fill actionability instead of treating every partial fill as equally useful.
-21. One-away Kappa books receive an extra bounded priority only when their learned fill
-    quality is acceptable; dust-prone books are penalized without adding a hard gate.
-22. Incomplete-book quotes can keep the original bounded maker exposure alive slightly longer
-    (750ms cap by default), reducing premature sub-minimum residuals without rescue top-ups.
-23. Safe dust compaction keeps the V4 theorem but adds fill-posterior ranking and bounded
-    retry cooldown so repeated 1%-quality attempts do not dominate execution capacity.
-24. Normal MM and explicit maintenance quote pairs are forced maker-only inside their quote
-    context; inventory-management exits retain the inherited risk behavior.
-25. V4.3 Phase 1 splits MarketRegime (book/cross-section) from ScoreRegime (Kappa/coverage).
-    Parent mean-spread STRESSED and UNEXPOSED_BY_PARENT no longer latch the market state.
-26. V4.3 Phase 2 records maker-quote lifecycle through fill/cancel/expiry, classifies fills
-    against the runtime min order size, and measures delayed maker markout off the request path.
-27. V4.3 Phase 3 learns a discrete fill-hazard at quote TTL with shrinkage and calibration.
-    Fill hazard remains telemetry / exit-comparison input; the inherited estimator is the live entry path.
-28. V4.3 Phase 4 ranks books by Score-EV (TradingEV + Kappa completion - dust/inventory/latency)
-    using the runtime Kappa observation requirement. Hard safety still beats completion.
-29. V4.3 Phase 5 holds maker quotes through tiny price noise and adapts TTL inside hard bounds.
-30. V4.3 Phase 6 optionally screens books with a cheap score, then runs full prediction only
-    on forced inventory/dust/Kappa/risk books plus a configurable candidate cap.
-31. Session / Kappa observations persist for one simulation. Reset is allowed only on
-    simulation-ID, network/netuid, or incompatible schema/invalid state. Timestamp rewind
-    and miner reload of the same simulation must not wipe realized observations.
-32. Kappa Completion Scheduler V3 ranks 1-remaining >> 2-remaining > uncovered books
-    only when TradingEV stays non-negative. Hard gates still block toxic, unsafe,
-    invalid-size, volume-cap, and negative-EV quotes. Completion slots are reserved
-    so normal attempt/success limits cannot starve them.
-33. V4.3 Phase 1.7 measures delayed maker markout at 100/250/500/1000 ms and
-    computes Cont–Kukanov–Stoikov OFI only from consecutive touch price+size.
-    Static imbalance is never labeled OFI. ExpectedMarkout and AdverseSelectionRisk
-    feed ranking, entry gating, exit urgency, and quote width.
-34. V4.3 Phase 1.8 holds maker quotes through tiny theoretical updates. Replace
-    only on meaningful price, material alpha, real OFI reversal, inventory/toxicity/
-    regime change, TTL expiry, or a material EV improvement. Hard safety cancels
-    immediately. Adaptive TTL stretches when stable with good fill hazard, shortens
-    under vol/toxicity, and skips stale state.
-35. V4.3 Phase 1.9 screens ~128 books cheaply, always keeps inventory / one-away
-    Kappa / risk / dust books, then runs full Strategy1 prediction on a
-    configurable 16–24 candidate set. Unchanged TOB features are cached. Timing
-    records screen_ms, full_predict_ms, ranking_ms, build_orders_ms, logging_ms,
-    and total_response_ms. Full-universe predict remains the fallback.
-36. V4.10 hardens Taker authority, uses live fees, rolling 3h Kappa observations,
-    zero-loss score completion defaults, and entry-feasibility recheck caching.
-37. V4.11 makes the candidate cap authoritative, concentrates acquisition into a
-    sticky 8–12 book cohort, and moves Kappa-expiry pressure into cheap screening.
-38. V4.11 entry ranking prices the full lifecycle (entry fee + expected maker/taker
-    realization cost + crossing/slippage + holding risk) rather than maker entry only.
-39. V4.11+ exact-min completion paths are restricted to explicit ONE_AWAY / TWO_AWAY /
-    qualified-CORE cases with hard risk, exit-capacity and headroom checks.
-40. V4.11 tightens safe cohort quotes and lengthens non-adverse QUIET maker TTL,
-    while preserving toxic/adverse shortening and all V4.10 hard Taker safety.
-41. V4.11.1 makes rolling timestamp-backed Kappa state the single authority for
-    scheduler, completion lanes, realization, cohort state, and telemetry.
-42. V4.11.2 adds an aggressive positive-EV Taker authority: take only when the
-    live net Taker realization is non-negative, beats maker WAIT EV, and an
-    explicit ONE_AWAY / failed-exit / age / low-fill / urgency trigger exists.
-43. V4.11.2 adds a strict ONE_AWAY exact-minimum path: a 2/3-observation book
-    may submit exactly 0.25 despite soft size shrinkage only when lifecycle EV is
-    positive and hard inventory/headroom checks pass.
-44. V4.12.11 removes the observed ONE_AWAY completion deadlock: the exact-min path
-    uses bounded soft floors (safe-size >=15%, modeled exit capacity >=20% of the
-    venue minimum), and a positive-EV non-toxic ONE_AWAY rejected only for velocity
-    staleness receives the existing 250ms minimum post-only TTL instead of no quote.
-45. V4.12.12 breaks immediate repeated post-only CONTRACT_VIOLATION loops with
-    a bounded book/side cooldown and fresh-touch safe reprice.
-46. V4.12.13 fixes guard liveness: NO_TOUCH preserves a pending-reprice episode,
-    reject streak/backoff survives 33-40+ tick gaps, and state clears only on an
-    accepted limit, FLAT/CROSS lifecycle transition, session reset, or a separate
-    512-tick hard safety lifetime. ONE_AWAY and Taker authority are unchanged.
-47. V4.12.15 adds bounded inventory liveness for TWO_AWAY/uncovered books only:
-    stale exits may move toward touch, a -8 bps soft / -12 bps hard rescue may
-    override the score zero-loss veto, and already-worse positions are parked so
-    they do not consume active acquisition capacity. QUALIFIED/ONE_AWAY remain
-    protected; the V4.12.14 contract guard and normal Taker authority are frozen.
-48. V4.12.16 pre-deploy targets Kappa conversion under scarce risk capacity:
-    parked-cap or tight total-headroom pressure suppresses only fresh uncovered
-    acquisition while preserving ONE_AWAY/TWO_AWAY work, score-PnL-ready
-    ONE_AWAY books lead equal-cost completion, and safe QUIET completion quotes
-    use a 1.5 bps touch cap plus a bounded 900ms stale TTL. PARK decisions now
-    take precedence over the legacy bridge; all V4.12.15 loss floors are frozen.
-49. V4.12.17 establishes the Kappa Flywheel foundation: Kappa-eligible books remain
-    schedulable after three observations, breadth/density phases reserve one exploration
-    opportunity under pressure, parking is no longer capped by a six-label veto, and
-    the velocity-STALE ONE_AWAY override returns to the bounded 250ms lifetime.
-50. V4.12.18 decouples Kappa loss protection from inventory-capacity protection.
-    ONE_AWAY/QUALIFIED positions may PARK_PROTECTED and release active capacity without
-    gaining bounded-loss Taker authority; every parked Maker refresh is checked against
-    its stored protected floor, and restored Kappa-eligible books remain Flywheel candidates
-    with FULL/PARTIAL/UNKNOWN PnL-confidence rather than being discarded after upgrade.
-
-The production Strategy1 parent remains untouched; this subclass intentionally changes the
-above research-policy and correctness paths while retaining Strategy1 signals and ranking.
+This module intentionally keeps proven inventory, dust, contract, session, markout,
+fill-hazard and V4.14.4 RealNet exit protections while removing historical scheduler
+authorities that no longer own live decisions.  TOTAL_SCORE_FRONTIER is the only
+score-acquisition authority for flat books.
 """
 from __future__ import annotations
 
@@ -206,7 +86,6 @@ from research_fill_hazard import (
 )
 from research_score_ev import (
     LANE_COMPLETION,
-    LANE_NORMAL,
     admit_scheduler_candidate,
     required_observation_count,
     round_trip_velocity,
@@ -226,7 +105,14 @@ from research_kappa_realization import (
 )
 from research_taker_economics import fee_rate_to_bps
 from research_lifecycle_ev import lifecycle_entry_cost_bps
-from research_cohort import CohortCandidate, update_sticky_cohort
+from research_clean_authority import (
+    CLEAN_AUTHORITY_VERSION,
+    LIFECYCLE_TAKER_MIN_SAMPLES,
+    LIFECYCLE_TAKER_PRIOR_STRENGTH,
+    LIFECYCLE_TAKER_PROB_CAP,
+    execution_reject_cooldown,
+    posterior_taker_exit_probability,
+)
 from research_quote_hysteresis import (
     ONE_AWAY_CONVERSION_TTL_VERSION,
     ONE_AWAY_STALE_TTL_VERSION,
@@ -234,7 +120,7 @@ from research_quote_hysteresis import (
     hold_existing_profitable_maker_exit,
     choose_ttl_ms,
     one_away_stale_completion_ttl,
-    qualified_core_stale_completion_ttl,
+    total_score_stale_completion_ttl,
     should_replace_quote,
 )
 from research_inventory_state import (
@@ -283,7 +169,6 @@ from research_velocity import (
     VelocityState,
 )
 from research_rt_phase_timing import RoundTripPhaseState
-from research_capacity_saturation import CapacitySaturationState
 from research_exit_quantity import choose_reduce_quantity, exchange_min_order_size
 from research_dust_economics import (
     ACTION_COMPETITIVE_MAKER as DUST_ACTION_COMPETITIVE,
@@ -306,11 +191,9 @@ from research_execution_lanes import (
     LANE_REALIZATION,
     LANES as EXEC_LANES,
     LaneBook,
-    apply_breadth_rotation_gate,
-    apply_kappa_conversion_pressure_gate,
     authoritative_execution_lane,
-    execution_completion_candidate,
     normalize_lane_budgets,
+    admit_lane_candidate,
     score_acquisition_granted,
     score_acquisition_grants,
     score_acquisition_mode,
@@ -335,7 +218,6 @@ from research_candidate_screen import (
     cheap_book_score,
     clamp_candidate_count,
     deep_book_fingerprint,
-    select_fast_candidates,
     timing_payload,
 )
 from research_contract_guard import (
@@ -362,27 +244,18 @@ from research_inventory_liveness import (
     positive_maker_rescue_veto_applies,
     parked_refresh_due,
 )
-from research_kappa_flywheel import (
-    KAPPA_FLYWHEEL_VERSION,
-    PHASE_BOOTSTRAP,
-    PHASE_BREADTH,
-    PHASE_DENSITY,
-    density_state as flywheel_density_state,
+from research_rolling_economics import (
+    ROLLING_ECONOMICS_VERSION,
     note_realized_pnl_event,
     pnl_confidence,
     pnl_confidence_multiplier,
     rolling_book_economics,
     sanitize_realized_pnl_events,
 )
-from research_kappa_productivity import (
-    KAPPA_PRODUCTIVITY_VERSION,
-    PHASE_BOOTSTRAP as PRODUCTIVITY_PHASE_BOOTSTRAP,
-    PHASE_BALANCED as PRODUCTIVITY_PHASE_BALANCED,
-    PHASE_DENSITY as PRODUCTIVITY_PHASE_DENSITY,
-    ProductivitySnapshot,
-    kappa_state as productivity_kappa_state,
-    sanitize_productivity_runtime,
-    scheduler_phase as productivity_scheduler_phase,
+from research_execution_quality import (
+    EXECUTION_QUALITY_VERSION,
+    ExecutionQualitySnapshot,
+    sanitize_execution_quality_runtime,
 )
 from research_session_state import (
     ACTION_RESET,
@@ -429,20 +302,19 @@ from research_scheduler_retry import (
 from research_total_score_frontier import (
     TOTAL_SCORE_FRONTIER_VERSION,
     PHASE_IGNITION as TOTAL_SCORE_PHASE_IGNITION,
-    PHASE_SURVIVAL as TOTAL_SCORE_PHASE_SURVIVAL,
-    PHASE_FRONTIER as TOTAL_SCORE_PHASE_FRONTIER,
     apply_total_score_frontier,
     phase_budget_tuple as total_score_phase_budget_tuple,
 )
 
 class Strategy1_Research(Strategy1_Debug):
-    RESEARCH_POLICY_VERSION = "total_score_frontier_v4_14_5"
-    RESEARCH_ENGINE_REVISION = "lean_engine_p1_total_score_frontier_v4_14_5"
+    RESEARCH_POLICY_VERSION = "lean_authority_cleanup_v4_15_1"
+    RESEARCH_ENGINE_REVISION = "lean_authority_cleanup_p2_v4_15_1"
     RESEARCH_REALNET_EXIT_AUTHORITY_VERSION = REALNET_EXIT_AUTHORITY_VERSION
     RESEARCH_SCHEDULER_RETRY_VERSION = SCHEDULER_RETRY_VERSION
     RESEARCH_TOTAL_SCORE_FRONTIER_VERSION = TOTAL_SCORE_FRONTIER_VERSION
-    # === V4.14.5 TOTAL SCORE FRONTIER P1 ===
-    RESEARCH_ENGINE_VERSION = "lean_engine_p1_v4_14_3"
+    RESEARCH_CLEAN_AUTHORITY_VERSION = CLEAN_AUTHORITY_VERSION
+    # === V4.15.1 LEAN AUTHORITY CLEANUP P2 ===
+    RESEARCH_ENGINE_VERSION = "lean_authority_cleanup_p2_v4_15_1"
     RESEARCH_HYBRID_VERSION = "early_escape_guard_v4_12_6"
     RESEARCH_EXIT_HAZARD_EV_VERSION = EXIT_HAZARD_EV_VERSION
     RESEARCH_VELOCITY_VERSION = VELOCITY_VERSION
@@ -455,18 +327,18 @@ class Strategy1_Research(Strategy1_Debug):
     RESEARCH_FRESH_MAKER_GRACE_VERSION = FRESH_MAKER_GRACE_VERSION
     RESEARCH_COMPLETION_ECONOMICS_VERSION = COMPLETION_ECONOMICS_VERSION
     RESEARCH_POSITIVE_MAKER_VETO_VERSION = POSITIVE_MAKER_VETO_VERSION
-    RESEARCH_KAPPA_FLYWHEEL_VERSION = KAPPA_FLYWHEEL_VERSION
-    RESEARCH_KAPPA_PRODUCTIVITY_VERSION = KAPPA_PRODUCTIVITY_VERSION
+    RESEARCH_ROLLING_ECONOMICS_VERSION = ROLLING_ECONOMICS_VERSION
+    RESEARCH_EXECUTION_QUALITY_VERSION = EXECUTION_QUALITY_VERSION
     RESEARCH_KAPPA_STATE_VERSION = KAPPA_STATE_VERSION
     RESEARCH_KAPPA_REALIZATION_VERSION = KAPPA_REALIZATION_VERSION
     RESEARCH_MARKOUT_VERSION = MARKOUT_VERSION
-    RESEARCH_LANES_VERSION = "execution_lanes_v8_total_score_single_authority"
-    RESEARCH_SCORE_ACQUISITION_VERSION = "total_score_acquisition_v4_14_5"
+    RESEARCH_LANES_VERSION = "execution_lanes_v10_total_score_only"
+    RESEARCH_SCORE_ACQUISITION_VERSION = "total_score_only_v4_15_1"
     RESEARCH_INVENTORY_STATE_VERSION = "inventory_state_v2"
     RESEARCH_EXIT_URGENCY_VERSION = "exit_urgency_v2"
     RESEARCH_LADDER_VERSION = "realization_ladder_v2"
     RESEARCH_TAKER_ECON_VERSION = "taker_economics_v2_live_fees"
-    RESEARCH_LIFECYCLE_ENTRY_VERSION = "lifecycle_entry_v1"
+    RESEARCH_LIFECYCLE_ENTRY_VERSION = "adaptive_lifecycle_entry_v4_15"
     RESEARCH_EXIT_QTY_VERSION = "exit_quantity_v1"
     RESEARCH_DUST_ECON_VERSION = "dust_economics_v2"
     RESEARCH_SAME_SIDE_VERSION = "same_side_v2_effective_exposure"
@@ -838,18 +710,7 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_completion_ev_cache_ticks = max(
             1, int(getattr(cfg, "research_completion_ev_cache_ticks", 20))
         )
-        self.research_density_priority_enabled = self._as_bool(
-            getattr(cfg, "research_density_priority_enabled", True)
-        )
-        self.research_density_priority_min_candidates = max(
-            1, int(getattr(cfg, "research_density_priority_min_candidates", 1))
-        )
-        # V4.14.5: one score-scheduling authority. The legacy density-priority
-        # knobs are parsed for backward-compatible launchers only and do not
-        # control live V4.14.5 lane allocation.
-        self.research_total_score_frontier_enabled = self._as_bool(
-            getattr(cfg, "research_total_score_frontier_enabled", True)
-        )
+        # TOTAL_SCORE_FRONTIER is mandatory in V4.15.1; no legacy scheduler toggle.
         self.research_total_score_ignition_books = max(
             1, min(80, int(getattr(cfg, "research_total_score_ignition_books", 41)))
         )
@@ -1006,15 +867,6 @@ class Strategy1_Research(Strategy1_Debug):
 
         self.research_enable_fast_candidate_screen = self._as_bool(
             getattr(cfg, "research_enable_fast_candidate_screen", True)
-        )
-        self.research_enable_execution_lanes = self._as_bool(
-            getattr(cfg, "research_enable_execution_lanes", True)
-        )
-        self.research_enable_lane_scheduler = self._as_bool(
-            getattr(cfg, "research_enable_lane_scheduler", True)
-        )
-        self.research_enable_aggressive_coverage = self._as_bool(
-            getattr(cfg, "research_enable_aggressive_coverage", True)
         )
         self.research_enable_exit_urgency_v2 = self._as_bool(
             getattr(cfg, "research_enable_exit_urgency_v2", True)
@@ -1207,27 +1059,11 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_enable_fill_hazard_exit_compare = self._as_bool(
             getattr(cfg, "research_enable_fill_hazard_exit_compare", True)
         )
-        _lane_budgets = normalize_lane_budgets(
-            coverage_slots=getattr(cfg, "research_coverage_slots", None),
-            completion_slots=getattr(cfg, "research_completion_slots", None),
-            realization_slots=getattr(cfg, "research_realization_slots", None),
-            shared_overflow_slots=getattr(cfg, "research_shared_overflow_slots", None),
-        )
-        self.research_coverage_slots = int(_lane_budgets.coverage_slots)
-        self.research_completion_slots = int(_lane_budgets.completion_slots)
-        self.research_realization_slots = int(_lane_budgets.realization_slots)
-        self.research_shared_overflow_slots = int(_lane_budgets.shared_overflow_slots)
-        self._research_lane_budgets = _lane_budgets
         self.research_candidate_count = clamp_candidate_count(
             getattr(cfg, "research_candidate_count", 10)
         )
-        # V4.11 performance mode: concentrate score acquisition into a sticky
-        # cohort and make the global candidate count authoritative.
-        self.research_cohort_size = max(
-            8, min(12, int(getattr(cfg, "research_cohort_size", 8)))
-        )
-        self.research_cohort_exploration_slots = max(
-            0, min(2, int(getattr(cfg, "research_cohort_exploration_slots", 2)))
+        self._research_lane_budgets = normalize_lane_budgets(
+            coverage_slots=4, completion_slots=3, realization_slots=3, shared_overflow_slots=1,
         )
         # V4.12.15 inventory liveness: stale/parked inventory must not consume
         # the active acquisition pool, but it still counts against a strict total
@@ -1253,38 +1089,8 @@ class Strategy1_Research(Strategy1_Debug):
                 int(getattr(cfg, "research_max_parked_open_books", 4)),
             ),
         )
-        # Kappa conversion pressure is now based on true total-position headroom
-        # and always preserves at least one fresh exploration slot.
-        self.research_kappa_conversion_pressure_enabled = self._as_bool(
-            getattr(cfg, "research_kappa_conversion_pressure_enabled", True)
-        )
-        self.research_kappa_conversion_reserve_slots = max(
-            1, min(6, int(getattr(cfg, "research_kappa_conversion_reserve_slots", 3)))
-        )
-        self.research_kappa_exploration_slots = max(
-            1, min(2, int(getattr(cfg, "research_kappa_exploration_slots", 2)))
-        )
-        self.research_kappa_flywheel_enabled = self._as_bool(
-            getattr(cfg, "research_kappa_flywheel_enabled", True)
-        )
-        # V4.13 simplified scheduler: one Kappa-productivity authority decides
-        # which flat books deserve scarce deep-analysis/execution capacity.
-        self.research_kappa_productivity_enabled = self._as_bool(
-            getattr(cfg, "research_kappa_productivity_enabled", True)
-        )
-        # V4.14.2 Wide-Kappa Wave: 3 observations is only eligibility. Keep
-        # healthy qualified books in the density lane through 6 observations,
-        # and selectively extend to 8 while raw Kappa is positive but still weak.
-        self.research_wide_kappa_min_density_observations = max(
-            3, min(12, int(getattr(cfg, "research_wide_kappa_min_density_observations", 6)))
-        )
-        self.research_wide_kappa_preferred_density_observations = max(
-            self.research_wide_kappa_min_density_observations,
-            min(16, int(getattr(cfg, "research_wide_kappa_preferred_density_observations", 8))),
-        )
-        self.research_wide_kappa_raw_target = max(
-            0.05, min(1.0, float(getattr(cfg, "research_wide_kappa_raw_target", 0.35)))
-        )
+        # Historical conversion-pressure, flywheel, sticky-cohort and density
+        # schedulers were removed. Execution quality remains a soft tie-breaker.
         self.research_post_only_safety_ticks = max(
             1, min(4, int(getattr(cfg, "research_post_only_safety_ticks", 2)))
         )
@@ -1300,9 +1106,6 @@ class Strategy1_Research(Strategy1_Debug):
                 _default_abs_cap,
                 float(getattr(cfg, "research_max_total_abs_base", _default_abs_cap)),
             ),
-        )
-        self.research_core_probe_enabled = self._as_bool(
-            getattr(cfg, "research_core_probe_enabled", True)
         )
         self.research_inventory_liveness_enabled = self._as_bool(
             getattr(cfg, "research_inventory_liveness_enabled", True)
@@ -1410,15 +1213,6 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_parked_touch_move_bps = max(
             1.0, float(getattr(cfg, "research_parked_touch_move_bps", 8.0))
         )
-        # V4.12.7 final-candidate: scarce acquisition slots should rotate into
-        # incomplete Kappa books instead of reopening stable qualified books.
-        # Refresh-required qualified books and all existing inventory remain eligible.
-        self.research_suppress_qualified_acquisition = self._as_bool(
-            getattr(cfg, "research_suppress_qualified_acquisition", True)
-        )
-        self.research_qualified_suppression_min_incomplete = max(
-            1, min(16, int(getattr(cfg, "research_qualified_suppression_min_incomplete", 1)))
-        )
         # V4.12.8 score-survival scheduler.  The existing 20% warning horizon
         # remains a visibility window; only the later critical portion may
         # bypass breadth rotation ahead of productive incomplete books.
@@ -1453,14 +1247,15 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_stale_maker_rescue_floor_bps = max(
             -2.0, min(0.0, float(getattr(cfg, "research_stale_maker_rescue_floor_bps", -1.0)))
         )
-        self.research_score_qualified_pnl_floor = float(
-            getattr(cfg, "research_score_qualified_pnl_floor", 0.0)
-        )
-        self.research_score_qualified_kappa_floor = float(
-            getattr(cfg, "research_score_qualified_kappa_floor", 0.0)
-        )
         self.research_lifecycle_taker_exit_prob = max(
             0.0, min(1.0, float(getattr(cfg, "research_lifecycle_taker_exit_prob", 0.30)))
+        )
+        # V4.15 clean-authority engine: the configured 30% value is only the
+        # Bayesian prior. The production architecture is not feature-flagged;
+        # rollback means reverting this Research release, not mixing old/new
+        # authorities in one runtime.
+        self.research_backfill_predict_reserve_per_lane = max(
+            0, min(8, int(getattr(cfg, "research_backfill_predict_reserve_per_lane", 3)))
         )
         self.research_lifecycle_slippage_bps = max(
             0.0, float(getattr(cfg, "research_lifecycle_slippage_bps", 0.75))
@@ -1504,29 +1299,30 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_two_away_exact_min_min_headroom = max(
             0.05, min(1.0, float(getattr(cfg, "research_two_away_exact_min_min_headroom", 0.25)))
         )
-        # V4.13.7: keep scheduler-proven qualified/Core books recyclable at the
-        # exchange's 0.25 venue quantum under hard-safe positive-EV constraints.
-        self.research_qualified_core_exact_min_enabled = self._as_bool(
-            getattr(cfg, "research_qualified_core_exact_min_enabled", True)
+        # V4.15.1: a qualified book may receive an exact-min clip only when the
+        # single TOTAL_SCORE authority explicitly marks it due (frontier/expiry),
+        # under the same hard-safe positive-EV constraints.
+        self.research_total_score_exact_min_enabled = self._as_bool(
+            getattr(cfg, "research_total_score_exact_min_enabled", True)
         )
-        self.research_qualified_core_exact_min_ev = max(
-            0.0, float(getattr(cfg, "research_qualified_core_exact_min_ev", 0.0))
+        self.research_total_score_exact_min_ev = max(
+            0.0, float(getattr(cfg, "research_total_score_exact_min_ev", 0.0))
         )
-        self.research_qualified_core_exact_min_max_inventory_risk = max(
-            0.05, min(0.80, float(getattr(cfg, "research_qualified_core_exact_min_max_inventory_risk", 0.35)))
+        self.research_total_score_exact_min_max_inventory_risk = max(
+            0.05, min(0.80, float(getattr(cfg, "research_total_score_exact_min_max_inventory_risk", 0.35)))
         )
-        self.research_qualified_core_exact_min_exit_fraction = max(
-            0.05, min(0.80, float(getattr(cfg, "research_qualified_core_exact_min_exit_fraction", 0.20)))
+        self.research_total_score_exact_min_exit_fraction = max(
+            0.05, min(0.80, float(getattr(cfg, "research_total_score_exact_min_exit_fraction", 0.20)))
         )
-        self.research_qualified_core_exact_min_min_headroom = max(
-            0.05, min(1.0, float(getattr(cfg, "research_qualified_core_exact_min_min_headroom", 0.25)))
+        self.research_total_score_exact_min_min_headroom = max(
+            0.05, min(1.0, float(getattr(cfg, "research_total_score_exact_min_min_headroom", 0.25)))
         )
-        self.research_qualified_core_stale_ttl_enabled = self._as_bool(
-            getattr(cfg, "research_qualified_core_stale_ttl_enabled", True)
+        self.research_total_score_stale_ttl_enabled = self._as_bool(
+            getattr(cfg, "research_total_score_stale_ttl_enabled", True)
         )
-        self.research_qualified_core_stale_ttl_ms = max(
+        self.research_total_score_stale_ttl_ms = max(
             float(self.research_ttl_min_ms),
-            min(250.0, float(getattr(cfg, "research_qualified_core_stale_ttl_ms", 250.0))),
+            min(250.0, float(getattr(cfg, "research_total_score_stale_ttl_ms", 250.0))),
         )
         self.research_quiet_ttl_ms = max(
             500.0, float(getattr(cfg, "research_quiet_ttl_ms", 1000.0))
@@ -1534,9 +1330,6 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_one_away_stale_ttl_ms = max(
             float(self.research_ttl_min_ms),
             min(250.0, float(getattr(cfg, "research_one_away_stale_ttl_ms", 250.0))),
-        )
-        self.research_quote_tighten_mult = max(
-            0.70, min(1.0, float(getattr(cfg, "research_quote_tighten_mult", 0.85)))
         )
         self.research_quote_width_floor_mult = max(
             0.70, min(1.0, float(getattr(cfg, "research_quote_width_floor_mult", 0.80)))
@@ -1694,8 +1487,6 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_ofi = OfiTracker()
         self._research_ofi_last: dict[int, Any] = {}
         self._research_as_width_mult = 1.0
-        self._research_cohort_ids: list[int] = []
-        self._research_score_qualified_ids: set[int] = set()
         self._research_lifecycle_cost_last: dict[int, Any] = {}
         self._research_hysteresis_holds = 0
         self._research_hysteresis_replaces = 0
@@ -1769,17 +1560,11 @@ class Strategy1_Research(Strategy1_Debug):
         # counters remain diagnostic only.  Persist these timestamps so a miner
         # reload cannot make scheduler/lanes forget still-valid observations.
         self._research_persisted_observation_timestamps: dict[int, list[int]] = {}
-        # Restart-safe rolling realized-PnL evidence for Kappa flywheel ranking.
+        # Restart-safe rolling realized-PnL evidence for score/risk context.
         self._research_realized_pnl_events_by_book: dict[int, list[tuple[int, float]]] = {}
-        self._research_flywheel_phase = PHASE_BOOTSTRAP
-        self._research_flywheel_core_ids: set[int] = set()
-        self._research_flywheel_kappa_eligible_ids: set[int] = set()
         # V4.13: one compact scheduler authority. Runtime counters are cheap,
-        # restart-safe inputs to Kappa productivity; they do not replace FIFO/PnL.
-        self._research_productivity_phase = PRODUCTIVITY_PHASE_BOOTSTRAP
-        self._research_productivity_core_ids: set[int] = set()
-        self._research_productivity_recycling_ids: set[int] = set()
-        self._research_productivity_runtime: dict[int, dict[str, int]] = {}
+        # restart-safe inputs to execution quality; they do not replace FIFO/PnL.
+        self._research_execution_quality_runtime: dict[int, dict[str, int]] = {}
         self._research_active_inventory_policy = None
         self._research_entry_size_last: dict[int, Any] = {}
         self._research_volume_cap_book_id: int | None = None
@@ -1826,6 +1611,12 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_lane_overflow_used = 0
         self._research_lane_cap_hits = {lane: 0 for lane in EXEC_LANES}
         self._research_last_lanes = None
+        # V4.15: short memory of downstream execution vetoes. This is not a
+        # score/risk authority; it prevents immediately re-spending prediction
+        # and lane attempts on a book that just failed a mechanical gate.
+        self._research_execution_reject_last: dict[int, dict[str, Any]] = {}
+        self._research_lifecycle_taker_prob_live = float(self.research_lifecycle_taker_exit_prob)
+        self._research_lifecycle_exit_samples = 0
         self._research_aggressive_context: dict[int, dict[str, Any]] = {}
 
         # V4.12.13: pending-reprice post-only hygiene. This state is populated only
@@ -1934,7 +1725,7 @@ class Strategy1_Research(Strategy1_Debug):
             "engine_revision": self.RESEARCH_ENGINE_REVISION,
             "total_score_frontier_version": self.RESEARCH_TOTAL_SCORE_FRONTIER_VERSION,
             "kappa_scheduler_version": self.RESEARCH_KAPPA_SCHEDULER_VERSION,
-            "kappa_productivity_version": self.RESEARCH_KAPPA_PRODUCTIVITY_VERSION,
+            "execution_quality_version": self.RESEARCH_EXECUTION_QUALITY_VERSION,
             "completion_economics_version": self.RESEARCH_COMPLETION_ECONOMICS_VERSION,
             "kappa_state_version": self.RESEARCH_KAPPA_STATE_VERSION,
             "kappa_realization_version": self.RESEARCH_KAPPA_REALIZATION_VERSION,
@@ -1942,18 +1733,16 @@ class Strategy1_Research(Strategy1_Debug):
             "lanes_version": self.RESEARCH_LANES_VERSION,
             "score_acquisition_version": self.RESEARCH_SCORE_ACQUISITION_VERSION,
             "lifecycle_entry_version": self.RESEARCH_LIFECYCLE_ENTRY_VERSION,
+            "clean_authority_version": self.RESEARCH_CLEAN_AUTHORITY_VERSION,
+            "backfill_predict_reserve_per_lane": int(getattr(self, "research_backfill_predict_reserve_per_lane", 3)),
+            "lifecycle_taker_prior": float(getattr(self, "research_lifecycle_taker_exit_prob", 0.30)),
             "candidate_count": int(getattr(self, "research_candidate_count", 10)),
-            "kappa_productivity_enabled": int(bool(getattr(self, "research_kappa_productivity_enabled", True))),
-            "core_probe_enabled": int(bool(getattr(self, "research_core_probe_enabled", True))),
             "post_only_safety_ticks": int(getattr(self, "research_post_only_safety_ticks", 2)),
-            "cohort_size": int(getattr(self, "research_cohort_size", 8)),
             "max_open_books": int(getattr(self, "research_max_open_books", 6)),
             "max_active_open_books": int(getattr(self, "research_max_active_open_books", 6)),
             "max_total_open_books": int(getattr(self, "research_max_total_open_books", 12)),
             "max_parked_open_books": int(getattr(self, "research_max_parked_open_books", 6)),
             "max_total_abs_base": float(getattr(self, "research_max_total_abs_base", 3.0)),
-            "kappa_conversion_pressure_enabled": int(bool(getattr(self, "research_kappa_conversion_pressure_enabled", True))),
-            "kappa_conversion_reserve_slots": int(getattr(self, "research_kappa_conversion_reserve_slots", 3)),
             "one_away_conversion_ttl_version": self.RESEARCH_ONE_AWAY_CONVERSION_TTL_VERSION,
             "inventory_liveness_enabled": int(bool(getattr(self, "research_inventory_liveness_enabled", True))),
             "fresh_maker_grace_version": self.RESEARCH_FRESH_MAKER_GRACE_VERSION,
@@ -1972,8 +1761,6 @@ class Strategy1_Research(Strategy1_Debug):
             "bounded_loss_escape_hard_trigger_bps": float(getattr(self, "research_bounded_loss_escape_hard_trigger_bps", -18.0)),
             "bounded_loss_escape_drawdown_bps": float(getattr(self, "research_bounded_loss_escape_drawdown_bps", 2.0)),
             "parked_refresh_ticks": int(getattr(self, "research_parked_refresh_ticks", 20)),
-            "suppress_qualified_acquisition": bool(getattr(self, "research_suppress_qualified_acquisition", True)),
-            "qualified_suppression_min_incomplete": int(getattr(self, "research_qualified_suppression_min_incomplete", 1)),
             "deadline_scheduler": bool(getattr(self, "research_deadline_scheduler_enabled", True)),
             "deadline_critical_urgency": float(getattr(self, "research_deadline_critical_urgency", 0.50)),
             "deadline_rank_bonus": float(getattr(self, "research_deadline_rank_bonus", 0.25)),
@@ -1981,7 +1768,6 @@ class Strategy1_Research(Strategy1_Debug):
             "stale_maker_rescue": bool(getattr(self, "research_stale_maker_rescue_enabled", True)),
             "stale_maker_rescue_failed_exits": int(getattr(self, "research_stale_maker_rescue_failed_exits", 4)),
             "stale_maker_rescue_floor_bps": float(getattr(self, "research_stale_maker_rescue_floor_bps", -1.0)),
-            "cohort_exploration_slots": int(getattr(self, "research_cohort_exploration_slots", 2)),
             "one_away_exact_min_enabled": bool(getattr(self, "research_one_away_exact_min_enabled", True)),
             "one_away_exact_min_ev_bps": float(getattr(self, "research_one_away_exact_min_ev_bps", 0.0)),
             "one_away_exact_min_safe_fraction": float(getattr(self, "research_one_away_exact_min_safe_fraction", 0.15)),
@@ -1991,13 +1777,13 @@ class Strategy1_Research(Strategy1_Debug):
             "two_away_exact_min_max_inventory_risk": float(getattr(self, "research_two_away_exact_min_max_inventory_risk", 0.35)),
             "two_away_exact_min_exit_fraction": float(getattr(self, "research_two_away_exact_min_exit_fraction", 0.20)),
             "two_away_exact_min_min_headroom": float(getattr(self, "research_two_away_exact_min_min_headroom", 0.25)),
-            "qualified_core_exact_min_enabled": bool(getattr(self, "research_qualified_core_exact_min_enabled", True)),
-            "qualified_core_exact_min_ev": float(getattr(self, "research_qualified_core_exact_min_ev", 0.0)),
-            "qualified_core_exact_min_max_inventory_risk": float(getattr(self, "research_qualified_core_exact_min_max_inventory_risk", 0.35)),
-            "qualified_core_exact_min_exit_fraction": float(getattr(self, "research_qualified_core_exact_min_exit_fraction", 0.20)),
-            "qualified_core_exact_min_min_headroom": float(getattr(self, "research_qualified_core_exact_min_min_headroom", 0.25)),
-            "qualified_core_stale_ttl_enabled": bool(getattr(self, "research_qualified_core_stale_ttl_enabled", True)),
-            "qualified_core_stale_ttl_ms": float(getattr(self, "research_qualified_core_stale_ttl_ms", 250.0)),
+            "total_score_exact_min_enabled": bool(getattr(self, "research_total_score_exact_min_enabled", True)),
+            "total_score_exact_min_ev": float(getattr(self, "research_total_score_exact_min_ev", 0.0)),
+            "total_score_exact_min_max_inventory_risk": float(getattr(self, "research_total_score_exact_min_max_inventory_risk", 0.35)),
+            "total_score_exact_min_exit_fraction": float(getattr(self, "research_total_score_exact_min_exit_fraction", 0.20)),
+            "total_score_exact_min_min_headroom": float(getattr(self, "research_total_score_exact_min_min_headroom", 0.25)),
+            "total_score_stale_ttl_enabled": bool(getattr(self, "research_total_score_stale_ttl_enabled", True)),
+            "total_score_stale_ttl_ms": float(getattr(self, "research_total_score_stale_ttl_ms", 250.0)),
             "enable_aggressive_positive_ev_taker": bool(getattr(self, "research_enable_aggressive_positive_ev_taker", True)),
             "aggressive_positive_ev_min_net_bps": float(getattr(self, "research_aggressive_positive_ev_min_net_bps", 0.0)),
             "aggressive_positive_ev_switch_margin_bps": float(getattr(self, "research_aggressive_positive_ev_switch_margin_bps", 0.50)),
@@ -2149,14 +1935,9 @@ class Strategy1_Research(Strategy1_Debug):
             "score_ev_min_trading": self.research_score_ev_min_trading,
             "completion_ev_cache_ticks": self.research_completion_ev_cache_ticks,
             "density_priority_enabled": 0,
-            "total_score_frontier_enabled": int(bool(self.research_total_score_frontier_enabled)),
             "total_score_ignition_books": int(self.research_total_score_ignition_books),
             "total_score_full_breadth_books": int(self.research_total_score_full_breadth_books),
             "total_score_frontier_band": int(self.research_total_score_frontier_band),
-            "density_priority_min_candidates": self.research_density_priority_min_candidates,
-            "wide_kappa_min_density_observations": self.research_wide_kappa_min_density_observations,
-            "wide_kappa_preferred_density_observations": self.research_wide_kappa_preferred_density_observations,
-            "wide_kappa_raw_target": self.research_wide_kappa_raw_target,
             "score_ev_one_away_weight": self.research_score_ev_one_away_weight,
             "required_observation_count": self._research_required_observation_count(),
             "enable_quote_hysteresis": self.research_enable_quote_hysteresis,
@@ -2172,9 +1953,6 @@ class Strategy1_Research(Strategy1_Debug):
             "dust_moderate_age_ticks": self.research_dust_moderate_age_ticks,
             "dust_maker_ev_floor_bps": self.research_dust_maker_ev_floor_bps,
             "enable_fast_candidate_screen": self.research_enable_fast_candidate_screen,
-            "enable_execution_lanes": self.research_enable_execution_lanes,
-            "enable_lane_scheduler": self.research_enable_lane_scheduler,
-            "enable_aggressive_coverage": self.research_enable_aggressive_coverage,
             "enable_exit_urgency_v2": self.research_enable_exit_urgency_v2,
             "enable_hybrid_realization_v2": self.research_enable_hybrid_realization_v2,
             "enable_economic_taker": self.research_enable_economic_taker,
@@ -2184,10 +1962,6 @@ class Strategy1_Research(Strategy1_Debug):
             "enable_markout_v2": self.research_enable_markout_v2,
             "enable_fill_hazard_exit_compare": self.research_enable_fill_hazard_exit_compare,
             "velocity_version": getattr(self, "RESEARCH_VELOCITY_VERSION", VELOCITY_VERSION),
-            "coverage_slots": self.research_coverage_slots,
-            "completion_slots": self.research_completion_slots,
-            "realization_slots": self.research_realization_slots,
-            "shared_overflow_slots": self.research_shared_overflow_slots,
             "candidate_count": self.research_candidate_count,
             "p95_target_ms": self.research_p95_target_ms,
             "rotate_jsonl": self.research_rotate_jsonl,
@@ -2338,12 +2112,7 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_round_trip_closes = 0
         self._research_persisted_observation_timestamps = {}
         self._research_realized_pnl_events_by_book = {}
-        self._research_flywheel_phase = PHASE_BOOTSTRAP
-        self._research_flywheel_core_ids = set()
-        self._research_productivity_phase = PRODUCTIVITY_PHASE_BOOTSTRAP
-        self._research_productivity_core_ids = set()
-        self._research_productivity_recycling_ids = set()
-        self._research_productivity_runtime = {}
+        self._research_execution_quality_runtime = {}
         self._research_completion_ev_cache = {}
         self._research_kappa_roll_cache_key = None
         self._research_kappa_roll_ts_cache = {}
@@ -2447,44 +2216,40 @@ class Strategy1_Research(Strategy1_Debug):
             lookback_ns=int(getattr(self, "research_kappa_lookback_ns", 10_800_000_000_000)),
         )
 
-    def _research_productivity_row(self, book_id: int) -> dict[str, int]:
-        table = getattr(self, "_research_productivity_runtime", None)
+    def _research_execution_quality_row(self, book_id: int) -> dict[str, int]:
+        table = getattr(self, "_research_execution_quality_runtime", None)
         if not isinstance(table, dict):
             table = {}
-            self._research_productivity_runtime = table
+            self._research_execution_quality_runtime = table
         return table.setdefault(
             int(book_id),
             {
                 "maker_quotes": 0, "maker_fills": 0, "contract_rejects": 0,
                 "last_rt_tick": 0, "fresh_round_trips": 0,
-                "fresh_positive_round_trips": 0, "fresh_negative_round_trips": 0,
             },
         )
 
-    def _research_restore_productivity_runtime(self, raw_session) -> None:
+    def _research_restore_execution_quality_runtime(self, raw_session) -> None:
         raw = raw_session if isinstance(raw_session, dict) else {}
-        self._research_productivity_runtime = sanitize_productivity_runtime(
-            raw.get("kappa_productivity_runtime")
+        self._research_execution_quality_runtime = sanitize_execution_quality_runtime(
+            raw.get("execution_quality_runtime", raw.get("kappa_productivity_runtime"))
         )
 
-    def _research_productivity_snapshot(
+    def _research_execution_quality_snapshot(
         self,
         book_id: int,
         *,
-        observations: int,
         rolling_econ,
         maker_fee_bps: float,
         fill_rate_hint: float,
         raw_kappa,
-    ) -> ProductivitySnapshot:
-        row = self._research_productivity_row(int(book_id))
+    ) -> ExecutionQualitySnapshot:
+        row = self._research_execution_quality_row(int(book_id))
         last_rt = max(0, int(row.get("last_rt_tick", 0) or 0))
         now_tick = max(0, int(getattr(self, "_tick", 0) or 0))
         ticks_since = None if last_rt <= 0 else max(0, now_tick - last_rt)
-        return ProductivitySnapshot(
+        return ExecutionQualitySnapshot(
             book_id=int(book_id),
-            observations=max(0, int(observations or 0)),
-            round_trips=max(0, int((getattr(self, "_research_round_trip_samples_by_book", {}) or {}).get(int(book_id), 0) or 0)),
             maker_quotes=max(0, int(row.get("maker_quotes", 0) or 0)),
             maker_fills=max(0, int(row.get("maker_fills", 0) or 0)),
             contract_rejects=max(0, int(row.get("contract_rejects", 0) or 0)),
@@ -2496,8 +2261,6 @@ class Strategy1_Research(Strategy1_Debug):
             raw_kappa=raw_kappa,
             ticks_since_last_rt=ticks_since,
             fresh_round_trips=max(0, int(row.get("fresh_round_trips", 0) or 0)),
-            fresh_positive_round_trips=max(0, int(row.get("fresh_positive_round_trips", 0) or 0)),
-            fresh_negative_round_trips=max(0, int(row.get("fresh_negative_round_trips", 0) or 0)),
         )
 
     def _research_emit_state_reset(self, decision, tick: int | None) -> None:
@@ -2638,6 +2401,9 @@ class Strategy1_Research(Strategy1_Debug):
         # Rejection guards are request-local execution state and must never leak
         # across simulation/session identity changes.
         self._research_contract_reject_state.clear()
+        execution_rejects = getattr(self, "_research_execution_reject_last", None)
+        if isinstance(execution_rejects, dict):
+            execution_rejects.clear()
         retry_guard = getattr(self, "_research_scheduler_retry_guard", None)
         retry_reset = getattr(retry_guard, "reset", None)
         if callable(retry_reset):
@@ -2725,7 +2491,7 @@ class Strategy1_Research(Strategy1_Debug):
             # rather than falsely extending expired score credit.
             self._research_restore_observation_timestamps(disk)
             self._research_restore_realized_pnl_events(disk)
-            self._research_restore_productivity_runtime(disk)
+            self._research_restore_execution_quality_runtime(disk)
         if current.simulation_id:
             self._research_session_identity = current
         self._research_guard_observation_monotonic()
@@ -2821,18 +2587,16 @@ class Strategy1_Research(Strategy1_Debug):
                 )
                 if rows
             }
-            payload["kappa_productivity_runtime"] = {
+            payload["execution_quality_runtime"] = {
                 str(book): {
                     "maker_quotes": int(row.get("maker_quotes", 0) or 0),
                     "maker_fills": int(row.get("maker_fills", 0) or 0),
                     "contract_rejects": int(row.get("contract_rejects", 0) or 0),
                     "last_rt_tick": int(row.get("last_rt_tick", 0) or 0),
                     "fresh_round_trips": int(row.get("fresh_round_trips", 0) or 0),
-                    "fresh_positive_round_trips": int(row.get("fresh_positive_round_trips", 0) or 0),
-                    "fresh_negative_round_trips": int(row.get("fresh_negative_round_trips", 0) or 0),
                 }
                 for book, row in sorted(
-                    (getattr(self, "_research_productivity_runtime", {}) or {}).items()
+                    (getattr(self, "_research_execution_quality_runtime", {}) or {}).items()
                 )
             }
             path = self._research_session_path(identity)
@@ -3102,24 +2866,17 @@ class Strategy1_Research(Strategy1_Debug):
             pass
 
     def _research_execution_lane_budgets(self):
-        # V4.14.5 single score authority.  Phase budgets are fixed by the total-
-        # score state and cannot be dynamically collapsed by completion demand.
-        if bool(getattr(self, "research_total_score_frontier_enabled", True)):
-            phase = str(
-                getattr(self, "_research_total_score_phase", TOTAL_SCORE_PHASE_IGNITION)
-                or TOTAL_SCORE_PHASE_IGNITION
-            )
-            coverage, completion, realization, overflow = total_score_phase_budget_tuple(phase)
-            return normalize_lane_budgets(
-                coverage_slots=coverage, completion_slots=completion,
-                realization_slots=realization, shared_overflow_slots=overflow,
-            )
-        # Fail-safe compatibility path only when the new authority is explicitly disabled.
+        """Return the mandatory TOTAL_SCORE phase budget."""
+        phase = str(
+            getattr(self, "_research_total_score_phase", TOTAL_SCORE_PHASE_IGNITION)
+            or TOTAL_SCORE_PHASE_IGNITION
+        )
+        coverage, completion, realization, overflow = total_score_phase_budget_tuple(phase)
         return normalize_lane_budgets(
-            coverage_slots=getattr(self, "research_coverage_slots", None),
-            completion_slots=getattr(self, "research_completion_slots", None),
-            realization_slots=getattr(self, "research_realization_slots", None),
-            shared_overflow_slots=getattr(self, "research_shared_overflow_slots", None),
+            coverage_slots=coverage,
+            completion_slots=completion,
+            realization_slots=realization,
+            shared_overflow_slots=overflow,
         )
 
     def _research_reset_lane_usage(self) -> None:
@@ -3417,6 +3174,57 @@ class Strategy1_Research(Strategy1_Debug):
         )
 
 
+    # === V4.15 CLEAN AUTHORITY: execution feasibility memory ===
+    def _research_execution_reject_block(self, book_id: int):
+        return execution_reject_cooldown(
+            (getattr(self, "_research_execution_reject_last", {}) or {}).get(int(book_id)),
+            tick=int(getattr(self, "_tick", 0) or 0),
+            enabled=True,
+        )
+
+    def _research_note_execution_decision(self, book_id: int, action: str, reason: str) -> None:
+        table = getattr(self, "_research_execution_reject_last", None)
+        if not isinstance(table, dict):
+            table = {}
+            self._research_execution_reject_last = table
+        token = str(action or "").upper()
+        why = str(reason or "").upper()
+        if token == "SKIP":
+            cd = execution_reject_cooldown(
+                {"tick": int(getattr(self, "_tick", 0) or 0), "reason": why},
+                tick=int(getattr(self, "_tick", 0) or 0) + 1, enabled=True,
+            )
+            if cd.reason:
+                table[int(book_id)] = {
+                    "tick": int(getattr(self, "_tick", 0) or 0),
+                    "reason": why,
+                }
+        elif token in {"QUOTE", "QUOTED", "PLACE", "PLACED"}:
+            table.pop(int(book_id), None)
+
+    def _research_live_lifecycle_taker_probability(self) -> float:
+        prior = float(getattr(self, "research_lifecycle_taker_exit_prob", 0.30))
+        maker = taker = 0
+        try:
+            vel = self._research_velocity_state()
+            maker = (
+                int(getattr(getattr(vel, "maker", None), "count", 0) or 0)
+                + int(getattr(getattr(vel, "competitive_maker", None), "count", 0) or 0)
+                + int(getattr(getattr(vel, "aggressive_maker", None), "count", 0) or 0)
+            )
+            taker = int(getattr(getattr(vel, "taker", None), "count", 0) or 0)
+        except Exception:
+            pass
+        p = posterior_taker_exit_probability(
+            maker_exits=maker, taker_exits=taker, prior=prior,
+            prior_strength=LIFECYCLE_TAKER_PRIOR_STRENGTH,
+            min_samples=LIFECYCLE_TAKER_MIN_SAMPLES,
+            floor=prior, cap=max(prior, LIFECYCLE_TAKER_PROB_CAP),
+        )
+        self._research_lifecycle_taker_prob_live = float(p)
+        self._research_lifecycle_exit_samples = int(maker + taker)
+        return float(p)
+
     # === V4.14.4 REALNET DEFECT FIX P1: scheduler retry rotation ===
     def _research_scheduler_retry_guard_v4144(self) -> SchedulerRetryGuard:
         guard = getattr(self, "_research_scheduler_retry_guard", None)
@@ -3507,9 +3315,6 @@ class Strategy1_Research(Strategy1_Debug):
         pnl_floor = float(getattr(self, "research_kappa_completion_recent_pnl_floor", -0.01))
         rows: list[ScreenBook] = []
         lane_rows: list[LaneBook] = []
-        cohort_candidates: list[CohortCandidate] = []
-        productivity_snapshots: dict[int, ProductivitySnapshot] = {}
-        score_qualified_ids: set[int] = set()
         kappa_eligible_ids: set[int] = set()
         obs_qualified_count = 0
         expiring_count = 0
@@ -3567,6 +3372,11 @@ class Strategy1_Research(Strategy1_Debug):
                 age_ticks = int(getattr(self, "_tick", 0) or 0) - int(cached_admission.get("tick", 0) or 0)
                 if age_ticks < int(getattr(self, "research_entry_recheck_ticks", 20)):
                     entry_feasible = bool(cached_admission.get("allow", True))
+            # V4.15 executability first: recent downstream mechanical vetoes
+            # temporarily remove a flat book before TOTAL_SCORE spends a lane on it.
+            exec_cd = self._research_execution_reject_block(bid)
+            if bool(getattr(exec_cd, "blocked", False)) and not has_inv:
+                entry_feasible = False
             mem = mems.get(bid)
             if mem is None:
                 mem = mems.get(book_id)
@@ -3659,10 +3469,8 @@ class Strategy1_Research(Strategy1_Debug):
             except Exception:
                 profile = None
 
-            # V4.11 score qualification is stricter than raw observation count.
-            # Three observations make a book OBS-qualified; SCORE-qualified also
-            # requires non-negative recent economics and, when available, a
-            # non-negative raw Kappa proxy.
+            # TOTAL_SCORE uses validator-aligned rolling Kappa eligibility directly.
+            # The historical SCORE-qualified overlay was removed in V4.15.1.
             expiry = self._research_kappa_expiry(bid)
             deadline_urgency = float(getattr(expiry, "expiry_urgency", 0.0) or 0.0)
             refresh_urgency = deadline_urgency if bool(getattr(expiry, "qualified", False)) else 0.0
@@ -3674,27 +3482,9 @@ class Strategy1_Research(Strategy1_Debug):
             )
             time_to_deadline_ns = getattr(expiry, "time_to_expiry_ns", None)
             raw_kappa = None if profile is None else getattr(profile, "raw_kappa", None)
-            kappa_quality_ok = True
-            if raw_kappa is not None:
-                try:
-                    rk = float(raw_kappa)
-                    if math.isfinite(rk):
-                        kappa_quality_ok = rk >= float(
-                            getattr(self, "research_score_qualified_kappa_floor", 0.0)
-                        )
-                except (TypeError, ValueError):
-                    pass
-            score_qualified = bool(
-                kappa.eligible
-                and pnl_authority_complete
-                and rolling_pnl >= float(getattr(self, "research_score_qualified_pnl_floor", 0.0))
-                and kappa_quality_ok
-            )
             if kappa.eligible:
                 obs_qualified_count += 1
                 kappa_eligible_ids.add(bid)
-            if score_qualified:
-                score_qualified_ids.add(bid)
             if needs_refresh:
                 expiring_count += 1
             if deadline_critical:
@@ -3742,43 +3532,13 @@ class Strategy1_Research(Strategy1_Debug):
                 )
                 if hard:
                     urgency = max(urgency, 0.95)
-            density_label = flywheel_density_state(
-                realized_observations=int(samples),
-                required_observations=self._research_required_observation_count(),
-                needs_refresh=bool(needs_refresh),
-            )
             maker_fee_bps = float(self._research_live_fee_bps(bid, is_maker=True))
-            rk_for_priority = 0.0
-            try:
-                if raw_kappa is not None and math.isfinite(float(raw_kappa)):
-                    rk_for_priority = max(-2.5, min(2.5, float(raw_kappa)))
-            except (TypeError, ValueError):
-                rk_for_priority = 0.0
-            productivity = self._research_productivity_snapshot(
+            execution_quality = self._research_execution_quality_snapshot(
                 bid,
-                observations=int(samples),
                 rolling_econ=rolling_econ,
                 maker_fee_bps=float(maker_fee_bps),
                 fill_rate_hint=float(fill_rate),
                 raw_kappa=raw_kappa,
-            )
-            productivity_snapshots[bid] = productivity
-
-            # Kappa-first tie-breaker: quality + nonnegative rolling PnL + low
-            # cubic downside + maker rebate. This does not replace the existing
-            # trading-EV gate; it ranks already-safe Kappa work.
-            pnl_sign = 0.0
-            if int(rolling_econ.nonzero_count) > 0:
-                pnl_sign = 1.0 if float(rolling_pnl) >= 0.0 else -1.0
-            # Migration-safe priority: missing historical PnL never becomes fake
-            # positive PnL. It lowers confidence while preserved Kappa observation
-            # eligibility still allows the book to enter the density candidate pool.
-            flywheel_priority = pnl_conf_mult * (
-                0.79 * rk_for_priority
-                + 0.21 * pnl_sign
-                - 0.50 * float(rolling_econ.loss_rate)
-                - min(1.0, float(rolling_econ.downside_m3))
-                + 0.02 * max(0.0, -maker_fee_bps)
             )
             rows.append(
                 ScreenBook(
@@ -3820,7 +3580,6 @@ class Strategy1_Research(Strategy1_Debug):
                     deadline_urgency=deadline_urgency,
                     deadline_critical=deadline_critical,
                     time_to_deadline_ns=time_to_deadline_ns,
-                    score_qualified=score_qualified,
                     kappa_eligible=bool(kappa.eligible),
                     pnl_confidence=str(pnl_conf),
                     pnl_confidence_mult=float(pnl_conf_mult),
@@ -3831,162 +3590,42 @@ class Strategy1_Research(Strategy1_Debug):
                     rolling_negative_count=int(rolling_econ.negative_count),
                     rolling_downside_m3=float(rolling_econ.downside_m3),
                     raw_kappa=(None if raw_kappa is None else float(raw_kappa)),
-                    density_state=str(density_label),
-                    density_due=False,
-                    flywheel_priority=float(flywheel_priority),
                     maker_fee_bps=float(maker_fee_bps),
-                    kappa_productivity_score=float(productivity.score),
-                    kappa_productivity_tier=str(productivity.execution_tier),
-                    kappa_productivity_state=str(
-                        productivity_kappa_state(
-                            observations=int(samples), core=bool(productivity.core_candidate)
-                        )
-                    ),
-                    core_candidate=bool(productivity.core_candidate),
-                    recycling_candidate=bool(productivity.recycling_candidate),
-                    placements_per_rt=float(productivity.placements_per_rt),
-                    maker_fill_conversion=float(productivity.maker_fill_conversion),
-                    contract_reject_rate=float(productivity.contract_reject_rate),
+                    execution_quality_score=float(execution_quality.score),
+                    execution_quality_tier=str(execution_quality.execution_tier),
+                    placements_per_rt=float(execution_quality.placements_per_rt),
+                    maker_fill_conversion=float(execution_quality.maker_fill_conversion),
+                    contract_reject_rate=float(execution_quality.contract_reject_rate),
                 )
             )
-            cohort_candidates.append(
-                CohortCandidate(
-                    book_id=bid,
-                    observations_remaining=int(remaining),
-                    entry_feasible=entry_feasible,
-                    economics_ok=(rolling_pnl >= pnl_floor if rolling_econ.nonzero_count > 0 else True),
-                    hard_risk=hard,
-                    has_inventory=lane_has_inv or bool(is_dust and lane_has_inv),
-                    score_qualified=score_qualified,
-                    needs_refresh=needs_refresh,
-                    refresh_urgency=refresh_urgency,
-                    deadline_urgency=deadline_urgency,
-                    deadline_critical=deadline_critical,
-                    cheap_score=cheap,
-                )
-            )
-
-        # V4.14.5 TOTAL_SCORE_FRONTIER: one score-scheduling authority.
-        # Productivity remains a cheap execution-efficiency signal only; it no
-        # longer creates CORE/RECYCLING/CORE_PROBE/density completion authority.
-        productivity_phase = productivity_scheduler_phase(len(kappa_eligible_ids))
-        strict_core = [
-            snap for snap in productivity_snapshots.values() if bool(snap.core_candidate)
-        ]
-        strict_core.sort(key=lambda snap: (-float(snap.score), int(snap.book_id)))
-        telemetry_core_ids = {int(snap.book_id) for snap in strict_core[:48]}
-
-        # The enable flag must gate the annotation itself, not only the lane
-        # budgets. Annotating rows while serving legacy budgets would leave the
-        # new lane authority running against the old slot plan -- a hybrid that
-        # is neither V4.14.4 nor V4.14.5. When disabled, rows keep an empty
-        # total_score_phase so classify_execution_lane takes its legacy path.
-        if bool(getattr(self, "research_total_score_frontier_enabled", True)):
-            lane_rows, total_score_plan = apply_total_score_frontier(
-                lane_rows,
-                qualified_books=len(kappa_eligible_ids),
-                required_observations=self._research_required_observation_count(),
-                ignition_books=int(getattr(self, "research_total_score_ignition_books", 41)),
-                full_breadth_books=int(getattr(self, "research_total_score_full_breadth_books", 80)),
-                frontier_band=int(getattr(self, "research_total_score_frontier_band", 2)),
-            )
-        else:
-            total_score_plan = None
+        # TOTAL_SCORE_FRONTIER is the sole score-acquisition authority.
+        lane_rows, total_score_plan = apply_total_score_frontier(
+            lane_rows,
+            qualified_books=len(kappa_eligible_ids),
+            required_observations=self._research_required_observation_count(),
+            ignition_books=int(getattr(self, "research_total_score_ignition_books", 41)),
+            full_breadth_books=int(getattr(self, "research_total_score_full_breadth_books", 80)),
+            frontier_band=int(getattr(self, "research_total_score_frontier_band", 2)),
+        )
         self._research_total_score_plan = total_score_plan
-        self._research_total_score_phase = (
-            str(total_score_plan.phase) if total_score_plan is not None else ""
-        )
-        self._research_total_score_frontier_ids = set(
-            total_score_plan.frontier_ids if total_score_plan is not None else set()
-        )
-        # Sole live score-authority set. Later entry/TTL helpers must consult this
-        # set rather than the historical productivity CORE/RECYCLING sets, or the
-        # old scheduler would retain hidden privileges after lane allocation.
+        self._research_total_score_phase = str(total_score_plan.phase)
+        self._research_total_score_frontier_ids = set(total_score_plan.frontier_ids)
         self._research_total_score_due_ids = {
-            int(row.book_id) for row in lane_rows
-            if bool(getattr(row, "total_score_due", False))
+            int(row.book_id) for row in lane_rows if bool(row.total_score_due)
         }
-
-        # Compatibility telemetry only. These sets are deliberately NOT copied
-        # back into live LaneBook scheduling flags by V4.14.5.
-        self._research_productivity_phase = str(productivity_phase)
-        self._research_productivity_core_ids = set(telemetry_core_ids)
-        self._research_productivity_recycling_ids = set()
-        self._research_productivity_core_probe_ids = set()
-        _plan_phase = str(getattr(total_score_plan, "phase", "") or TOTAL_SCORE_PHASE_IGNITION)
-        self._research_flywheel_phase = (
-            PHASE_BOOTSTRAP if _plan_phase == TOTAL_SCORE_PHASE_IGNITION
-            else (PHASE_BREADTH if _plan_phase == TOTAL_SCORE_PHASE_SURVIVAL else PHASE_DENSITY)
+        self._research_productive_incomplete_count = sum(
+            1 for row in lane_rows
+            if bool(row.entry_feasible)
+            and bool(row.economics_ok)
+            and not bool(row.has_inventory)
+            and max(0, int(row.observations_remaining or 0)) in {1, 2}
         )
-        self._research_flywheel_core_ids = set()
-        self._research_flywheel_kappa_eligible_ids = set(kappa_eligible_ids)
-        # Three observations is the only qualification target now.
-        self._research_flywheel_density_target = self._research_required_observation_count()
         self._research_lane_budgets = self._research_execution_lane_budgets()
 
-        # V4.12.7 breadth rotation: when there is productive ONE_AWAY/TWO_AWAY
-        # backlog, stable score-qualified books are retired from *new acquisition*.
-        # This does not touch existing positions, dust/risk exits, or expiry refresh.
-        # V4.12.9 / St6.4 final: breadth rotation is now tied to the live
-        # score target instead of being a telemetry-only number.  Current SN79
-        # scoring tolerates 48 inactive books out of 128, so 80 qualified books
-        # is the critical breadth boundary.  V4.14.5 uses 80 as the full-breadth boundary.  Above 80, extra weak breadth
-        # is not forced; the same total-score authority shifts to median-frontier
-        # repair and ordinary positive-EV economics.
-        score_target = int(getattr(self, "research_score_target_books", 80) or 80)
-        # V4.13 scheduler breadth authority is Kappa eligibility (3+ rolling
-        # realized observations). Score-qualified remains diagnostic quality
-        # telemetry and no longer blocks restored/partial-history breadth work.
-        score_deficit = max(0, score_target - len(kappa_eligible_ids))
-        lane_rows, qualified_suppressed_ids, productive_incomplete = apply_breadth_rotation_gate(
-            lane_rows,
-            enabled=bool(getattr(self, "research_suppress_qualified_acquisition", True))
-            and score_deficit > 0,
-            min_productive_incomplete=int(
-                getattr(self, "research_qualified_suppression_min_incomplete", 1) or 1
-            ),
-        )
-        self._research_qualified_suppressed_ids = set(qualified_suppressed_ids)
-        self._research_productive_incomplete_count = int(productive_incomplete)
-
-        # V4.12.15: stale parked inventory releases the *active* acquisition
-        # slot but still counts against total open-position and aggregate exposure
-        # safety. This is the core non-blocking-inventory change.
+        # Hard exposure caps below remain authoritative in both modes.
         max_active_open = int(getattr(self, "research_max_active_open_books", 6) or 6)
         max_total_open = int(getattr(self, "research_max_total_open_books", 12) or 12)
         max_total_abs_base = float(getattr(self, "research_max_total_abs_base", 3.0) or 3.0)
-        lane_rows, pressure_suppressed_ids, pressure_productive, pressure_reason = (
-            apply_kappa_conversion_pressure_gate(
-                lane_rows,
-                parked_open_books=int(parked_nonflat),
-                max_parked_open_books=int(getattr(self, "research_max_parked_open_books", 6)),
-                total_open_books=int(actual_nonflat),
-                max_total_open_books=max_total_open,
-                reserve_total_slots=int(getattr(
-                    self, "research_kappa_conversion_reserve_slots", 3
-                )),
-                exploration_slots=int(getattr(
-                    self, "research_kappa_exploration_slots", 2
-                )),
-                enabled=bool(getattr(
-                    self, "research_kappa_conversion_pressure_enabled", True
-                )) and score_deficit > 0,
-            )
-        )
-        # V4.14.2 Wide-Kappa Wave: parked labels no longer create a second
-        # breadth veto. The conversion-pressure gate above uses *true* total
-        # position headroom and preserves exploration. Hard caps below remain
-        # authoritative, while parked count stays visible in telemetry.
-        pressure_suppressed = set(pressure_suppressed_ids)
-        if pressure_suppressed:
-            cohort_candidates = [
-                replace(row, entry_feasible=False)
-                if int(row.book_id) in pressure_suppressed else row
-                for row in cohort_candidates
-            ]
-        self._research_kappa_pressure_suppressed_ids = pressure_suppressed
-        self._research_kappa_pressure_productive = int(pressure_productive)
-        self._research_kappa_pressure_reason = str(pressure_reason)
         # V4.14.3: sub-minimum dust remains inside actual_nonflat and BASE risk
         # caps, but no longer consumes one of the six productive acquisition
         # slots. The total-open=8 cap naturally limits extra fresh books to the
@@ -3997,22 +3636,6 @@ class Strategy1_Research(Strategy1_Debug):
         open_cap_saturated = bool(
             active_cap_saturated or total_cap_saturated or exposure_cap_saturated
         )
-        try:
-            self._research_capacity_state().observe(
-                active_saturated=bool(active_cap_saturated),
-                total_saturated=bool(total_cap_saturated),
-                exposure_saturated=bool(exposure_cap_saturated),
-                active_open=active_nonflat,
-                total_open=actual_nonflat,
-                dust_open=dust_nonflat,
-                parked_open=parked_nonflat,
-                abs_base=total_abs_base,
-                max_active_open_books=max_active_open,
-                max_total_open_books=max_total_open,
-                max_total_abs_base=max_total_abs_base,
-            )
-        except Exception:
-            pass
         if open_cap_saturated:
             lane_rows = [
                 replace(row, entry_feasible=False)
@@ -4020,40 +3643,14 @@ class Strategy1_Research(Strategy1_Debug):
                 else row
                 for row in lane_rows
             ]
-            cohort_candidates = [
-                replace(row, entry_feasible=False)
-                if not (row.has_inventory or row.hard_risk)
-                else row
-                for row in cohort_candidates
-            ]
 
-        cohort = update_sticky_cohort(
-            getattr(self, "_research_cohort_ids", []),
-            cohort_candidates,
-            target_size=int(getattr(self, "research_cohort_size", 10)),
-            exploration_slots=int(getattr(self, "research_cohort_exploration_slots", 2)),
-        )
-        self._research_cohort_ids = list(cohort)
-        self._research_score_qualified_ids = set(score_qualified_ids)
-        cohort_set = set(cohort)
-        lane_rows = [replace(row, cohort_member=int(row.book_id) in cohort_set) for row in lane_rows]
-
-        # One compact progress record per request. This is the primary V4.11
+        # Compact score-progress telemetry follows the single TOTAL_SCORE authority.
         # upside telemetry: concentration -> observations -> score qualification.
         try:
-            self._emit(
-                "COHORT",
-                force=True,
-                tick=getattr(self, "_tick", None),
-                size=len(cohort),
-                books=",".join(str(x) for x in cohort),
-                target=int(getattr(self, "research_cohort_size", 10)),
-            )
             self._emit(
                 "SCORE_PROGRESS",
                 force=True,
                 tick=getattr(self, "_tick", None),
-                score_qualified=len(score_qualified_ids),
                 kappa_eligible=len(kappa_eligible_ids),
                 obs_qualified=int(obs_qualified_count),
                 one_away=int(one_away_count),
@@ -4064,25 +3661,17 @@ class Strategy1_Research(Strategy1_Debug):
                 min_deadline_ns=min_deadline_ns,
                 score_target=int(getattr(self, "research_score_target_books", 80)),
                 score_deficit=max(0, int(getattr(self, "research_score_target_books", 80)) - len(kappa_eligible_ids)),
-                cohort_size=len(cohort),
                 productive_incomplete=int(getattr(self, "_research_productive_incomplete_count", 0) or 0),
-                qualified_suppressed=len(getattr(self, "_research_qualified_suppressed_ids", set()) or set()),
-                kappa_pressure_reason=str(getattr(self, "_research_kappa_pressure_reason", "NO_PRESSURE")),
-                kappa_pressure_suppressed=len(getattr(self, "_research_kappa_pressure_suppressed_ids", set()) or set()),
-                kappa_pressure_productive=int(getattr(self, "_research_kappa_pressure_productive", 0) or 0),
-                flywheel_phase=str(getattr(self, "_research_flywheel_phase", PHASE_BOOTSTRAP)),
-                flywheel_core_books=len(getattr(self, "_research_flywheel_core_ids", set()) or set()),
-                flywheel_density_target=int(getattr(self, "_research_flywheel_density_target", 3) or 3),
-                productivity_phase=str(getattr(self, "_research_productivity_phase", PRODUCTIVITY_PHASE_BOOTSTRAP)),
-                productivity_core_books=len(getattr(self, "_research_productivity_core_ids", set()) or set()),
-                productivity_recycling_books=len(getattr(self, "_research_productivity_recycling_ids", set()) or set()),
-                productivity_core_probe_books=len(getattr(self, "_research_productivity_core_probe_ids", set()) or set()),
-                productivity_inefficient=sum(1 for row in lane_rows if str(getattr(row, "kappa_productivity_tier", "")).upper() == "INEFFICIENT"),
-                total_score_phase=str(getattr(getattr(self, "_research_total_score_plan", None), "phase", "DISABLED")),
+                execution_quality_inefficient=sum(
+                    1 for row in lane_rows
+                    if str(getattr(row, "execution_quality_tier", "")).upper() == "INEFFICIENT"
+                ),
+                total_score_phase=str(getattr(total_score_plan, "phase", "IGNITION")),
+                total_score_due=len(getattr(self, "_research_total_score_due_ids", set()) or set()),
                 total_score_frontier_books=len(getattr(self, "_research_total_score_frontier_ids", set()) or set()),
-                total_score_pivot_low=getattr(getattr(self, "_research_total_score_plan", None), "pivot_low", None),
-                total_score_pivot_high=getattr(getattr(self, "_research_total_score_plan", None), "pivot_high", None),
-                total_score_inefficient_rotated=int(getattr(getattr(self, "_research_total_score_plan", None), "inefficient_rotated", 0) or 0),
+                total_score_pivot_low=getattr(total_score_plan, "pivot_low", None),
+                total_score_pivot_high=getattr(total_score_plan, "pivot_high", None),
+                total_score_inefficient_rotated=int(getattr(total_score_plan, "inefficient_rotated", 0) or 0),
             )
         except Exception:
             pass
@@ -4104,19 +3693,10 @@ class Strategy1_Research(Strategy1_Debug):
             "exposure_cap_saturated": int(exposure_cap_saturated),
             "stale_empty_position_keys": int(stale_empty_position_keys),
             "productive_incomplete": int(getattr(self, "_research_productive_incomplete_count", 0) or 0),
-            "qualified_suppressed": len(getattr(self, "_research_qualified_suppressed_ids", set()) or set()),
-            "kappa_pressure_reason": str(getattr(self, "_research_kappa_pressure_reason", "NO_PRESSURE")),
-            "kappa_pressure_suppressed": len(getattr(self, "_research_kappa_pressure_suppressed_ids", set()) or set()),
-            "kappa_pressure_productive": int(getattr(self, "_research_kappa_pressure_productive", 0) or 0),
-            "flywheel_phase": str(getattr(self, "_research_flywheel_phase", PHASE_BOOTSTRAP)),
-            "flywheel_kappa_eligible": len(getattr(self, "_research_flywheel_kappa_eligible_ids", set()) or set()),
-            "flywheel_core_books": len(getattr(self, "_research_flywheel_core_ids", set()) or set()),
-            "flywheel_density_target": int(getattr(self, "_research_flywheel_density_target", 3) or 3),
-            "productivity_phase": str(getattr(self, "_research_productivity_phase", PRODUCTIVITY_PHASE_BOOTSTRAP)),
-            "productivity_core_books": len(getattr(self, "_research_productivity_core_ids", set()) or set()),
-            "productivity_recycling_books": len(getattr(self, "_research_productivity_recycling_ids", set()) or set()),
-            "productivity_core_probe_books": len(getattr(self, "_research_productivity_core_probe_ids", set()) or set()),
-            "productivity_inefficient": sum(1 for row in lane_rows if str(getattr(row, "kappa_productivity_tier", "")).upper() == "INEFFICIENT"),
+            "execution_quality_inefficient": sum(
+                1 for row in lane_rows
+                if str(getattr(row, "execution_quality_tier", "")).upper() == "INEFFICIENT"
+            ),
             "total_score_phase": str(getattr(getattr(self, "_research_total_score_plan", None), "phase", "DISABLED")),
             "total_score_frontier_books": len(getattr(self, "_research_total_score_frontier_ids", set()) or set()),
             "total_score_pivot_low": getattr(getattr(self, "_research_total_score_plan", None), "pivot_low", None),
@@ -4129,43 +3709,65 @@ class Strategy1_Research(Strategy1_Debug):
             "score_deficit": max(0, int(getattr(self, "research_score_target_books", 80)) - len(kappa_eligible_ids)),
         }
         cap = self.research_candidate_count
-        if not self._research_lanes_on():
-            result = select_fast_candidates(rows, cap)
-            self._research_last_lanes = None
-        else:
-            screen_budgets = self._research_lane_budgets_for_screen(lane_rows)
-            # V4.14.5: shared overflow is spilled into REALIZATION/COMPLETION
-            # *before* the global candidate cap truncates the lanes, so a cap
-            # below total_cap silently consumes COVERAGE's reserved slots. At
-            # IGNITION that turns the documented 4-slot coverage reserve into 3
-            # and reintroduces fresh-breadth starvation. Never let the cap fall
-            # below the reserved+overflow total the phase budget promises.
-            if screen_budgets is not None:
-                cap = max(int(cap), int(screen_budgets.total_cap))
-            allocation = select_lane_candidates(
-                lane_rows,
-                screen_budgets,
-                max_candidates=cap,
-            )
-            self._research_last_lanes = allocation
-            selected = list(allocation.selected)
-            result = ScreenResult(
-                selected=selected,
-                forced=list(allocation.by_lane.get(LANE_REALIZATION, []))
-                + list(allocation.by_lane.get(EXEC_LANE_COMPLETION, [])),
-                forced_inventory=list(allocation.by_lane.get(LANE_REALIZATION, [])),
-                forced_dust=[row.book_id for row in lane_rows if row.is_dust and row.book_id in selected],
-                forced_kappa=list(allocation.by_lane.get(EXEC_LANE_COMPLETION, [])),
-                forced_hard_risk=[row.book_id for row in lane_rows if row.is_hard_risk and row.book_id in selected],
-                forced_live=[row.book_id for row in rows if row.has_live_quote and row.book_id in selected],
-                screened_extra=list(allocation.by_lane.get(EXEC_LANE_COVERAGE, [])),
-                candidate_count=int(cap),
-                universe=len(lane_rows),
-            )
-            try:
-                self._research_emit_lanes(stage="SCREEN")
-            except Exception:
-                pass
+        screen_budgets = self._research_lane_budgets_for_screen(lane_rows)
+        # Lean authority: shared overflow is spilled into REALIZATION/COMPLETION
+        # *before* the global candidate cap truncates the lanes, so a cap
+        # below total_cap silently consumes COVERAGE's reserved slots. At
+        # IGNITION that turns the documented 4-slot coverage reserve into 3
+        # and reintroduces fresh-breadth starvation. Never let the cap fall
+        # below the reserved+overflow total the phase budget promises.
+        if screen_budgets is not None:
+            cap = max(int(cap), int(screen_budgets.total_cap))
+        allocation = select_lane_candidates(
+            lane_rows,
+            screen_budgets,
+            max_candidates=cap,
+        )
+        self._research_last_lanes = allocation
+        selected = list(allocation.selected)
+        # V4.15 same-request success backfill. Predict a small reserve from
+        # each acquisition lane. Reserve books do not consume capacity here;
+        # execution admits them only if earlier candidates fail to place.
+        full_pool = dict(getattr(allocation, "pool_by_lane", {}) or {})
+        authorized_pool = {
+            lane: list((allocation.by_lane or {}).get(lane, []) or [])
+            for lane in EXEC_LANES
+        }
+        if bool(getattr(self, "research_candidate_backfill", True)):
+            reserve_n = int(getattr(self, "research_backfill_predict_reserve_per_lane", 3) or 0)
+            selected_set = {int(x) for x in selected}
+            for _lane in (EXEC_LANE_COMPLETION, EXEC_LANE_COVERAGE):
+                added = 0
+                for _bid in full_pool.get(_lane, []) or []:
+                    ibid = int(_bid)
+                    if ibid in selected_set:
+                        continue
+                    selected.append(ibid)
+                    selected_set.add(ibid)
+                    authorized_pool[_lane].append(ibid)
+                    added += 1
+                    if added >= reserve_n:
+                        break
+        # Keep pool authorization selected-only; the full 128-book ranked
+        # universe must never receive inactive/bootstrap privileges.
+        allocation.pool_by_lane = authorized_pool
+        result = ScreenResult(
+            selected=selected,
+            forced=list(allocation.by_lane.get(LANE_REALIZATION, []))
+            + list(allocation.by_lane.get(EXEC_LANE_COMPLETION, [])),
+            forced_inventory=list(allocation.by_lane.get(LANE_REALIZATION, [])),
+            forced_dust=[row.book_id for row in lane_rows if row.is_dust and row.book_id in selected],
+            forced_kappa=list(allocation.by_lane.get(EXEC_LANE_COMPLETION, [])),
+            forced_hard_risk=[row.book_id for row in lane_rows if row.is_hard_risk and row.book_id in selected],
+            forced_live=[row.book_id for row in rows if row.has_live_quote and row.book_id in selected],
+            screened_extra=list(allocation.by_lane.get(EXEC_LANE_COVERAGE, [])),
+            candidate_count=len(selected),
+            universe=len(lane_rows),
+        )
+        try:
+            self._research_emit_lanes(stage="SCREEN")
+        except Exception:
+            pass
         self._research_last_screen = result
         return result
 
@@ -5435,7 +5037,7 @@ class Strategy1_Research(Strategy1_Debug):
         book_id = getattr(mem, "_research_book_id", None)
         if book_id is None:
             return
-        prow = self._research_productivity_row(int(book_id))
+        prow = self._research_execution_quality_row(int(book_id))
         prow["maker_quotes"] = int(prow.get("maker_quotes", 0) or 0) + 1
         bucket = self._spread_dist_bucket(float(dist_from_touch))
         key = (int(book_id), str(side), int(bucket))
@@ -5561,7 +5163,7 @@ class Strategy1_Research(Strategy1_Debug):
         grow["dust"] = int(grow.get("dust", 0)) + int(is_dust)
         grow["fill_qty"] = float(grow.get("fill_qty", 0.0)) + abs(float(fill_qty))
 
-        prow = self._research_productivity_row(int(book_id))
+        prow = self._research_execution_quality_row(int(book_id))
         prow["maker_fills"] = int(prow.get("maker_fills", 0) or 0) + 1
         self._research_actionable_maker_fills += 1
         self._research_actionable_fills += int(is_actionable)
@@ -5747,9 +5349,8 @@ class Strategy1_Research(Strategy1_Debug):
         return counts
 
     def _research_lanes_on(self) -> bool:
-        return bool(getattr(self, "research_enable_lane_scheduler", True)) and bool(
-            getattr(self, "research_enable_execution_lanes", True)
-        )
+        """Execution lanes are mandatory in V4.15.1+."""
+        return True
 
     def _research_dust_econ_on(self) -> bool:
         return bool(getattr(self, "research_enable_dust_economic_gate", True)) and bool(
@@ -5782,7 +5383,7 @@ class Strategy1_Research(Strategy1_Debug):
             pass
 
     def _research_lane_budgets_for_screen(self, lane_rows=None):
-        # V4.14.5: phase budgets are authoritative.  Completion demand cannot
+        # Total-score phase budgets are authoritative. Completion demand cannot
         # silently rewrite COVERAGE=4 into COVERAGE=1 as V4.13.6 did.
         return getattr(self, "_research_lane_budgets", None)
 
@@ -5798,13 +5399,6 @@ class Strategy1_Research(Strategy1_Debug):
         if not isinstance(state, RoundTripPhaseState):
             state = RoundTripPhaseState()
             self._research_rt_phase = state
-        return state
-
-    def _research_capacity_state(self) -> CapacitySaturationState:
-        state = getattr(self, "_research_capacity", None)
-        if not isinstance(state, CapacitySaturationState):
-            state = CapacitySaturationState()
-            self._research_capacity = state
         return state
 
     def _research_inventory_ages(self) -> list[float]:
@@ -5849,10 +5443,6 @@ class Strategy1_Research(Strategy1_Debug):
                     simulation_time=self._research_simulation_time_s(),
                 )
             )
-        except Exception:
-            pass
-        try:
-            payload.update(self._research_capacity_state().snapshot())
         except Exception:
             pass
         return payload
@@ -5926,17 +5516,6 @@ class Strategy1_Research(Strategy1_Debug):
 
     def _research_observations_remaining(self, book_id: int) -> int:
         return self._research_kappa_book(book_id).observations_remaining
-
-    def _is_kappa_completion_candidate(self, book_id: int) -> bool:
-        if not self.research_kappa_completion_enabled:
-            return False
-        kappa = self._research_kappa_book(book_id)
-        if kappa.realized_observation_count <= 0 or kappa.eligible:
-            return False
-        mem = self._mem(book_id)
-        return float(getattr(mem, "recent_pnl", 0.0) or 0.0) >= (
-            self.research_kappa_completion_recent_pnl_floor
-        )
 
     def _research_update_ofi(self, book_id: int, book) -> Any:
         snap = self._research_ofi.update(int(book_id), extract_touch(book))
@@ -6258,6 +5837,13 @@ class Strategy1_Research(Strategy1_Debug):
                 self, "RESEARCH_KAPPA_STATE_VERSION", KAPPA_STATE_VERSION
             ),
             "mm_candidates": stats.get("mm_candidates"),
+            "clean_authority_version": self.RESEARCH_CLEAN_AUTHORITY_VERSION,
+            "lifecycle_taker_prob_live": float(getattr(self, "_research_lifecycle_taker_prob_live", getattr(self, "research_lifecycle_taker_exit_prob", 0.30))),
+            "lifecycle_exit_samples": int(getattr(self, "_research_lifecycle_exit_samples", 0) or 0),
+            "execution_reject_cooldowns": sum(
+                1 for bid in (getattr(self, "_research_execution_reject_last", {}) or {})
+                if bool(getattr(self._research_execution_reject_block(int(bid)), "blocked", False))
+            ),
         }
         if allocation is not None:
             payload.update(allocation.as_log())
@@ -7578,11 +7164,14 @@ class Strategy1_Research(Strategy1_Debug):
         )
 
     def _research_lifecycle_entry_cost_bps(self, book_id: int, spread_bps: float) -> float:
+        # V4.15 prices the realization path actually observed by this miner. The
+        # old 30% value is now a Bayesian prior rather than a permanent truth.
+        taker_prob = self._research_live_lifecycle_taker_probability()
         cost = lifecycle_entry_cost_bps(
             maker_fee_bps=self._research_live_fee_bps(book_id, is_maker=True),
             taker_fee_bps=self._research_live_fee_bps(book_id, is_maker=False),
             spread_bps=max(0.0, float(spread_bps or 0.0)),
-            taker_exit_probability=float(getattr(self, "research_lifecycle_taker_exit_prob", 0.30)),
+            taker_exit_probability=float(taker_prob),
             slippage_bps=float(getattr(self, "research_lifecycle_slippage_bps", 0.75)),
             holding_risk_bps=float(getattr(self, "research_lifecycle_holding_bps", 0.50)),
         )
@@ -9495,7 +9084,7 @@ class Strategy1_Research(Strategy1_Debug):
         state = register_contract_reject(previous, current_tick=now)
         self._research_contract_reject_state[key] = state
         self._research_contract_rejects += 1
-        prow = self._research_productivity_row(int(book_id))
+        prow = self._research_execution_quality_row(int(book_id))
         prow["contract_rejects"] = int(prow.get("contract_rejects", 0) or 0) + 1
         self._emit(
             "CONTRACT_REJECT_GUARD",
@@ -9869,18 +9458,10 @@ class Strategy1_Research(Strategy1_Debug):
             transition == "CROSS" and abs(realized_delta) > 1e-12
         )
         if round_trip_event:
-            prow = self._research_productivity_row(int(book_id))
+            prow = self._research_execution_quality_row(int(book_id))
             prow["last_rt_tick"] = max(0, int(getattr(self, "_tick", 0) or 0))
             if abs(realized_delta) > 1e-12:
                 prow["fresh_round_trips"] = int(prow.get("fresh_round_trips", 0) or 0) + 1
-                if realized_delta > 0.0:
-                    prow["fresh_positive_round_trips"] = int(
-                        prow.get("fresh_positive_round_trips", 0) or 0
-                    ) + 1
-                else:
-                    prow["fresh_negative_round_trips"] = int(
-                        prow.get("fresh_negative_round_trips", 0) or 0
-                    ) + 1
         rt_phase_sample = None
         try:
             vel = self._research_velocity_state()
@@ -10154,10 +9735,9 @@ class Strategy1_Research(Strategy1_Debug):
                 kappa_remaining = int(self._research_kappa_book(int(book_id)).observations_remaining)
             except Exception:
                 kappa_remaining = None
-        # V4.14.5: exact-min admission must follow the same single total-score
-        # authority as lane selection. Historical productivity CORE telemetry is
-        # not allowed to grant a hidden entry privilege.
-        productive_qualified_core = bool(
+        # Exact-min admission follows the same single TOTAL_SCORE authority as
+        # lane selection. No historical CORE/cohort state can grant privilege.
+        total_score_due = bool(
             book_id is not None
             and int(book_id) in (getattr(self, "_research_total_score_due_ids", set()) or set())
         )
@@ -10272,21 +9852,21 @@ class Strategy1_Research(Strategy1_Debug):
                 two_away_min_headroom=float(
                     getattr(self, "research_two_away_exact_min_min_headroom", 0.25)
                 ),
-                productive_qualified_core=bool(productive_qualified_core),
-                enable_qualified_core_exact_min=bool(
-                    getattr(self, "research_qualified_core_exact_min_enabled", True)
+                total_score_due=bool(total_score_due),
+                enable_total_score_frontier_exact_min=bool(
+                    getattr(self, "research_total_score_exact_min_enabled", True)
                 ),
-                qualified_core_min_trading_ev=float(
-                    getattr(self, "research_qualified_core_exact_min_ev", 0.0)
+                total_score_frontier_min_trading_ev=float(
+                    getattr(self, "research_total_score_exact_min_ev", 0.0)
                 ),
-                qualified_core_max_inventory_risk=float(
-                    getattr(self, "research_qualified_core_exact_min_max_inventory_risk", 0.35)
+                total_score_frontier_max_inventory_risk=float(
+                    getattr(self, "research_total_score_exact_min_max_inventory_risk", 0.35)
                 ),
-                qualified_core_min_exit_fraction=float(
-                    getattr(self, "research_qualified_core_exact_min_exit_fraction", 0.20)
+                total_score_frontier_min_exit_fraction=float(
+                    getattr(self, "research_total_score_exact_min_exit_fraction", 0.20)
                 ),
-                qualified_core_min_headroom=float(
-                    getattr(self, "research_qualified_core_exact_min_min_headroom", 0.25)
+                total_score_frontier_min_headroom=float(
+                    getattr(self, "research_total_score_exact_min_min_headroom", 0.25)
                 ),
             )
             if book_id is not None:
@@ -10325,17 +9905,6 @@ class Strategy1_Research(Strategy1_Debug):
                 promoted = True
             else:
                 size = 0.0
-        core_probe = bool(
-            book_id is not None
-            and int(book_id) in (getattr(self, "_research_productivity_core_probe_ids", set()) or set())
-            and abs(float(inventory.net_base)) <= self._execution_flat_epsilon()
-        )
-        if core_probe and size > 0.0 and min_size > 0.0 and size + 1e-12 >= min_size:
-            # V4.13.2 CORE_PROBE is evidence acquisition, not risk expansion:
-            # execute exactly one exchange-minimum Maker entry when normal
-            # admission already says the order is safe.
-            size = min(float(size), float(min_size), float(remaining))
-            promoted = abs(float(size) - float(min_size)) <= 1e-12
         size = min(size, remaining)
         if entry is not None or admission is not None:
             if book_id is not None:
@@ -10360,7 +9929,6 @@ class Strategy1_Research(Strategy1_Debug):
             record["inventory_util"] = self._inventory_util(inventory)
             record["min_order_size"] = min_size
             record["size_promoted_to_min"] = promoted
-            record["core_probe"] = int(bool(core_probe))
             if entry is not None:
                 record["entry_size"] = entry.entry_size
                 record["expected_exit_capacity"] = entry.expected_exit_capacity
@@ -10643,49 +10211,19 @@ class Strategy1_Research(Strategy1_Debug):
             )
             return 0
         completion_samples = self._completion_observation_count(book_id)
-        # V4.13.4: candidate screening is the authoritative lane allocator.
-        # V4.13.3 repaired this identity only for CORE_PROBE, but actual CORE,
-        # RECYCLING and density_due books are already Kappa-eligible too, so
-        # re-running the legacy completion predicate still changed their grant
-        # from KAPPA_COMPLETION to COVERAGE and produced LANE_NOT_GRANTED.
-        # Preserve the granted lane for every flat productivity candidate; use
-        # the old predicates only as a fallback when no current grant exists.
-        core_probe_candidate = bool(
-            inventory.band == "FLAT"
-            and bool(getattr(self, "research_core_probe_enabled", True))
-            and int(book_id)
-            in (getattr(self, "_research_productivity_core_probe_ids", set()) or set())
-        )
-        # V4.14.5: stale-TTL/min-order privileges are controlled by the same
-        # total-score decision that granted completion. Old productivity CORE
-        # membership remains telemetry only.
-        productive_qualified_core = bool(
+        # Candidate screening is the sole lane allocator. Flat books default to
+        # COVERAGE only if no current allocation is available; inventory defaults
+        # to REALIZATION. Historical CORE/RECYCLING/CORE_PROBE predicates are gone.
+        total_score_due = bool(
             inventory.band == "FLAT"
             and int(book_id) in (getattr(self, "_research_total_score_due_ids", set()) or set())
         )
-        fallback_completion_candidate = execution_completion_candidate(
-            inventory_flat=(inventory.band == "FLAT"),
-            core_probe_candidate=core_probe_candidate,
-            legacy_completion_candidate=self._is_kappa_completion_candidate(book_id),
+        fallback_lane = (
+            LANE_REALIZATION
+            if str(getattr(inventory, "band", "")).upper() != "FLAT"
+            else EXEC_LANE_COVERAGE
         )
-        if str(getattr(inventory, "band", "")).upper() != "FLAT":
-            fallback_lane = LANE_REALIZATION
-        elif fallback_completion_candidate:
-            fallback_lane = EXEC_LANE_COMPLETION
-        elif (
-            inventory.band == "FLAT"
-            and completion_samples <= 0
-            and self.research_kappa_completion_enabled
-        ):
-            fallback_lane = EXEC_LANE_COVERAGE
-        else:
-            fallback_lane = EXEC_LANE_COVERAGE if self._research_lanes_on() else LANE_NORMAL
-
-        allocation = (
-            getattr(self, "_research_last_lanes", None)
-            if self._research_lanes_on()
-            else None
-        )
+        allocation = getattr(self, "_research_last_lanes", None)
         lane = authoritative_execution_lane(
             book_id,
             inventory_flat=(inventory.band == "FLAT"),
@@ -10728,17 +10266,6 @@ class Strategy1_Research(Strategy1_Debug):
             adverse_selection_risk=as_risk,
             ofi_normalized=ofi_snap.ofi_normalized if ofi_snap.supported else None,
         )
-        if (
-            int(book_id) in set(getattr(self, "_research_cohort_ids", []) or [])
-            and str(getattr(self, "_research_market_regime", "") or "").upper() == "QUIET"
-            and float(as_risk) < 0.25
-            and float(expected_mo) >= -4.0
-        ):
-            self._research_as_width_mult = max(
-                float(getattr(self, "research_quote_width_floor_mult", 0.80)),
-                float(self._research_as_width_mult)
-                * float(getattr(self, "research_quote_tighten_mult", 0.85)),
-            )
         adverse_block = (
             str(getattr(inventory, "band", "")).upper() == "FLAT"
             and entry_adverse_blocked(
@@ -10771,20 +10298,38 @@ class Strategy1_Research(Strategy1_Debug):
 
         if self._research_backfill_active:
             if self._research_lanes_on() and lane in EXEC_LANES:
-                # Candidate screening is the single authoritative lane allocator.
-                # Do not re-budget here: that previously discarded unused-lane
-                # spill grants and burned lane capacity before a quote succeeded.
                 allocation = getattr(self, "_research_last_lanes", None)
                 if allocation is not None:
-                    granted = set((allocation.by_lane or {}).get(lane, []) or [])
-                    if int(book_id) not in granted:
+                    # V4.15: selection authorizes an ordered pool; actual lane
+                    # capacity is consumed only after a quote is successfully
+                    # placed. This makes backfill real instead of cosmetic.
+                    pool = set((getattr(allocation, "pool_by_lane", {}) or {}).get(lane, []) or [])
+                    if int(book_id) not in pool:
                         hits = getattr(self, "_research_lane_cap_hits", None)
                         if isinstance(hits, dict):
                             hits[lane] = int(hits.get(lane, 0) or 0) + 1
                         if self.debug_enabled:
                             record = self._book_record(book_id)
                             record["action"] = "SKIP"
-                            record["reason"] = "LANE_NOT_GRANTED"
+                            record["reason"] = "LANE_NOT_AUTHORIZED"
+                            record["scheduler_lane"] = lane
+                        self._research_as_width_mult = 1.0
+                        return 0
+                    budgets = getattr(self, "_research_lane_budgets", None) or self._research_execution_lane_budgets()
+                    used = getattr(self, "_research_lane_used", {}) or {}
+                    admit, reject = admit_lane_candidate(
+                        lane=lane, used=used,
+                        overflow_used=int(getattr(self, "_research_lane_overflow_used", 0) or 0),
+                        budgets=budgets,
+                    )
+                    if not admit:
+                        hits = getattr(self, "_research_lane_cap_hits", None)
+                        if isinstance(hits, dict):
+                            hits[lane] = int(hits.get(lane, 0) or 0) + 1
+                        if self.debug_enabled:
+                            record = self._book_record(book_id)
+                            record["action"] = "SKIP"
+                            record["reason"] = str(reject or "LANE_SLOT_CAP")
                             record["scheduler_lane"] = lane
                         self._research_as_width_mult = 1.0
                         return 0
@@ -10911,19 +10456,19 @@ class Strategy1_Research(Strategy1_Debug):
                     stale_ttl_ms=float(getattr(self, "research_one_away_stale_ttl_ms", 250.0)),
                 )
                 chosen_ttl_ms = chosen
-            core_stale_override = False
-            if chosen is None and bool(getattr(self, "research_qualified_core_stale_ttl_enabled", True)):
-                chosen, ttl_reason, core_stale_override = qualified_core_stale_completion_ttl(
+            total_score_stale_override = False
+            if chosen is None and bool(getattr(self, "research_total_score_stale_ttl_enabled", True)):
+                chosen, ttl_reason, total_score_stale_override = total_score_stale_completion_ttl(
                     chosen_ttl_ms=chosen,
                     ttl_reason=ttl_reason,
                     completion_candidate=completion_candidate,
                     completion_samples=completion_samples,
                     completion_target=self.research_kappa_completion_target,
-                    productive_qualified_core=productive_qualified_core,
+                    total_score_due=total_score_due,
                     trading_ev=completion_ev,
                     market_regime=getattr(self, "_research_market_regime", None),
                     min_ttl_ms=float(self.research_ttl_min_ms),
-                    stale_ttl_ms=float(getattr(self, "research_qualified_core_stale_ttl_ms", 250.0)),
+                    stale_ttl_ms=float(getattr(self, "research_total_score_stale_ttl_ms", 250.0)),
                 )
                 chosen_ttl_ms = chosen
             if chosen is None:
@@ -10954,10 +10499,10 @@ class Strategy1_Research(Strategy1_Debug):
                     )
                 except Exception:
                     pass
-            if core_stale_override:
+            if total_score_stale_override:
                 try:
                     self._emit(
-                        "QUALIFIED_CORE_TTL_RESCUE",
+                        "TOTAL_SCORE_TTL_RESCUE",
                         force=True,
                         tick=getattr(self, "_tick", None),
                         book=int(book_id),
@@ -11326,16 +10871,6 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_score_ev_last = {}
         self._research_bind_volume_state(state)
 
-        # V4.12.7 defense-in-depth: even if inherited selection proposes
-        # maintenance on a stable qualified book, do not let it consume a fresh
-        # inventory slot while productive incomplete books are waiting.
-        suppressed_qualified = set(getattr(self, "_research_qualified_suppressed_ids", set()) or set())
-        if suppressed_qualified:
-            selection.maintenance_books = [
-                bid for bid in (getattr(selection, "maintenance_books", []) or [])
-                if int(bid) not in suppressed_qualified
-            ]
-
         if self._research_backfill_active:
             # Parent Strategy1 slices mm_candidates before calling our quote
             # hook. Scan the full current profile set so candidates rejected by
@@ -11545,6 +11080,12 @@ class Strategy1_Research(Strategy1_Debug):
         # never present INACTIVE_TIER as a proven live gate when V2 bypasses it.
         if reason == "INACTIVE_TIER" and inactive_gate_bypassed and not self.mm_skip_inactive_tier:
             reason = "INACTIVE_DIAGNOSTIC_ONLY"
+        try:
+            self._research_note_execution_decision(
+                int(book_id), str(record.get("action", "SKIP")), reason,
+            )
+        except Exception:
+            pass
         self._debug_reason_counts[reason] += 1
         self._emit(
             "DECISION",
@@ -12045,14 +11586,15 @@ class Strategy1_Research(Strategy1_Debug):
         if typ == "SCORE_PROGRESS":
             return (
                 f"[S1R_SCORE_PROGRESS] tick={r.get('tick')} "
-                f"score_qualified={r.get('score_qualified')} obs_qualified={r.get('obs_qualified')} "
+                f"kappa_eligible={r.get('kappa_eligible')} obs_qualified={r.get('obs_qualified')} "
                 f"one_away={r.get('one_away')} two_away={r.get('two_away')} "
                 f"expiring={r.get('expiring')} "
                 f"critical_q={r.get('deadline_critical_qualified')} "
                 f"critical_i={r.get('deadline_critical_incomplete')} "
                 f"score_target={r.get('score_target')} score_deficit={r.get('score_deficit')} "
                 f"productive_incomplete={r.get('productive_incomplete')} "
-                f"qualified_suppressed={r.get('qualified_suppressed')}"
+                f"total_score_phase={r.get('total_score_phase')} due={r.get('total_score_due')} "
+                f"exec_inefficient={r.get('execution_quality_inefficient')}"
             )
         if typ == "STALE_RESCUE":
             return (

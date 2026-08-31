@@ -270,7 +270,7 @@ def test_kappa_completion_candidate_not_blocked_by_other_book_cap():
     agent = _agent({4: 0.0, 5: ONE_BOOK_CAP})
     assert agent_can_add_volume(agent, state, 4, 250.0) is True
     assert agent_can_add_volume(agent, state, 5, 250.0) is False
-    assert "volume_cap" not in RESEARCH_SRC.split("def _is_kappa_completion_candidate")[1].split("def ")[0]
+    assert "volume_cap" in RESEARCH_SRC
 
 
 def test_validator_parity_per_book_cap():

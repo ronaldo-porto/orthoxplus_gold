@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""SN79 Research V4.14.5 total-score scheduling authority.
+"""SN79 Research V4.15.1 total-score scheduling authority.
 
 This module intentionally owns only *score-acquisition prioritisation* for flat
 books. Risk, inventory exits, FIFO/PnL accounting, contract safety, lifecycle
@@ -19,7 +19,7 @@ The live scheduler has exactly three score states:
   * FRONTIER  : >= 80 Kappa-eligible books
 
 There is no 6/12/50 observation densification target and no CORE/RECYCLING
-special scheduling authority in V4.14.5.  Productivity remains an execution-
+special scheduling authority in V4.15.1.  Execution quality remains an execution-
 efficiency signal only.
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ import math
 from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
-TOTAL_SCORE_FRONTIER_VERSION = "total_score_frontier_v4_14_5"
+TOTAL_SCORE_FRONTIER_VERSION = "total_score_frontier_v4_15_1"
 
 PHASE_IGNITION = "IGNITION"
 PHASE_SURVIVAL = "SURVIVAL"
@@ -174,7 +174,7 @@ def apply_total_score_frontier(
     full_breadth_books: int = DEFAULT_FULL_BREADTH_BOOKS,
     frontier_band: int = 2,
 ) -> tuple[list[Any], FrontierPlan]:
-    """Annotate LaneBook rows with the sole V4.14.5 score-scheduling authority.
+    """Annotate LaneBook rows with the sole V4.15.1 score-scheduling authority.
 
     The function does not bypass hard economics.  It only supplies a marginal
     score priority. Known non-positive completion EV, toxicity, inventory/risk,
@@ -224,7 +224,7 @@ def apply_total_score_frontier(
             and bool(getattr(row, "completion_ev_ok", True))
             and bool(getattr(row, "entry_feasible", True))
         )
-        tier = str(getattr(row, "kappa_productivity_tier", "UNKNOWN") or "UNKNOWN").upper()
+        tier = str(getattr(row, "execution_quality_tier", "UNKNOWN") or "UNKNOWN").upper()
         inefficient = tier == "INEFFICIENT"
         realization_row = bool(
             getattr(row, "has_inventory", False)
@@ -247,13 +247,15 @@ def apply_total_score_frontier(
         elif not eligible:
             if remaining == 1:
                 one_away += 1
-                due = bool(econ_ok and not inefficient)
-                value = 1.00 if due else 0.08
+                # V4.15.1: execution quality is a soft efficiency signal, not
+                # a second score authority. Hard economics/feasibility decide due.
+                due = bool(econ_ok)
+                value = (1.00 if not inefficient else 0.88) if due else 0.08
                 reason = REASON_ONE_AWAY if due else REASON_ROTATE
             elif remaining == 2:
                 two_away += 1
-                due = bool(econ_ok and not inefficient)
-                value = 0.72 if due else 0.06
+                due = bool(econ_ok)
+                value = (0.72 if not inefficient else 0.60) if due else 0.06
                 reason = REASON_TWO_AWAY if due else REASON_ROTATE
             else:
                 fresh += 1
@@ -274,7 +276,7 @@ def apply_total_score_frontier(
             # Already qualified: only the current score frontier gets explicit
             # score pressure. Strong qualified books remain tradable through the
             # ordinary economic COVERAGE path, but cannot steal COMPLETION slots.
-            if bid in frontier_ids and phase in {PHASE_SURVIVAL, PHASE_FRONTIER} and econ_ok and not inefficient:
+            if bid in frontier_ids and phase in {PHASE_SURVIVAL, PHASE_FRONTIER} and econ_ok:
                 quality = _quality_proxy(row)
                 idx = rank_by_id.get(bid, 0)
                 if pivot is not None:
@@ -287,6 +289,8 @@ def apply_total_score_frontier(
                 # hard EV gates still decide whether a trade may be placed.
                 weakness = max(0.0, 0.60 - quality)
                 value = min(0.78, 0.48 + 0.20 * proximity + 0.20 * weakness)
+                if inefficient:
+                    value *= 0.82
                 due = True
                 reason = REASON_FRONTIER
             else:
@@ -308,13 +312,6 @@ def apply_total_score_frontier(
         out.append(
             replace(
                 row,
-                # Old V4.13/14 flywheel fields are forcibly non-authoritative in
-                # live V4.14.5 rows. They remain on LaneBook for backward tests and
-                # historical tooling only.
-                density_due=False,
-                core_candidate=False,
-                recycling_candidate=False,
-                core_probe_candidate=False,
                 total_score_phase=phase,
                 total_score_due=bool(due),
                 total_score_value=float(value),

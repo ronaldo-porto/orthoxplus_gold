@@ -1,0 +1,77 @@
+{
+  "release": "SN79 St6.5 Research V4.15.1 LEAN_AUTHORITY_CLEANUP_P2",
+  "date": "2026-09-01",
+  "baseline": {
+    "release": "V4.15.0 CLEAN_AUTHORITY_ENGINE_P1",
+    "user_project": "sn-79(5).zip",
+    "user_project_sha256": "91e40185322855d8c55b4b1312b22452184673b4f3e627f88cfa978180dffc94"
+  },
+  "policy": "lean_authority_cleanup_v4_15_1",
+  "engine": "lean_authority_cleanup_p2_v4_15_1",
+  "workflow": [
+    "HARD_SAFETY",
+    "EXECUTABILITY",
+    "LIFECYCLE_EV",
+    "TOTAL_SCORE_VALUE",
+    "EXECUTION_EXIT"
+  ],
+  "cleanup": {
+    "strategy1_research_lines": 12349,
+    "execution_lanes_lines": 416,
+    "combined_primary_lines": 12765,
+    "v4_15_0_combined_primary_lines": 13860,
+    "primary_lines_removed": 1095,
+    "removed_modules": [
+      "research_cohort.py",
+      "research_kappa_flywheel.py",
+      "research_kappa_productivity.py",
+      "research_capacity_saturation.py"
+    ],
+    "removed_authorities": [
+      "CORE",
+      "RECYCLING",
+      "CORE_PROBE",
+      "density_due",
+      "cohort",
+      "flywheel",
+      "productivity_scheduler",
+      "score_qualified_overlay",
+      "breadth_rotation",
+      "kappa_conversion_pressure",
+      "legacy_lane_fallback"
+    ],
+    "launcher_research_assignments": 233,
+    "launcher_unique_research_assignments": 233,
+    "launcher_duplicate_research_assignments": {}
+  },
+  "runtime_files": {
+    "agents/strategy/Strategy1_Research.py": "422d0d0748e9d49d2a8cb4afdaf2775ad6a408df6ac045819fe0b7cabc83b37c",
+    "agents/strategy/research_execution_lanes.py": "0b15d2638dc3dcf08b9aab8626904930a7c45637c8b5dd0a864b7d8056ffcbe5",
+    "agents/strategy/research_total_score_frontier.py": "14b879054d33a1c1c93149cc730f078c46af666f607114a0a0c63d1fcbfaf98a",
+    "agents/strategy/research_clean_authority.py": "24b212d4e4f4ffa23c127785a290df941b7fa13f23b26e740a79d1c11b7a0b8b",
+    "agents/strategy/research_entry_size.py": "ba7f00e480b5ecb096653a99197f57e4541785d4b086d0cb606cad851418146a",
+    "agents/strategy/research_quote_hysteresis.py": "7b2b89461b99ab6c0a90f78bab2d0f7006d8b46ec04ed924bb5d2f3589d73427",
+    "run_strategy1_research_test_multi.sh": "3e68d2e063ff61c123bdeed130113d57c5c2cb627f4389e91d289580c70ae1df",
+    "agents/strategy/AGENT_VERSION_MANIFEST.md": "6d19aac1f050f165be4e041763b95277808ac51f90a6a5b60aa7883b3e35c5e9",
+    "SN79_ST65_RESEARCH_V4_15_1_LEAN_AUTHORITY_CLEANUP.md": "e8244cb2908f636d17e0286142fc76bf948fbc713a18479e1926503c3476b366"
+  },
+  "protected_unchanged": {
+    "taos/im/validator/trade.py": "137a4a7f26de9395a0028539a95411992c6ed0fa16ddd21682c04838121af0b8",
+    "agents/strategy/BaseStrategy.py": "76941d948ce3bac0057e9ef788a3c6e93dab4f4bc79ce7b5b00733a67211f0cb",
+    "agents/strategy/AdaptiveAgent.py": "6421fe403c4a51cb80ffd67bc37cd92be9dcbe646968819ceeabd42f1eb234c1"
+  },
+  "verification": {
+    "active_research_component_tests": "427 PASS",
+    "compileall_agents_strategy_taos": "PASS",
+    "launcher_bash_n": "PASS",
+    "v4_15_1_preflight": "PASS",
+    "v4_14_4_realnet_safety_preflight": "PASS",
+    "live_legacy_authority_residue_scan": "PASS",
+    "repository_wide_pytest": "NOT RELEASE GATE: optional/runtime deps absent in analysis environment (bittensor, transformers, pyarrow, loky)"
+  },
+  "promotion": {
+    "research": "ACTIVE CANDIDATE; Testnet runtime validation required",
+    "base": "UNCHANGED; known live-Research inheritance isolation defect remains for Phase 2",
+    "adaptive": "UNCHANGED; Phase 3 only after true frozen Base"
+  }
+}

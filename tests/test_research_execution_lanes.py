@@ -42,10 +42,10 @@ def test_inventory_cannot_consume_every_candidate_slot():
         for i in range(10)
     )
     books.append(
-        LaneBook(book_id=200, observations_remaining=1, economics_ok=True, cheap_score=0.50)
+        LaneBook(book_id=200, observations_remaining=1, economics_ok=True, cheap_score=0.50, total_score_phase="IGNITION", total_score_due=True)
     )
     books.append(
-        LaneBook(book_id=201, observations_remaining=2, economics_ok=True, cheap_score=0.40)
+        LaneBook(book_id=201, observations_remaining=2, economics_ok=True, cheap_score=0.40, total_score_phase="IGNITION", total_score_due=True)
     )
     result = select_lane_candidates(books, _budgets())
     log = result.as_log()
@@ -75,8 +75,8 @@ def test_realization_orders_by_exit_urgency():
 
 def test_completion_prefers_one_remaining_then_two_then_new_via_spill():
     books = [
-        LaneBook(book_id=11, observations_remaining=2, economics_ok=True, cheap_score=0.90),
-        LaneBook(book_id=10, observations_remaining=1, economics_ok=True, cheap_score=0.10),
+        LaneBook(book_id=11, observations_remaining=2, economics_ok=True, cheap_score=0.90, total_score_phase="IGNITION", total_score_due=True),
+        LaneBook(book_id=10, observations_remaining=1, economics_ok=True, cheap_score=0.10, total_score_phase="IGNITION", total_score_due=True),
         LaneBook(book_id=12, is_uncovered=True, observations_remaining=3, cheap_score=0.99),
         LaneBook(book_id=13, observations_remaining=2, economics_ok=False, cheap_score=1.0),
     ]
@@ -140,10 +140,11 @@ def test_admit_lane_uses_reserved_then_overflow():
 
 
 def test_research_wires_three_execution_lanes():
-    assert "research_coverage_slots" in RESEARCH_SRC
-    assert "research_completion_slots" in RESEARCH_SRC
-    assert "research_realization_slots" in RESEARCH_SRC
-    assert "research_shared_overflow_slots" in RESEARCH_SRC
+    assert "total_score_phase_budget_tuple" in RESEARCH_SRC
+    assert "research_coverage_slots" not in RESEARCH_SRC
+    assert "research_completion_slots" not in RESEARCH_SRC
+    assert "research_realization_slots" not in RESEARCH_SRC
+    assert "research_shared_overflow_slots" not in RESEARCH_SRC
     assert "select_lane_candidates" in RESEARCH_SRC
     assert "[S1R_LANES]" in RESEARCH_SRC
     screen = RESEARCH_SRC.split("def _research_fast_screen(")[1].split(
