@@ -133,6 +133,37 @@ def test_snapshot_reports_rate_shares_and_implied_concurrency():
     assert abs(snap["rt_implied_concurrency"] - (10.0 * 130.0 / 3600.0)) < 1e-9
 
 
+def test_littles_law_uses_the_mean_not_the_median():
+    """A right-skewed hold distribution must not read as a starved pipeline."""
+    state = RoundTripPhaseState()
+    # Nine fast round trips and one very slow one: median 20s, mean 118s.
+    for book_id in range(9):
+        _full_round_trip(
+            state, book_id, submit=0, fill=5 * S, exit_submit=10 * S, flat=20 * S,
+        )
+    _full_round_trip(
+        state, 99, submit=0, fill=5 * S, exit_submit=10 * S, flat=1000 * S,
+    )
+    snap = state.snapshot(simulation_time=3600.0)
+    assert snap["rt_total_s_median"] == 20.0
+    assert abs(snap["rt_total_s_mean"] - 118.0) < 1e-9
+    # Little's Law must use 118, not 20, or concurrency reads ~6x too low.
+    assert abs(snap["rt_implied_concurrency"] - (10.0 * 118.0 / 3600.0)) < 1e-9
+
+
+def test_mean_stays_unbiased_past_the_sample_cap():
+    """The capped sample list must not silently window the Little's Law mean."""
+    state = RoundTripPhaseState()
+    for i in range(2100):
+        _full_round_trip(
+            state, i, submit=0, fill=1 * S, exit_submit=2 * S, flat=10 * S,
+        )
+    snap = state.snapshot(simulation_time=3600.0)
+    assert len(state.total) == 2048  # list is capped
+    assert state.count_total_s == 2100  # mean is not
+    assert abs(snap["rt_total_s_mean"] - 10.0) < 1e-9
+
+
 def test_snapshot_is_safe_before_any_round_trip():
     snap = RoundTripPhaseState().snapshot(simulation_time=0.0)
     assert snap["rt_phase_samples"] == 0
@@ -140,6 +171,7 @@ def test_snapshot_is_safe_before_any_round_trip():
     assert snap["rt_hold_s_median"] is None
     assert snap["rt_implied_concurrency"] is None
     assert snap["rt_hold_share"] is None
+    assert snap["rt_total_s_mean"] == 0.0
 
 
 def test_books_in_flight_tracks_open_positions_only():
@@ -196,3 +228,13 @@ def test_round_trip_durations_reach_position_and_hybrid_summary():
     assert "rt_hold_s=(rt_phase_sample or {}).get(\"hold_s\")" in SRC
     assert "_research_rt_phase_state().snapshot(" in SRC
     assert "rt_per_h=" in SRC  # console formatter
+
+
+def test_simulation_time_uses_sim_clock_not_tick_count():
+    method = SRC.split("def _research_simulation_time_s(")[1].split(
+        "def _research_round_trip_velocity("
+    )[0]
+    assert "_research_sim_start_ts" in method
+    assert "_research_last_sim_ts" in method
+    assert 'getattr(self, "_tick"' not in method
+    assert "1_000_000_000.0" in method

@@ -205,7 +205,7 @@ def test_loss_making_cross_dust_blocked():
     decision = evaluate_dust_action(
         inventory=0.18, min_order=0.25, reduce_qty=0.25, spread_bps=1.0, fee_bps=8.0,
         slippage_bps=6.0, expected_markout=-12.0, unrealized_pnl=-20.0,
-        age_ticks=80.0, volatility=0.008, inventory_ratio=0.15,
+        age_ticks=4.0, volatility=0.008, inventory_ratio=0.15,
     )
     assert decision.allow is False
 

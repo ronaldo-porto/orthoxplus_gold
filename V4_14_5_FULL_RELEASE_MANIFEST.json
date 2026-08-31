@@ -71,7 +71,7 @@
     "FIFO/validator accounting unchanged"
   ],
   "validation": {
-    "active_research_suite": "553 PASS / 1 SKIP (554 collected)",
+    "active_research_suite": "555 PASS / 1 SKIP (556 collected)",
     "python_compile": "PASS",
     "strategy_compileall": "PASS",
     "launcher_bash_syntax": "PASS",
@@ -86,8 +86,8 @@
   "validator_trade_sha256": "137a4a7f26de9395a0028539a95411992c6ed0fa16ddd21682c04838121af0b8",
   "files": {
     "agents/strategy/Strategy1_Research.py": {
-      "bytes": 642897,
-      "sha256": "10e0492d14ebac77cfb25ad575b573642b2964858b0d2baadcf2f30560932513"
+      "bytes": 642955,
+      "sha256": "a57125d997ca317418d807080b8dd5cb50b778011084dc285d4c69518d8dd29e"
     },
     "agents/strategy/research_execution_lanes.py": {
       "bytes": 37657,
@@ -106,8 +106,8 @@
       "sha256": "40568ee72d5fe14ce7188ea5b9f82c3935ac9681d73e9fdb9a5c840b529b69ae"
     },
     "agents/strategy/research_rt_phase_timing.py": {
-      "bytes": 8158,
-      "sha256": "0138cc8b467e51431e19728dcb2f0bf83bd7810edd714e864cc6ed62a9b25466"
+      "bytes": 8820,
+      "sha256": "d90f1e490aec8d14f0a299bfa3c9a206b6789c6a8154396d1f994a8d7abb2991"
     },
     "agents/strategy/research_capacity_saturation.py": {
       "bytes": 5821,
@@ -122,8 +122,8 @@
       "sha256": "8245b7fbdc830cbcb97dc6229769a808906d7e78a045f1ce7fffa5020af366d4"
     },
     "tests/test_research_rt_phase_timing.py": {
-      "bytes": 7017,
-      "sha256": "de7f6595b1b5503d28dd3e75c2612438925e1a90d8578247dee5c9ed25616da8"
+      "bytes": 8336,
+      "sha256": "e5828915a3cce9abba50d1182e20387be7aa01414bc93665297d1fc9fd1b0795"
     },
     "tests/test_research_capacity_saturation.py": {
       "bytes": 5440,
@@ -154,8 +154,8 @@
       "sha256": "137a4a7f26de9395a0028539a95411992c6ed0fa16ddd21682c04838121af0b8"
     },
     "agents/strategy/__ver_st1_log__/Strategy1_Research_v4_14_5.py": {
-      "bytes": 642897,
-      "sha256": "10e0492d14ebac77cfb25ad575b573642b2964858b0d2baadcf2f30560932513"
+      "bytes": 642955,
+      "sha256": "a57125d997ca317418d807080b8dd5cb50b778011084dc285d4c69518d8dd29e"
     },
     "agents/strategy/__ver_st1_log__/research_execution_lanes_v4_14_5.py": {
       "bytes": 37657,
@@ -166,8 +166,8 @@
       "sha256": "3e47c8f6bf61b878bcd69517db6aad479b7a96276aa0883cd55a1592bc151a1c"
     },
     "agents/strategy/__ver_st1_log__/research_rt_phase_timing_v4_14_5.py": {
-      "bytes": 8158,
-      "sha256": "0138cc8b467e51431e19728dcb2f0bf83bd7810edd714e864cc6ed62a9b25466"
+      "bytes": 8820,
+      "sha256": "d90f1e490aec8d14f0a299bfa3c9a206b6789c6a8154396d1f994a8d7abb2991"
     },
     "agents/strategy/__ver_st1_log__/research_capacity_saturation_v4_14_5.py": {
       "bytes": 5821,

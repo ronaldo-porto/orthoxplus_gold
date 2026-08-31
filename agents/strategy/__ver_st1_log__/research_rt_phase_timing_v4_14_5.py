@@ -81,6 +81,10 @@ class RoundTripPhaseState:
     completed: int = 0
     missing_entry_submit: int = 0
     missing_exit_submit: int = 0
+    # Little's Law needs the mean time in system, and the sample lists are
+    # capped. Accumulate the mean separately so it stays unbiased over long runs.
+    sum_total_s: float = 0.0
+    count_total_s: int = 0
 
     def _book(self, book_id: int) -> BookPhase:
         return self.books.setdefault(int(book_id), BookPhase())
@@ -159,6 +163,8 @@ class RoundTripPhaseState:
             _append_capped(self.exit_wait, exit_wait)
         if total is not None:
             _append_capped(self.total, total)
+            self.sum_total_s += total
+            self.count_total_s += 1
         self.completed += 1
 
         book.clear()
@@ -193,6 +199,9 @@ class RoundTripPhaseState:
         total_med = percentile(self.total, 0.50)
 
         per_hour = (self.completed / sim_s * S_PER_HOUR) if sim_s > 0.0 else 0.0
+        total_mean = (
+            self.sum_total_s / self.count_total_s if self.count_total_s > 0 else None
+        )
 
         # Shares are normalized over the sum of the three phase medians rather
         # than total_med: medians are not additive, and the question these answer
@@ -212,16 +221,19 @@ class RoundTripPhaseState:
             "rt_exit_wait_s_median": exit_med,
             "rt_exit_wait_s_p90": percentile(self.exit_wait, 0.90),
             "rt_total_s_median": total_med,
+            "rt_total_s_mean": total_mean,
             "rt_total_s_p90": percentile(self.total, 0.90),
             "rt_entry_wait_share": shares[0],
             "rt_hold_share": shares[1],
             "rt_exit_wait_share": shares[2],
-            # Little's Law: L = lambda * W. Compare against
-            # research_max_active_open_books to tell a concurrency ceiling apart
-            # from an empty pipeline.
+            # Little's Law: L = lambda * W, with W the *mean* time in system.
+            # Using the median would bias this low on a right-skewed hold-time
+            # distribution and read as "starved" on a genuinely capped run.
+            # Compare against cap_mean_total_open, which measures the same
+            # quantity directly; disagreement means round trips are being missed.
             "rt_implied_concurrency": (
-                per_hour * total_med / S_PER_HOUR
-                if total_med is not None and per_hour > 0.0
+                per_hour * total_mean / S_PER_HOUR
+                if total_mean is not None and per_hour > 0.0
                 else None
             ),
             "rt_books_in_flight": self.books_in_flight(),

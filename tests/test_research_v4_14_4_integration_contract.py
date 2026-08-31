@@ -41,3 +41,16 @@ def test_v4144_launcher_fails_closed_on_new_helper_versions():
     assert 'SCHEDULER_RETRY_VERSION != "scheduler_retry_rotation_v4_14_4"' in RUNNER
     assert 'V4.14.4 RealNet exit authority + scheduler retry rotation API OK' in RUNNER
     assert 'V4.14.5 TOTAL_SCORE_FRONTIER API OK' in RUNNER
+
+
+def test_realnet_arbiter_reads_configured_floors_not_literals():
+    start = SRC.index("realnet_exit_decision = arbitrate_realnet_exit(")
+    block = SRC[start:start + 1800]
+    assert "research_liveness_soft_taker_floor_bps" in block
+    assert "research_bounded_loss_escape_hard_trigger_bps" in block
+    assert "research_bounded_loss_escape_floor_bps" in block
+    assert "soft_floor_bps=-8.0" not in block
+    assert "hard_trigger_bps=-18.0" not in block
+    assert "absolute_floor_bps=-25.0" not in block
+    assert "research_dust_moderate_age_ticks=16" in RUNNER
+    assert "research_dust_compact_cooldown_ticks=8" in RUNNER

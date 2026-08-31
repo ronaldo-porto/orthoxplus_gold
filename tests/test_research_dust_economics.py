@@ -30,6 +30,7 @@ from research_dust_economics import (
     REASON_MAKER_PROFITABLE,
     REASON_OLDER_COMPETITIVE,
     REASON_REJECT_UNECONOMIC_CROSS,
+    REASON_SLOT_RELEASE,
     REASON_TINY,
     classify_dust_band,
     evaluate_dust_action,
@@ -44,7 +45,7 @@ def _moderate(**overrides):
         inventory=0.18,
         min_order=0.25,
         reduce_qty=0.25,
-        age_ticks=20.0,
+        age_ticks=4.0,
         unrealized_pnl=2.0,
         spread_bps=8.0,
         fee_bps=1.0,
@@ -85,7 +86,8 @@ def test_profitable_maker_reduction_uses_maker_cleanup():
     decision = _moderate()
     assert decision.band == BAND_MODERATE
     assert decision.allow is True
-    assert decision.action == ACTION_PASSIVE_MAKER
+    assert decision.action == ACTION_COMPETITIVE_MAKER
+    assert decision.action != ACTION_PASSIVE_MAKER
     assert decision.reason == REASON_MAKER_PROFITABLE
     assert decision.maker_ev_bps > 0.0
 
@@ -113,16 +115,32 @@ def test_loss_making_cross_dust_is_blocked():
         slippage_bps=6.0,
         expected_markout=-12.0,
         unrealized_pnl=-20.0,
-        age_ticks=80.0,
+        age_ticks=4.0,
         volatility=0.008,
         inventory_ratio=0.15,
     )
     assert decision.maker_ev_bps < 0.0
     assert decision.cross_dust is True
     assert decision.allow is False
-    assert decision.action == ACTION_REJECT_CROSS
-    assert decision.reason == REASON_REJECT_UNECONOMIC_CROSS
+    assert decision.action in {ACTION_REJECT_CROSS, ACTION_QUARANTINE}
     assert decision.expected_net_bps < 0.0
+
+
+def test_older_uneconomic_dust_quotes_at_touch_instead_of_quarantine():
+    decision = _moderate(
+        spread_bps=1.0,
+        fee_bps=8.0,
+        slippage_bps=6.0,
+        expected_markout=-12.0,
+        unrealized_pnl=-20.0,
+        age_ticks=80.0,
+        volatility=0.008,
+        inventory_ratio=0.15,
+    )
+    assert decision.maker_ev_bps < 0.0
+    assert decision.allow is True
+    assert decision.action == ACTION_COMPETITIVE_MAKER
+    assert decision.reason == REASON_SLOT_RELEASE
 
 
 def test_taker_cleanup_requires_holding_above_cost_and_non_losing_cross():
@@ -200,3 +218,9 @@ def test_research_wires_dust_economics_and_prevention():
     assert "DUST_ECON" in RESEARCH_SRC
     assert "_research_try_dust_escape" not in RESEARCH_SRC
     assert "research_enable_dust_escape" not in RESEARCH_SRC
+    dust_manage = RESEARCH_SRC.split("def _research_manage_dust(")[1].split(
+        "def _dust_fill_matches_recent_compaction("
+    )[0]
+    assert "decision.action not in {DUST_ACTION_TAKER, DUST_ACTION_COMPETITIVE}" in dust_manage
+    assert "self._research_note_exit_attempt(" in dust_manage
+    assert DUST_ECON_VERSION == "dust_economics_v2"

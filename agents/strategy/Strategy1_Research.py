@@ -468,7 +468,7 @@ class Strategy1_Research(Strategy1_Debug):
     RESEARCH_TAKER_ECON_VERSION = "taker_economics_v2_live_fees"
     RESEARCH_LIFECYCLE_ENTRY_VERSION = "lifecycle_entry_v1"
     RESEARCH_EXIT_QTY_VERSION = "exit_quantity_v1"
-    RESEARCH_DUST_ECON_VERSION = "dust_economics_v1"
+    RESEARCH_DUST_ECON_VERSION = "dust_economics_v2"
     RESEARCH_SAME_SIDE_VERSION = "same_side_v2_effective_exposure"
     RESEARCH_SESSION_SCHEMA = RESEARCH_SESSION_SCHEMA
     RESEARCH_VALIDATOR_HISTORY_ALIGNMENT_VERSION = VALIDATOR_HISTORY_ALIGNMENT_VERSION
@@ -800,11 +800,11 @@ class Strategy1_Research(Strategy1_Debug):
             getattr(cfg, "research_dust_compact_adaptive", True)
         )
         self.research_dust_compact_cooldown_ticks = max(
-            1, int(getattr(cfg, "research_dust_compact_cooldown_ticks", 100))
+            1, int(getattr(cfg, "research_dust_compact_cooldown_ticks", 8))
         )
         self.research_dust_compact_max_cooldown_ticks = max(
             self.research_dust_compact_cooldown_ticks,
-            int(getattr(cfg, "research_dust_compact_max_cooldown_ticks", 600)),
+            int(getattr(cfg, "research_dust_compact_max_cooldown_ticks", 40)),
         )
         self.research_dust_compact_prior_fill = max(
             0.0, min(1.0, float(getattr(cfg, "research_dust_compact_prior_fill", 0.02)))
@@ -998,7 +998,7 @@ class Strategy1_Research(Strategy1_Debug):
             min(1.0, float(getattr(cfg, "research_dust_tiny_fraction", 0.50))),
         )
         self.research_dust_moderate_age_ticks = max(
-            1, int(getattr(cfg, "research_dust_moderate_age_ticks", 400))
+            1, int(getattr(cfg, "research_dust_moderate_age_ticks", 16))
         )
         self.research_dust_maker_ev_floor_bps = float(
             getattr(cfg, "research_dust_maker_ev_floor_bps", 0.0)
@@ -5867,13 +5867,22 @@ class Strategy1_Research(Strategy1_Debug):
         )
 
     def _research_simulation_time_s(self) -> float:
+        """Elapsed simulation seconds since this process saw its first timestamp.
+
+        Tick count is not a time unit. Treating it as seconds inflates
+        ``rt_per_sim_hour`` whenever the sim clock has not advanced yet.
+        """
         start_ts = getattr(self, "_research_sim_start_ts", None)
         now_ts = getattr(self, "_research_last_sim_ts", None)
-        if start_ts is not None and now_ts is not None:
-            sim_time = max(0.0, (float(now_ts) - float(start_ts)) / 1_000_000_000.0)
-            if sim_time > 0.0:
-                return sim_time
-        return float(max(int(getattr(self, "_tick", 0) or 0), 0))
+        if start_ts is None or now_ts is None:
+            return 0.0
+        try:
+            sim_time = (float(now_ts) - float(start_ts)) / 1_000_000_000.0
+        except (TypeError, ValueError):
+            return 0.0
+        if not math.isfinite(sim_time) or sim_time < 0.0:
+            return 0.0
+        return sim_time
 
     def _research_round_trip_velocity(self) -> float:
         # Use only round trips observed by the current runtime velocity state.
@@ -8031,9 +8040,15 @@ class Strategy1_Research(Strategy1_Debug):
                 None if liveness_rescue is None
                 else float(getattr(liveness_rescue, "allowed_loss_floor_bps", -12.0))
             ),
-            soft_floor_bps=-8.0,
-            hard_trigger_bps=-18.0,
-            absolute_floor_bps=-25.0,
+            soft_floor_bps=float(
+                getattr(self, "research_liveness_soft_taker_floor_bps", -8.0)
+            ),
+            hard_trigger_bps=float(
+                getattr(self, "research_bounded_loss_escape_hard_trigger_bps", -18.0)
+            ),
+            absolute_floor_bps=float(
+                getattr(self, "research_bounded_loss_escape_floor_bps", -25.0)
+            ),
             bounded_loss_min_age_ticks=float(
                 getattr(self, "research_bounded_loss_escape_min_age_ticks", 2.0) or 2.0
             ),
@@ -8325,6 +8340,10 @@ class Strategy1_Research(Strategy1_Debug):
             )
             liveness_override = False
             realnet_exit_override = False
+            # Parked books still quote; sitting two ticks behind touch is why
+            # books 112/115/96 never left PARKED_HOLD on the 31 Aug log.
+            if str(maker_action or "").upper() == ACTION_PASSIVE:
+                maker_action = ACTION_COMPETITIVE
 
         self._research_unified_exit_last[int(book_id)] = unified
         if unified.action == UNIFIED_KEEP_MAKER:
@@ -9265,7 +9284,7 @@ class Strategy1_Research(Strategy1_Debug):
             band=getattr(inventory, "band", None),
             tiny_fraction=float(getattr(self, "research_dust_tiny_fraction", 0.50)),
             moderate_age_ticks=float(
-                getattr(self, "research_dust_moderate_age_ticks", 400)
+                getattr(self, "research_dust_moderate_age_ticks", 16)
             ),
             maker_ev_floor_bps=float(
                 getattr(self, "research_dust_maker_ev_floor_bps", 0.0)
@@ -9323,7 +9342,14 @@ class Strategy1_Research(Strategy1_Debug):
                 record["dust_band"] = decision.band
                 record["dust_compact_selected"] = compact_selected
             return 0
-        if not compact_selected and decision.action != DUST_ACTION_TAKER:
+        # Competitive / taker dust already passed economics. The compact_selected
+        # ranker was starving those quotes (0 compact orders on the 31 Aug log)
+        # behind a 100–600 tick adaptive cooldown. Passive still needs a slot
+        # because it sits behind touch and is only a last-resort leftover path.
+        if (
+            not compact_selected
+            and decision.action not in {DUST_ACTION_TAKER, DUST_ACTION_COMPETITIVE}
+        ):
             if self.debug_enabled:
                 record = self._book_record(book_id)
                 record["dust_position"] = True
@@ -9349,8 +9375,11 @@ class Strategy1_Research(Strategy1_Debug):
                 self._research_dust_compact_active[book_id] = int(
                     getattr(self, "_tick", 0) or 0
                 )
-                if self.research_dust_compact_adaptive:
+                if self.research_dust_compact_adaptive and compact_selected:
                     self._record_dust_compaction_attempt(book_id)
+                self._research_note_exit_attempt(
+                    book_id, maker_action, placed=True,
+                )
                 self._inventory_reason[book_id] = decision.action
                 self._emit(
                     "POSITION_GUARD",
@@ -9396,6 +9425,9 @@ class Strategy1_Research(Strategy1_Debug):
                     record["dust_action"] = decision.action
                     record["dust_reason"] = "PLACE_FAIL"
                 return 0
+            self._research_note_exit_attempt(
+                book_id, decision.action, placed=True,
+            )
             self._inventory_reason[book_id] = decision.action
             self._emit(
                 "POSITION_GUARD",
@@ -12234,7 +12266,8 @@ class Strategy1_Research(Strategy1_Debug):
                 f"/{self._fmt(r.get('rt_hold_share'))} "
                 f"exit_wait={self._fmt(r.get('rt_exit_wait_s_median'))}s"
                 f"/{self._fmt(r.get('rt_exit_wait_share'))} "
-                f"rt_total={self._fmt(r.get('rt_total_s_median'))}s "
+                f"rt_total={self._fmt(r.get('rt_total_s_median'))}"
+                f"/{self._fmt(r.get('rt_total_s_mean'))}s "
                 f"implied_conc={self._fmt(r.get('rt_implied_concurrency'))} "
                 f"in_flight={r.get('rt_books_in_flight')} "
                 f"unanchored={r.get('rt_missing_entry_submit')}/{r.get('rt_missing_exit_submit')} "

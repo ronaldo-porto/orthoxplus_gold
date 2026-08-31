@@ -9,8 +9,8 @@ Primary objective: prevent dust rather than clean it.
 
 Cleanup ladder:
     tiny dust              → quarantine
-    profitable maker       → maker cleanup
-    older moderate dust    → competitive maker if economics stay positive
+    profitable maker       → competitive maker at touch (passive never fills)
+    older moderate dust    → competitive maker at touch even if maker EV is slightly negative
     taker / aggressive     → only if holding risk > cleanup cost
 
 Loss-making CROSS_DUST is blocked unless true catastrophic hard-risk
@@ -31,7 +31,7 @@ from research_taker_economics import (
     is_catastrophic_hard_risk,
 )
 
-DUST_ECON_VERSION = "dust_economics_v1"
+DUST_ECON_VERSION = "dust_economics_v2"
 
 BAND_NONE = "NONE"
 BAND_TINY = "TINY"
@@ -49,6 +49,7 @@ REASON_NOT_DUST = "NOT_DUST"
 REASON_TINY = "TINY_QUARANTINE"
 REASON_MAKER_PROFITABLE = "MAKER_CLEANUP"
 REASON_OLDER_COMPETITIVE = "OLDER_COMPETITIVE_MAKER"
+REASON_SLOT_RELEASE = "OLDER_SLOT_RELEASE_MAKER"
 REASON_HOLDING_EXCEEDS_COST = "DUST_HOLDING_EXCEEDS_COST"
 REASON_REJECT_UNECONOMIC_CROSS = "REJECT_LOSS_MAKING_CROSS_DUST"
 REASON_REJECT_UNSIZABLE = "REJECT_UNSIZABLE_DUST"
@@ -56,7 +57,7 @@ REASON_CATASTROPHIC = "DUST_CATASTROPHIC"
 REASON_QUARANTINE = "DUST_QUARANTINE"
 
 DEFAULT_TINY_FRACTION = 0.50
-DEFAULT_MODERATE_AGE_TICKS = 400.0
+DEFAULT_MODERATE_AGE_TICKS = 16.0
 DEFAULT_MAKER_EV_FLOOR_BPS = 0.0
 DEFAULT_NET_FLOOR_BPS = 0.0
 
@@ -384,11 +385,19 @@ def evaluate_dust_action(
     if catastrophic:
         return accept(ACTION_TAKER, REASON_CATASTROPHIC)
     if maker_ev + 1e-12 >= floor:
+        # PASSIVE sits two ticks behind touch and does not fill on Testnet.
+        # Moderate dust that is economic enough to make must quote at touch.
         if older:
             return accept(ACTION_COMPETITIVE_MAKER, REASON_OLDER_COMPETITIVE)
-        return accept(ACTION_PASSIVE_MAKER, REASON_MAKER_PROFITABLE)
+        return accept(ACTION_COMPETITIVE_MAKER, REASON_MAKER_PROFITABLE)
     if holding + 1e-12 > cleanup:
         if cross and expected_net + 1e-12 < net_floor:
+            if older:
+                return accept(ACTION_COMPETITIVE_MAKER, REASON_SLOT_RELEASE)
             return reject(ACTION_REJECT_CROSS, REASON_REJECT_UNECONOMIC_CROSS)
         return accept(ACTION_TAKER, REASON_HOLDING_EXCEEDS_COST)
+    if older:
+        # Slot-release: quarantine never recycles the total-open slot. A touch
+        # maker quote can; a loss-making CROSS taker still must not.
+        return accept(ACTION_COMPETITIVE_MAKER, REASON_SLOT_RELEASE)
     return reject(ACTION_QUARANTINE, REASON_QUARANTINE)

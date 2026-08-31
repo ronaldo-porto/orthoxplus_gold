@@ -923,7 +923,8 @@ research_toxic_pnl_hard_floor=-0.05 research_yellow_sparse_active=1 \
 research_green_sparse_active=1 research_dust_park_enabled=1 \
 research_dust_heartbeat_ticks=250 research_dust_warn_ticks=1000 \
 research_dust_compact_enabled=1 research_dust_compact_min_fraction=0.50 \
-research_dust_compact_books_per_tick=2 research_kappa_completion_enabled=1 \
+research_dust_compact_books_per_tick=2 research_dust_moderate_age_ticks=16 \
+research_kappa_completion_enabled=1 \
 research_kappa_completion_target=3 research_kappa_completion_rank_bonus=0.30 \
 research_kappa_completion_attempt_cap=6 research_kappa_completion_success_cap=3 \
 research_kappa_completion_fill_mult=0.70 research_kappa_completion_fill_floor=0.08 \
@@ -935,7 +936,7 @@ research_dust_risk_target=0.15 research_kappa_one_away_bonus=0.10 \
 research_partial_fill_hold_enabled=1 research_partial_fill_hold_min_dust_prob=0.12 \
 research_partial_fill_hold_max_ns=750000000 \
 research_force_mm_post_only=1 research_dust_compact_adaptive=1 \
-research_dust_compact_cooldown_ticks=100 research_dust_compact_max_cooldown_ticks=600 \
+research_dust_compact_cooldown_ticks=8 research_dust_compact_max_cooldown_ticks=40 \
 research_dust_compact_prior_fill=0.02 research_dust_compact_prior_strength=8.0 \
 research_enable_fill_hazard=1 \
 research_completion_ev_cache_ticks=20 research_density_priority_enabled=0 research_density_priority_min_candidates=1 research_total_score_frontier_enabled=1 research_total_score_ignition_books=41 research_total_score_full_breadth_books=80 research_total_score_frontier_band=2 research_enable_score_velocity=1 research_score_velocity_weight=0.08 research_enable_quote_hysteresis=1 \
