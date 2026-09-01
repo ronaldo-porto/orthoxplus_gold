@@ -349,6 +349,7 @@ def select_lane_candidates(
             and not book.has_inventory
             and not book.is_dust
             and not book.is_hard_risk
+            and not bool(book.total_score_due)
         ):
             continue
         pools[classify_execution_lane(book)].append(book)

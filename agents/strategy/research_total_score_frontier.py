@@ -225,15 +225,16 @@ def apply_total_score_frontier(
             getattr(row, "needs_refresh", False)
             and getattr(row, "deadline_critical", False)
         )
-        # Entry feasibility is a hard gate. A candidate the V4.14.4 retry
-        # quarantine or minimum-order sizing has already rejected must not become
-        # total_score_due, otherwise it still collects the exact-min admission
-        # and stale-TTL privileges that now key off the due set.
-        econ_ok = (
+        # Score economics are independent of mechanical entry_feasible.
+        # For remaining=1/2, last-tick TTL / LOW_FILL / NEGATIVE_EV quarantine
+        # must not clear total_score_due; those books stay in KAPPA_COMPLETION
+        # and are still rejected at quote time if this tick is actually bad.
+        score_ok = (
             bool(getattr(row, "economics_ok", True))
             and bool(getattr(row, "completion_ev_ok", True))
-            and bool(getattr(row, "entry_feasible", True))
         )
+        entry_ok = bool(getattr(row, "entry_feasible", True))
+        econ_ok = bool(score_ok and (entry_ok or remaining in {1, 2}))
         tier = str(getattr(row, "execution_quality_tier", "UNKNOWN") or "UNKNOWN").upper()
         inefficient = tier == "INEFFICIENT"
         realization_row = bool(

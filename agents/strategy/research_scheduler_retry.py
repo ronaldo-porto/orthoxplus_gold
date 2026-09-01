@@ -11,7 +11,9 @@ import math
 from dataclasses import dataclass
 from typing import Any, Hashable
 
-SCHEDULER_RETRY_VERSION = "scheduler_retry_rotation_v4_14_4"
+SCHEDULER_RETRY_VERSION = "scheduler_retry_rotation_v4_15_2"
+COMPLETION_REQUOTE_REMAINING = frozenset({1, 2})
+COMPLETION_REQUOTE_RETRY_EXEMPT_REASONS = frozenset({"NEGATIVE_EV"})
 
 HARD_RETRY_REASONS = frozenset({
     "NEGATIVE_EV",
@@ -152,6 +154,7 @@ class SchedulerRetryGuard:
         *,
         tick: int,
         fingerprint: Hashable | None = None,
+        observations_remaining: int | None = None,
     ) -> RetryDecision:
         bid = int(book_id)
         now = max(0, int(tick))
@@ -167,6 +170,18 @@ class SchedulerRetryGuard:
 
         if now >= state.blocked_until_tick:
             return RetryDecision(False, state.reason, state.blocked_until_tick, 0, state.reject_count)
+
+        kappa_remaining = max(0, int(observations_remaining or 0))
+        if (
+            kappa_remaining in COMPLETION_REQUOTE_REMAINING
+            and normalize_reason(state.reason) in COMPLETION_REQUOTE_RETRY_EXEMPT_REASONS
+        ):
+            # Last-tick NEGATIVE_EV must not hide one-away/two-away from the
+            # due set. Quote-time EV still rejects a currently-negative book.
+            # TOXIC / AVOID_LIST quarantine is unchanged.
+            return RetryDecision(
+                False, state.reason, state.blocked_until_tick, 0, state.reject_count,
+            )
 
         remaining = state.blocked_until_tick - now
         self.total_skips += 1

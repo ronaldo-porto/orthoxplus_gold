@@ -2,7 +2,7 @@
   "release": "SN79 St6.5 Research V4.15.2 ACQUISITION_QUALITY",
   "date": "2026-09-01",
   "policy": "acquisition_quality_v4_15_2",
-  "engine": "acquisition_quality_p1_v4_15_2",
+    "engine": "acquisition_quality_p2_v4_15_2",
   "workflow": [
     "HARD_SAFETY",
     "CHEAP_SCREEN",

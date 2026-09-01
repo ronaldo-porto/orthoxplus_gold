@@ -5,8 +5,9 @@ Centralizes two cross-cutting behaviors that were previously scattered across
 scheduler/execution code:
   * short cooldowns for repeated downstream execution vetoes, so impossible
     books do not repeatedly consume score-acquisition prediction/attempt budget.
-    TTL_STALE and LOW_FILL_PROBABILITY are exempt for one-away / two-away
-    Kappa books so QUIET requotes can still mark total_score_due;
+    TTL_STALE, LOW_FILL_PROBABILITY and NON_POSITIVE_EDGE are exempt for
+    one-away / two-away Kappa books so QUIET requotes can still mark
+    total_score_due;
   * empirical lifecycle Taker-exit probability with Bayesian shrinkage to the
     configured prior, so entry EV prices the observed realization path.
 
@@ -16,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-CLEAN_AUTHORITY_VERSION = "clean_authority_v4_15_1_completion_requote"
+CLEAN_AUTHORITY_VERSION = "clean_authority_v4_15_2_completion_due"
 LIFECYCLE_TAKER_PRIOR_STRENGTH = 8.0
 LIFECYCLE_TAKER_MIN_SAMPLES = 4
 LIFECYCLE_TAKER_PROB_CAP = 0.90
@@ -38,8 +39,30 @@ EXECUTION_REJECT_COOLDOWNS = {
 COMPLETION_REQUOTE_EXEMPT_REASONS = frozenset({
     "TTL_STALE",
     "LOW_FILL_PROBABILITY",
+    "NON_POSITIVE_EDGE",
 })
 COMPLETION_REQUOTE_REMAINING = frozenset({1, 2})
+
+
+def is_completion_requote_candidate(
+    observations_remaining: int | None,
+    *,
+    projected_completion_healthy: bool | None = True,
+    economics_ok: bool = True,
+) -> bool:
+    """True when remaining=1/2 should stay in the completion due/pool.
+
+    Mechanical cooldowns and last-tick NEGATIVE_EV quarantine must not
+    hide these books from TOTAL_SCORE. Quote-time EV/size gates still apply.
+    Projected-unhealthy books are excluded so we do not force a bad 41st.
+    """
+    remaining = max(0, int(observations_remaining or 0))
+    if remaining not in COMPLETION_REQUOTE_REMAINING:
+        return False
+    if projected_completion_healthy is False:
+        return False
+    return bool(economics_ok)
+
 
 @dataclass(frozen=True)
 class RejectCooldown:

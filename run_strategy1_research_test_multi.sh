@@ -46,8 +46,8 @@ done
 
 [[ -f "$REPO_ROOT/run_miner_multi.sh" ]] || { echo "run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research.py" ]] || { echo "Strategy1_Research.py missing" >&2; exit 1; }
-grep -q 'RESEARCH_POLICY_VERSION = "acquisition_quality_v4_15_2"' "$AGENT_PATH/Strategy1_Research.py" || {
-  echo "ERROR: Strategy1_Research.py is not acquisition_quality_v4_15_2" >&2
+grep -q 'RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"' "$AGENT_PATH/Strategy1_Research.py" || {
+  echo "ERROR: Strategy1_Research.py is not entry_ev_calibration_v4_15_3" >&2
   exit 1
 }
 for required in \
@@ -231,8 +231,8 @@ from research_realnet_exit_authority import (
 from research_scheduler_retry import SCHEDULER_RETRY_VERSION, SchedulerRetryGuard
 if REALNET_EXIT_AUTHORITY_VERSION != "realnet_exit_authority_v4_14_4":
     raise SystemExit("ERROR: stale V4.14.4 RealNet exit-authority helper")
-if SCHEDULER_RETRY_VERSION != "scheduler_retry_rotation_v4_14_4":
-    raise SystemExit("ERROR: stale V4.14.4 scheduler retry helper")
+if SCHEDULER_RETRY_VERSION != "scheduler_retry_rotation_v4_15_2":
+    raise SystemExit("ERROR: stale V4.15.2 scheduler retry helper")
 hard = arbitrate_realnet_exit(
     taker_net_bps=-20.0, maker_net_bps=3.0, maker_executable=True,
     failed_exit_count=0, inventory_age=0, liveness_park=True, liveness_floor_bps=-12.0,
@@ -249,6 +249,10 @@ g = SchedulerRetryGuard(negative_ev_base_ticks=8, toxic_base_ticks=16, max_coold
 d = g.record_reject(7, tick=100, reason="NEGATIVE_EV", fingerprint=("NEGATIVE_EV", -3.0))
 if not d.blocked or not g.should_skip(7, tick=101, fingerprint=("NEGATIVE_EV", -3.0)).blocked:
     raise SystemExit("ERROR: V4.14.4 scheduler quarantine contract failed")
+if g.should_skip(7, tick=101, fingerprint=("NEGATIVE_EV", -3.0), observations_remaining=1).blocked:
+    raise SystemExit("ERROR: NEGATIVE_EV retry must not hide one-away requotes")
+if not g.should_skip(7, tick=101, fingerprint=("NEGATIVE_EV", -3.0), observations_remaining=3).blocked:
+    raise SystemExit("ERROR: NEGATIVE_EV retry must still hide fresh coverage")
 g.reset()
 if g.should_skip(7, tick=0, fingerprint=("NEGATIVE_EV", -3.0)).blocked:
     raise SystemExit("ERROR: V4.14.4 scheduler session reset contract failed")
@@ -315,7 +319,7 @@ from research_entry_size import (
 from research_quote_hysteresis import (
     TOTAL_SCORE_STALE_TTL_VERSION, total_score_stale_completion_ttl,
 )
-if CLEAN_AUTHORITY_VERSION != "clean_authority_v4_15_1_completion_requote":
+if CLEAN_AUTHORITY_VERSION != "clean_authority_v4_15_2_completion_due":
     raise SystemExit("ERROR: stale V4.15 clean-authority helper")
 if TOTAL_SCORE_FRONTIER_EXACT_MIN_VERSION != "total_score_frontier_exact_min_v4_15_1":
     raise SystemExit("ERROR: stale V4.15.1 TOTAL_SCORE exact-min helper")
@@ -333,6 +337,10 @@ if execution_reject_cooldown(
     {"tick": 10, "reason": "LOW_FILL_PROBABILITY"}, tick=11, observations_remaining=2,
 ).blocked:
     raise SystemExit("ERROR: LOW_FILL_PROBABILITY cooldown must not block two-away requotes")
+if execution_reject_cooldown(
+    {"tick": 10, "reason": "NON_POSITIVE_EDGE"}, tick=11, observations_remaining=1,
+).blocked:
+    raise SystemExit("ERROR: NON_POSITIVE_EDGE cooldown must not block one-away requotes")
 if not execution_reject_cooldown(
     {"tick": 10, "reason": "TTL_STALE"}, tick=11, observations_remaining=3,
 ).blocked:
@@ -370,16 +378,16 @@ PYV415CLEAN
 
 PYTHONPATH="$AGENT_PATH${PYTHONPATH:+:$PYTHONPATH}" python - <<'PYV4152ACQ'
 from research_projected_completion import project_completion_quality, REASON_HEALTHY, REASON_UNHEALTHY
-from research_lifecycle_ev import required_entry_ev, RESEARCH_LIFECYCLE_ENTRY_VERSION
+from research_lifecycle_ev import required_entry_ev, RESEARCH_LIFECYCLE_ENTRY_VERSION, TOTAL_ENTRY_EV_CAP
 from research_score_ev import compute_score_ev
 from research_fresh_feasibility import DEFAULT_CHEAP_SHORTLIST, shortlist_fresh_candidates
 from research_execution_lanes import LaneBook
 from research_total_score_frontier import apply_total_score_frontier, TOTAL_SCORE_FRONTIER_VERSION
-from research_lane_funnel import empty_funnel, bump, compact_log
+from research_lane_funnel import empty_funnel, bump, bump_reject, compact_log
 if TOTAL_SCORE_FRONTIER_VERSION != "total_score_frontier_v4_15_2":
     raise SystemExit("ERROR: stale V4.15.2 frontier version")
-if RESEARCH_LIFECYCLE_ENTRY_VERSION != "lifecycle_ev_v4_15_2":
-    raise SystemExit("ERROR: stale V4.15.2 lifecycle EV version")
+if RESEARCH_LIFECYCLE_ENTRY_VERSION != "lifecycle_ev_v4_15_3":
+    raise SystemExit("ERROR: stale V4.15.3 lifecycle EV version")
 if DEFAULT_CHEAP_SHORTLIST != 22:
     raise SystemExit("ERROR: cheap shortlist is not 22")
 healthy = project_completion_quality(
@@ -402,8 +410,31 @@ planned, _ = apply_total_score_frontier(rows, qualified_books=10)
 by_id = {r.book_id: r for r in planned}
 if not by_id[1].total_score_due or by_id[2].total_score_due:
     raise SystemExit("ERROR: projected completion due-policy failed")
+cooldown_due = LaneBook(
+    book_id=11, rolling_observation_count=2, observations_remaining=1,
+    economics_ok=True, completion_ev_ok=True, entry_feasible=False,
+    projected_completion_healthy=True, projected_completion_reason="PROJECTED_HEALTHY",
+)
+planned_cd, _ = apply_total_score_frontier([cooldown_due], qualified_books=36)
+if not planned_cd[0].total_score_due:
+    raise SystemExit("ERROR: entry_feasible=False must not clear healthy ONE_AWAY due")
 if required_entry_ev(taker_exit_probability=0.78) <= required_entry_ev(taker_exit_probability=0.30):
     raise SystemExit("ERROR: taker probability must raise the entry EV bar")
+capped = required_entry_ev(
+    taker_exit_probability=0.90, expected_cross_bps=1000.0,
+    holding_risk_bps=1000.0, adverse_selection_cost=10.0,
+)
+if capped > TOTAL_ENTRY_EV_CAP + 1e-12:
+    raise SystemExit("ERROR: required_entry_ev exceeded total cap")
+one_away = compute_score_ev(
+    book=22, realized_observation_count=2, required=3,
+    fill_prob_old=0.80, learned_actionable_p=0.22, learned_actionable_samples=20,
+    spread_capture_bps=2.0, fees_bps=0.5, markout_mean_bps=0.0, markout_samples=20,
+    taker_exit_probability=0.78, expected_cross_bps=1.6, holding_risk_bps=0.50,
+    projected_completion_healthy=True, recent_realized_pnl=0.04,
+)
+if not one_away.eligible or one_away.required_entry_ev > one_away.trading_ev:
+    raise SystemExit("ERROR: healthy ONE_AWAY failed calibrated entry EV")
 strong = compute_score_ev(
     book=1, fill_prob_old=0.80, learned_actionable_p=0.80, learned_actionable_samples=20,
     spread_capture_bps=12.0, fees_bps=0.5, markout_mean_bps=0.0, markout_samples=20,
@@ -425,10 +456,14 @@ if {r.book_id for r in kept} != {1}:
     raise SystemExit("ERROR: infeasible book consumed cheap shortlist priority")
 funnel = empty_funnel()
 bump(funnel, "COMPLETION", "lane_total_score_selected")
+bump_reject(funnel, "NEGATIVE_EV")
+bump_reject(funnel, "REQUIRED_ENTRY_EV")
 rec = compact_log(funnel, tick=1, lane="COMPLETION")
 if rec.get("selected") != 1:
     raise SystemExit("ERROR: funnel compact record missing selected")
-print("V4.15.2 acquisition-quality API OK")
+if rec.get("reject_negative_ev") != 1 or rec.get("reject_required_entry_ev") != 1:
+    raise SystemExit("ERROR: funnel RANK required-entry reject accounting failed")
+print("V4.15.3 entry-EV calibration API OK")
 PYV4152ACQ
 [[ -f "$REPO_ROOT/taos/im/validator/trade.py" ]] || { echo "validator trade.py missing" >&2; exit 1; }
 grep -q 'Preserve EVERY timestamp' "$REPO_ROOT/taos/im/validator/trade.py" || {
@@ -672,11 +707,11 @@ grep -q 'from research_rt_phase_timing import RoundTripPhaseState' agents/strate
   exit 1
 }
 
-echo "[Strategy1_Research] version=acquisition_quality_v4_15_2"
+echo "[Strategy1_Research] version=entry_ev_calibration_v4_15_3"
 echo "[Strategy1_Research] log_dir=$RESEARCH_DIR"
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
-  echo "V4.15.2 acquisition-quality + V4.14.4 RealNet safety preflight-only PASS"
+  echo "V4.15.3 entry-EV calibration + V4.14.4 RealNet safety preflight-only PASS"
   exit 0
 fi
 

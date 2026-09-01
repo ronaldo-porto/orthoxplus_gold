@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""SN79 Research V4.15.1 lean authority engine.
+"""SN79 Research V4.15.3 entry-EV calibration.
 
 Current runtime workflow:
     HARD_SAFETY -> EXECUTABILITY -> LIFECYCLE_EV -> TOTAL_SCORE_VALUE -> EXECUTION_EXIT
@@ -86,6 +86,7 @@ from research_fill_hazard import (
 )
 from research_score_ev import (
     LANE_COMPLETION,
+    SCORE_EV_VERSION,
     admit_scheduler_candidate,
     required_observation_count,
     round_trip_velocity,
@@ -330,14 +331,15 @@ from research_total_score_frontier import (
 )
 
 class Strategy1_Research(Strategy1_Debug):
-    RESEARCH_POLICY_VERSION = "acquisition_quality_v4_15_2"
-    RESEARCH_ENGINE_REVISION = "acquisition_quality_p1_v4_15_2"
+    RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"
+    RESEARCH_ENGINE_REVISION = "entry_ev_calibration_p0_v4_15_3"
     RESEARCH_REALNET_EXIT_AUTHORITY_VERSION = REALNET_EXIT_AUTHORITY_VERSION
     RESEARCH_SCHEDULER_RETRY_VERSION = SCHEDULER_RETRY_VERSION
     RESEARCH_TOTAL_SCORE_FRONTIER_VERSION = TOTAL_SCORE_FRONTIER_VERSION
     RESEARCH_CLEAN_AUTHORITY_VERSION = CLEAN_AUTHORITY_VERSION
-    # === V4.15.2 ACQUISITION QUALITY ===
-    RESEARCH_ENGINE_VERSION = "acquisition_quality_p1_v4_15_2"
+    # === V4.15.3 ENTRY EV CALIBRATION ===
+    RESEARCH_ENGINE_VERSION = "entry_ev_calibration_p0_v4_15_3"
+    RESEARCH_SCORE_EV_VERSION = SCORE_EV_VERSION
     RESEARCH_HYBRID_VERSION = "early_escape_guard_v4_12_6"
     RESEARCH_EXIT_HAZARD_EV_VERSION = EXIT_HAZARD_EV_VERSION
     RESEARCH_VELOCITY_VERSION = VELOCITY_VERSION
@@ -1511,6 +1513,7 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_hazard_last: dict[int, dict[str, Any]] = {}
         self._research_score_ev_last: dict[int, Any] = {}
         self._research_completion_ev_cache: dict[int, dict[str, float | int]] = {}
+        self._research_projected_by_book: dict[int, bool | None] = {}
         self._research_markout_by_book: dict[int, dict[str, float]] = {}
         self._research_markout_horizons: dict[int, dict[int, dict[str, float]]] = {}
         self._research_ofi = OfiTracker()
@@ -1632,7 +1635,9 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_completion_relaxed_successes = 0
         self._research_completion_relaxed_attempts = 0
         self._research_completion_quote_attempts = 0
+        self._research_completion_quote_attempts_total = 0
         self._research_completion_quote_successes = 0
+        self._research_completion_quote_successes_total = 0
         self._research_completion_attempt_cap_hits = 0
         self._research_completion_success_cap_hits = 0
         self._research_normal_attempt_cap_hits = 0
@@ -1765,6 +1770,7 @@ class Strategy1_Research(Strategy1_Debug):
             "lanes_version": self.RESEARCH_LANES_VERSION,
             "score_acquisition_version": self.RESEARCH_SCORE_ACQUISITION_VERSION,
             "lifecycle_entry_version": self.RESEARCH_LIFECYCLE_ENTRY_VERSION,
+            "score_ev_version": self.RESEARCH_SCORE_EV_VERSION,
             "projected_completion_version": self.RESEARCH_PROJECTED_COMPLETION_VERSION,
             "fresh_feasibility_version": self.RESEARCH_FRESH_FEASIBILITY_VERSION,
             "lane_funnel_version": self.RESEARCH_LANE_FUNNEL_VERSION,
@@ -2150,6 +2156,7 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_realized_pnl_events_by_book = {}
         self._research_execution_quality_runtime = {}
         self._research_completion_ev_cache = {}
+        self._research_projected_by_book = {}
         self._research_kappa_roll_cache_key = None
         self._research_kappa_roll_ts_cache = {}
         self._research_kappa_roll_count_cache = {}
@@ -3301,6 +3308,29 @@ class Strategy1_Research(Strategy1_Debug):
             self._research_funnel_bump(int(book_id), "lane_fill_prob_valid")
             self._research_funnel_bump(int(book_id), "lane_quote_created")
 
+    def _research_note_rank_entry_ev(self, book_id: int, breakdown) -> None:
+        """Count RANK trading_ev / required_entry_ev so FUNNEL is not quote-only."""
+        try:
+            t_ev = float(getattr(breakdown, "trading_ev", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            t_ev = 0.0
+        if not math.isfinite(t_ev):
+            t_ev = 0.0
+        reason = str(getattr(breakdown, "reject_reason", "") or "").upper()
+        eligible = bool(getattr(breakdown, "eligible", False))
+        if t_ev >= 0.0:
+            self._research_funnel_bump(int(book_id), "lane_lifecycle_ev_pass")
+        if eligible:
+            self._research_funnel_bump(int(book_id), "lane_required_entry_ev_pass")
+            return
+        if reason != "NEGATIVE_EV":
+            return
+        funnel_bump_reject(self._research_funnel(), "NEGATIVE_EV")
+        if t_ev < 0.0:
+            funnel_bump_reject(self._research_funnel(), "LIFECYCLE_EV")
+        else:
+            funnel_bump_reject(self._research_funnel(), "REQUIRED_ENTRY_EV")
+
     def _research_live_lifecycle_taker_probability(self) -> float:
         tick = int(getattr(self, "_tick", 0) or 0)
         cached_tick = getattr(self, "_research_lifecycle_taker_prob_tick", None)
@@ -3354,6 +3384,7 @@ class Strategy1_Research(Strategy1_Debug):
         has_inventory: bool = False,
         is_dust: bool = False,
         hard_risk: bool = False,
+        observations_remaining: int | None = None,
     ) -> bool:
         # Inventory/risk exits are never quarantined by an entry retry policy.
         if has_inventory or is_dust or hard_risk:
@@ -3363,17 +3394,12 @@ class Strategy1_Research(Strategy1_Debug):
             int(book_id),
             tick=int(getattr(self, "_tick", 0) or 0),
             fingerprint=score_ev_fingerprint(ev),
+            observations_remaining=observations_remaining,
         )
         if decision.blocked:
-            try:
-                self._emit(
-                    "SCHEDULER_RETRY", force=True,
-                    tick=getattr(self, "_tick", None),
-                    phase="ROTATE_OUT",
-                    **decision.as_log(book_id=int(book_id)),
-                )
-            except Exception:
-                pass
+            # Do not force-emit ROTATE_OUT on the 128-book screen. That path
+            # produced ~40 jsonl events/tick and pushed respond p95 over 120ms.
+            # HARD_REJECT still logs when a book first enters quarantine.
             return False
         return True
 
@@ -3703,6 +3729,7 @@ class Strategy1_Research(Strategy1_Debug):
                     entry_feasible=bool(entry_feasible) and (
                         self._research_scheduler_retry_allows_v4144(
                         bid, ev, has_inventory=has_inv, is_dust=bool(is_dust), hard_risk=hard,
+                        observations_remaining=int(remaining),
                     )
                     ),
                     needs_refresh=needs_refresh,
@@ -3759,7 +3786,13 @@ class Strategy1_Research(Strategy1_Debug):
             )
             entry_ok = bool(row.entry_feasible)
             if not (row.has_inventory or row.is_dust or row.is_hard_risk):
-                entry_ok = bool(entry_ok and fresh.feasible)
+                if remaining not in {1, 2}:
+                    entry_ok = bool(entry_ok and fresh.feasible)
+                elif (
+                    not fresh.feasible
+                    and str(fresh.reason) not in {"ENTRY_INFEASIBLE", "FILL_PROB"}
+                ):
+                    entry_ok = False
             proj = project_completion_quality(
                 observations_remaining=remaining,
                 realized_sum=float(row.recent_realized_pnl or 0.0),
@@ -3782,6 +3815,9 @@ class Strategy1_Research(Strategy1_Debug):
                 )
             )
         lane_rows = annotated
+        self._research_projected_by_book = {
+            int(row.book_id): row.projected_completion_healthy for row in lane_rows
+        }
         # TOTAL_SCORE_FRONTIER is the sole score-acquisition authority.
         lane_rows, total_score_plan = apply_total_score_frontier(
             lane_rows,
@@ -3799,8 +3835,8 @@ class Strategy1_Research(Strategy1_Debug):
         }
         self._research_productive_incomplete_count = sum(
             1 for row in lane_rows
-            if bool(row.entry_feasible)
-            and bool(row.economics_ok)
+            if bool(row.economics_ok)
+            and bool(row.completion_ev_ok)
             and not bool(row.has_inventory)
             and max(0, int(row.observations_remaining or 0)) in {1, 2}
             and row.projected_completion_healthy is not False
@@ -5962,6 +5998,9 @@ class Strategy1_Research(Strategy1_Debug):
             taker_exit_probability=self._research_live_lifecycle_taker_probability(),
             expected_cross_bps=float(getattr(cost, "expected_cross_bps", 0.0) or 0.0) if cost is not None else 0.0,
             holding_risk_bps=float(getattr(cost, "holding_risk_bps", 0.0) or 0.0) if cost is not None else 0.0,
+            projected_completion_healthy=(
+                getattr(self, "_research_projected_by_book", {}) or {}
+            ).get(int(book_id)),
         )
 
     def _global_book_rank(self, expected_alpha: float, mem) -> float:
@@ -5989,6 +6028,10 @@ class Strategy1_Research(Strategy1_Debug):
                 tick=getattr(self, "_tick", None),
                 **breakdown.as_log(),
             )
+        except Exception:
+            pass
+        try:
+            self._research_note_rank_entry_ev(book_id, breakdown)
         except Exception:
             pass
         try:
@@ -10637,6 +10680,9 @@ class Strategy1_Research(Strategy1_Debug):
                     return 0
             if lane in {LANE_COMPLETION, EXEC_LANE_COMPLETION}:
                 self._research_completion_quote_attempts += 1
+                self._research_completion_quote_attempts_total = int(
+                    getattr(self, "_research_completion_quote_attempts_total", 0) or 0
+                ) + 1
             else:
                 self._research_normal_quote_attempts += 1
             self._research_quote_attempts += 1
@@ -11044,6 +11090,9 @@ class Strategy1_Research(Strategy1_Debug):
                 )
             if completion_candidate:
                 self._research_completion_quote_successes += 1
+                self._research_completion_quote_successes_total = int(
+                    getattr(self, "_research_completion_quote_successes_total", 0) or 0
+                ) + 1
             else:
                 self._research_normal_quote_successes += 1
 
@@ -11250,8 +11299,14 @@ class Strategy1_Research(Strategy1_Debug):
                 stats["research_normal_quote_attempts"] = self._research_normal_quote_attempts
                 stats["research_normal_quote_successes"] = self._research_normal_quote_successes
                 stats["research_normal_attempt_cap"] = self.research_normal_attempt_cap
-                stats["research_completion_quote_attempts"] = self._research_completion_quote_attempts
-                stats["research_completion_quote_successes"] = self._research_completion_quote_successes
+                stats["research_completion_quote_attempts"] = int(
+                    getattr(self, "_research_completion_quote_attempts_total", 0) or 0
+                )
+                stats["research_completion_quote_successes"] = int(
+                    getattr(self, "_research_completion_quote_successes_total", 0) or 0
+                )
+                stats["research_completion_quote_attempts_tick"] = self._research_completion_quote_attempts
+                stats["research_completion_quote_successes_tick"] = self._research_completion_quote_successes
                 stats["research_completion_attempt_cap"] = self.research_kappa_completion_attempt_cap
                 stats["research_completion_success_cap"] = self.research_kappa_completion_success_cap
                 stats["research_completion_relaxed_attempts"] = self._research_completion_relaxed_attempts
@@ -12272,6 +12327,9 @@ class Strategy1_Research(Strategy1_Debug):
                 f"expected_markout_bps={self._fmt(r.get('expected_markout_bps'))} "
                 f"fees_bps={self._fmt(r.get('fees_bps'))} "
                 f"trading_ev={self._fmt(r.get('trading_ev'))} "
+                f"required_entry_ev={self._fmt(r.get('required_entry_ev'))} "
+                f"entry_ev_margin={self._fmt(r.get('entry_ev_margin'))} "
+                f"entry_ev_pass={int(bool(r.get('entry_ev_pass')))} "
                 f"observation_count={r.get('observation_count')} "
                 f"observations_remaining={r.get('observations_remaining')} "
                 f"completion_value={self._fmt(r.get('completion_value'))} "

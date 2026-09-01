@@ -133,11 +133,21 @@ def shortlist_fresh_candidates(
                 or getattr(row, "is_hard_risk", False))
     ]
     flat = [row for row in rows if row not in forced]
-    feasible_flat = [
-        row for row in flat
-        if bool(getattr(row, "fresh_feasible", True))
-        and bool(getattr(row, "entry_feasible", True))
-    ]
+    feasible_flat = []
+    for row in flat:
+        remaining = max(0, int(getattr(row, "observations_remaining", 0) or 0))
+        healthy = getattr(row, "projected_completion_healthy", None)
+        completion_keep = (
+            remaining in {1, 2}
+            and healthy is not False
+            and bool(getattr(row, "economics_ok", True))
+            and bool(getattr(row, "completion_ev_ok", True))
+        )
+        if completion_keep:
+            feasible_flat.append(row)
+            continue
+        if bool(getattr(row, "fresh_feasible", True)) and bool(getattr(row, "entry_feasible", True)):
+            feasible_flat.append(row)
     feasible_flat.sort(key=cheap_priority_key)
     room = max(0, cap - len(forced))
     kept_flat = feasible_flat[:room]

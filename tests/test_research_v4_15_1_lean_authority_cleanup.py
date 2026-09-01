@@ -32,7 +32,7 @@ LAUNCHER = (ROOT / "run_strategy1_research_test_multi.sh").read_text()
 
 
 def test_release_versions_and_single_authority_contract():
-    assert 'RESEARCH_POLICY_VERSION = "acquisition_quality_v4_15_2"' in STRATEGY
+    assert 'RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"' in STRATEGY
     assert TOTAL_SCORE_FRONTIER_VERSION == "total_score_frontier_v4_15_2"
     assert "apply_total_score_frontier" in STRATEGY
     for legacy in (
@@ -95,7 +95,7 @@ def test_total_score_phase_geometry_and_lane_ownership():
 
 
 def test_execution_cooldown_and_success_backfill_pool():
-    assert CLEAN_AUTHORITY_VERSION == "clean_authority_v4_15_1_completion_requote"
+    assert CLEAN_AUTHORITY_VERSION == "clean_authority_v4_15_2_completion_due"
     assert execution_reject_cooldown({"tick": 10, "reason": "ZERO_ORDER_SIZE"}, tick=11).blocked
     assert not execution_reject_cooldown({"tick": 10, "reason": "TOXIC"}, tick=11).blocked
     rows = [LaneBook(book_id=i, total_score_phase="IGNITION", total_score_due=True, economics_ok=True) for i in range(1, 5)]
@@ -119,7 +119,7 @@ def test_ttl_and_low_fill_cooldown_exempt_one_away_and_two_away():
         assert execution_reject_cooldown(
             rec_size, tick=11, observations_remaining=remaining,
         ).blocked
-        assert execution_reject_cooldown(
+        assert not execution_reject_cooldown(
             rec_edge, tick=11, observations_remaining=remaining,
         ).blocked
     assert execution_reject_cooldown(
@@ -147,7 +147,7 @@ def test_ttl_and_low_fill_cooldown_exempt_one_away_and_two_away():
     rows, _plan = apply_total_score_frontier([one_away, blocked], qualified_books=10)
     by_id = {r.book_id: r for r in rows}
     assert by_id[9].total_score_due is True
-    assert by_id[10].total_score_due is False
+    assert by_id[10].total_score_due is True
 
 
 def test_lifecycle_taker_probability_prices_observed_exit_path():
@@ -176,6 +176,9 @@ def test_scheduler_retry_quarantine_remains_separate_from_mechanical_cooldown():
     d = g.record_reject(7, tick=100, reason="NEGATIVE_EV", fingerprint=("NEGATIVE_EV", -3.0))
     assert d.blocked
     assert g.should_skip(7, tick=101, fingerprint=("NEGATIVE_EV", -3.0)).blocked
+    assert not g.should_skip(
+        7, tick=101, fingerprint=("NEGATIVE_EV", -3.0), observations_remaining=1,
+    ).blocked
     g.reset()
     assert not g.should_skip(7, tick=101, fingerprint=("NEGATIVE_EV", -3.0)).blocked
 

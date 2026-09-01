@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: MIT
-"""V4.15.2 per-request lane funnel telemetry.
+"""V4.15.3 per-request lane funnel telemetry.
 
 Shows where selected capacity disappears after TOTAL_SCORE_FRONTIER grants
 a lane. One compact record per request, broken down by COVERAGE / COMPLETION /
-REALIZATION.
+REALIZATION. RANK entry-EV is split into lifecycle (trading_ev < 0) versus
+required-entry (0 <= trading_ev < bar).
 """
 from __future__ import annotations
 
 from typing import Any
 
-LANE_FUNNEL_VERSION = "lane_funnel_v4_15_2"
+LANE_FUNNEL_VERSION = "lane_funnel_v4_15_3"
 LANES = ("COVERAGE", "COMPLETION", "REALIZATION")
 
 STAGE_KEYS = (
@@ -18,6 +19,8 @@ STAGE_KEYS = (
     "lane_fresh_feasible",
     "lane_total_score_selected",
     "lane_deep_predicted",
+    "lane_lifecycle_ev_pass",
+    "lane_required_entry_ev_pass",
     "lane_ev_pass",
     "lane_size_valid",
     "lane_ttl_valid",
@@ -31,6 +34,8 @@ STAGE_KEYS = (
 
 REJECT_KEYS = (
     "NEGATIVE_EV",
+    "LIFECYCLE_EV",
+    "REQUIRED_ENTRY_EV",
     "NON_POSITIVE_EDGE",
     "LOW_FILL_PROBABILITY",
     "ZERO_ORDER_SIZE",
@@ -44,6 +49,8 @@ REJECT_KEYS = (
 _REASON_TO_REJECT = {
     "NEGATIVE_EXPECTED_PNL": "NEGATIVE_EV",
     "NEGATIVE_EV": "NEGATIVE_EV",
+    "LIFECYCLE_EV": "LIFECYCLE_EV",
+    "REQUIRED_ENTRY_EV": "REQUIRED_ENTRY_EV",
     "NON_POSITIVE_EDGE": "NON_POSITIVE_EDGE",
     "LOW_FILL_PROBABILITY": "LOW_FILL_PROBABILITY",
     "ZERO_ORDER_SIZE": "ZERO_ORDER_SIZE",
@@ -113,6 +120,8 @@ def compact_log(funnel: dict[str, Any], *, tick: Any = None, lane: Any = None) -
         "lane_funnel_version": LANE_FUNNEL_VERSION,
         "tick": tick,
         "reject_negative_ev": int(reject.get("NEGATIVE_EV", 0) or 0),
+        "reject_lifecycle_ev": int(reject.get("LIFECYCLE_EV", 0) or 0),
+        "reject_required_entry_ev": int(reject.get("REQUIRED_ENTRY_EV", 0) or 0),
         "reject_size_zero": int(reject.get("ZERO_ORDER_SIZE", 0) or 0),
         "reject_fill_prob": int(reject.get("LOW_FILL_PROBABILITY", 0) or 0),
         "reject_ttl": int(reject.get("TTL_STALE", 0) or 0),
@@ -125,10 +134,14 @@ def compact_log(funnel: dict[str, Any], *, tick: Any = None, lane: Any = None) -
     for name in lanes:
         counts = src.get(name) if isinstance(src.get(name), dict) else {}
         prefix = name.lower()
+        required_entry_pass = int(counts.get("lane_required_entry_ev_pass", 0) or 0)
+        quote_ev_pass = int(counts.get("lane_ev_pass", 0) or 0)
         out[f"{prefix}_selected"] = int(counts.get("lane_total_score_selected", 0) or 0)
         out[f"{prefix}_fresh_feasible"] = int(counts.get("lane_fresh_feasible", 0) or 0)
         out[f"{prefix}_predicted"] = int(counts.get("lane_deep_predicted", 0) or 0)
-        out[f"{prefix}_ev_pass"] = int(counts.get("lane_ev_pass", 0) or 0)
+        out[f"{prefix}_lifecycle_ev_pass"] = int(counts.get("lane_lifecycle_ev_pass", 0) or 0)
+        out[f"{prefix}_required_entry_ev_pass"] = required_entry_pass
+        out[f"{prefix}_ev_pass"] = required_entry_pass or quote_ev_pass
         out[f"{prefix}_size_valid"] = int(counts.get("lane_size_valid", 0) or 0)
         out[f"{prefix}_quoted"] = int(counts.get("lane_quote_created", 0) or 0)
         out[f"{prefix}_submitted"] = int(counts.get("lane_quote_submitted", 0) or 0)
@@ -139,11 +152,15 @@ def compact_log(funnel: dict[str, Any], *, tick: Any = None, lane: Any = None) -
     if lane:
         name = _lane_name(lane)
         counts = src.get(name) if isinstance(src.get(name), dict) else {}
+        required_entry_pass = int(counts.get("lane_required_entry_ev_pass", 0) or 0)
+        quote_ev_pass = int(counts.get("lane_ev_pass", 0) or 0)
         out["lane"] = name
         out["selected"] = int(counts.get("lane_total_score_selected", 0) or 0)
         out["fresh_feasible"] = int(counts.get("lane_fresh_feasible", 0) or 0)
         out["predicted"] = int(counts.get("lane_deep_predicted", 0) or 0)
-        out["ev_pass"] = int(counts.get("lane_ev_pass", 0) or 0)
+        out["lifecycle_ev_pass"] = int(counts.get("lane_lifecycle_ev_pass", 0) or 0)
+        out["required_entry_ev_pass"] = required_entry_pass
+        out["ev_pass"] = required_entry_pass or quote_ev_pass
         out["size_valid"] = int(counts.get("lane_size_valid", 0) or 0)
         out["quoted"] = int(counts.get("lane_quote_created", 0) or 0)
         out["submitted"] = int(counts.get("lane_quote_submitted", 0) or 0)

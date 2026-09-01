@@ -5,6 +5,11 @@ import sys
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "agents" / "strategy"))
 
+from research_clean_authority import (
+    CLEAN_AUTHORITY_VERSION,
+    execution_reject_cooldown,
+)
+from research_scheduler_retry import SchedulerRetryGuard
 from research_execution_lanes import (
     COMPLETION_ECONOMICS_VERSION,
     LANE_COMPLETION,
@@ -76,14 +81,14 @@ def _ev(**kwargs):
 
 
 def test_release_versions_and_pipeline_contract():
-    assert 'RESEARCH_POLICY_VERSION = "acquisition_quality_v4_15_2"' in STRATEGY
-    assert 'RESEARCH_ENGINE_VERSION = "acquisition_quality_p1_v4_15_2"' in STRATEGY
-    assert 'RESEARCH_ENGINE_REVISION = "acquisition_quality_p1_v4_15_2"' in STRATEGY
+    assert 'RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"' in STRATEGY
+    assert 'RESEARCH_ENGINE_VERSION = "entry_ev_calibration_p0_v4_15_3"' in STRATEGY
+    assert 'RESEARCH_ENGINE_REVISION = "entry_ev_calibration_p0_v4_15_3"' in STRATEGY
     assert TOTAL_SCORE_FRONTIER_VERSION == "total_score_frontier_v4_15_2"
     assert COMPLETION_ECONOMICS_VERSION == "total_score_completion_v4_15_2"
-    assert RESEARCH_LIFECYCLE_ENTRY_VERSION == "lifecycle_ev_v4_15_2"
+    assert RESEARCH_LIFECYCLE_ENTRY_VERSION == "lifecycle_ev_v4_15_3"
     assert PROJECTED_COMPLETION_VERSION == "projected_completion_v4_15_2"
-    assert SCORE_EV_VERSION == "lifecycle_total_score_split_v4_15_2"
+    assert SCORE_EV_VERSION == "entry_ev_calibration_v4_15_3"
     assert DEFAULT_CHEAP_SHORTLIST == 22
     assert "shortlist_fresh_candidates" in STRATEGY
     assert "project_completion_quality" in STRATEGY
@@ -198,8 +203,10 @@ def test_high_taker_probability_raises_entry_ev_bar():
     weak_high = _ev(taker_exit_probability=0.78)
     assert weak_high.required_entry_ev > weak_low.required_entry_ev
     assert weak_low.eligible is True
-    assert weak_high.eligible is False
-    assert weak_high.reject_reason == "NEGATIVE_EV"
+    assert weak_high.required_entry_ev <= 0.12 + 1e-12
+    # V4.15.3: a weakly positive trading_ev can still clear the bounded bar.
+    assert weak_high.eligible is True
+    assert weak_high.reject_reason is None
 
 
 def test_high_taker_probability_is_not_a_hard_veto():
@@ -340,6 +347,8 @@ def test_validator_and_frozen_agents_are_unchanged():
     assert "Preserve EVERY timestamp" in VALIDATOR_TRADE.read_text(encoding="utf-8")
     base_src = BASE.read_text(encoding="utf-8")
     adaptive_src = ADAPTIVE.read_text(encoding="utf-8")
+    assert "entry_ev_calibration_v4_15_3" not in base_src
+    assert "entry_ev_calibration_v4_15_3" not in adaptive_src
     assert "acquisition_quality_v4_15_2" not in base_src
     assert "acquisition_quality_v4_15_2" not in adaptive_src
     assert "projected_completion_v4_15_2" not in base_src
@@ -391,3 +400,93 @@ def test_funnel_compact_record_has_lane_and_reject_fields():
     assert rec["quoted"] == 1
     assert rec["reject_ttl"] == 1
     assert rec["reject_negative_ev"] == 1
+    assert rec["reject_required_entry_ev"] == 0
+    assert rec["reject_lifecycle_ev"] == 0
+
+
+def test_one_away_stays_due_when_entry_feasible_is_false():
+    blocked = LaneBook(
+        book_id=10,
+        rolling_observation_count=2,
+        observations_remaining=1,
+        economics_ok=True,
+        completion_ev_ok=True,
+        entry_feasible=False,
+        projected_completion_healthy=True,
+        projected_completion_reason=REASON_HEALTHY,
+        projected_completion_quality=0.80,
+    )
+    planned, _ = apply_total_score_frontier([blocked], qualified_books=36)
+    assert planned[0].total_score_due is True
+    assert classify_execution_lane(planned[0]) == LANE_COMPLETION
+    alloc = select_lane_candidates(
+        planned,
+        normalize_lane_budgets(coverage_slots=0, completion_slots=1, realization_slots=0, shared_overflow_slots=0),
+        max_candidates=1,
+    )
+    assert alloc.by_lane[LANE_COMPLETION] == [10]
+    assert alloc.demand[LANE_COMPLETION] == 1
+
+
+def test_negative_ev_retry_does_not_hide_one_away():
+    g = SchedulerRetryGuard(negative_ev_base_ticks=8, toxic_base_ticks=16, max_cooldown_ticks=64)
+    fp = ("NEGATIVE_EV", -3.0, 0.0, 0, 0)
+    g.record_reject(7, tick=100, reason="NEGATIVE_EV", fingerprint=fp)
+    assert g.should_skip(7, tick=101, fingerprint=fp).blocked
+    assert not g.should_skip(
+        7, tick=101, fingerprint=fp, observations_remaining=1,
+    ).blocked
+    assert not g.should_skip(
+        7, tick=101, fingerprint=fp, observations_remaining=2,
+    ).blocked
+    assert g.should_skip(
+        7, tick=101, fingerprint=fp, observations_remaining=3,
+    ).blocked
+    g.reset()
+    toxic = SchedulerRetryGuard(negative_ev_base_ticks=8, toxic_base_ticks=16, max_cooldown_ticks=64)
+    tfp = ("TOXIC", 0.0, 0.0, 1, 0)
+    toxic.record_reject(8, tick=100, reason="TOXIC", fingerprint=tfp)
+    assert toxic.should_skip(
+        8, tick=101, fingerprint=tfp, observations_remaining=1,
+    ).blocked
+
+
+def test_edge_cooldown_exempt_for_completion_requote():
+    assert CLEAN_AUTHORITY_VERSION == "clean_authority_v4_15_2_completion_due"
+    rec = {"tick": 10, "reason": "NON_POSITIVE_EDGE"}
+    assert not execution_reject_cooldown(
+        rec, tick=11, observations_remaining=1,
+    ).blocked
+    assert execution_reject_cooldown(
+        rec, tick=11, observations_remaining=3,
+    ).blocked
+    assert execution_reject_cooldown(
+        {"tick": 10, "reason": "ZERO_ORDER_SIZE"}, tick=11, observations_remaining=1,
+    ).blocked
+
+
+def test_shortlist_keeps_infeasible_one_away():
+    one = LaneBook(
+        book_id=4,
+        observations_remaining=1,
+        rolling_observation_count=2,
+        economics_ok=True,
+        completion_ev_ok=True,
+        entry_feasible=False,
+        fresh_feasible=False,
+        projected_completion_healthy=True,
+        cheap_score=0.01,
+    )
+    coverage = LaneBook(
+        book_id=5,
+        observations_remaining=3,
+        economics_ok=True,
+        fresh_feasible=True,
+        entry_feasible=True,
+        cheap_score=0.90,
+        is_uncovered=True,
+    )
+    kept = shortlist_fresh_candidates([one, coverage], cheap_shortlist=22)
+    ids = {row.book_id for row in kept}
+    assert 4 in ids
+    assert 5 in ids
