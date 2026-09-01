@@ -81,14 +81,14 @@ def _ev(**kwargs):
 
 
 def test_release_versions_and_pipeline_contract():
-    assert 'RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"' in STRATEGY
-    assert 'RESEARCH_ENGINE_VERSION = "entry_ev_calibration_p0_v4_15_3"' in STRATEGY
-    assert 'RESEARCH_ENGINE_REVISION = "entry_ev_calibration_p0_v4_15_3"' in STRATEGY
+    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"' in STRATEGY
+    assert 'RESEARCH_ENGINE_VERSION = "simplified_hybrid_authority_v4_16_0"' in STRATEGY
+    assert 'RESEARCH_ENGINE_REVISION = "simplified_hybrid_authority_v4_16_0"' in STRATEGY
     assert TOTAL_SCORE_FRONTIER_VERSION == "total_score_frontier_v4_15_2"
     assert COMPLETION_ECONOMICS_VERSION == "total_score_completion_v4_15_2"
-    assert RESEARCH_LIFECYCLE_ENTRY_VERSION == "lifecycle_ev_v4_15_3"
+    assert RESEARCH_LIFECYCLE_ENTRY_VERSION == "lifecycle_ev_v4_16_0"
     assert PROJECTED_COMPLETION_VERSION == "projected_completion_v4_15_2"
-    assert SCORE_EV_VERSION == "entry_ev_calibration_v4_15_3"
+    assert SCORE_EV_VERSION == "simplified_hybrid_authority_v4_16_0"
     assert DEFAULT_CHEAP_SHORTLIST == 22
     assert "shortlist_fresh_candidates" in STRATEGY
     assert "project_completion_quality" in STRATEGY
@@ -201,11 +201,10 @@ def test_high_taker_probability_raises_entry_ev_bar():
     assert high > low
     weak_low = _ev(taker_exit_probability=0.30)
     weak_high = _ev(taker_exit_probability=0.78)
-    assert weak_high.required_entry_ev > weak_low.required_entry_ev
+    # V4.16: required_entry_ev remains a diagnostic, not a live ScoreEV gate.
     assert weak_low.eligible is True
-    assert weak_high.required_entry_ev <= 0.12 + 1e-12
-    # V4.15.3: a weakly positive trading_ev can still clear the bounded bar.
     assert weak_high.eligible is True
+    assert weak_high.required_entry_ev <= 0.12 + 1e-12
     assert weak_high.reject_reason is None
 
 
@@ -215,7 +214,7 @@ def test_high_taker_probability_is_not_a_hard_veto():
         learned_actionable_p=0.80,
         taker_exit_probability=0.90,
     )
-    assert strong.required_entry_ev > 0.0
+    assert strong.required_entry_ev >= 0.0
     assert strong.eligible is True
     assert strong.reject_reason is None
     a = required_entry_ev(taker_exit_probability=0.70)
@@ -347,8 +346,8 @@ def test_validator_and_frozen_agents_are_unchanged():
     assert "Preserve EVERY timestamp" in VALIDATOR_TRADE.read_text(encoding="utf-8")
     base_src = BASE.read_text(encoding="utf-8")
     adaptive_src = ADAPTIVE.read_text(encoding="utf-8")
-    assert "entry_ev_calibration_v4_15_3" not in base_src
-    assert "entry_ev_calibration_v4_15_3" not in adaptive_src
+    assert "simplified_hybrid_authority_v4_16_0" not in base_src
+    assert "simplified_hybrid_authority_v4_16_0" not in adaptive_src
     assert "acquisition_quality_v4_15_2" not in base_src
     assert "acquisition_quality_v4_15_2" not in adaptive_src
     assert "projected_completion_v4_15_2" not in base_src

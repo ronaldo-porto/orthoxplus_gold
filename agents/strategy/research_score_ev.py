@@ -26,19 +26,14 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from research_kappa_state import build_kappa_universe, kappa_book_state, kappa_progress
-from research_lifecycle_ev import (
-    ONE_AWAY_ENTRY_MULT,
-    TWO_AWAY_ENTRY_MULT,
-    completion_entry_multiplier,
-    compute_required_entry_ev,
-)
+from research_lifecycle_ev import LIFECYCLE_EV_MARGIN
 from research_markout import (
     CONSERVATIVE_MARKOUT_FALLBACK_BPS,
     MIN_MARKOUT_SAMPLES,
     conservative_expected_markout_bps,
 )
 
-SCORE_EV_VERSION = "entry_ev_calibration_v4_15_3"
+SCORE_EV_VERSION = "simplified_hybrid_authority_v4_16_0"
 PROTOCOL_DEFAULT_MIN_REALIZED_OBSERVATIONS = 3
 LANE_COVERAGE = "COVERAGE"
 LANE_COMPLETION = "COMPLETION"
@@ -532,8 +527,8 @@ def compute_score_ev(
     expected_cross_bps: float = 0.0,
     holding_risk_bps: float = 0.0,
     projected_completion_healthy: bool | None = None,
-    one_away_entry_mult: float = ONE_AWAY_ENTRY_MULT,
-    two_away_entry_mult: float = TWO_AWAY_ENTRY_MULT,
+    one_away_entry_mult: float = 0.60,
+    two_away_entry_mult: float = 0.80,
 ) -> ScoreEVBreakdown:
     realized, req, remaining = observation_progress(realized_observation_count, required)
     p_act = conservative_actionable_probability(
@@ -594,42 +589,22 @@ def compute_score_ev(
     if not math.isfinite(headroom):
         headroom = 1.0
     capped = bool(volume_capped) or headroom <= 0.0
-    entry_bar = max(0.0, float(min_trading_ev))
-    entry = None
-    mult = 1.0
-    if taker_exit_probability is not None:
-        mult = completion_entry_multiplier(
-            observations_remaining=remaining,
-            projected_completion_healthy=projected_completion_healthy,
-            trading_ev=t_ev,
-            recent_realized_pnl=recent_realized_pnl,
-            one_away_mult=one_away_entry_mult,
-            two_away_mult=two_away_entry_mult,
-        )
-        entry = compute_required_entry_ev(
-            base_required_ev=min_trading_ev,
-            taker_exit_probability=taker_exit_probability,
-            expected_cross_bps=expected_cross_bps,
-            holding_risk_bps=holding_risk_bps,
-            adverse_selection_cost=a_risk,
-            completion_multiplier=mult,
-        )
-        entry_bar = max(entry_bar, float(entry.required_entry_ev))
+    entry_bar = max(0.0, float(min_trading_ev), float(LIFECYCLE_EV_MARGIN))
+    lifecycle = t_ev - d_cost - i_cost - l_cost - a_risk
     reason = hard_safety_blocks(
         toxic=toxic,
         inventory_blocked=inventory_blocked,
         unsafe=unsafe,
         invalid_size=invalid_size,
         volume_capped=capped,
-        trading_ev_value=t_ev,
+        trading_ev_value=lifecycle,
         min_trading_ev=entry_bar,
     )
     eligible = reason is None
-    lifecycle = t_ev - d_cost - i_cost - l_cost - a_risk
     total_score = c_val + a_def
     final = (lifecycle + total_score) if eligible else float("-inf")
     entry_ev_margin = lifecycle - entry_bar
-    entry_ev_pass = bool(eligible and t_ev >= 0.0 and t_ev >= entry_bar)
+    entry_ev_pass = bool(eligible)
     return ScoreEVBreakdown(
         book=int(book),
         side=str(side),
@@ -662,17 +637,7 @@ def compute_score_ev(
         lifecycle_ev=lifecycle if eligible else float("-inf"),
         total_score_component=total_score,
         required_entry_ev=float(entry_bar),
-        taker_prob_live=0.0 if entry is None else float(entry.taker_prob_live),
-        taker_prob_prior=0.0 if entry is None else float(entry.taker_prob_prior),
-        taker_prob_excess=0.0 if entry is None else float(entry.taker_prob_excess),
-        expected_taker_cost=0.0 if entry is None else float(entry.expected_taker_cost),
-        raw_taker_penalty=0.0 if entry is None else float(entry.raw_taker_penalty),
-        capped_taker_penalty=0.0 if entry is None else float(entry.capped_taker_penalty),
-        adverse_penalty=0.0 if entry is None else float(entry.adverse_penalty),
-        holding_penalty=0.0 if entry is None else float(entry.holding_penalty),
-        latency_penalty=0.0 if entry is None else float(entry.latency_penalty),
-        crossing_penalty=0.0 if entry is None else float(entry.crossing_penalty),
-        completion_multiplier=float(mult),
+        completion_multiplier=1.0,
         entry_ev_margin=entry_ev_margin,
         entry_ev_pass=entry_ev_pass,
     )

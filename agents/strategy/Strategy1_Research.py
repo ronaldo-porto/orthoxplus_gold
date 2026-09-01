@@ -1,13 +1,9 @@
 # SPDX-License-Identifier: MIT
-"""SN79 Research V4.15.3 entry-EV calibration.
+"""SN79 Research V4.16 simplified hybrid authority.
 
 Current runtime workflow:
-    HARD_SAFETY -> EXECUTABILITY -> LIFECYCLE_EV -> TOTAL_SCORE_VALUE -> EXECUTION_EXIT
-
-This module intentionally keeps proven inventory, dust, contract, session, markout,
-fill-hazard and V4.14.4 RealNet exit protections while removing historical scheduler
-authorities that no longer own live decisions.  TOTAL_SCORE_FRONTIER is the only
-score-acquisition authority for flat books.
+    HARD SAFETY -> LIFECYCLE EV -> TOTAL SCORE PRIORITY -> MAKER/TAKER/SKIP
+    POSITION EXIT = Maker/Taker/Wait utility + one four-band loss corridor
 """
 from __future__ import annotations
 
@@ -178,15 +174,27 @@ from research_exit_hazard_ev import EXIT_HAZARD_EV_VERSION
 from research_unified_exit import (
     ACTION_HARD_RISK_TAKER as UNIFIED_HARD_TAKER,
     ACTION_KEEP_MAKER as UNIFIED_KEEP_MAKER,
-    ACTION_TAKER_PROFIT_LOCK as UNIFIED_TAKER_PROFIT_LOCK,
     ACTION_TAKER_PROTECT as UNIFIED_TAKER_PROTECT,
-    ACTION_TAKER_STALE_BRIDGE as UNIFIED_TAKER_STALE_BRIDGE,
-    bounded_stale_direct_bridge,
+    UnifiedExitDecision,
     breakeven_price as unified_breakeven_price,
-    choose_unified_exit,
     completion_net_bps as unified_completion_net_bps,
     wait_value_bps as unified_wait_value_bps,
 )
+from research_position_exit import (
+    ACTION_PARK_EXIT,
+    ACTION_TAKER_EXIT,
+    POSITION_EXIT_VERSION,
+    choose_position_exit,
+)
+from research_execution_controller import (
+    ACTION_MAKER as EXEC_ACTION_MAKER,
+    ACTION_SKIP as EXEC_ACTION_SKIP,
+    ACTION_TAKER as EXEC_ACTION_TAKER,
+    EXECUTION_CONTROLLER_VERSION,
+    choose_execution,
+)
+from research_risk_guard import RISK_GUARD_VERSION, evaluate_risk_guard
+from research_role_size import ROLE_SIZE_VERSION, maker_entry_size, taker_clip_size
 from research_velocity import (
     VELOCITY_VERSION,
     VelocityState,
@@ -260,12 +268,7 @@ from research_inventory_liveness import (
     INVENTORY_LIVENESS_VERSION,
     InventoryLivenessStage,
     classify_liveness_stage,
-    evaluate_bounded_rescue,
-    bounded_loss_escape_reason,
     counts_against_productive_open_cap,
-    evaluate_protected_parking,
-    fresh_maker_grace_applies,
-    positive_maker_rescue_veto_applies,
     parked_refresh_due,
 )
 from research_rolling_economics import (
@@ -331,15 +334,19 @@ from research_total_score_frontier import (
 )
 
 class Strategy1_Research(Strategy1_Debug):
-    RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"
-    RESEARCH_ENGINE_REVISION = "entry_ev_calibration_p0_v4_15_3"
+    RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"
+    RESEARCH_ENGINE_REVISION = "simplified_hybrid_authority_v4_16_0"
     RESEARCH_REALNET_EXIT_AUTHORITY_VERSION = REALNET_EXIT_AUTHORITY_VERSION
     RESEARCH_SCHEDULER_RETRY_VERSION = SCHEDULER_RETRY_VERSION
     RESEARCH_TOTAL_SCORE_FRONTIER_VERSION = TOTAL_SCORE_FRONTIER_VERSION
     RESEARCH_CLEAN_AUTHORITY_VERSION = CLEAN_AUTHORITY_VERSION
-    # === V4.15.3 ENTRY EV CALIBRATION ===
-    RESEARCH_ENGINE_VERSION = "entry_ev_calibration_p0_v4_15_3"
+    # === V4.16 SIMPLIFIED HYBRID AUTHORITY ===
+    RESEARCH_ENGINE_VERSION = "simplified_hybrid_authority_v4_16_0"
     RESEARCH_SCORE_EV_VERSION = SCORE_EV_VERSION
+    RESEARCH_POSITION_EXIT_VERSION = POSITION_EXIT_VERSION
+    RESEARCH_EXECUTION_CONTROLLER_VERSION = EXECUTION_CONTROLLER_VERSION
+    RESEARCH_RISK_GUARD_VERSION = RISK_GUARD_VERSION
+    RESEARCH_ROLE_SIZE_VERSION = ROLE_SIZE_VERSION
     RESEARCH_HYBRID_VERSION = "early_escape_guard_v4_12_6"
     RESEARCH_EXIT_HAZARD_EV_VERSION = EXIT_HAZARD_EV_VERSION
     RESEARCH_VELOCITY_VERSION = VELOCITY_VERSION
@@ -416,6 +423,10 @@ class Strategy1_Research(Strategy1_Debug):
         "KAPPA_COMPLETION_SUCCESS_CAP": "KAPPA_SUCCESS_CAP",
         "NORMAL_MM_ATTEMPT_CAP": "NORMAL_ATTEMPT_CAP",
     }
+
+    def _passes_expected_pnl_gate(self, expected_realized_pnl: float) -> bool:
+        """Parent expected-PnL gate is retired. LifecycleEV is the economic rule."""
+        return True
 
     def initialize(self) -> None:
         # Strategy1_Debug.initialize() calls self._emit(), so prepare an early buffer.
@@ -3309,27 +3320,28 @@ class Strategy1_Research(Strategy1_Debug):
             self._research_funnel_bump(int(book_id), "lane_quote_created")
 
     def _research_note_rank_entry_ev(self, book_id: int, breakdown) -> None:
-        """Count RANK trading_ev / required_entry_ev so FUNNEL is not quote-only."""
+        """Count RANK LifecycleEV so FUNNEL is not quote-only."""
         try:
-            t_ev = float(getattr(breakdown, "trading_ev", 0.0) or 0.0)
+            life = float(getattr(breakdown, "lifecycle_ev", 0.0) or 0.0)
         except (TypeError, ValueError):
-            t_ev = 0.0
-        if not math.isfinite(t_ev):
-            t_ev = 0.0
+            life = 0.0
+        if not math.isfinite(life):
+            try:
+                life = float(getattr(breakdown, "trading_ev", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                life = 0.0
         reason = str(getattr(breakdown, "reject_reason", "") or "").upper()
         eligible = bool(getattr(breakdown, "eligible", False))
-        if t_ev >= 0.0:
+        if life >= 0.0:
             self._research_funnel_bump(int(book_id), "lane_lifecycle_ev_pass")
+            self._research_funnel_bump(int(book_id), "lane_lifecycle_ev_positive")
         if eligible:
-            self._research_funnel_bump(int(book_id), "lane_required_entry_ev_pass")
+            self._research_funnel_bump(int(book_id), "lane_score_ranked")
             return
         if reason != "NEGATIVE_EV":
             return
         funnel_bump_reject(self._research_funnel(), "NEGATIVE_EV")
-        if t_ev < 0.0:
-            funnel_bump_reject(self._research_funnel(), "LIFECYCLE_EV")
-        else:
-            funnel_bump_reject(self._research_funnel(), "REQUIRED_ENTRY_EV")
+        funnel_bump_reject(self._research_funnel(), "LIFECYCLE_EV")
 
     def _research_live_lifecycle_taker_probability(self) -> float:
         tick = int(getattr(self, "_tick", 0) or 0)
@@ -7086,6 +7098,21 @@ class Strategy1_Research(Strategy1_Debug):
                 return True
         return False
 
+    def _research_execute_entry_taker(
+        self,
+        response: FinanceAgentResponse,
+        book_id: int,
+        book: Book,
+        qty: float,
+        prediction: DirectionForecast,
+    ) -> bool:
+        """Acquire a controlled Taker clip. Direction follows the forecast."""
+        token = str(getattr(prediction, "direction", "") or "").upper()
+        open_long = token != "DOWN"
+        return self._execute_aggressive_close(
+            response, book_id, book, abs(float(qty)), long_pos=not open_long,
+        )
+
     def _manage_inventory(
         self,
         response: FinanceAgentResponse,
@@ -7548,120 +7575,31 @@ class Strategy1_Research(Strategy1_Debug):
         maker_action = str(getattr(legacy, "proposed_rung", "") or "")
         if maker_action not in {ACTION_PASSIVE, ACTION_COMPETITIVE, ACTION_AGGRESSIVE}:
             maker_action = ACTION_AGGRESSIVE if int(failed_exit_count) >= 3 else ACTION_COMPETITIVE
-        liveness_age = max(
+        inventory_age = max(
             float(getattr(inventory, "position_ticks", 0) or 0),
             float(time_since_first_exit_attempt),
         )
         liveness_stage = self._research_liveness_stage(
             observations_remaining=int(observations_remaining),
             failed_exit_count=int(failed_exit_count),
-            inventory_age=float(liveness_age),
+            inventory_age=float(inventory_age),
             inventory_state=str(getattr(legacy, "state", "NORMAL") or "NORMAL"),
             stop_loss_hit=bool(stop_hit),
         )
-        liveness_enabled = bool(getattr(self, "research_inventory_liveness_enabled", True))
-        liveness_maker_active = bool(liveness_enabled and liveness_stage.maker_rescue_armed)
-        if liveness_maker_active:
-            # "Aggressive Maker" now means executable distance from current touch,
-            # not an old breakeven target. The bounded maker floor below can still
-            # stop the quote from realizing more than the configured small loss.
-            maker_action = ACTION_AGGRESSIVE
         raw_maker_px = maker_exit_price(
             bid=bid, ask=ask, long_position=long_pos, action=maker_action, tick_size=tick,
         )
         maker_fee = self._research_live_fee_bps(int(book_id), is_maker=True)
         taker_fee = self._research_live_fee_bps(int(book_id), is_maker=False)
-        entry_fee = maker_fee  # Research entries are post-only Maker orders.
-        maker_floor = float(getattr(self, "research_unified_maker_net_floor_bps", 0.0))
-        if liveness_maker_active:
-            maker_floor = float(liveness_stage.maker_floor_bps)
-
-        # V4.12.8 stale-Maker rescue.  V4.12.6 proved that a -2 bps Taker
-        # rescue window often does not exist in ~30 bps spread books: the
-        # immediate Taker unwind is already deeply negative.  Keep the Taker
-        # floor unchanged, but allow ONE_AWAY Maker realization to relax from
-        # strict breakeven to a tiny bounded Maker floor after repeated failed
-        # exits (or sooner when its existing Kappa observations are at a
-        # critical rolling deadline).
-        rescue_active = False
-        rescue_reason = ""
-        rescue_deadline_urgency = 0.0
-        raw_maker_net = unified_completion_net_bps(
-            entry_price=float(entry), exit_price=float(raw_maker_px),
-            long_position=long_pos, entry_fee_bps=entry_fee, exit_fee_bps=maker_fee,
-        )
-        if (
-            bool(getattr(self, "research_stale_maker_rescue_enabled", True))
-            and int(observations_remaining) == 1
-            and float(raw_maker_net) < float(maker_floor)
-        ):
-            try:
-                expiry = self._research_kappa_expiry(int(book_id))
-                rescue_deadline_urgency = float(getattr(expiry, "expiry_urgency", 0.0) or 0.0)
-            except Exception:
-                rescue_deadline_urgency = 0.0
-            normal_trigger = int(failed_exit_count) >= int(
-                getattr(self, "research_stale_maker_rescue_failed_exits", 4)
-            )
-            critical_trigger = bool(
-                rescue_deadline_urgency >= float(getattr(self, "research_deadline_critical_urgency", 0.50))
-                and int(failed_exit_count) >= int(
-                    getattr(self, "research_stale_maker_rescue_critical_failed_exits", 1)
-                )
-            )
-            if normal_trigger or critical_trigger:
-                configured_floor = float(getattr(self, "research_stale_maker_rescue_floor_bps", -1.0))
-                taker_floor = float(getattr(self, "research_protective_taker_loss_floor_bps", -2.0))
-                maker_floor = max(taker_floor, min(0.0, configured_floor))
-                rescue_active = True
-                rescue_reason = "DEADLINE" if critical_trigger else "FAILED_EXITS"
-
-        # V4.12.18 capacity/loss decoupling. For protected ONE_AWAY/QUALIFIED
-        # books, evaluate the *actual closest legal post-only touch* against the
-        # existing Kappa floor. If stale and that executable touch violates the
-        # floor, PARK the position. This releases active capacity without granting
-        # any bounded-loss Taker authority or weakening the Kappa floor.
-        protected_touch_px = maker_exit_price(
-            bid=bid, ask=ask, long_position=long_pos, action=ACTION_AGGRESSIVE, tick_size=tick,
-        )
-        protected_touch_net = unified_completion_net_bps(
-            entry_price=float(entry), exit_price=float(protected_touch_px),
-            long_position=long_pos, entry_fee_bps=entry_fee, exit_fee_bps=maker_fee,
-        )
-        protected_park_decision = (
-            evaluate_protected_parking(
-                liveness_stage,
-                executable_maker_net_bps=float(protected_touch_net),
-                protected_floor_bps=float(maker_floor),
-            )
-            if liveness_enabled else None
-        )
-
+        entry_fee = maker_fee
+        maker_px = round(max(tick, float(raw_maker_px)), price_dec)
+        taker_px = bid if long_pos else ask
         be_px = unified_breakeven_price(
             entry_price=float(entry),
             long_position=long_pos,
             round_trip_fee_bps=entry_fee + maker_fee,
-            net_floor_bps=maker_floor,
+            net_floor_bps=0.0,
         )
-        # V4.12.17 executable Maker semantics. For liveness-eligible stale
-        # inventory, AGGRESSIVE means the actual closest legal post-only touch
-        # price. If that touch price violates the bounded Maker loss floor, do
-        # not silently drag it back toward breakeven and still call it aggressive.
-        # The later liveness authority must either take the bounded Taker rescue
-        # or PARK the position. Protected/normal paths retain their old floor.
-        liveness_touch_maker_blocked = bool(
-            liveness_maker_active and float(raw_maker_net) < float(maker_floor) - 1e-12
-        )
-        if liveness_maker_active:
-            maker_px = float(raw_maker_px)
-        elif long_pos:
-            maker_px = max(float(raw_maker_px), float(be_px))
-            maker_px = math.ceil(maker_px / tick - 1e-12) * tick
-        else:
-            maker_px = min(float(raw_maker_px), float(be_px))
-            maker_px = math.floor(maker_px / tick + 1e-12) * tick
-        maker_px = round(max(tick, maker_px), price_dec)
-        taker_px = bid if long_pos else ask
         econ = getattr(legacy, "taker_economics", None)
         impact = 0.0
         holding = 0.0
@@ -7684,19 +7622,6 @@ class Strategy1_Research(Strategy1_Debug):
             entry_fee_bps=entry_fee, exit_fee_bps=taker_fee,
             slippage_bps=slippage, impact_bps=impact,
         )
-        if rescue_active:
-            try:
-                self._emit(
-                    "STALE_RESCUE", force=True, tick=getattr(self, "_tick", None),
-                    book=int(book_id), observations_remaining=int(observations_remaining),
-                    failed_exits=int(failed_exit_count), reason=rescue_reason,
-                    deadline_urgency=float(rescue_deadline_urgency),
-                    raw_maker_price=float(raw_maker_px), selected_maker_price=float(maker_px),
-                    raw_maker_net_bps=float(raw_maker_net), maker_net_bps=float(maker_net),
-                    maker_floor_bps=float(maker_floor), taker_net_bps=float(taker_net),
-                )
-            except Exception:
-                pass
         ttl_ms = self._research_exit_ttl_target_ms(int(book_id))
         actual_hazard = self._research_actual_exit_hazard(
             int(book_id), book, inventory, maker_px, ttl_ms,
@@ -7712,512 +7637,90 @@ class Strategy1_Research(Strategy1_Debug):
             holding_cost_bps=holding, reversal_cost_bps=reversal,
             failed_exit_count=int(failed_exit_count),
             failed_exit_penalty_bps=float(getattr(self, "research_failed_exit_penalty_bps", 0.75)),
-            age_ticks=max(
-                float(getattr(inventory, "position_ticks", 0) or 0),
-                float(time_since_first_exit_attempt),
-            ),
+            age_ticks=float(inventory_age),
             age_penalty_bps_per_tick=float(getattr(self, "research_exit_age_penalty_bps_per_tick", 0.03)),
         )
-        liveness_rescue = evaluate_bounded_rescue(
-            liveness_stage,
-            taker_net_bps=float(taker_net),
-            wait_ev_bps=float(wait_ev),
-            expected_markout_bps=float(expected_markout or 0.0),
-            adverse_selection_risk=float(adverse_selection_risk or 0.0),
-            stop_loss_hit=bool(stop_hit),
-            inventory_state=str(getattr(legacy, "state", "NORMAL") or "NORMAL"),
-            min_ev_advantage_bps=float(getattr(self, "research_liveness_min_ev_advantage_bps", 0.50)),
-            adverse_markout_bps=float(getattr(self, "research_liveness_adverse_markout_bps", 1.0)),
-            adverse_risk_floor=float(getattr(self, "research_liveness_adverse_risk_floor", 0.25)),
-        ) if liveness_enabled else None
         hard_emergency = str(getattr(inventory, "band", "") or "").upper() in {"MAX_LONG", "MAX_SHORT"}
-        legacy_risk_authority = str(getattr(legacy, "taker_authority", "NONE") or "NONE").upper() == "RISK"
-        maker_grace_active = fresh_maker_grace_applies(
-            liveness_stage,
-            liveness_rescue,
-            maker_net_bps=float(maker_net),
-            maker_executable=not bool(liveness_touch_maker_blocked),
-            stop_loss_hit=bool(stop_hit),
-            inventory_state=str(getattr(legacy, "state", "NORMAL") or "NORMAL"),
-            hard_risk=bool(hard_emergency or legacy_risk_authority),
-            enabled=bool(getattr(self, "research_fresh_maker_grace_enabled", True)),
-            grace_ticks=float(getattr(self, "research_fresh_maker_grace_ticks", 3.0)),
-        )
-        if liveness_maker_active:
-            self._research_inventory_rescue_armed = int(
-                getattr(self, "_research_inventory_rescue_armed", 0) or 0
-            ) + 1
-            try:
-                self._emit(
-                    "RESCUE_ARMED", force=True, tick=getattr(self, "_tick", None),
-                    book=int(book_id), phase="MAKER", maker_action=maker_action,
-                    raw_maker_price=float(raw_maker_px), selected_maker_price=float(maker_px),
-                    maker_net_bps=float(maker_net), raw_touch_maker_net_bps=float(raw_maker_net),
-                    touch_maker_blocked=int(bool(liveness_touch_maker_blocked)),
-                    taker_net_bps=float(taker_net), wait_ev_bps=float(wait_ev),
-                    **liveness_stage.as_log(),
-                )
-            except Exception:
-                pass
-        peaks = getattr(self, "_research_peak_taker_net_bps", None)
-        if not isinstance(peaks, dict):
-            peaks = {}
-            self._research_peak_taker_net_bps = peaks
-        peak = max(float(peaks.get(int(book_id), taker_net)), float(taker_net))
-        peaks[int(book_id)] = peak
-        unified = choose_unified_exit(
-            maker_net_bps=maker_net, taker_net_bps=taker_net, wait_ev_bps=wait_ev,
-            maker_price=maker_px, taker_price=taker_px, breakeven_px=be_px,
-            p_maker_fill=p_maker, peak_taker_net_bps=peak,
-            failed_exit_count=int(failed_exit_count), inventory_age=max(
-                float(getattr(inventory, "position_ticks", 0) or 0),
-                float(time_since_first_exit_attempt),
-            ),
-            observations_remaining=int(observations_remaining),
-            expected_markout_bps=float(expected_markout or 0.0),
-            adverse_selection_risk=float(adverse_selection_risk or 0.0),
-            inventory_state=str(getattr(legacy, "state", "NORMAL") or "NORMAL"),
-            stop_loss_hit=bool(stop_hit), hard_emergency=bool(hard_emergency),
-            profit_lock_min_bps=float(getattr(self, "research_unified_profit_lock_min_bps", 1.0)),
-            profit_lock_drawdown_bps=float(getattr(self, "research_unified_profit_lock_drawdown_bps", 2.0)),
-            switch_margin_bps=float(getattr(self, "research_unified_switch_margin_bps", 0.50)),
-            protective_enabled=bool(getattr(self, "research_enable_protective_taker", True)),
-            protective_loss_floor_bps=float(getattr(self, "research_protective_taker_loss_floor_bps", -2.0)),
-            protective_ev_advantage_bps=float(getattr(self, "research_protective_taker_ev_advantage_bps", 1.0)),
-            protective_failed_exits=int(getattr(self, "research_protective_taker_failed_exits", 6)),
-            protective_min_age_ticks=float(getattr(self, "research_protective_taker_min_age_ticks", 8.0)),
-            protective_adverse_bps=float(getattr(self, "research_protective_taker_adverse_bps", 2.0)),
-            early_escape_enabled=bool(getattr(self, "research_early_escape_enabled", True)),
-            early_escape_failed_exits=int(getattr(self, "research_early_escape_failed_exits", 3)),
-            early_escape_min_age_ticks=float(getattr(self, "research_early_escape_min_age_ticks", 5.0)),
-            early_escape_drawdown_bps=float(getattr(self, "research_early_escape_drawdown_bps", 1.5)),
-            early_escape_floor_headroom_bps=float(getattr(self, "research_early_escape_floor_headroom_bps", 0.75)),
-            early_escape_ev_advantage_bps=float(getattr(self, "research_early_escape_ev_advantage_bps", 0.50)),
-        )
-        positive_maker_veto_active = positive_maker_rescue_veto_applies(
+        qty_abs = abs(float(getattr(inventory, "net_base", 0.0) or 0.0))
+        min_size = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        expiry_urgency = 0.0
+        try:
+            expiry = self._research_kappa_expiry(int(book_id))
+            expiry_urgency = float(getattr(expiry, "expiry_urgency", 0.0) or 0.0)
+        except Exception:
+            expiry_urgency = 0.0
+        exit_decision = choose_position_exit(
             maker_net_bps=float(maker_net),
             taker_net_bps=float(taker_net),
-            maker_executable=not bool(liveness_touch_maker_blocked),
-            failed_exit_count=int(failed_exit_count),
-            stop_loss_hit=bool(stop_hit),
-            inventory_state=str(getattr(legacy, "state", "NORMAL") or "NORMAL"),
-            hard_risk=bool(hard_emergency or getattr(unified, "hard_risk_trigger", False)),
-            enabled=bool(getattr(self, "research_positive_maker_veto_enabled", True)),
-            maker_positive_floor_bps=float(getattr(self, "research_positive_maker_veto_floor_bps", 1.0)),
-            max_failed_exits=int(getattr(self, "research_positive_maker_veto_max_failed_exits", 3)),
-        )
-        if positive_maker_veto_active and unified.action != UNIFIED_KEEP_MAKER:
-            unified = replace(
-                unified, action=UNIFIED_KEEP_MAKER, reason="POSITIVE_MAKER_VETO",
-            )
-            try:
-                self._emit(
-                    "POSITIVE_MAKER_VETO", force=True, tick=getattr(self, "_tick", None),
-                    book=int(book_id), selected_action="MAKER",
-                    maker_action=str(maker_action), maker_net_bps=float(maker_net),
-                    taker_net_bps=float(taker_net), failed_exits=int(failed_exit_count),
-                    inventory_age=max(
-                        float(getattr(inventory, "position_ticks", 0) or 0),
-                        float(time_since_first_exit_attempt),
-                    ),
-                    maker_floor_bps=float(getattr(self, "research_positive_maker_veto_floor_bps", 1.0)),
-                    max_failed_exits=int(getattr(self, "research_positive_maker_veto_max_failed_exits", 3)),
-                )
-            except Exception:
-                pass
-        # V4.14.0 long-run tail containment. This intentionally outranks
-        # Positive-Maker/Kappa parking once a small adverse loss is deteriorating,
-        # because recycling a -8..-25 bps loss is preferable to a multi-hour
-        # -1000+ bps parked position. It adds no state: peak Taker is already kept.
-        inventory_age = max(
-            float(getattr(inventory, "position_ticks", 0) or 0),
-            float(time_since_first_exit_attempt),
-        )
-        bounded_loss_reason = bounded_loss_escape_reason(
-            taker_net_bps=float(taker_net),
-            peak_taker_net_bps=float(peak),
+            p_maker_fill=float(p_maker),
+            unrealized_bps=float(taker_net),
+            inventory_qty=qty_abs,
             inventory_age=float(inventory_age),
-            maker_net_bps=float(maker_net),
             failed_exit_count=int(failed_exit_count),
-            enabled=bool(getattr(self, "research_bounded_loss_escape_enabled", True)),
-            min_age_ticks=float(getattr(self, "research_bounded_loss_escape_min_age_ticks", 2.0)),
-            soft_floor_bps=float(getattr(self, "research_liveness_soft_taker_floor_bps", -8.0)),
-            hard_trigger_bps=float(getattr(self, "research_bounded_loss_escape_hard_trigger_bps", -18.0)),
-            hard_floor_bps=float(getattr(self, "research_bounded_loss_escape_floor_bps", -25.0)),
-            min_drawdown_bps=float(getattr(self, "research_bounded_loss_escape_drawdown_bps", 2.0)),
-            maker_positive_floor_bps=float(getattr(self, "research_positive_maker_veto_floor_bps", 1.0)),
-            soft_maker_failed_exits=int(getattr(self, "research_positive_maker_veto_max_failed_exits", 4)),
-            soft_maker_min_age_ticks=float(getattr(self, "research_liveness_maker_min_age_ticks", 8.0)),
-        )
-        bounded_loss_escape = bounded_loss_reason in {"SOFT_ESCAPE", "HARD_ESCAPE"}
-        if bounded_loss_reason == "SOFT_MAKER_HOLD":
-            try:
-                self._emit(
-                    "BOUNDED_LOSS_SOFT_HOLD", force=True, tick=getattr(self, "_tick", None),
-                    book=int(book_id), selected_action="MAKER",
-                    maker_net_bps=float(maker_net), taker_net_bps=float(taker_net),
-                    peak_taker_net_bps=float(peak), inventory_age=float(inventory_age),
-                    failed_exits=int(failed_exit_count),
-                    hard_trigger_bps=float(getattr(self, "research_bounded_loss_escape_hard_trigger_bps", -18.0)),
-                )
-            except Exception:
-                pass
-        if bounded_loss_escape:
-            unified = replace(
-                unified, action=UNIFIED_TAKER_PROTECT, reason="BOUNDED_LOSS_ESCAPE",
-            )
-            try:
-                self._emit(
-                    "BOUNDED_LOSS_ESCAPE", force=True, tick=getattr(self, "_tick", None),
-                    book=int(book_id), selected_action=ACTION_TAKER,
-                    stage=str(bounded_loss_reason),
-                    maker_net_bps=float(maker_net), taker_net_bps=float(taker_net),
-                    peak_taker_net_bps=float(peak), inventory_age=float(inventory_age),
-                    loss_floor_bps=float(getattr(self, "research_bounded_loss_escape_floor_bps", -25.0)),
-                    hard_trigger_bps=float(getattr(self, "research_bounded_loss_escape_hard_trigger_bps", -18.0)),
-                )
-            except Exception:
-                pass
-
-        liveness_override = False
-        liveness_parked_now = False
-
-        # === V4.14.4 REALNET DEFECT FIX P1: single non-catastrophic loss authority ===
-        realnet_exit_override = False
-        realnet_exit_decision = arbitrate_realnet_exit(
-            taker_net_bps=float(taker_net),
-            maker_net_bps=float(maker_net),
-            maker_executable=not bool(liveness_touch_maker_blocked),
-            failed_exit_count=int(failed_exit_count),
-            inventory_age=max(
-                float(getattr(inventory, "position_ticks", 0) or 0),
-                float(time_since_first_exit_attempt),
-            ),
+            observations_remaining=int(observations_remaining),
+            required_observations=int(self._research_required_observation_count()),
+            holding_bps=float(holding),
+            adverse_risk=float(adverse_selection_risk or 0.0),
+            expiry_urgency=float(expiry_urgency),
+            capital_release=min(1.0, qty_abs / max(min_size, 1e-9) * 0.25),
+            inventory_risk=math.tanh(float(inventory_age) / 16.0),
+            crossing_bps=float(taker_fee) + 0.5 * max(0.0, ((ask - bid) / max((ask + bid) * 0.5, 1e-9)) * 10_000.0),
+            maker_executable=True,
             stop_loss_hit=bool(stop_hit),
-            catastrophic_hard_risk=bool(hard_emergency or legacy_risk_authority),
-            adverse_evidence=bool(
-                bool(stop_hit)
-                or float(expected_markout or 0.0) <= -1.0
-                or float(adverse_selection_risk or 0.0) >= 0.25
-            ),
-            wait_ev_bps=float(wait_ev),
-            liveness_authorized=bool(
-                liveness_rescue is not None and getattr(liveness_rescue, "authorized", False)
-            ),
-            liveness_park=bool(
-                liveness_rescue is not None and getattr(liveness_rescue, "park", False)
-            ),
-            liveness_floor_bps=(
-                None if liveness_rescue is None
-                else float(getattr(liveness_rescue, "allowed_loss_floor_bps", -12.0))
-            ),
-            soft_floor_bps=float(
-                getattr(self, "research_liveness_soft_taker_floor_bps", -8.0)
-            ),
-            hard_trigger_bps=float(
-                getattr(self, "research_bounded_loss_escape_hard_trigger_bps", -18.0)
-            ),
-            absolute_floor_bps=float(
-                getattr(self, "research_bounded_loss_escape_floor_bps", -25.0)
-            ),
-            bounded_loss_min_age_ticks=float(
-                getattr(self, "research_bounded_loss_escape_min_age_ticks", 2.0) or 2.0
-            ),
-            positive_maker_floor_bps=float(
-                getattr(self, "research_positive_maker_veto_floor_bps", 1.0) or 1.0
-            ),
-            positive_maker_max_failed_exits=int(
-                getattr(self, "research_positive_maker_veto_max_failed_exits", 4) or 4
-            ),
-            positive_maker_max_age_ticks=float(
-                getattr(self, "research_liveness_maker_min_age_ticks", 8.0) or 8.0
-            ),
+            catastrophic_hard_risk=bool(hard_emergency),
+            min_order=min_size,
+            taker_clip=min_size,
         )
         try:
             self._emit(
-                "REALNET_EXIT_AUTHORITY", force=True,
-                tick=getattr(self, "_tick", None),
+                "EXIT_DECISION", force=True, tick=getattr(self, "_tick", None),
                 book=int(book_id),
-                **realnet_exit_decision.as_log(),
+                inventory=qty_abs,
+                inventory_age=float(inventory_age),
+                unrealized_bps=float(taker_net),
+                **exit_decision.as_log(),
             )
         except Exception:
             pass
-
-        # Suppress the old liveness side effects whenever the V4.14.4 bounded
-        # authority owns this price corridor. This is what removes the -12 bps
-        # floor / V4.14.3 -18..-25 contradiction.
-        if realnet_exit_decision.action == REALNET_KEEP_MAKER:
-            unified = replace(
-                unified, action=UNIFIED_KEEP_MAKER,
-                reason="REALNET_BOUNDED_LOSS_SOFT_HOLD",
-            )
-            liveness_rescue = None
-            maker_grace_active = False
-            liveness_override = False
-        elif realnet_exit_decision.action == REALNET_TAKER_ESCAPE:
-            unified = replace(
-                unified, action=UNIFIED_TAKER_PROTECT,
-                reason="REALNET_BOUNDED_LOSS_" + str(realnet_exit_decision.stage),
-            )
-            liveness_rescue = None
-            maker_grace_active = False
-            liveness_override = False
-            realnet_exit_override = True
-        elif realnet_exit_decision.action == REALNET_PARK:
-            unified = replace(
-                unified, action=UNIFIED_KEEP_MAKER,
-                reason="REALNET_BELOW_ABSOLUTE_FLOOR_PARK",
-            )
-            liveness_rescue = None
-            maker_grace_active = False
-            liveness_override = False
-            liveness_parked_now = self._research_park_inventory(
+        unified_action = UNIFIED_KEEP_MAKER
+        if exit_decision.action == ACTION_TAKER_EXIT:
+            unified_action = UNIFIED_TAKER_PROTECT
+        elif exit_decision.action == ACTION_PARK_EXIT:
+            unified_action = UNIFIED_KEEP_MAKER
+        unified = UnifiedExitDecision(
+            action=unified_action,
+            reason=str(exit_decision.reason),
+            maker_net_bps=float(maker_net),
+            taker_net_bps=float(taker_net),
+            wait_ev_bps=float(wait_ev),
+            maker_price=float(maker_px),
+            taker_price=float(taker_px),
+            breakeven_price=float(be_px),
+            p_maker_fill=float(p_maker),
+            peak_taker_net_bps=float(taker_net),
+            profit_drawdown_bps=0.0,
+            protective_trigger=exit_decision.risk_band in {"HARD_ESCAPE", "ABSOLUTE_PROTECTION"},
+            profit_lock_trigger=False,
+            hard_risk_trigger=bool(hard_emergency),
+            emergency_state_only=False,
+            stop_loss_hit=bool(stop_hit),
+            early_escape_trigger=False,
+            early_escape_reason="",
+            protective_loss_headroom_bps=0.0,
+            protective_margin_bps=0.0,
+        )
+        self._research_unified_exit_last[int(book_id)] = unified
+        if exit_decision.action == ACTION_PARK_EXIT:
+            self._research_park_inventory(
                 int(book_id), inventory=inventory, book=book,
                 score_state=str(liveness_stage.score_state),
                 taker_net_bps=float(taker_net),
-                rescue_floor_bps=float(realnet_exit_decision.absolute_floor_bps),
-                protected_floor_bps=float(realnet_exit_decision.absolute_floor_bps),
+                rescue_floor_bps=-25.0,
+                protected_floor_bps=-25.0,
                 loss_rescue_eligible=True, park_eligible=True,
                 park_state="PARKED_REALNET_ABSOLUTE_FLOOR",
-                reason=str(realnet_exit_decision.reason),
+                reason=str(exit_decision.reason),
             )
-
-        if not liveness_parked_now and unified.action == UNIFIED_KEEP_MAKER:
-            if protected_park_decision is not None and bool(protected_park_decision.park):
-                liveness_parked_now = self._research_park_inventory(
-                    int(book_id), inventory=inventory, book=book,
-                    score_state=str(liveness_stage.score_state),
-                    taker_net_bps=float(taker_net),
-                    rescue_floor_bps=float(maker_floor),
-                    protected_floor_bps=float(maker_floor),
-                    loss_rescue_eligible=False,
-                    park_eligible=True,
-                    park_state="PARKED_PROTECTED",
-                    reason=str(protected_park_decision.reason),
-                )
-                try:
-                    self._emit(
-                        "PROTECTED_REFRESH_BLOCKED", force=True, tick=getattr(self, "_tick", None),
-                        book=int(book_id), phase="PARK",
-                        **liveness_stage.as_log(), **protected_park_decision.as_log(),
-                    )
-                except Exception:
-                    pass
-            elif liveness_rescue is not None and bool(liveness_rescue.authorized):
-                if positive_maker_veto_active:
-                    # V4.13.5: the unified/liveness rescue may be economically
-                    # authorized, but ordinary negative Taker authority remains
-                    # junior to a meaningful executable Maker profit until the
-                    # bounded failed-exit limit is reached.
-                    pass
-                elif maker_grace_active:
-                    # V4.13.2: a fresh position with zero failed exits and a
-                    # profitable executable Maker close must get a short Maker
-                    # chance before the event-driven -8/-12 bps Taker rescue.
-                    # Stop-loss, hard inventory bands, EXIT_ONLY/EMERGENCY, and
-                    # all later rescue stages remain authoritative.
-                    try:
-                        self._emit(
-                            "MAKER_GRACE", force=True, tick=getattr(self, "_tick", None),
-                            book=int(book_id), selected_action="MAKER",
-                            maker_net_bps=float(maker_net), taker_net_bps=float(taker_net),
-                            grace_ticks=float(getattr(self, "research_fresh_maker_grace_ticks", 3.0)),
-                            **liveness_stage.as_log(), **liveness_rescue.as_log(),
-                        )
-                    except Exception:
-                        pass
-                else:
-                    liveness_override = True
-                    self._research_inventory_rescue_taker = int(
-                        getattr(self, "_research_inventory_rescue_taker", 0) or 0
-                    ) + 1
-                    unified = replace(
-                        unified,
-                        action=UNIFIED_TAKER_PROTECT,
-                        reason="INVENTORY_LIVENESS_BOUNDED_RESCUE",
-                    )
-                    try:
-                        self._emit(
-                            "RESCUE_TAKER", force=True, tick=getattr(self, "_tick", None),
-                            book=int(book_id), selected_action=ACTION_TAKER,
-                            **liveness_stage.as_log(), **liveness_rescue.as_log(),
-                        )
-                    except Exception:
-                        pass
-            elif liveness_rescue is not None and bool(liveness_touch_maker_blocked):
-                # The only executable post-only touch price is outside the
-                # Maker loss budget and Taker rescue was not authorized. PARK
-                # instead of submitting a fake-aggressive breakeven order.
-                liveness_parked_now = self._research_park_inventory(
-                    int(book_id), inventory=inventory, book=book,
-                    score_state=str(liveness_stage.score_state),
-                    taker_net_bps=float(taker_net),
-                    rescue_floor_bps=float(liveness_stage.hard_floor_bps),
-                    protected_floor_bps=float(liveness_stage.hard_floor_bps),
-                    loss_rescue_eligible=True, park_eligible=True,
-                    park_state="PARKED_LIVENESS",
-                    reason="TOUCH_MAKER_BEYOND_FLOOR",
-                )
-            elif liveness_rescue is not None and bool(liveness_rescue.park):
-                liveness_parked_now = self._research_park_inventory(
-                    int(book_id), inventory=inventory, book=book,
-                    score_state=str(liveness_stage.score_state),
-                    taker_net_bps=float(taker_net),
-                    rescue_floor_bps=float(liveness_stage.hard_floor_bps),
-                    protected_floor_bps=float(liveness_stage.hard_floor_bps),
-                    loss_rescue_eligible=True, park_eligible=True,
-                    park_state="PARKED_LIVENESS",
-                    reason=str(liveness_rescue.reason),
-                )
-                if not liveness_parked_now:
-                    self._research_inventory_rescue_blocked = int(
-                        getattr(self, "_research_inventory_rescue_blocked", 0) or 0
-                    ) + 1
-            elif liveness_rescue is not None and liveness_stage.taker_rescue_armed:
-                self._research_inventory_rescue_blocked = int(
-                    getattr(self, "_research_inventory_rescue_blocked", 0) or 0
-                ) + 1
-                try:
-                    self._emit(
-                        "RESCUE_BLOCKED", force=True, tick=getattr(self, "_tick", None),
-                        book=int(book_id), **liveness_stage.as_log(), **liveness_rescue.as_log(),
-                    )
-                except Exception:
-                    pass
-
-        # V4.12.10 final blocker fix. The legacy positive-EV/SN79 layer compares
-        # incremental exit choices, where the already-paid entry fee is sunk. The
-        # unified layer reports total round-trip PnL, which includes that entry fee.
-        # Do not let that accounting-basis difference silently erase an otherwise
-        # valid stale-capital release. Bridge only under very strict conditions and
-        # retain a hard total round-trip floor of -12 bps.
-        bridge = False
-        # A V4.12.17 park decision is authoritative for this response. The
-        # legacy bridge must not silently convert a soft-window PARK into a
-        # Taker exit using its wider -12 bps floor.
-        if (
-            unified.action == UNIFIED_KEEP_MAKER
-            and not liveness_parked_now
-            and not positive_maker_veto_active
-        ):
-            legacy_ev = getattr(legacy, "maker_taker_ev", None)
-            action_utility = getattr(legacy, "action_utility", None)
-            legacy_taker_raw = getattr(legacy_ev, "expected_taker_exit_value", None)
-            legacy_wait_raw = getattr(legacy_ev, "expected_maker_exit_value", None)
-            legacy_taker_ev = -1e9 if legacy_taker_raw is None else float(legacy_taker_raw)
-            legacy_wait_ev = 1e9 if legacy_wait_raw is None else float(legacy_wait_raw)
-            maker_fill_evidence = bool(
-                actual_hazard is not None
-                or getattr(legacy, "maker_fill_hazard", None) is not None
-            )
-            bridge = bounded_stale_direct_bridge(
-                legacy_direct_authorized=bool(
-                    getattr(legacy, "direct_taker_authorized", False)
-                ),
-                positive_ev_authorized=bool(
-                    getattr(legacy, "aggressive_positive_ev_taker_authorized", False)
-                ),
-                sn79_take=bool(getattr(action_utility, "take", False)),
-                legacy_taker_ev_bps=legacy_taker_ev,
-                legacy_wait_ev_bps=legacy_wait_ev,
-                actual_roundtrip_taker_net_bps=float(taker_net),
-                p_maker_fill=float(p_maker),
-                maker_fill_evidence=maker_fill_evidence,
-                failed_exit_count=int(failed_exit_count),
-                inventory_age=max(
-                    float(getattr(inventory, "position_ticks", 0) or 0),
-                    float(time_since_first_exit_attempt),
-                ),
-                min_failed_exits=int(getattr(
-                    self, "research_aggressive_positive_ev_failed_exit_count", 8
-                )),
-                min_age_ticks=float(getattr(
-                    self, "research_aggressive_positive_ev_min_age_ticks", 16.0
-                )),
-                max_maker_fill=float(getattr(
-                    self, "research_aggressive_positive_ev_max_maker_fill", 0.08
-                )),
-                ev_advantage_bps=float(getattr(
-                    self, "research_aggressive_positive_ev_switch_margin_bps", 0.50
-                )),
-                roundtrip_loss_floor_bps=float(getattr(
-                    self, "research_unified_stale_bridge_roundtrip_floor_bps", -12.0
-                )),
-            )
-            if bridge:
-                unified = replace(
-                    unified,
-                    action=UNIFIED_TAKER_STALE_BRIDGE,
-                    reason="BOUNDED_STALE_DIRECT_GT_WAIT",
-                )
-                try:
-                    self._emit(
-                        "TAKER_BRIDGE", force=True, tick=getattr(self, "_tick", None),
-                        book=int(book_id), authority=str(getattr(legacy, "taker_authority", "NONE")),
-                        failed_exits=int(failed_exit_count),
-                        inventory_age=max(
-                            float(getattr(inventory, "position_ticks", 0) or 0),
-                            float(time_since_first_exit_attempt),
-                        ),
-                        maker_fill=float(p_maker), incremental_taker_ev_bps=legacy_taker_ev,
-                        incremental_wait_ev_bps=legacy_wait_ev,
-                        roundtrip_taker_net_bps=float(taker_net),
-                        roundtrip_floor_bps=float(getattr(
-                            self, "research_unified_stale_bridge_roundtrip_floor_bps", -12.0
-                        )),
-                    )
-                except Exception:
-                    pass
-        if (
-            liveness_maker_active
-            and not liveness_touch_maker_blocked
-            and unified.action == UNIFIED_KEEP_MAKER
-            and not liveness_parked_now
-        ):
-            self._research_inventory_rescue_maker = int(
-                getattr(self, "_research_inventory_rescue_maker", 0) or 0
-            ) + 1
-            try:
-                self._emit(
-                    "RESCUE_MAKER", force=True, tick=getattr(self, "_tick", None),
-                    book=int(book_id), selected_action=maker_action,
-                    maker_price=float(maker_px), maker_net_bps=float(maker_net),
-                    taker_net_bps=float(taker_net), wait_ev_bps=float(wait_ev),
-                    **liveness_stage.as_log(),
-                )
-            except Exception:
-                pass
-
-        # Re-apply the V4.14.4 arbiter after legacy stale-bridge / bounded-loss
-        # transformations. No older non-catastrophic layer may override it.
-        if realnet_exit_decision.action == REALNET_KEEP_MAKER:
-            unified = replace(
-                unified, action=UNIFIED_KEEP_MAKER,
-                reason="REALNET_BOUNDED_LOSS_SOFT_HOLD",
-            )
-            liveness_override = False
-            realnet_exit_override = False
-        elif realnet_exit_decision.action == REALNET_TAKER_ESCAPE:
-            unified = replace(
-                unified, action=UNIFIED_TAKER_PROTECT,
-                reason="REALNET_BOUNDED_LOSS_" + str(realnet_exit_decision.stage),
-            )
-            liveness_override = False
-            realnet_exit_override = True
-        elif realnet_exit_decision.action == REALNET_PARK:
-            unified = replace(
-                unified, action=UNIFIED_KEEP_MAKER,
-                reason="REALNET_BELOW_ABSOLUTE_FLOOR_PARK",
-            )
-            liveness_override = False
-            realnet_exit_override = False
-            # Parked books still quote; sitting two ticks behind touch is why
-            # books 112/115/96 never left PARKED_HOLD on the 31 Aug log.
-            if str(maker_action or "").upper() == ACTION_PASSIVE:
-                maker_action = ACTION_COMPETITIVE
-
-        self._research_unified_exit_last[int(book_id)] = unified
-        if unified.action == UNIFIED_KEEP_MAKER:
             return replace(
                 legacy,
                 action=maker_action, selected_action=maker_action,
@@ -8225,90 +7728,38 @@ class Strategy1_Research(Strategy1_Debug):
                 taker_allowed=False, direct_taker_authorized=False,
                 economic_taker_authorized=False, score_taker_authorized=False,
                 risk_taker_authorized=False, aggressive_positive_ev_taker_authorized=False,
-                taker_authority="NONE", trigger=unified.reason, hybrid_reason=unified.reason,
-                unified_exit=unified,
+                taker_authority="NONE", trigger=exit_decision.reason,
+                hybrid_reason=exit_decision.reason, unified_exit=unified,
             )
-
-        if realnet_exit_override:
+        if exit_decision.action == ACTION_TAKER_EXIT:
+            frac = 1.0
+            if qty_abs > 1e-12:
+                frac = min(1.0, max(0.0, float(exit_decision.selected_qty) / qty_abs))
+            hard_band = exit_decision.risk_band in {"HARD_ESCAPE", "ABSOLUTE_PROTECTION"}
             return replace(
                 legacy,
                 action=ACTION_TAKER, selected_action=ACTION_TAKER,
                 maker_exit_ev=maker_net, maker_fill_hazard=p_maker,
-                taker_allowed=True, taker_qty_frac=1.0,
+                taker_allowed=True, taker_qty_frac=frac,
                 direct_taker_authorized=True,
-                economic_taker_authorized=False,
+                economic_taker_authorized=not hard_band,
                 score_taker_authorized=False,
-                risk_taker_authorized=True,
+                risk_taker_authorized=hard_band,
                 aggressive_positive_ev_taker_authorized=False,
-                taker_authority="RISK",
-                allowed_loss_floor_bps=float(realnet_exit_decision.absolute_floor_bps),
-                trigger="REALNET_BOUNDED_LOSS_" + str(realnet_exit_decision.stage),
-                hybrid_reason=str(realnet_exit_decision.reason),
+                taker_authority="RISK" if hard_band else "ECONOMIC",
+                allowed_loss_floor_bps=-25.0 if hard_band else 0.0,
+                trigger=exit_decision.reason, hybrid_reason=exit_decision.reason,
                 unified_exit=unified,
             )
-
-        if liveness_override:
-            return replace(
-                legacy,
-                action=ACTION_TAKER, selected_action=ACTION_TAKER,
-                maker_exit_ev=maker_net, maker_fill_hazard=p_maker,
-                taker_allowed=True, taker_qty_frac=1.0,
-                direct_taker_authorized=True,
-                economic_taker_authorized=False,
-                score_taker_authorized=False,
-                risk_taker_authorized=True,
-                aggressive_positive_ev_taker_authorized=False,
-                taker_authority="RISK",
-                allowed_loss_floor_bps=float(liveness_rescue.allowed_loss_floor_bps),
-                trigger="INVENTORY_LIVENESS_RESCUE",
-                hybrid_reason="BOUNDED_RESCUE_GT_WAIT",
-                unified_exit=unified,
-            )
-        if unified.action == UNIFIED_TAKER_STALE_BRIDGE:
-            authority = str(getattr(legacy, "taker_authority", "ECONOMIC") or "ECONOMIC")
-            bridge_floor = float(getattr(
-                self, "research_unified_stale_bridge_roundtrip_floor_bps", -12.0
-            ))
-            return replace(
-                legacy,
-                action=ACTION_TAKER, selected_action=ACTION_TAKER,
-                maker_exit_ev=maker_net, maker_fill_hazard=p_maker,
-                taker_allowed=True,
-                taker_qty_frac=max(0.90, float(getattr(legacy, "taker_qty_frac", 0.0) or 0.0)),
-                direct_taker_authorized=True,
-                economic_taker_authorized=bool(authority == "ECONOMIC"),
-                score_taker_authorized=bool(authority == "SCORE"),
-                risk_taker_authorized=False,
-                aggressive_positive_ev_taker_authorized=True,
-                taker_authority=authority, allowed_loss_floor_bps=bridge_floor,
-                trigger=UNIFIED_TAKER_STALE_BRIDGE,
-                hybrid_reason="BOUNDED_STALE_DIRECT_GT_WAIT", unified_exit=unified,
-            )
-        if unified.action == UNIFIED_TAKER_PROFIT_LOCK:
-            authority = "ECONOMIC"
-            floor = 0.0
-            econ_auth, risk_auth = True, False
-        elif unified.action == UNIFIED_TAKER_PROTECT:
-            authority = "RISK"
-            if str(getattr(unified, "reason", "")) == "BOUNDED_LOSS_ESCAPE":
-                floor = float(getattr(self, "research_bounded_loss_escape_floor_bps", -25.0))
-            else:
-                floor = float(getattr(self, "research_protective_taker_loss_floor_bps", -2.0))
-            econ_auth, risk_auth = False, True
-        else:
-            authority = "RISK"
-            floor = float(getattr(self, "research_risk_direct_max_loss_bps", -10.0))
-            econ_auth, risk_auth = False, True
         return replace(
             legacy,
-            action=ACTION_TAKER, selected_action=ACTION_TAKER,
+            action=maker_action, selected_action=maker_action,
             maker_exit_ev=maker_net, maker_fill_hazard=p_maker,
-            taker_allowed=True, taker_qty_frac=1.0,
-            direct_taker_authorized=True, economic_taker_authorized=econ_auth,
-            score_taker_authorized=False, risk_taker_authorized=risk_auth,
-            aggressive_positive_ev_taker_authorized=False,
-            taker_authority=authority, allowed_loss_floor_bps=floor,
-            trigger=unified.action, hybrid_reason=unified.reason, unified_exit=unified,
+            taker_allowed=False, direct_taker_authorized=False,
+            economic_taker_authorized=False, score_taker_authorized=False,
+            risk_taker_authorized=False, aggressive_positive_ev_taker_authorized=False,
+            taker_authority="NONE", trigger=exit_decision.reason,
+            hybrid_reason=exit_decision.reason, unified_exit=unified,
         )
 
     def _research_evaluate_realization(
@@ -8435,25 +7886,19 @@ class Strategy1_Research(Strategy1_Debug):
             use_fill_hazard_ev=bool(
                 getattr(self, "research_enable_fill_hazard_exit_compare", True)
             ),
-            allow_economic_taker=bool(getattr(self, "research_enable_economic_taker", True)),
+            allow_economic_taker=False,
             enable_sn79_action_utility=bool(
                 getattr(self, "research_enable_sn79_action_utility", True)
             ),
-            allow_score_taker_direct=bool(
-                getattr(self, "research_enable_score_taker_direct", True)
-            ),
-            allow_economic_taker_direct=bool(
-                getattr(self, "research_enable_economic_taker_direct", True)
-            ),
+            allow_score_taker_direct=False,
+            allow_economic_taker_direct=False,
             economic_direct_max_loss_bps=float(
                 getattr(self, "research_economic_direct_max_loss_bps", -20.0)
             ),
             risk_direct_max_loss_bps=float(
                 getattr(self, "research_risk_direct_max_loss_bps", -10.0)
             ),
-            allow_aggressive_positive_ev_taker=bool(
-                getattr(self, "research_enable_aggressive_positive_ev_taker", True)
-            ),
+            allow_aggressive_positive_ev_taker=False,
             aggressive_positive_ev_min_net_bps=float(
                 getattr(self, "research_aggressive_positive_ev_min_net_bps", 0.0)
             ),
@@ -8931,7 +8376,7 @@ class Strategy1_Research(Strategy1_Debug):
             unified_action = str(getattr(unified, "action", "") or "")
             if catastrophic:
                 frac = 1.0
-            elif unified_action in {UNIFIED_TAKER_PROFIT_LOCK, UNIFIED_TAKER_PROTECT} and raw_inv < 2.0 * min_size - 1e-12:
+            elif unified_action == UNIFIED_TAKER_PROTECT and raw_inv < 2.0 * min_size - 1e-12:
                 # A 0.25 position at a 0.25 exchange minimum cannot be split safely.
                 frac = 1.0
             else:
@@ -10027,13 +9472,47 @@ class Strategy1_Research(Strategy1_Debug):
         if book_id is not None:
             ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(int(book_id))
             if ev is not None:
-                trading_ev = float(getattr(ev, "trading_ev", 0.0) or 0.0)
+                trading_ev = float(getattr(ev, "lifecycle_ev", getattr(ev, "trading_ev", 0.0)) or 0.0)
+                if not math.isfinite(trading_ev):
+                    trading_ev = float(getattr(ev, "trading_ev", 0.0) or 0.0)
         headroom = 1.0
         if book_id is not None:
             headroom = self._research_volume_cap_headroom(
                 getattr(self, "_research_volume_cap_state", None),
                 int(book_id),
             )
+        p_fill = 0.50
+        remaining_obs = 3
+        kappa_remaining = None
+        if book_id is not None:
+            ev_row = (getattr(self, "_research_score_ev_last", {}) or {}).get(int(book_id))
+            if ev_row is not None:
+                try:
+                    p_fill = float(getattr(ev_row, "actionable_fill_prob", 0.50) or 0.50)
+                except (TypeError, ValueError):
+                    p_fill = 0.50
+                try:
+                    remaining_obs = int(getattr(ev_row, "observations_remaining", 3) or 3)
+                except (TypeError, ValueError):
+                    remaining_obs = 3
+            try:
+                kappa_remaining = int(self._research_kappa_book(int(book_id)).observations_remaining)
+            except Exception:
+                kappa_remaining = None
+        role = maker_entry_size(
+            lifecycle_ev=trading_ev,
+            p_fill=p_fill,
+            observations_remaining=remaining_obs if kappa_remaining is None else int(kappa_remaining),
+            min_order=min_size,
+            inventory_headroom=remaining,
+            volume_headroom=max(0.0, float(headroom)) * max(min_size, 1.0),
+        )
+        if role.size > 0.0:
+            size = min(size, self._round_order_size(float(role.size), vol_dec))
+            if size + 1e-12 < min_size <= float(role.size) + 1e-12:
+                size = self._round_order_size(float(role.size), vol_dec)
+        else:
+            size = 0.0
         risk_after_min = 0.0
         if min_size > 0.0:
             after_min = abs(float(inventory.net_base)) + min_size
@@ -10048,12 +9527,6 @@ class Strategy1_Research(Strategy1_Debug):
         exit_capacity = (
             float(entry.expected_exit_capacity) if entry is not None else remaining
         )
-        kappa_remaining = None
-        if book_id is not None:
-            try:
-                kappa_remaining = int(self._research_kappa_book(int(book_id)).observations_remaining)
-            except Exception:
-                kappa_remaining = None
         # Exact-min admission follows the same single TOTAL_SCORE authority as
         # lane selection. No historical CORE/cohort state can grant privilege.
         total_score_due = bool(
@@ -10520,14 +9993,39 @@ class Strategy1_Research(Strategy1_Debug):
             return 0
         self._research_volume_cap_bind_book(book_id)
         cap = self._research_volume_cap_quote(state)
-        if cap > 0.0 and self._research_volume_cap_remaining(state, book_id) <= 0.0:
+        volume_capped = cap > 0.0 and self._research_volume_cap_remaining(state, book_id) <= 0.0
+        inventory_blocked = str(getattr(inventory, "band", "")).upper() in {
+            "MAX_LONG", "MAX_SHORT",
+        }
+        toxic = str(getattr(self, "_research_market_regime", "") or "").upper() in {
+            "TOXIC",
+        }
+        guard = evaluate_risk_guard(
+            inventory_blocked=inventory_blocked,
+            volume_capped=volume_capped,
+            toxic=toxic,
+            unsafe=str(getattr(inventory, "band", "")).upper() == "UNSAFE",
+        )
+        if not guard.safe:
             if self.debug_enabled:
                 record = self._book_record(book_id)
                 record["action"] = "SKIP"
-                record["reason"] = "VOLUME_CAP"
-            self._research_emit_volume_cap(
-                state, book_id, allowed=False, reason="CAP_REACHED", force=True,
-            )
+                record["reason"] = str(guard.reason or "UNSAFE")
+            if volume_capped:
+                self._research_emit_volume_cap(
+                    state, book_id, allowed=False, reason="CAP_REACHED", force=True,
+                )
+            try:
+                self._emit(
+                    "ENTRY_DECISION", force=True, tick=getattr(self, "_tick", None),
+                    book=int(book_id), lane=None, safe=0,
+                    hard_reject_reason=str(guard.reason or "UNSAFE"),
+                    lifecycle_ev=None, total_score_value=None,
+                    selected_action="SKIP", reason=str(guard.reason or "UNSAFE"),
+                    inventory_before=float(getattr(inventory, "net_base", 0.0) or 0.0),
+                )
+            except Exception:
+                pass
             return 0
         completion_samples = self._completion_observation_count(book_id)
         # Candidate screening is the sole lane allocator. Flat books default to
@@ -10564,6 +10062,82 @@ class Strategy1_Research(Strategy1_Debug):
                 record["scheduler_lane"] = lane
             return 0
 
+        if str(getattr(inventory, "band", "")).upper() == "FLAT" and ev is not None:
+            life = float(getattr(ev, "lifecycle_ev", 0.0) or 0.0)
+            if not math.isfinite(life):
+                life = float(getattr(ev, "trading_ev", 0.0) or 0.0)
+            remaining_obs = int(getattr(ev, "observations_remaining", 3) or 3)
+            p_fill = float(getattr(ev, "actionable_fill_prob", 0.50) or 0.50)
+            min_size = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+            inv_headroom = max(
+                0.0,
+                float(getattr(self, "max_inventory_base", 1.2) or 1.2)
+                - abs(float(getattr(inventory, "net_base", 0.0) or 0.0)),
+            )
+            role = maker_entry_size(
+                lifecycle_ev=life,
+                p_fill=p_fill,
+                observations_remaining=remaining_obs,
+                min_order=min_size,
+                inventory_headroom=inv_headroom,
+                volume_headroom=self._research_volume_cap_headroom(state, book_id),
+            )
+            clip = taker_clip_size(
+                inventory_qty=max(min_size, 0.25),
+                min_order=min_size,
+            )
+            exec_d = choose_execution(
+                lifecycle_ev=life,
+                p_fill=p_fill,
+                spread_capture_bps=float(getattr(ev, "spread_capture_bps", 0.0) or 0.0),
+                score_value=float(getattr(ev, "total_score_component", 0.0) or 0.0),
+                observations_remaining=remaining_obs,
+                required_observations=int(getattr(ev, "required_observation_count", 3) or 3),
+                crossing_cost=0.12,
+                maker_size=float(role.size),
+                taker_clip=float(clip.size or min_size),
+            )
+            try:
+                self._emit(
+                    "ENTRY_DECISION", force=True, tick=getattr(self, "_tick", None),
+                    book=int(book_id), lane=str(lane), safe=1,
+                    hard_reject_reason=None,
+                    lifecycle_ev=life,
+                    total_score_value=float(getattr(ev, "total_score_component", 0.0) or 0.0),
+                    inventory_before=float(getattr(inventory, "net_base", 0.0) or 0.0),
+                    maker_tier=str(role.tier),
+                    **exec_d.as_log(),
+                )
+            except Exception:
+                pass
+            if exec_d.action == EXEC_ACTION_SKIP:
+                if self.debug_enabled:
+                    record = self._book_record(book_id)
+                    record["action"] = "SKIP"
+                    record["reason"] = "SKIP_UTILITY"
+                    record["scheduler_lane"] = lane
+                self._research_funnel_bump(int(book_id), "lane_skip_selected")
+                return 0
+            if exec_d.action == EXEC_ACTION_TAKER:
+                self._research_funnel_bump(int(book_id), "lane_taker_selected")
+                take_qty = float(exec_d.taker_size or min_size)
+                if take_qty > 0.0 and self._research_execute_entry_taker(
+                    response, book_id, book, take_qty, prediction,
+                ):
+                    if self.debug_enabled:
+                        record = self._book_record(book_id)
+                        record["action"] = "TAKER"
+                        record["reason"] = "TAKER_UTILITY"
+                        record["scheduler_lane"] = lane
+                    return 1
+                if self.debug_enabled:
+                    record = self._book_record(book_id)
+                    record["action"] = "SKIP"
+                    record["reason"] = "TAKER_UNEXECUTABLE"
+                    record["scheduler_lane"] = lane
+                return 0
+            self._research_funnel_bump(int(book_id), "lane_maker_selected")
+
         ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(int(book_id))
         expected_mo = self._research_conservative_markout(int(book_id))
         as_risk = 0.0
@@ -10585,13 +10159,7 @@ class Strategy1_Research(Strategy1_Debug):
             adverse_selection_risk=as_risk,
             ofi_normalized=ofi_snap.ofi_normalized if ofi_snap.supported else None,
         )
-        adverse_block = (
-            str(getattr(inventory, "band", "")).upper() == "FLAT"
-            and entry_adverse_blocked(
-                expected_markout_bps=expected_mo,
-                adverse_selection_risk=as_risk,
-            )
-        )
+        adverse_block = False
         try:
             self._emit(
                 "ADVERSE",
@@ -10606,14 +10174,6 @@ class Strategy1_Research(Strategy1_Debug):
             )
         except Exception:
             pass
-        if adverse_block:
-            if self.debug_enabled:
-                record = self._book_record(book_id)
-                record["action"] = "SKIP"
-                record["reason"] = "ADVERSE_SELECTION"
-                record["scheduler_lane"] = lane
-            self._research_as_width_mult = 1.0
-            return 0
 
         if self._research_backfill_active:
             if self._research_lanes_on() and lane in EXEC_LANES:
@@ -10694,13 +10254,10 @@ class Strategy1_Research(Strategy1_Debug):
         )
 
         old_min_fill = float(regime_params.min_fill_prob)
-        relaxed_min_fill = old_min_fill
+        # Fill attractiveness is a utility term, not a hard gate. A quote is
+        # blocked only when size/price/balance/volume make it impossible.
+        regime_params.min_fill_prob = 0.0
         if allow_relaxed_fill:
-            relaxed_min_fill = max(
-                self.research_kappa_completion_fill_floor,
-                old_min_fill * self.research_kappa_completion_fill_mult,
-            )
-            regime_params.min_fill_prob = min(old_min_fill, relaxed_min_fill)
             self._research_completion_relaxed_attempts += 1
 
         if self.debug_enabled:
@@ -10794,18 +10351,9 @@ class Strategy1_Research(Strategy1_Debug):
                 )
                 chosen_ttl_ms = chosen
             if chosen is None:
-                self._research_ttl_stale_skips += 1
-                if self.debug_enabled:
-                    record = self._book_record(book_id)
-                    record["action"] = "SKIP"
-                    record["reason"] = "TTL_STALE"
-                    record["ttl_reason"] = ttl_reason
-                regime_params.min_fill_prob = old_min_fill
-                self.mm_expiry_period = old_expiry
-                self._research_force_maker_context = old_maker_context
-                self._research_completion_quiet_tight_context = old_completion_tight
-                self._research_as_width_mult = 1.0
-                return 0
+                chosen = float(getattr(self, "research_ttl_min_ms", 250.0) or 250.0)
+                ttl_reason = "TTL_MIN_FALLBACK"
+                chosen_ttl_ms = chosen
             if stale_override:
                 try:
                     self._emit(

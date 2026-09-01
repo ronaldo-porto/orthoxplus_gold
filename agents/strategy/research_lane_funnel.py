@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-LANE_FUNNEL_VERSION = "lane_funnel_v4_15_3"
+LANE_FUNNEL_VERSION = "lane_funnel_v4_16_0"
 LANES = ("COVERAGE", "COMPLETION", "REALIZATION")
 
 STAGE_KEYS = (
@@ -21,6 +21,11 @@ STAGE_KEYS = (
     "lane_deep_predicted",
     "lane_lifecycle_ev_pass",
     "lane_required_entry_ev_pass",
+    "lane_lifecycle_ev_positive",
+    "lane_score_ranked",
+    "lane_maker_selected",
+    "lane_taker_selected",
+    "lane_skip_selected",
     "lane_ev_pass",
     "lane_size_valid",
     "lane_ttl_valid",
@@ -141,7 +146,12 @@ def compact_log(funnel: dict[str, Any], *, tick: Any = None, lane: Any = None) -
         out[f"{prefix}_predicted"] = int(counts.get("lane_deep_predicted", 0) or 0)
         out[f"{prefix}_lifecycle_ev_pass"] = int(counts.get("lane_lifecycle_ev_pass", 0) or 0)
         out[f"{prefix}_required_entry_ev_pass"] = required_entry_pass
-        out[f"{prefix}_ev_pass"] = required_entry_pass or quote_ev_pass
+        out[f"{prefix}_lifecycle_ev_positive"] = int(counts.get("lane_lifecycle_ev_positive", 0) or counts.get("lane_lifecycle_ev_pass", 0) or 0)
+        out[f"{prefix}_score_ranked"] = int(counts.get("lane_score_ranked", 0) or counts.get("lane_total_score_selected", 0) or 0)
+        out[f"{prefix}_maker_selected"] = int(counts.get("lane_maker_selected", 0) or 0)
+        out[f"{prefix}_taker_selected"] = int(counts.get("lane_taker_selected", 0) or 0)
+        out[f"{prefix}_skip_selected"] = int(counts.get("lane_skip_selected", 0) or 0)
+        out[f"{prefix}_ev_pass"] = int(counts.get("lane_lifecycle_ev_pass", 0) or 0) or quote_ev_pass
         out[f"{prefix}_size_valid"] = int(counts.get("lane_size_valid", 0) or 0)
         out[f"{prefix}_quoted"] = int(counts.get("lane_quote_created", 0) or 0)
         out[f"{prefix}_submitted"] = int(counts.get("lane_quote_submitted", 0) or 0)
@@ -160,7 +170,7 @@ def compact_log(funnel: dict[str, Any], *, tick: Any = None, lane: Any = None) -
         out["predicted"] = int(counts.get("lane_deep_predicted", 0) or 0)
         out["lifecycle_ev_pass"] = int(counts.get("lane_lifecycle_ev_pass", 0) or 0)
         out["required_entry_ev_pass"] = required_entry_pass
-        out["ev_pass"] = required_entry_pass or quote_ev_pass
+        out["ev_pass"] = int(counts.get("lane_lifecycle_ev_pass", 0) or 0) or quote_ev_pass
         out["size_valid"] = int(counts.get("lane_size_valid", 0) or 0)
         out["quoted"] = int(counts.get("lane_quote_created", 0) or 0)
         out["submitted"] = int(counts.get("lane_quote_submitted", 0) or 0)

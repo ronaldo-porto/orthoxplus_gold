@@ -60,15 +60,11 @@ def _ev(**kwargs):
 
 
 def test_v4153_release_versions():
-    assert 'RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"' in STRATEGY
-    assert 'RESEARCH_ENGINE_VERSION = "entry_ev_calibration_p0_v4_15_3"' in STRATEGY
-    assert 'RESEARCH_ENGINE_REVISION = "entry_ev_calibration_p0_v4_15_3"' in STRATEGY
-    assert RESEARCH_LIFECYCLE_ENTRY_VERSION == "lifecycle_ev_v4_15_3"
-    assert SCORE_EV_VERSION == "entry_ev_calibration_v4_15_3"
-    assert LANE_FUNNEL_VERSION == "lane_funnel_v4_15_3"
+    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"' in STRATEGY
+    assert RESEARCH_LIFECYCLE_ENTRY_VERSION == "lifecycle_ev_v4_16_0"
+    assert SCORE_EV_VERSION == "simplified_hybrid_authority_v4_16_0"
+    assert LANE_FUNNEL_VERSION == "lane_funnel_v4_16_0"
     assert REALNET_EXIT_AUTHORITY_VERSION == "realnet_exit_authority_v4_14_4"
-    assert "_research_note_rank_entry_ev" in STRATEGY
-    assert "entry_ev_margin" in STRATEGY
 
 
 def test_healthy_one_away_can_clear_calibrated_entry_bar():
@@ -84,16 +80,9 @@ def test_healthy_one_away_can_clear_calibrated_entry_bar():
     )
     assert row.trading_ev > 0.0
     assert row.observations_remaining == 1
-    assert row.completion_multiplier == ONE_AWAY_ENTRY_MULT
-    assert row.required_entry_ev <= TOTAL_ENTRY_EV_CAP
-    assert row.required_entry_ev <= row.trading_ev + 1e-12
     assert row.eligible is True
     assert row.reject_reason is None
     assert row.entry_ev_pass is True
-    payload = row.as_log()
-    assert "taker_prob_excess" in payload
-    assert "capped_taker_penalty" in payload
-    assert payload["entry_ev_pass"] is True
 
 
 def test_negative_trading_ev_is_rejected_without_completion_subsidy():
@@ -152,9 +141,9 @@ def test_healthy_two_away_discount_is_weaker_than_one_away():
         projected_completion_healthy=True,
         recent_realized_pnl=0.04,
     )
-    assert one.completion_multiplier == ONE_AWAY_ENTRY_MULT
-    assert two.completion_multiplier == TWO_AWAY_ENTRY_MULT
-    assert two.required_entry_ev > one.required_entry_ev
+    assert one.completion_value > two.completion_value
+    assert one.eligible is True
+    assert two.eligible is True
 
 
 def test_coverage_and_qualified_books_keep_full_entry_bar():
@@ -225,7 +214,7 @@ def test_validator_and_frozen_agents_are_unchanged():
     assert digest == VALIDATOR_TRADE_SHA256
     base_src = BASE.read_text(encoding="utf-8")
     adaptive_src = ADAPTIVE.read_text(encoding="utf-8")
-    assert "entry_ev_calibration_v4_15_3" not in base_src
-    assert "entry_ev_calibration_v4_15_3" not in adaptive_src
-    assert "lifecycle_ev_v4_15_3" not in base_src
-    assert "lane_funnel_v4_15_3" not in adaptive_src
+    assert "simplified_hybrid_authority_v4_16_0" not in base_src
+    assert "simplified_hybrid_authority_v4_16_0" not in adaptive_src
+    assert "lifecycle_ev_v4_16_0" not in base_src
+    assert "lane_funnel_v4_16_0" not in adaptive_src

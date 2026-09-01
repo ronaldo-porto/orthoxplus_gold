@@ -13,7 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-RESEARCH_LIFECYCLE_ENTRY_VERSION = "lifecycle_ev_v4_15_3"
+RESEARCH_LIFECYCLE_ENTRY_VERSION = "lifecycle_ev_v4_16_0"
+LIFECYCLE_EV_MARGIN = 0.0
 
 LIFECYCLE_TAKER_PRIOR = 0.30
 TAKER_PENALTY_WEIGHT = 0.12
@@ -37,6 +38,15 @@ def _finite(value: float, default: float = 0.0) -> float:
 
 def _bps_to_ev(bps: float, scale: float = BPS_TO_EV_SCALE) -> float:
     return math.tanh(max(0.0, _finite(bps)) / max(1e-6, _finite(scale, BPS_TO_EV_SCALE)))
+
+
+def lifecycle_is_executable(
+    lifecycle_ev: float,
+    *,
+    margin: float = LIFECYCLE_EV_MARGIN,
+) -> bool:
+    """Single economics rule. Score bonuses never rescue a negative book."""
+    return _finite(lifecycle_ev) >= _finite(margin, LIFECYCLE_EV_MARGIN)
 
 
 @dataclass(frozen=True)

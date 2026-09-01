@@ -46,15 +46,17 @@ done
 
 [[ -f "$REPO_ROOT/run_miner_multi.sh" ]] || { echo "run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research.py" ]] || { echo "Strategy1_Research.py missing" >&2; exit 1; }
-grep -q 'RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"' "$AGENT_PATH/Strategy1_Research.py" || {
-  echo "ERROR: Strategy1_Research.py is not entry_ev_calibration_v4_15_3" >&2
+grep -q 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"' "$AGENT_PATH/Strategy1_Research.py" || {
+  echo "ERROR: Strategy1_Research.py is not simplified_hybrid_authority_v4_16_0" >&2
   exit 1
 }
 for required in \
   research_execution_lanes.py research_total_score_frontier.py research_clean_authority.py \
   research_entry_size.py research_quote_hysteresis.py research_realnet_exit_authority.py \
   research_scheduler_retry.py research_unified_exit.py research_projected_completion.py \
-  research_fresh_feasibility.py research_lane_funnel.py research_lifecycle_ev.py; do
+  research_fresh_feasibility.py research_lane_funnel.py research_lifecycle_ev.py \
+  research_position_exit.py research_execution_controller.py research_risk_guard.py \
+  research_role_size.py; do
   [[ -f "$AGENT_PATH/$required" ]] || { echo "ERROR: missing $AGENT_PATH/$required" >&2; exit 1; }
 done
 
@@ -386,8 +388,8 @@ from research_total_score_frontier import apply_total_score_frontier, TOTAL_SCOR
 from research_lane_funnel import empty_funnel, bump, bump_reject, compact_log
 if TOTAL_SCORE_FRONTIER_VERSION != "total_score_frontier_v4_15_2":
     raise SystemExit("ERROR: stale V4.15.2 frontier version")
-if RESEARCH_LIFECYCLE_ENTRY_VERSION != "lifecycle_ev_v4_15_3":
-    raise SystemExit("ERROR: stale V4.15.3 lifecycle EV version")
+if RESEARCH_LIFECYCLE_ENTRY_VERSION != "lifecycle_ev_v4_16_0":
+    raise SystemExit("ERROR: stale V4.16 lifecycle EV version")
 if DEFAULT_CHEAP_SHORTLIST != 22:
     raise SystemExit("ERROR: cheap shortlist is not 22")
 healthy = project_completion_quality(
@@ -433,8 +435,8 @@ one_away = compute_score_ev(
     taker_exit_probability=0.78, expected_cross_bps=1.6, holding_risk_bps=0.50,
     projected_completion_healthy=True, recent_realized_pnl=0.04,
 )
-if not one_away.eligible or one_away.required_entry_ev > one_away.trading_ev:
-    raise SystemExit("ERROR: healthy ONE_AWAY failed calibrated entry EV")
+if not one_away.eligible:
+    raise SystemExit("ERROR: healthy ONE_AWAY failed LifecycleEV eligibility")
 strong = compute_score_ev(
     book=1, fill_prob_old=0.80, learned_actionable_p=0.80, learned_actionable_samples=20,
     spread_capture_bps=12.0, fees_bps=0.5, markout_mean_bps=0.0, markout_samples=20,
@@ -463,7 +465,20 @@ if rec.get("selected") != 1:
     raise SystemExit("ERROR: funnel compact record missing selected")
 if rec.get("reject_negative_ev") != 1 or rec.get("reject_required_entry_ev") != 1:
     raise SystemExit("ERROR: funnel RANK required-entry reject accounting failed")
-print("V4.15.3 entry-EV calibration API OK")
+from research_position_exit import choose_position_exit, ACTION_TAKER_EXIT, ACTION_WAIT, ACTION_MAKER_EXIT
+from research_execution_controller import choose_execution, ACTION_MAKER, ACTION_SKIP
+ex = choose_execution(lifecycle_ev=0.25, p_fill=0.70, crossing_cost=0.40)
+if ex.action != ACTION_MAKER:
+    raise SystemExit("ERROR: execution controller maker path failed")
+if choose_execution(lifecycle_ev=-0.20, p_fill=0.90, crossing_cost=0.40).action != ACTION_SKIP:
+    raise SystemExit("ERROR: negative lifecycle still selected an execution")
+hard = choose_position_exit(
+    maker_net_bps=-5.0, taker_net_bps=-20.0, p_maker_fill=0.20,
+    unrealized_bps=-20.0, inventory_age=10.0, failed_exit_count=2,
+)
+if hard.action != ACTION_TAKER_EXIT:
+    raise SystemExit("ERROR: hard-escape corridor did not force a Taker clip")
+print("V4.16 simplified hybrid authority API OK")
 PYV4152ACQ
 [[ -f "$REPO_ROOT/taos/im/validator/trade.py" ]] || { echo "validator trade.py missing" >&2; exit 1; }
 grep -q 'Preserve EVERY timestamp' "$REPO_ROOT/taos/im/validator/trade.py" || {
@@ -707,11 +722,11 @@ grep -q 'from research_rt_phase_timing import RoundTripPhaseState' agents/strate
   exit 1
 }
 
-echo "[Strategy1_Research] version=entry_ev_calibration_v4_15_3"
+echo "[Strategy1_Research] version=simplified_hybrid_authority_v4_16_0"
 echo "[Strategy1_Research] log_dir=$RESEARCH_DIR"
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
-  echo "V4.15.3 entry-EV calibration + V4.14.4 RealNet safety preflight-only PASS"
+  echo "V4.16 simplified hybrid authority + V4.14.4 RealNet safety preflight-only PASS"
   exit 0
 fi
 

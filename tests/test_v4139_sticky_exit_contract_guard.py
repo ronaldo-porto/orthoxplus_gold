@@ -58,7 +58,7 @@ def test_accepted_exit_retains_existing_guard_without_new_cache():
 
 
 def test_v4139_promotion_chain_is_exact():
-    assert 'RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"' in SRC
     assert 'EXIT_CONTRACT_GUARD_PERSISTENCE_VERSION = "sticky_exit_contract_guard_v4_13_9"' in SRC
     assert 'DEPLOY_POLICY_VERSION = "base_v4_13_9_champion"' in BASE
     assert 'BASE_CHAMPION_PARENT = "simplified_kappa_productivity_v4_13_9"' in BASE

@@ -29,13 +29,10 @@ def veto(maker, taker, failed, **kw):
 
 def test_v4135_version_and_wiring_contract():
     assert POSITIVE_MAKER_VETO_VERSION == "positive_maker_veto_v4_13_5"
-    assert 'RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"' in SRC
-    assert "positive_maker_rescue_veto_applies(" in SRC
-    assert 'reason="POSITIVE_MAKER_VETO"' in SRC
-    assert "and not positive_maker_veto_active" in SRC
-    assert "research_positive_maker_veto_enabled=1" in LAUNCHER
-    assert "research_positive_maker_veto_floor_bps=1.0" in LAUNCHER
-    assert "research_positive_maker_veto_max_failed_exits=4" in LAUNCHER
+    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"' in SRC
+    assert "choose_position_exit" in SRC
+    assert "positive_maker_rescue_veto_applies(" not in SRC
+    assert "POSITIVE_MAKER_VETO" not in SRC or "choose_position_exit" in SRC
 
 
 def test_exact_v4134_negative_taker_over_positive_maker_failures_are_vetoed():

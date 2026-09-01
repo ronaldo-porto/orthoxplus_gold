@@ -32,7 +32,7 @@ LAUNCHER = (ROOT / "run_strategy1_research_test_multi.sh").read_text()
 
 
 def test_release_versions_and_single_authority_contract():
-    assert 'RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"' in STRATEGY
+    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"' in STRATEGY
     assert TOTAL_SCORE_FRONTIER_VERSION == "total_score_frontier_v4_15_2"
     assert "apply_total_score_frontier" in STRATEGY
     for legacy in (

@@ -179,13 +179,13 @@ def test_strategy_contract_freezes_v41214_guard_and_other_engines():
     root = Path(__file__).parents[1]
     src = (root / "agents" / "strategy" / "Strategy1_Research.py").read_text()
     guard = (root / "agents" / "strategy" / "research_contract_guard.py").read_text()
-    assert 'RESEARCH_POLICY_VERSION = "entry_ev_calibration_v4_15_3"' in src
+    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"' in src
     assert 'RESEARCH_INVENTORY_LIVENESS_VERSION = INVENTORY_LIVENESS_VERSION' in src
     assert 'CONTRACT_GUARD_VERSION = "authoritative_l1_contract_guard_v4_12_14"' in guard
     assert 'research_max_active_open_books' in src
     assert 'research_max_total_open_books' in src
     assert 'research_max_total_abs_base' in src
-    assert 'INVENTORY_LIVENESS_BOUNDED_RESCUE' in src
+    assert 'choose_position_exit' in src
     assert 'PARK_POSITION' in src and 'UNPARK_POSITION' in src
     assert 'park_hard_risk = bool((qty / max_inv) >= close_thr)' in src
     assert INVENTORY_LIVENESS_VERSION == "inventory_state_decoupling_v4_12_18"
