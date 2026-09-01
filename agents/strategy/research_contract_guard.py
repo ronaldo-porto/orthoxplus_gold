@@ -194,3 +194,41 @@ def guarded_post_only_price(
         price = min(original, bid - cushion * tick)
         return price if price > 0.0 else None
     return None
+
+
+def sanitize_post_only_limit_price(
+    *,
+    side: str,
+    original_price: float,
+    best_bid: float,
+    best_ask: float,
+    tick_size: float,
+    safety_ticks: int = 1,
+) -> float | None:
+    """Reprice a Maker order against the latest authoritative L1.
+
+    BUY must stay strictly below best ask. SELL must stay strictly above best
+    bid. One safety tick is applied. Returns None when no legal price exists.
+    """
+    original = _finite(original_price, -1.0)
+    bid = _finite(best_bid, -1.0)
+    ask = _finite(best_ask, -1.0)
+    tick = _finite(tick_size, -1.0)
+    if original <= 0.0 or bid <= 0.0 or ask <= 0.0 or ask < bid or tick <= 0.0:
+        return None
+    cushion = max(1, int(safety_ticks or 1))
+    token = str(side or "").strip().lower()
+    if token == "buy":
+        cap = ask - cushion * tick
+        price = min(original, cap)
+        if price <= 0.0 or price >= ask - 1e-12:
+            return None
+        return price
+    if token == "sell":
+        floor = bid + cushion * tick
+        price = max(original, floor)
+        if price <= bid + 1e-12:
+            return None
+        return price
+    return None
+

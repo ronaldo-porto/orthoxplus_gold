@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: MIT
-"""SN79 Research V4.16 simplified hybrid authority.
+"""SN79 Research V4.16.1 simplified hybrid authority.
 
 Current runtime workflow:
     HARD SAFETY -> LIFECYCLE EV -> TOTAL SCORE PRIORITY -> MAKER/TAKER/SKIP
     POSITION EXIT = Maker/Taker/Wait utility + one four-band loss corridor
+
+V4.16.1 repairs UID68 P0 runtime faults without changing that architecture:
+    missing directional prediction is a neutral Maker fallback, not a hard gate;
+    Maker exit utility includes the probability of not filling;
+    ABSOLUTE_PROTECTION reduces executable inventory instead of parking it.
 """
 from __future__ import annotations
 
@@ -181,10 +186,14 @@ from research_unified_exit import (
     wait_value_bps as unified_wait_value_bps,
 )
 from research_position_exit import (
+    ACTION_MAKER_EXIT,
     ACTION_PARK_EXIT,
     ACTION_TAKER_EXIT,
+    ACTION_WAIT,
+    BAND_ABSOLUTE,
     POSITION_EXIT_VERSION,
     choose_position_exit,
+    new_exposure_allowed,
 )
 from research_execution_controller import (
     ACTION_MAKER as EXEC_ACTION_MAKER,
@@ -193,6 +202,16 @@ from research_execution_controller import (
     EXECUTION_CONTROLLER_VERSION,
     choose_execution,
 )
+from research_neutral_prediction import (
+    NEUTRAL_PREDICTION_VERSION,
+    can_use_neutral_fallback,
+    directional_prediction_unavailable,
+    is_neutral_forecast,
+    l1_is_valid,
+    prediction_source_of,
+    tag_directional_forecast,
+    tag_neutral_forecast,
+)
 from research_risk_guard import RISK_GUARD_VERSION, evaluate_risk_guard
 from research_role_size import ROLE_SIZE_VERSION, maker_entry_size, taker_clip_size
 from research_velocity import (
@@ -200,7 +219,7 @@ from research_velocity import (
     VelocityState,
 )
 from research_rt_phase_timing import RoundTripPhaseState
-from research_exit_quantity import choose_reduce_quantity, exchange_min_order_size
+from research_exit_quantity import choose_reduce_quantity, exchange_min_order_size, round_volume
 from research_dust_economics import (
     ACTION_COMPETITIVE_MAKER as DUST_ACTION_COMPETITIVE,
     ACTION_PASSIVE_MAKER as DUST_ACTION_PASSIVE,
@@ -261,6 +280,7 @@ from research_contract_guard import (
     guarded_post_only_price,
     register_contract_reject,
     resolve_book_from_state_mapping,
+    sanitize_post_only_limit_price,
 )
 from research_inventory_liveness import (
     FRESH_MAKER_GRACE_VERSION,
@@ -334,17 +354,18 @@ from research_total_score_frontier import (
 )
 
 class Strategy1_Research(Strategy1_Debug):
-    RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"
-    RESEARCH_ENGINE_REVISION = "simplified_hybrid_authority_v4_16_0"
+    RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_1"
+    RESEARCH_ENGINE_REVISION = "simplified_hybrid_authority_v4_16_1"
     RESEARCH_REALNET_EXIT_AUTHORITY_VERSION = REALNET_EXIT_AUTHORITY_VERSION
     RESEARCH_SCHEDULER_RETRY_VERSION = SCHEDULER_RETRY_VERSION
     RESEARCH_TOTAL_SCORE_FRONTIER_VERSION = TOTAL_SCORE_FRONTIER_VERSION
     RESEARCH_CLEAN_AUTHORITY_VERSION = CLEAN_AUTHORITY_VERSION
     # === V4.16 SIMPLIFIED HYBRID AUTHORITY ===
-    RESEARCH_ENGINE_VERSION = "simplified_hybrid_authority_v4_16_0"
+    RESEARCH_ENGINE_VERSION = "simplified_hybrid_authority_v4_16_1"
     RESEARCH_SCORE_EV_VERSION = SCORE_EV_VERSION
     RESEARCH_POSITION_EXIT_VERSION = POSITION_EXIT_VERSION
     RESEARCH_EXECUTION_CONTROLLER_VERSION = EXECUTION_CONTROLLER_VERSION
+    RESEARCH_NEUTRAL_PREDICTION_VERSION = NEUTRAL_PREDICTION_VERSION
     RESEARCH_RISK_GUARD_VERSION = RISK_GUARD_VERSION
     RESEARCH_ROLE_SIZE_VERSION = ROLE_SIZE_VERSION
     RESEARCH_HYBRID_VERSION = "early_escape_guard_v4_12_6"
@@ -405,6 +426,8 @@ class Strategy1_Research(Strategy1_Debug):
         "NO_PROFILE": "NO_PROFILE",
         "AVOID_LIST": "AVOID",
         "NO_PREDICTION": "NO_PREDICTION",
+        "NOT_SELECTED": "NOT_SELECTED",
+        "NEUTRAL_MAKER_FALLBACK": "NEUTRAL_FB",
         "GRACE_PERIOD": "GRACE",
         "NO_ACTION": "NO_ACTION",
         # Reserved for descendants; base Strategy1 does not currently emit these.
@@ -1677,6 +1700,10 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_contract_guard_accept_clears = 0
         self._research_contract_guard_lifecycle_clears = 0
         self._research_contract_guard_hard_expiry_clears = 0
+        self._research_p0_tick: dict[str, float] = {}
+        self._research_p0_life: dict[str, float] = {}
+        self._research_absolute_protection_active = False
+        self._research_neutral_quoted_books: set[int] = set()
 
         # V4.2 fill-quality and bounded liveness state.
         self._research_actionable_by_book: dict[int, dict[str, float | int]] = {}
@@ -2708,6 +2735,7 @@ class Strategy1_Research(Strategy1_Debug):
         except (TypeError, ValueError):
             pass
         self._research_skip_summary_counts = {}
+        self._research_p0_reset_tick()
         self._research_timing = {
             "screen_ms": 0.0,
             "screen_all_books_ms": 0.0,
@@ -2786,11 +2814,10 @@ class Strategy1_Research(Strategy1_Debug):
         t0 = time.perf_counter()
         response = super().respond(state)
         self._research_timing["_respond_wall_ms"] = (time.perf_counter() - t0) * 1000.0
-        if not getattr(self, "debug_enabled", False):
-            try:
-                self._research_register_submitted_quotes(response, state)
-            except Exception:
-                pass
+        try:
+            self._research_register_submitted_quotes(response, state)
+        except Exception:
+            pass
         return response
 
     def predict_direction(self, book_id: int, book: Book, timestamp: int):
@@ -2967,6 +2994,10 @@ class Strategy1_Research(Strategy1_Debug):
         payload = funnel_compact_log(
             self._research_funnel(), tick=getattr(self, "_tick", None),
         )
+        try:
+            payload.update(self._research_p0_snapshot(lifetime=False))
+        except Exception:
+            pass
         self._emit("FUNNEL", force=True, **payload)
 
     def _research_emit_lanes(self, *, stage: str) -> None:
@@ -4052,7 +4083,7 @@ class Strategy1_Research(Strategy1_Debug):
         if cache is not None:
             self._research_timing["cache_hits"] = int(cache.hits)
             self._research_timing["cache_misses"] = int(cache.misses)
-        return predictions
+        return self._research_apply_neutral_predictions(state, predictions)
 
     def _predict_all_books(self, state: MarketSimulationStateUpdate):
         books = getattr(state, "books", None) or {}
@@ -4093,7 +4124,149 @@ class Strategy1_Research(Strategy1_Debug):
         if cache is not None:
             self._research_timing["cache_hits"] = int(cache.hits)
             self._research_timing["cache_misses"] = int(cache.misses)
-        return predictions
+        return self._research_apply_neutral_predictions(state, predictions)
+
+    def expected_alpha_score(
+        self,
+        profile: BookProfile,
+        prediction: DirectionForecast,
+        fill_est: FillProbabilityEstimate,
+        mem,
+        book_id: int,
+        now: int,
+    ) -> float:
+        if is_neutral_forecast(prediction):
+            try:
+                mem.last_expected_alpha = 0.0
+            except Exception:
+                pass
+            # Inherited min_expected_alpha is not an economic gate. Neutral
+            # Maker books must reach LifecycleEV; they do not invent alpha.
+            return float(self.min_expected_alpha)
+        return super().expected_alpha_score(
+            profile, prediction, fill_est, mem, book_id, now,
+        )
+
+    def _research_p0_bump(self, key: str, n: float = 1.0) -> None:
+        try:
+            tick = getattr(self, "_research_p0_tick", None)
+            if not isinstance(tick, dict):
+                tick = {}
+                self._research_p0_tick = tick
+            life = getattr(self, "_research_p0_life", None)
+            if not isinstance(life, dict):
+                life = {}
+                self._research_p0_life = life
+            tick[key] = float(tick.get(key, 0.0) or 0.0) + float(n)
+            life[key] = float(life.get(key, 0.0) or 0.0) + float(n)
+        except Exception:
+            pass
+
+    def _research_p0_reset_tick(self) -> None:
+        self._research_p0_tick = {}
+        self._research_absolute_protection_active = False
+
+    def _research_p0_snapshot(self, *, lifetime: bool = False) -> dict[str, Any]:
+        src = getattr(self, "_research_p0_life" if lifetime else "_research_p0_tick", {}) or {}
+        if not isinstance(src, dict):
+            src = {}
+        keys = (
+            "prediction_total", "prediction_real", "prediction_neutral_fallback",
+            "prediction_terminal_missing", "neutral_fallback_considered",
+            "neutral_lifecycle_positive", "neutral_maker_selected",
+            "neutral_taker_selected", "neutral_quoted", "neutral_filled",
+            "exit_maker_selected", "exit_taker_selected", "exit_wait_selected",
+            "exit_park_selected", "exit_low_fill_maker_rejected",
+            "exit_continuation_penalty_sum", "exit_continuation_penalty_n",
+            "absolute_protection_reduce", "absolute_protection_park",
+            "contract_reject_count",
+        )
+        out = {key: float(src.get(key, 0.0) or 0.0) for key in keys}
+        n = max(1.0, out["exit_continuation_penalty_n"])
+        out["exit_continuation_penalty_mean"] = out["exit_continuation_penalty_sum"] / n
+        try:
+            out["rt_missing_entry_submit"] = int(
+                self._research_rt_phase_state().missing_entry_submit
+            )
+        except Exception:
+            out["rt_missing_entry_submit"] = 0
+        out["contract_reject_count"] = float(
+            getattr(self, "_research_contract_rejects", 0) or out["contract_reject_count"]
+        )
+        return out
+
+    def _research_inventory_is_flat(self, book_id: int, book) -> bool:
+        try:
+            if book is None or not getattr(book, "bids", None) or not getattr(book, "asks", None):
+                return False
+            mid = 0.5 * (float(book.bids[0].price) + float(book.asks[0].price))
+            inventory = self._net_inventory(int(book_id), mid)
+            return str(getattr(inventory, "band", "")).upper() == "FLAT"
+        except Exception:
+            return False
+
+    def _research_apply_neutral_predictions(self, state, predictions: dict) -> dict:
+        books = getattr(state, "books", None) or {}
+        screen = getattr(self, "_research_last_screen", None)
+        selected = {int(bid) for bid in getattr(screen, "selected", []) or []}
+        forced_inv = {int(bid) for bid in getattr(screen, "forced_inventory", []) or []}
+        if not selected:
+            selected = {int(bid) for bid in (predictions or {}).keys()}
+        out = dict(predictions or {})
+        market_toxic = str(getattr(self, "_research_market_regime", "") or "").upper() == "TOXIC"
+        for bid in selected:
+            book = resolve_book_from_state_mapping(books, bid)
+            forecast = out.get(bid)
+            if forecast is None:
+                for key in (bid, str(bid), int(bid)):
+                    if key in out:
+                        forecast = out.get(key)
+                        break
+            self._research_p0_bump("prediction_total")
+            if not directional_prediction_unavailable(forecast):
+                tag_directional_forecast(forecast)
+                self._research_p0_bump("prediction_real")
+                out[bid] = forecast
+                continue
+            self._research_p0_bump("neutral_fallback_considered")
+            flat = int(bid) not in forced_inv and self._research_inventory_is_flat(bid, book)
+            allowed, reason = can_use_neutral_fallback(
+                book=book,
+                inventory_flat=flat,
+                risk_safe=True,
+                toxic=market_toxic or int(bid) in (getattr(self, "_research_parked_dust", {}) or {}),
+            )
+            if not allowed:
+                self._research_p0_bump("prediction_terminal_missing")
+                continue
+            if forecast is None:
+                forecast = DirectionForecast(
+                    book_id=int(bid),
+                    direction="HOLD",
+                    score=0.0,
+                    momentum_m=0.0,
+                    flow_f=0.0,
+                    trade_t=0.0,
+                    log_return=None,
+                    imbalance=0.0,
+                    trade_imbalance=0.0,
+                )
+            tag_neutral_forecast(forecast, reason=reason)
+            out[bid] = forecast
+            self._research_p0_bump("prediction_neutral_fallback")
+        self._last_predictions = out
+        return out
+
+    def _research_note_entry_submit_if_flat(
+        self, book_id: int, timestamp, inventory_before=None,
+    ) -> None:
+        try:
+            if inventory_before is None:
+                inventory_before = float(self._position_tracker_snapshot(book_id).net_qty)
+            if abs(float(inventory_before)) < self._execution_flat_epsilon():
+                self._research_rt_phase_state().note_entry_submit(book_id, timestamp)
+        except Exception:
+            pass
 
     def _compute_local_kappa(self, state):
         """Event-driven miner-side validator Kappa cache.
@@ -4285,10 +4458,26 @@ class Strategy1_Research(Strategy1_Debug):
         return {}
 
     def _research_register_submitted_quotes(self, response, state) -> None:
+        now = getattr(state, "timestamp", None)
+        for instruction in getattr(response, "instructions", []) or []:
+            book_id = self._get(instruction, "bookId", "book_id")
+            if book_id is None:
+                continue
+            try:
+                book_id = int(book_id)
+            except (TypeError, ValueError):
+                continue
+            inventory_before = None
+            try:
+                inventory_before = float(self._position_tracker_snapshot(book_id).net_qty)
+            except Exception:
+                inventory_before = None
+            self._research_note_entry_submit_if_flat(
+                book_id, now, inventory_before=inventory_before,
+            )
         store = getattr(self, "_research_quote_store", None)
         if store is None:
             return
-        now = getattr(state, "timestamp", None)
         tick_size = self._research_tick_size(state)
         books = getattr(state, "books", None) or {}
         selection = getattr(self, "_research_last_selection", None)
@@ -5715,6 +5904,10 @@ class Strategy1_Research(Strategy1_Debug):
             )
         except Exception:
             pass
+        try:
+            payload.update(self._research_p0_snapshot(lifetime=True))
+        except Exception:
+            pass
         return payload
 
     def _research_emit_hybrid_summary(self, *, force: bool = False) -> None:
@@ -5963,10 +6156,12 @@ class Strategy1_Research(Strategy1_Debug):
             pass
         fees_bps = self._research_lifecycle_entry_cost_bps(int(book_id), spread_bps)
         cost = (getattr(self, "_research_lifecycle_cost_last", {}) or {}).get(int(book_id))
+        pred = (getattr(self, "_last_predictions", None) or {}).get(int(book_id))
+        alpha_in = 0.0 if is_neutral_forecast(pred) else float(expected_alpha)
         return score_velocity_priority(
             book=int(book_id),
             side=side,
-            alpha=float(expected_alpha),
+            alpha=alpha_in,
             fill_prob_old=float(fill_old),
             fill_prob_hazard=hazard_any,
             actionable_fill_hazard=hazard_act,
@@ -6024,6 +6219,12 @@ class Strategy1_Research(Strategy1_Debug):
 
         breakdown = self._research_score_ev_for_book(book_id, expected_alpha, mem)
         self._research_score_ev_last[book_id] = breakdown
+        try:
+            pred = (getattr(self, "_last_predictions", None) or {}).get(int(book_id))
+            if is_neutral_forecast(pred) and float(getattr(breakdown, "lifecycle_ev", 0.0) or 0.0) > 0.0:
+                self._research_p0_bump("neutral_lifecycle_positive")
+        except Exception:
+            pass
         try:
             trading_ev = float(getattr(breakdown, "trading_ev", 0.0))
             if math.isfinite(trading_ev):
@@ -7643,6 +7844,14 @@ class Strategy1_Research(Strategy1_Debug):
         hard_emergency = str(getattr(inventory, "band", "") or "").upper() in {"MAX_LONG", "MAX_SHORT"}
         qty_abs = abs(float(getattr(inventory, "net_base", 0.0) or 0.0))
         min_size = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        is_dust = self._is_dust_qty(qty_abs)
+        valid_opposite_touch = True
+        try:
+            valid_opposite_touch = (
+                float(bid) > 0.0 and float(ask) > 0.0 and float(ask) >= float(bid)
+            )
+        except Exception:
+            valid_opposite_touch = False
         expiry_urgency = 0.0
         try:
             expiry = self._research_kappa_expiry(int(book_id))
@@ -7670,6 +7879,9 @@ class Strategy1_Research(Strategy1_Debug):
             catastrophic_hard_risk=bool(hard_emergency),
             min_order=min_size,
             taker_clip=min_size,
+            reduction_executable=bool(valid_opposite_touch and not is_dust and qty_abs + 1e-12 >= min_size),
+            is_dust=bool(is_dust),
+            valid_opposite_touch=bool(valid_opposite_touch),
         )
         try:
             self._emit(
@@ -7680,6 +7892,31 @@ class Strategy1_Research(Strategy1_Debug):
                 unrealized_bps=float(taker_net),
                 **exit_decision.as_log(),
             )
+        except Exception:
+            pass
+        try:
+            action = str(exit_decision.action)
+            if action == ACTION_MAKER_EXIT:
+                self._research_p0_bump("exit_maker_selected")
+            elif action == ACTION_TAKER_EXIT:
+                self._research_p0_bump("exit_taker_selected")
+            elif action == ACTION_WAIT:
+                self._research_p0_bump("exit_wait_selected")
+            elif action == ACTION_PARK_EXIT:
+                self._research_p0_bump("exit_park_selected")
+            if int(getattr(exit_decision, "low_fill_maker_rejected", 0) or 0):
+                self._research_p0_bump("exit_low_fill_maker_rejected")
+            self._research_p0_bump(
+                "exit_continuation_penalty_sum",
+                float(getattr(exit_decision, "continuation_penalty", 0.0) or 0.0),
+            )
+            self._research_p0_bump("exit_continuation_penalty_n")
+            if str(exit_decision.risk_band) == BAND_ABSOLUTE:
+                if action == ACTION_TAKER_EXIT:
+                    self._research_p0_bump("absolute_protection_reduce")
+                    self._research_absolute_protection_active = True
+                elif action == ACTION_PARK_EXIT:
+                    self._research_p0_bump("absolute_protection_park")
         except Exception:
             pass
         unified_action = UNIFIED_KEEP_MAKER
@@ -9117,6 +9354,102 @@ class Strategy1_Research(Strategy1_Debug):
             object.__setattr__(response, "instructions", kept)
         return {"skips": skips, "reprices": reprices, "active": len(self._research_contract_reject_state)}
 
+    def _research_set_instruction_attr(self, instruction, name: str, value) -> bool:
+        try:
+            object.__setattr__(instruction, name, value)
+            return True
+        except Exception:
+            try:
+                setattr(instruction, name, value)
+                return True
+            except Exception:
+                return False
+
+    def _research_sanitize_maker_instructions(self, response, state) -> None:
+        """Revalidate every Maker order against the latest authoritative L1."""
+        instructions = list(getattr(response, "instructions", None) or [])
+        if not instructions:
+            return
+        books = getattr(state, "books", None) or {}
+        try:
+            price_dec = int(getattr(getattr(state, "config", None), "priceDecimals", 2) or 2)
+        except (TypeError, ValueError):
+            price_dec = 2
+        try:
+            vol_dec = int(getattr(getattr(state, "config", None), "volumeDecimals", 8) or 8)
+        except (TypeError, ValueError):
+            vol_dec = 8
+        tick_size = 10.0 ** (-max(0, price_dec))
+        min_size = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        kept = []
+        seen_book_sides: dict[tuple[int, str], object] = {}
+        for instruction in instructions:
+            if not self._research_instruction_is_maker(instruction):
+                kept.append(instruction)
+                continue
+            raw_book = self._get(instruction, "bookId", "book_id")
+            try:
+                book_id = int(raw_book)
+            except (TypeError, ValueError):
+                kept.append(instruction)
+                continue
+            side = self._research_instruction_side(instruction)
+            book = resolve_book_from_state_mapping(books, book_id)
+            bids = getattr(book, "bids", None) if book is not None else None
+            asks = getattr(book, "asks", None) if book is not None else None
+            if book is None or not bids or not asks:
+                continue
+            try:
+                best_bid = float(bids[0].price)
+                best_ask = float(asks[0].price)
+            except (TypeError, ValueError, IndexError, AttributeError):
+                continue
+            raw_price = self._get(instruction, "price", "limitPrice", "limit_price")
+            try:
+                old_price = float(raw_price)
+            except (TypeError, ValueError):
+                continue
+            new_price = sanitize_post_only_limit_price(
+                side=side,
+                original_price=old_price,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                tick_size=tick_size,
+                safety_ticks=1,
+            )
+            if new_price is None:
+                continue
+            new_price = round(float(new_price), price_dec)
+            if side == "buy" and new_price >= best_ask - 1e-12:
+                continue
+            if side == "sell" and new_price <= best_bid + 1e-12:
+                continue
+            if abs(new_price - old_price) > max(1e-12, tick_size * 0.25):
+                if not self._research_set_instruction_attr(instruction, "price", new_price):
+                    continue
+            qty = self._get(instruction, "quantity", "qty", "size")
+            try:
+                qty_f = float(qty)
+            except (TypeError, ValueError):
+                continue
+            qty_f = round_volume(qty_f, vol_dec)
+            if qty_f + 1e-12 < min_size:
+                continue
+            if abs(qty_f - float(qty)) > 1e-12:
+                if not self._research_set_instruction_attr(instruction, "quantity", qty_f):
+                    continue
+            key = (book_id, side)
+            if key in seen_book_sides:
+                # One Maker order per book/side. A duplicate opposite-side pair
+                # is legal; a second same-side order is not emitted.
+                continue
+            seen_book_sides[key] = instruction
+            kept.append(instruction)
+        try:
+            response.instructions[:] = kept
+        except Exception:
+            object.__setattr__(response, "instructions", kept)
+
     def onTrade(self, event, validator: str | None = None) -> None:
         book_id = getattr(event, "bookId", None)
         own = (
@@ -9162,6 +9495,8 @@ class Strategy1_Research(Strategy1_Debug):
         if abs(before) < eps and abs(after) >= eps:
             transition = "OPEN"
             self._research_position_opens += 1
+            if int(book_id) in (getattr(self, "_research_neutral_quoted_books", set()) or set()):
+                self._research_p0_bump("neutral_filled")
         elif abs(before) >= eps and abs(after) < eps:
             transition = "FLAT"
             self._research_round_trip_closes += 1
@@ -10023,9 +10358,21 @@ class Strategy1_Research(Strategy1_Debug):
                     lifecycle_ev=None, total_score_value=None,
                     selected_action="SKIP", reason=str(guard.reason or "UNSAFE"),
                     inventory_before=float(getattr(inventory, "net_base", 0.0) or 0.0),
+                    prediction_source=prediction_source_of(prediction),
+                    neutral_fallback_used=int(is_neutral_forecast(prediction)),
                 )
             except Exception:
                 pass
+            return 0
+        if (
+            str(getattr(inventory, "band", "")).upper() == "FLAT"
+            and getattr(self, "_research_absolute_protection_active", False)
+            and not new_exposure_allowed(BAND_ABSOLUTE)
+        ):
+            if self.debug_enabled:
+                record = self._book_record(book_id)
+                record["action"] = "SKIP"
+                record["reason"] = "ABSOLUTE_PROTECTION_NO_NEW_EXPOSURE"
             return 0
         completion_samples = self._completion_observation_count(book_id)
         # Candidate screening is the sole lane allocator. Flat books default to
@@ -10096,6 +10443,7 @@ class Strategy1_Research(Strategy1_Debug):
                 crossing_cost=0.12,
                 maker_size=float(role.size),
                 taker_clip=float(clip.size or min_size),
+                neutral_fallback=is_neutral_forecast(prediction),
             )
             try:
                 self._emit(
@@ -10106,6 +10454,13 @@ class Strategy1_Research(Strategy1_Debug):
                     total_score_value=float(getattr(ev, "total_score_component", 0.0) or 0.0),
                     inventory_before=float(getattr(inventory, "net_base", 0.0) or 0.0),
                     maker_tier=str(role.tier),
+                    prediction_source=prediction_source_of(prediction),
+                    neutral_fallback_used=int(is_neutral_forecast(prediction)),
+                    neutral_fallback_reason=getattr(prediction, "neutral_fallback_reason", None),
+                    spread_capture=float(getattr(ev, "spread_capture_bps", 0.0) or 0.0),
+                    fees=float(getattr(ev, "fees_bps", 0.0) or 0.0),
+                    expected_markout=float(getattr(ev, "expected_markout_bps", 0.0) or 0.0),
+                    fill_probability=p_fill,
                     **exec_d.as_log(),
                 )
             except Exception:
@@ -10119,11 +10474,25 @@ class Strategy1_Research(Strategy1_Debug):
                 self._research_funnel_bump(int(book_id), "lane_skip_selected")
                 return 0
             if exec_d.action == EXEC_ACTION_TAKER:
+                if is_neutral_forecast(prediction) and float(exec_d.taker_utility) <= 0.0:
+                    if self.debug_enabled:
+                        record = self._book_record(book_id)
+                        record["action"] = "SKIP"
+                        record["reason"] = "NEUTRAL_NO_TAKER"
+                        record["scheduler_lane"] = lane
+                    self._research_funnel_bump(int(book_id), "lane_skip_selected")
+                    return 0
                 self._research_funnel_bump(int(book_id), "lane_taker_selected")
+                if is_neutral_forecast(prediction):
+                    self._research_p0_bump("neutral_taker_selected")
                 take_qty = float(exec_d.taker_size or min_size)
                 if take_qty > 0.0 and self._research_execute_entry_taker(
                     response, book_id, book, take_qty, prediction,
                 ):
+                    self._research_note_entry_submit_if_flat(
+                        book_id, getattr(state, "timestamp", None),
+                        inventory_before=float(getattr(inventory, "net_base", 0.0) or 0.0),
+                    )
                     if self.debug_enabled:
                         record = self._book_record(book_id)
                         record["action"] = "TAKER"
@@ -10137,6 +10506,8 @@ class Strategy1_Research(Strategy1_Debug):
                     record["scheduler_lane"] = lane
                 return 0
             self._research_funnel_bump(int(book_id), "lane_maker_selected")
+            if is_neutral_forecast(prediction):
+                self._research_p0_bump("neutral_maker_selected")
 
         ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(int(book_id))
         expected_mo = self._research_conservative_markout(int(book_id))
@@ -10656,6 +11027,16 @@ class Strategy1_Research(Strategy1_Debug):
 
         if placed:
             self._research_scheduler_retry_guard_v4144().clear(int(book_id))
+            self._research_note_entry_submit_if_flat(
+                book_id, getattr(state, "timestamp", None),
+                inventory_before=float(getattr(inventory, "net_base", 0.0) or 0.0),
+            )
+            if is_neutral_forecast(prediction):
+                self._research_p0_bump("neutral_quoted")
+                try:
+                    self._research_neutral_quoted_books.add(int(book_id))
+                except Exception:
+                    pass
         return placed
 
     def _place_directional_round_trip(self, *args, **kwargs) -> int:
@@ -10803,6 +11184,7 @@ class Strategy1_Research(Strategy1_Debug):
                 collect_archetypes=collect_archetypes,
             )
             contract_guard = self._research_apply_contract_reject_guard(response, state)
+            self._research_sanitize_maker_instructions(response, state)
             if isinstance(stats, dict):
                 stats["research_contract_guard_version"] = self.RESEARCH_CONTRACT_GUARD_VERSION
                 stats["research_contract_rejects"] = self._research_contract_rejects
@@ -10937,6 +11319,17 @@ class Strategy1_Research(Strategy1_Debug):
         mem = self._mem(book_id) if profile is not None else None
 
         reason = str(record.get("reason", DebugReason.NO_ACTION))
+        if reason == "NO_PREDICTION":
+            screen = getattr(self, "_research_last_screen", None)
+            selected = {int(bid) for bid in getattr(screen, "selected", []) or []}
+            if int(book_id) not in selected:
+                reason = "NOT_SELECTED"
+            elif is_neutral_forecast(prediction):
+                reason = "NEUTRAL_MAKER_FALLBACK"
+            elif not l1_is_valid(book):
+                reason = "NO_PREDICTION"
+            elif prediction is not None:
+                reason = "NO_PREDICTION"
         if (
             record.get("dust_quarantine")
             and reason in ("TOXIC_BOOK", "TOXIC_REGIME")
@@ -11001,6 +11394,9 @@ class Strategy1_Research(Strategy1_Debug):
             ),
             direction=getattr(prediction, "direction", None) if prediction else None,
             signal=getattr(prediction, "score", None) if prediction else None,
+            prediction_source=prediction_source_of(prediction),
+            neutral_fallback_used=int(is_neutral_forecast(prediction)),
+            alpha_directional=0.0 if is_neutral_forecast(prediction) else getattr(prediction, "alpha_directional", getattr(prediction, "score", None) if prediction else None),
             expected_alpha=record.get("expected_alpha"),
             min_expected_alpha=self.min_expected_alpha,
             fill_buy=record.get("fill_buy"),

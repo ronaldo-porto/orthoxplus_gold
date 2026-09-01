@@ -46,8 +46,8 @@ done
 
 [[ -f "$REPO_ROOT/run_miner_multi.sh" ]] || { echo "run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research.py" ]] || { echo "Strategy1_Research.py missing" >&2; exit 1; }
-grep -q 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"' "$AGENT_PATH/Strategy1_Research.py" || {
-  echo "ERROR: Strategy1_Research.py is not simplified_hybrid_authority_v4_16_0" >&2
+grep -q 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_1"' "$AGENT_PATH/Strategy1_Research.py" || {
+  echo "ERROR: Strategy1_Research.py is not simplified_hybrid_authority_v4_16_1" >&2
   exit 1
 }
 for required in \
@@ -56,7 +56,7 @@ for required in \
   research_scheduler_retry.py research_unified_exit.py research_projected_completion.py \
   research_fresh_feasibility.py research_lane_funnel.py research_lifecycle_ev.py \
   research_position_exit.py research_execution_controller.py research_risk_guard.py \
-  research_role_size.py; do
+  research_role_size.py research_neutral_prediction.py; do
   [[ -f "$AGENT_PATH/$required" ]] || { echo "ERROR: missing $AGENT_PATH/$required" >&2; exit 1; }
 done
 
@@ -722,11 +722,57 @@ grep -q 'from research_rt_phase_timing import RoundTripPhaseState' agents/strate
   exit 1
 }
 
-echo "[Strategy1_Research] version=simplified_hybrid_authority_v4_16_0"
+echo "[Strategy1_Research] version=simplified_hybrid_authority_v4_16_1"
 echo "[Strategy1_Research] log_dir=$RESEARCH_DIR"
 
+PYTHONPATH="$AGENT_PATH${PYTHONPATH:+:$PYTHONPATH}" python - <<'PYV4161P0'
+from research_neutral_prediction import (
+    NEUTRAL_PREDICTION_VERSION, can_use_neutral_fallback, make_neutral_forecast,
+)
+from research_position_exit import (
+    POSITION_EXIT_VERSION, ACTION_TAKER_EXIT, ACTION_PARK_EXIT, choose_position_exit,
+)
+from research_execution_controller import EXECUTION_CONTROLLER_VERSION, choose_execution, ACTION_SKIP
+from research_contract_guard import sanitize_post_only_limit_price
+from types import SimpleNamespace
+
+if NEUTRAL_PREDICTION_VERSION != "neutral_prediction_v4_16_1":
+    raise SystemExit("ERROR: stale V4.16.1 neutral prediction version")
+if POSITION_EXIT_VERSION != "position_exit_v4_16_1":
+    raise SystemExit("ERROR: stale V4.16.1 position exit version")
+if EXECUTION_CONTROLLER_VERSION != "execution_controller_v4_16_1":
+    raise SystemExit("ERROR: stale V4.16.1 execution controller version")
+book = SimpleNamespace(bids=[SimpleNamespace(price=99.9)], asks=[SimpleNamespace(price=100.1)])
+ok, _ = can_use_neutral_fallback(book=book, inventory_flat=True)
+if not ok:
+    raise SystemExit("ERROR: V4.16.1 valid L1 should allow neutral fallback")
+fc = make_neutral_forecast(1)
+if float(fc.score) != 0.0 or float(fc.alpha_directional) != 0.0:
+    raise SystemExit("ERROR: V4.16.1 invented directional alpha")
+if choose_execution(lifecycle_ev=-0.2, p_fill=0.9, crossing_cost=0.4, neutral_fallback=True).action != ACTION_SKIP:
+    raise SystemExit("ERROR: V4.16.1 negative LifecycleEV must skip")
+reduce = choose_position_exit(
+    maker_net_bps=-8.0, taker_net_bps=-26.0, p_maker_fill=0.10,
+    unrealized_bps=-26.0, inventory_qty=0.25,
+)
+if reduce.action != ACTION_TAKER_EXIT:
+    raise SystemExit("ERROR: V4.16.1 executable 0.25 must not PARK under ABSOLUTE")
+park = choose_position_exit(
+    maker_net_bps=-8.0, taker_net_bps=-26.0, p_maker_fill=0.10,
+    unrealized_bps=-26.0, inventory_qty=0.01, is_dust=True,
+)
+if park.action != ACTION_PARK_EXIT:
+    raise SystemExit("ERROR: V4.16.1 dust may PARK")
+px = sanitize_post_only_limit_price(
+    side="buy", original_price=100.2, best_bid=99.9, best_ask=100.1, tick_size=0.01,
+)
+if px is None or px >= 100.1:
+    raise SystemExit("ERROR: V4.16.1 Maker BUY crossed ask")
+print("V4.16.1 P0 runtime corrections OK")
+PYV4161P0
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
-  echo "V4.16 simplified hybrid authority + V4.14.4 RealNet safety preflight-only PASS"
+  echo "V4.16.1 P0 runtime corrections + V4.14.4 RealNet safety preflight-only PASS"
   exit 0
 fi
 

@@ -12,7 +12,7 @@ from typing import Any
 
 from research_action_utility import kappa_completion_value
 
-EXECUTION_CONTROLLER_VERSION = "execution_controller_v4_16_0"
+EXECUTION_CONTROLLER_VERSION = "execution_controller_v4_16_1"
 
 ACTION_MAKER = "MAKER"
 ACTION_TAKER = "TAKER"
@@ -102,6 +102,7 @@ def choose_execution(
     maker_size: float = 0.25,
     taker_clip: float = 0.25,
     skip_utility: float = 0.0,
+    neutral_fallback: bool = False,
 ) -> ExecutionDecision:
     maker_u = maker_utility(
         lifecycle_ev=lifecycle_ev,
@@ -110,14 +111,19 @@ def choose_execution(
         score_value=score_value,
         capital_efficiency=capital_efficiency,
     )
-    taker_u = taker_utility(
-        lifecycle_ev=lifecycle_ev,
-        crossing_cost=crossing_cost,
-        observations_remaining=observations_remaining,
-        required_observations=required_observations,
-        expiry_urgency=expiry_urgency,
-        capital_release=capital_release,
-    )
+    if neutral_fallback:
+        # Neutral Maker context: no invented directional Taker alpha.
+        immediate = _finite(lifecycle_ev) - max(0.0, _finite(crossing_cost))
+        taker_u = immediate if immediate > 0.0 else min(immediate, 0.0)
+    else:
+        taker_u = taker_utility(
+            lifecycle_ev=lifecycle_ev,
+            crossing_cost=crossing_cost,
+            observations_remaining=observations_remaining,
+            required_observations=required_observations,
+            expiry_urgency=expiry_urgency,
+            capital_release=capital_release,
+        )
     skip_u = _finite(skip_utility)
     if maker_u > taker_u and maker_u > skip_u and maker_u > 0.0:
         return ExecutionDecision(
@@ -125,9 +131,10 @@ def choose_execution(
             float(maker_size), 0.0, "MAKER_UTILITY",
         )
     if taker_u > maker_u and taker_u > skip_u and taker_u > 0.0:
+        reason = "TAKER_IMMEDIATE_EV" if neutral_fallback else "TAKER_UTILITY"
         return ExecutionDecision(
             ACTION_TAKER, maker_u, taker_u, skip_u,
-            0.0, float(taker_clip), "TAKER_UTILITY",
+            0.0, float(taker_clip), reason,
         )
     return ExecutionDecision(
         ACTION_SKIP, maker_u, taker_u, skip_u, 0.0, 0.0, "SKIP_UTILITY",

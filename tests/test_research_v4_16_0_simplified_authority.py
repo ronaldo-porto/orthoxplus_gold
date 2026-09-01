@@ -182,14 +182,21 @@ def test_loss_corridor_bands():
     assert hard.selected_qty <= TAKER_CLIP + 1e-12
     park = choose_position_exit(
         maker_net_bps=-8.0, taker_net_bps=-26.0, p_maker_fill=0.10,
-        unrealized_bps=-26.0,
+        unrealized_bps=-26.0, is_dust=True, inventory_qty=0.01,
+        valid_opposite_touch=True,
     )
     assert park.action == ACTION_PARK_EXIT
+    reduce = choose_position_exit(
+        maker_net_bps=-8.0, taker_net_bps=-26.0, p_maker_fill=0.10,
+        unrealized_bps=-26.0, inventory_qty=0.25,
+    )
+    assert reduce.action == ACTION_TAKER_EXIT
+    assert reduce.selected_qty <= TAKER_CLIP + 1e-12
     score_cannot_bypass = choose_position_exit(
         maker_net_bps=50.0, taker_net_bps=-26.0, p_maker_fill=1.0,
-        unrealized_bps=-26.0, observations_remaining=1,
+        unrealized_bps=-26.0, observations_remaining=1, inventory_qty=0.25,
     )
-    assert score_cannot_bypass.action == ACTION_PARK_EXIT
+    assert score_cannot_bypass.action == ACTION_TAKER_EXIT
 
 
 def test_regression_frozen_surfaces():
@@ -209,4 +216,6 @@ def test_regression_frozen_surfaces():
     adaptive_src = ADAPTIVE.read_text(encoding="utf-8")
     assert "simplified_hybrid_authority_v4_16_0" not in base_src
     assert "simplified_hybrid_authority_v4_16_0" not in adaptive_src
+    assert "simplified_hybrid_authority_v4_16_1" not in base_src
+    assert "simplified_hybrid_authority_v4_16_1" not in adaptive_src
     assert "choose_position_exit" not in adaptive_src

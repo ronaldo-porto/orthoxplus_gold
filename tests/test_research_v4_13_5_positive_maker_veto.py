@@ -29,7 +29,7 @@ def veto(maker, taker, failed, **kw):
 
 def test_v4135_version_and_wiring_contract():
     assert POSITIVE_MAKER_VETO_VERSION == "positive_maker_veto_v4_13_5"
-    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_1"' in SRC
     assert "choose_position_exit" in SRC
     assert "positive_maker_rescue_veto_applies(" not in SRC
     assert "POSITIVE_MAKER_VETO" not in SRC or "choose_position_exit" in SRC

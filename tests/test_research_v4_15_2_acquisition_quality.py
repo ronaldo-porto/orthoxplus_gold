@@ -81,9 +81,9 @@ def _ev(**kwargs):
 
 
 def test_release_versions_and_pipeline_contract():
-    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"' in STRATEGY
-    assert 'RESEARCH_ENGINE_VERSION = "simplified_hybrid_authority_v4_16_0"' in STRATEGY
-    assert 'RESEARCH_ENGINE_REVISION = "simplified_hybrid_authority_v4_16_0"' in STRATEGY
+    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_1"' in STRATEGY
+    assert 'RESEARCH_ENGINE_VERSION = "simplified_hybrid_authority_v4_16_1"' in STRATEGY
+    assert 'RESEARCH_ENGINE_REVISION = "simplified_hybrid_authority_v4_16_1"' in STRATEGY
     assert TOTAL_SCORE_FRONTIER_VERSION == "total_score_frontier_v4_15_2"
     assert COMPLETION_ECONOMICS_VERSION == "total_score_completion_v4_15_2"
     assert RESEARCH_LIFECYCLE_ENTRY_VERSION == "lifecycle_ev_v4_16_0"
@@ -348,6 +348,8 @@ def test_validator_and_frozen_agents_are_unchanged():
     adaptive_src = ADAPTIVE.read_text(encoding="utf-8")
     assert "simplified_hybrid_authority_v4_16_0" not in base_src
     assert "simplified_hybrid_authority_v4_16_0" not in adaptive_src
+    assert "simplified_hybrid_authority_v4_16_1" not in base_src
+    assert "simplified_hybrid_authority_v4_16_1" not in adaptive_src
     assert "acquisition_quality_v4_15_2" not in base_src
     assert "acquisition_quality_v4_15_2" not in adaptive_src
     assert "projected_completion_v4_15_2" not in base_src

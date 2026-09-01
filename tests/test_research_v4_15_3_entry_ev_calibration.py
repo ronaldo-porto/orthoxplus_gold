@@ -60,7 +60,7 @@ def _ev(**kwargs):
 
 
 def test_v4153_release_versions():
-    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_0"' in STRATEGY
+    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_1"' in STRATEGY
     assert RESEARCH_LIFECYCLE_ENTRY_VERSION == "lifecycle_ev_v4_16_0"
     assert SCORE_EV_VERSION == "simplified_hybrid_authority_v4_16_0"
     assert LANE_FUNNEL_VERSION == "lane_funnel_v4_16_0"
@@ -216,5 +216,7 @@ def test_validator_and_frozen_agents_are_unchanged():
     adaptive_src = ADAPTIVE.read_text(encoding="utf-8")
     assert "simplified_hybrid_authority_v4_16_0" not in base_src
     assert "simplified_hybrid_authority_v4_16_0" not in adaptive_src
+    assert "simplified_hybrid_authority_v4_16_1" not in base_src
+    assert "simplified_hybrid_authority_v4_16_1" not in adaptive_src
     assert "lifecycle_ev_v4_16_0" not in base_src
     assert "lane_funnel_v4_16_0" not in adaptive_src
