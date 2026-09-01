@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""V4.15.1 execution lanes for the single TOTAL_SCORE authority.
+"""V4.15.2 execution lanes for the single TOTAL_SCORE authority.
 
 The live Research scheduler has exactly three capacity lanes:
   * COVERAGE          - flat economic books without score-completion pressure
@@ -8,7 +8,9 @@ The live Research scheduler has exactly three capacity lanes:
 
 Historical CORE/RECYCLING/density/cohort scheduler fallbacks were removed in
 V4.15.1.  Lane identity is allocated once by the current screen and consumed by
-execution; it is not re-derived from older scheduler states.
+execution; it is not re-derived from older scheduler states.  V4.15.2 ranks
+completion/reserve candidates by projected qualification quality after fresh
+feasibility, without adding a second scheduler.
 """
 from __future__ import annotations
 
@@ -21,7 +23,7 @@ LANE_REALIZATION = "REALIZATION"
 LANES = (LANE_COVERAGE, LANE_COMPLETION, LANE_REALIZATION)
 SPILL_ORDER = (LANE_REALIZATION, LANE_COMPLETION, LANE_COVERAGE)
 SCORE_ACQUISITION_REGIMES = frozenset({"COVERAGE", "COMPLETION"})
-COMPLETION_ECONOMICS_VERSION = "total_score_completion_v4_15_1"
+COMPLETION_ECONOMICS_VERSION = "total_score_completion_v4_15_2"
 
 DEFAULT_COVERAGE_SLOTS = 4
 DEFAULT_COMPLETION_SLOTS = 3
@@ -143,6 +145,15 @@ class LaneBook:
     placements_per_rt: float = 0.0
     maker_fill_conversion: float = 0.0
     contract_reject_rate: float = 0.0
+    lifecycle_ev: float = 0.0
+    fresh_feasible: bool = True
+    fresh_feasible_reason: str = "OK"
+    projected_completion_pnl: float = 0.0
+    projected_completion_downside: float = 0.0
+    projected_completion_quality: float = 0.0
+    projected_completion_healthy: bool | None = None
+    projected_completion_reason: str = ""
+    p_fill_hint: float = 0.0
 
 
 def classify_execution_lane(book: LaneBook) -> str:
@@ -165,14 +176,19 @@ def completion_sort_key(book: LaneBook) -> tuple:
     ev_known = bool(book.completion_ev_known)
     ev_ok = bool(book.completion_ev_ok)
     ev_rank = 0 if (ev_known and ev_ok) else (1 if not ev_known else 2)
+    healthy = book.projected_completion_healthy
+    health_rank = 0 if healthy is True else (1 if healthy is None else 2)
     tier = str(book.execution_quality_tier or "UNKNOWN").upper()
     efficiency_rank = 0 if tier == "PRODUCTIVE" else (1 if tier == "UNKNOWN" else 2)
     completion_cost = 1 if remaining == 1 else (2 if remaining == 2 else 3)
     return (
         0 if critical else 1,
         0 if critical else ev_rank,
+        health_rank,
         -_finite(book.total_score_value),
         completion_cost,
+        -_finite(book.projected_completion_quality),
+        -_finite(book.lifecycle_ev),
         efficiency_rank,
         -deadline,
         0 if bool(book.score_pnl_ready) else 1,
@@ -205,9 +221,12 @@ def coverage_sort_key(book: LaneBook) -> tuple:
     tier = str(book.execution_quality_tier or "UNKNOWN").upper()
     efficiency_rank = 0 if tier == "PRODUCTIVE" else (1 if tier == "UNKNOWN" else 2)
     return (
+        0 if bool(book.fresh_feasible) else 1,
         efficiency_rank,
         -_finite(book.total_score_value),
         market_rank,
+        -_finite(book.lifecycle_ev),
+        -_finite(book.projected_completion_quality),
         -_finite(book.execution_quality_score),
         -maker_ev,
         _finite(book.maker_fee_bps),

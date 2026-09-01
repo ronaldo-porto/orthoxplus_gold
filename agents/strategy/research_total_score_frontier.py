@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""SN79 Research V4.15.1 total-score scheduling authority.
+"""SN79 Research V4.15.2 total-score scheduling authority.
 
 This module intentionally owns only *score-acquisition prioritisation* for flat
 books. Risk, inventory exits, FIFO/PnL accounting, contract safety, lifecycle
@@ -18,8 +18,12 @@ The live scheduler has exactly three score states:
   * SURVIVAL  : 41..79 Kappa-eligible books
   * FRONTIER  : >= 80 Kappa-eligible books
 
+Projected completion quality decides whether an incomplete book is a healthy
+COMPLETION candidate, an uncertain reserve, or a rotation.  It is not a second
+score authority.
+
 There is no 6/12/50 observation densification target and no CORE/RECYCLING
-special scheduling authority in V4.15.1.  Execution quality remains an execution-
+special scheduling authority.  Execution quality remains an execution-
 efficiency signal only.
 """
 from __future__ import annotations
@@ -28,7 +32,7 @@ import math
 from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
-TOTAL_SCORE_FRONTIER_VERSION = "total_score_frontier_v4_15_1"
+TOTAL_SCORE_FRONTIER_VERSION = "total_score_frontier_v4_15_2"
 
 PHASE_IGNITION = "IGNITION"
 PHASE_SURVIVAL = "SURVIVAL"
@@ -41,6 +45,11 @@ REASON_EXPIRY = "EXPIRY_DEFENSE"
 REASON_FRONTIER = "MEDIAN_FRONTIER"
 REASON_ECONOMIC = "ECONOMIC_ONLY"
 REASON_ROTATE = "ROTATE_INEFFICIENT"
+REASON_UNCERTAIN = "UNCERTAIN_RESERVE"
+
+PROJECTED_HEALTHY = "PROJECTED_HEALTHY"
+PROJECTED_UNHEALTHY = "PROJECTED_UNHEALTHY"
+PROJECTED_UNCERTAIN = "PROJECTED_UNCERTAIN"
 
 DEFAULT_IGNITION_BOOKS = 41
 DEFAULT_FULL_BREADTH_BOOKS = 80
@@ -174,11 +183,12 @@ def apply_total_score_frontier(
     full_breadth_books: int = DEFAULT_FULL_BREADTH_BOOKS,
     frontier_band: int = 2,
 ) -> tuple[list[Any], FrontierPlan]:
-    """Annotate LaneBook rows with the sole V4.15.1 score-scheduling authority.
+    """Annotate LaneBook rows with the sole V4.15.2 score-scheduling authority.
 
     The function does not bypass hard economics.  It only supplies a marginal
     score priority. Known non-positive completion EV, toxicity, inventory/risk,
-    and entry feasibility remain authoritative in their existing layers.
+    entry feasibility, and projected-unhealthy completion remain authoritative
+    in their existing layers.
     """
     rows = list(books or [])
     required = max(1, int(required_observations or 3))
@@ -245,18 +255,39 @@ def apply_total_score_frontier(
             value = 0.96
             reason = REASON_EXPIRY
         elif not eligible:
+            proj_reason = str(getattr(row, "projected_completion_reason", "") or "")
+            healthy = getattr(row, "projected_completion_healthy", None)
+            evaluated = proj_reason in {
+                PROJECTED_HEALTHY, PROJECTED_UNHEALTHY, PROJECTED_UNCERTAIN,
+            }
             if remaining == 1:
                 one_away += 1
-                # V4.15.1: execution quality is a soft efficiency signal, not
-                # a second score authority. Hard economics/feasibility decide due.
-                due = bool(econ_ok)
-                value = (1.00 if not inefficient else 0.88) if due else 0.08
-                reason = REASON_ONE_AWAY if due else REASON_ROTATE
+                if evaluated and healthy is False:
+                    due = False
+                    value = 0.08
+                    reason = REASON_ROTATE
+                elif evaluated and healthy is None:
+                    due = bool(econ_ok)
+                    value = (0.58 if not inefficient else 0.46) if due else 0.08
+                    reason = REASON_UNCERTAIN if due else REASON_ROTATE
+                else:
+                    due = bool(econ_ok)
+                    value = (1.00 if not inefficient else 0.88) if due else 0.08
+                    reason = REASON_ONE_AWAY if due else REASON_ROTATE
             elif remaining == 2:
                 two_away += 1
-                due = bool(econ_ok)
-                value = (0.72 if not inefficient else 0.60) if due else 0.06
-                reason = REASON_TWO_AWAY if due else REASON_ROTATE
+                if evaluated and healthy is False:
+                    due = False
+                    value = 0.06
+                    reason = REASON_ROTATE
+                elif evaluated and healthy is None:
+                    due = bool(econ_ok)
+                    value = (0.38 if not inefficient else 0.28) if due else 0.06
+                    reason = REASON_UNCERTAIN if due else REASON_ROTATE
+                else:
+                    due = bool(econ_ok)
+                    value = (0.72 if not inefficient else 0.60) if due else 0.06
+                    reason = REASON_TWO_AWAY if due else REASON_ROTATE
             else:
                 fresh += 1
                 # Fresh books live in COVERAGE, not COMPLETION.  Their score

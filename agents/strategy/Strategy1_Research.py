@@ -104,7 +104,29 @@ from research_kappa_realization import (
     kappa_realization_boost,
 )
 from research_taker_economics import fee_rate_to_bps
-from research_lifecycle_ev import lifecycle_entry_cost_bps
+from research_lifecycle_ev import (
+    RESEARCH_LIFECYCLE_ENTRY_VERSION,
+    lifecycle_entry_cost_bps,
+)
+from research_projected_completion import (
+    PROJECTED_COMPLETION_VERSION,
+    project_completion_quality,
+)
+from research_fresh_feasibility import (
+    DEFAULT_CHEAP_SHORTLIST,
+    FRESH_FEASIBILITY_VERSION,
+    clamp_cheap_shortlist,
+    evaluate_fresh_feasibility,
+    reserve_rank_score,
+    shortlist_fresh_candidates,
+)
+from research_lane_funnel import (
+    LANE_FUNNEL_VERSION,
+    bump as funnel_bump,
+    bump_reject as funnel_bump_reject,
+    compact_log as funnel_compact_log,
+    empty_funnel,
+)
 from research_clean_authority import (
     CLEAN_AUTHORITY_VERSION,
     LIFECYCLE_TAKER_MIN_SAMPLES,
@@ -192,6 +214,7 @@ from research_execution_lanes import (
     LANES as EXEC_LANES,
     LaneBook,
     authoritative_execution_lane,
+    classify_execution_lane,
     normalize_lane_budgets,
     admit_lane_candidate,
     score_acquisition_granted,
@@ -307,14 +330,14 @@ from research_total_score_frontier import (
 )
 
 class Strategy1_Research(Strategy1_Debug):
-    RESEARCH_POLICY_VERSION = "lean_authority_cleanup_v4_15_1"
-    RESEARCH_ENGINE_REVISION = "lean_authority_cleanup_p2_v4_15_1"
+    RESEARCH_POLICY_VERSION = "acquisition_quality_v4_15_2"
+    RESEARCH_ENGINE_REVISION = "acquisition_quality_p1_v4_15_2"
     RESEARCH_REALNET_EXIT_AUTHORITY_VERSION = REALNET_EXIT_AUTHORITY_VERSION
     RESEARCH_SCHEDULER_RETRY_VERSION = SCHEDULER_RETRY_VERSION
     RESEARCH_TOTAL_SCORE_FRONTIER_VERSION = TOTAL_SCORE_FRONTIER_VERSION
     RESEARCH_CLEAN_AUTHORITY_VERSION = CLEAN_AUTHORITY_VERSION
-    # === V4.15.1 LEAN AUTHORITY CLEANUP P2 ===
-    RESEARCH_ENGINE_VERSION = "lean_authority_cleanup_p2_v4_15_1"
+    # === V4.15.2 ACQUISITION QUALITY ===
+    RESEARCH_ENGINE_VERSION = "acquisition_quality_p1_v4_15_2"
     RESEARCH_HYBRID_VERSION = "early_escape_guard_v4_12_6"
     RESEARCH_EXIT_HAZARD_EV_VERSION = EXIT_HAZARD_EV_VERSION
     RESEARCH_VELOCITY_VERSION = VELOCITY_VERSION
@@ -332,13 +355,16 @@ class Strategy1_Research(Strategy1_Debug):
     RESEARCH_KAPPA_STATE_VERSION = KAPPA_STATE_VERSION
     RESEARCH_KAPPA_REALIZATION_VERSION = KAPPA_REALIZATION_VERSION
     RESEARCH_MARKOUT_VERSION = MARKOUT_VERSION
-    RESEARCH_LANES_VERSION = "execution_lanes_v10_total_score_only"
-    RESEARCH_SCORE_ACQUISITION_VERSION = "total_score_only_v4_15_1"
+    RESEARCH_LANES_VERSION = "execution_lanes_v11_acquisition_quality"
+    RESEARCH_SCORE_ACQUISITION_VERSION = "total_score_only_v4_15_2"
     RESEARCH_INVENTORY_STATE_VERSION = "inventory_state_v2"
     RESEARCH_EXIT_URGENCY_VERSION = "exit_urgency_v2"
     RESEARCH_LADDER_VERSION = "realization_ladder_v2"
     RESEARCH_TAKER_ECON_VERSION = "taker_economics_v2_live_fees"
-    RESEARCH_LIFECYCLE_ENTRY_VERSION = "adaptive_lifecycle_entry_v4_15"
+    RESEARCH_LIFECYCLE_ENTRY_VERSION = RESEARCH_LIFECYCLE_ENTRY_VERSION
+    RESEARCH_PROJECTED_COMPLETION_VERSION = PROJECTED_COMPLETION_VERSION
+    RESEARCH_FRESH_FEASIBILITY_VERSION = FRESH_FEASIBILITY_VERSION
+    RESEARCH_LANE_FUNNEL_VERSION = LANE_FUNNEL_VERSION
     RESEARCH_EXIT_QTY_VERSION = "exit_quantity_v1"
     RESEARCH_DUST_ECON_VERSION = "dust_economics_v2"
     RESEARCH_SAME_SIDE_VERSION = "same_side_v2_effective_exposure"
@@ -1062,6 +1088,9 @@ class Strategy1_Research(Strategy1_Debug):
         self.research_candidate_count = clamp_candidate_count(
             getattr(cfg, "research_candidate_count", 10)
         )
+        self.research_cheap_shortlist_count = clamp_cheap_shortlist(
+            getattr(cfg, "research_cheap_shortlist_count", DEFAULT_CHEAP_SHORTLIST)
+        )
         self._research_lane_budgets = normalize_lane_budgets(
             coverage_slots=4, completion_slots=3, realization_slots=3, shared_overflow_slots=1,
         )
@@ -1611,11 +1640,14 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_lane_overflow_used = 0
         self._research_lane_cap_hits = {lane: 0 for lane in EXEC_LANES}
         self._research_last_lanes = None
+        self._research_lane_funnel = empty_funnel()
+        self._research_lane_by_book: dict[int, str] = {}
         # V4.15: short memory of downstream execution vetoes. This is not a
         # score/risk authority; it prevents immediately re-spending prediction
         # and lane attempts on a book that just failed a mechanical gate.
         self._research_execution_reject_last: dict[int, dict[str, Any]] = {}
         self._research_lifecycle_taker_prob_live = float(self.research_lifecycle_taker_exit_prob)
+        self._research_lifecycle_taker_prob_tick: int | None = None
         self._research_lifecycle_exit_samples = 0
         self._research_aggressive_context: dict[int, dict[str, Any]] = {}
 
@@ -1733,10 +1765,14 @@ class Strategy1_Research(Strategy1_Debug):
             "lanes_version": self.RESEARCH_LANES_VERSION,
             "score_acquisition_version": self.RESEARCH_SCORE_ACQUISITION_VERSION,
             "lifecycle_entry_version": self.RESEARCH_LIFECYCLE_ENTRY_VERSION,
+            "projected_completion_version": self.RESEARCH_PROJECTED_COMPLETION_VERSION,
+            "fresh_feasibility_version": self.RESEARCH_FRESH_FEASIBILITY_VERSION,
+            "lane_funnel_version": self.RESEARCH_LANE_FUNNEL_VERSION,
             "clean_authority_version": self.RESEARCH_CLEAN_AUTHORITY_VERSION,
             "backfill_predict_reserve_per_lane": int(getattr(self, "research_backfill_predict_reserve_per_lane", 3)),
             "lifecycle_taker_prior": float(getattr(self, "research_lifecycle_taker_exit_prob", 0.30)),
             "candidate_count": int(getattr(self, "research_candidate_count", 10)),
+            "cheap_shortlist_count": int(getattr(self, "research_cheap_shortlist_count", DEFAULT_CHEAP_SHORTLIST)),
             "post_only_safety_ticks": int(getattr(self, "research_post_only_safety_ticks", 2)),
             "max_open_books": int(getattr(self, "research_max_open_books", 6)),
             "max_active_open_books": int(getattr(self, "research_max_active_open_books", 6)),
@@ -2885,6 +2921,36 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_lane_overflow_used = 0
         self._research_lane_cap_hits = {lane: 0 for lane in EXEC_LANES}
 
+    def _research_funnel(self) -> dict:
+        funnel = getattr(self, "_research_lane_funnel", None)
+        if not isinstance(funnel, dict):
+            funnel = empty_funnel()
+            self._research_lane_funnel = funnel
+        return funnel
+
+    def _research_funnel_lane(self, book_id: int) -> str:
+        mapped = (getattr(self, "_research_lane_by_book", {}) or {}).get(int(book_id))
+        if mapped:
+            return str(mapped)
+        return authoritative_execution_lane(
+            book_id,
+            inventory_flat=True,
+            allocation=getattr(self, "_research_last_lanes", None),
+            fallback_lane=EXEC_LANE_COVERAGE,
+        )
+
+    def _research_funnel_bump(self, book_id: int, stage: str, n: int = 1) -> None:
+        try:
+            funnel_bump(self._research_funnel(), self._research_funnel_lane(book_id), stage, n)
+        except Exception:
+            pass
+
+    def _research_emit_funnel(self) -> None:
+        payload = funnel_compact_log(
+            self._research_funnel(), tick=getattr(self, "_tick", None),
+        )
+        self._emit("FUNNEL", force=True, **payload)
+
     def _research_emit_lanes(self, *, stage: str) -> None:
         allocation = getattr(self, "_research_last_lanes", None)
         log = allocation.as_log() if allocation is not None else {}
@@ -2902,6 +2968,11 @@ class Strategy1_Research(Strategy1_Debug):
         # JSONL telemetry is sufficient here. Avoid synchronous flush=True console
         # I/O twice per request; it can directly inflate miner response latency.
         self._emit("LANES", force=True, tick=getattr(self, "_tick", None), **fields)
+        if str(stage).upper() == "EXEC":
+            try:
+                self._research_emit_funnel()
+            except Exception:
+                pass
 
     def _research_book_mid(self, book) -> float | None:
         try:
@@ -3175,11 +3246,22 @@ class Strategy1_Research(Strategy1_Debug):
 
 
     # === V4.15 CLEAN AUTHORITY: execution feasibility memory ===
-    def _research_execution_reject_block(self, book_id: int):
+    def _research_execution_reject_block(
+        self, book_id: int, observations_remaining: int | None = None,
+    ):
+        remaining = observations_remaining
+        if remaining is None:
+            try:
+                remaining = int(
+                    self._research_kappa_book(int(book_id)).observations_remaining
+                )
+            except Exception:
+                remaining = None
         return execution_reject_cooldown(
             (getattr(self, "_research_execution_reject_last", {}) or {}).get(int(book_id)),
             tick=int(getattr(self, "_tick", 0) or 0),
             enabled=True,
+            observations_remaining=remaining,
         )
 
     def _research_note_execution_decision(self, book_id: int, action: str, reason: str) -> None:
@@ -3199,10 +3281,35 @@ class Strategy1_Research(Strategy1_Debug):
                     "tick": int(getattr(self, "_tick", 0) or 0),
                     "reason": why,
                 }
+            funnel_bump_reject(self._research_funnel(), why)
+            if why in {"NEGATIVE_EXPECTED_PNL", "NEGATIVE_EV", "NON_POSITIVE_EDGE"}:
+                pass
+            elif why in {"ZERO_ORDER_SIZE", "SIZE_ZERO"}:
+                self._research_funnel_bump(int(book_id), "lane_ev_pass")
+            elif why == "LOW_FILL_PROBABILITY":
+                self._research_funnel_bump(int(book_id), "lane_ev_pass")
+                self._research_funnel_bump(int(book_id), "lane_size_valid")
+            elif why == "TTL_STALE":
+                self._research_funnel_bump(int(book_id), "lane_ev_pass")
+                self._research_funnel_bump(int(book_id), "lane_size_valid")
+                self._research_funnel_bump(int(book_id), "lane_fill_prob_valid")
         elif token in {"QUOTE", "QUOTED", "PLACE", "PLACED"}:
             table.pop(int(book_id), None)
+            self._research_funnel_bump(int(book_id), "lane_ev_pass")
+            self._research_funnel_bump(int(book_id), "lane_size_valid")
+            self._research_funnel_bump(int(book_id), "lane_ttl_valid")
+            self._research_funnel_bump(int(book_id), "lane_fill_prob_valid")
+            self._research_funnel_bump(int(book_id), "lane_quote_created")
 
     def _research_live_lifecycle_taker_probability(self) -> float:
+        tick = int(getattr(self, "_tick", 0) or 0)
+        cached_tick = getattr(self, "_research_lifecycle_taker_prob_tick", None)
+        live = getattr(self, "_research_lifecycle_taker_prob_live", None)
+        if cached_tick == tick and live is not None:
+            try:
+                return float(live)
+            except (TypeError, ValueError):
+                pass
         prior = float(getattr(self, "research_lifecycle_taker_exit_prob", 0.30))
         maker = taker = 0
         try:
@@ -3222,6 +3329,7 @@ class Strategy1_Research(Strategy1_Debug):
             floor=prior, cap=max(prior, LIFECYCLE_TAKER_PROB_CAP),
         )
         self._research_lifecycle_taker_prob_live = float(p)
+        self._research_lifecycle_taker_prob_tick = tick
         self._research_lifecycle_exit_samples = int(maker + taker)
         return float(p)
 
@@ -3374,7 +3482,11 @@ class Strategy1_Research(Strategy1_Debug):
                     entry_feasible = bool(cached_admission.get("allow", True))
             # V4.15 executability first: recent downstream mechanical vetoes
             # temporarily remove a flat book before TOTAL_SCORE spends a lane on it.
-            exec_cd = self._research_execution_reject_block(bid)
+            # TTL_STALE / LOW_FILL_PROBABILITY do not apply to one-away / two-away
+            # books: those are the QUIET requote path that must keep total_score_due.
+            exec_cd = self._research_execution_reject_block(
+                bid, observations_remaining=int(remaining),
+            )
             if bool(getattr(exec_cd, "blocked", False)) and not has_inv:
                 entry_feasible = False
             mem = mems.get(bid)
@@ -3421,10 +3533,26 @@ class Strategy1_Research(Strategy1_Debug):
             ev = score_ev_last.get(bid)
             maker_ev = 0.0
             maker_ev_known = False
+            lifecycle_ev = 0.0
+            p_fill_hint = fill_rate
             if ev is not None:
                 last_alpha = max(last_alpha, float(getattr(ev, "final_score", 0.0) or 0.0))
                 maker_ev = float(getattr(ev, "trading_ev", 0.0) or 0.0)
                 maker_ev_known = math.isfinite(maker_ev)
+                try:
+                    cached_life = float(getattr(ev, "lifecycle_ev", maker_ev) or 0.0)
+                    if math.isfinite(cached_life):
+                        lifecycle_ev = cached_life
+                except (TypeError, ValueError):
+                    lifecycle_ev = maker_ev if maker_ev_known else 0.0
+                try:
+                    cached_p = float(getattr(ev, "actionable_fill_prob", 0.0) or 0.0)
+                    if math.isfinite(cached_p) and cached_p > 0.0:
+                        p_fill_hint = max(p_fill_hint, cached_p)
+                except (TypeError, ValueError):
+                    pass
+            else:
+                lifecycle_ev = maker_ev if maker_ev_known else 0.0
             if not maker_ev_known:
                 cached_ev = (getattr(self, "_research_completion_ev_cache", {}) or {}).get(bid)
                 if cached_ev is not None:
@@ -3438,6 +3566,8 @@ class Strategy1_Research(Strategy1_Debug):
                         ):
                             maker_ev = cached_value
                             maker_ev_known = True
+                            if abs(lifecycle_ev) <= 1e-15:
+                                lifecycle_ev = cached_value
                     except (TypeError, ValueError):
                         pass
             completion_ev_ok = bool(
@@ -3596,8 +3726,62 @@ class Strategy1_Research(Strategy1_Debug):
                     placements_per_rt=float(execution_quality.placements_per_rt),
                     maker_fill_conversion=float(execution_quality.maker_fill_conversion),
                     contract_reject_rate=float(execution_quality.contract_reject_rate),
+                    lifecycle_ev=float(lifecycle_ev),
+                    p_fill_hint=float(p_fill_hint),
                 )
             )
+        annotated: list[LaneBook] = []
+        for row in lane_rows:
+            remaining = max(0, int(row.observations_remaining or 0))
+            fill_floor = 0.0 if remaining in {1, 2} else 0.04
+            cached_admission = (getattr(self, "_research_entry_admission_cache", {}) or {}).get(int(row.book_id))
+            safe_size = None
+            if isinstance(cached_admission, dict) and cached_admission.get("safe_size") is not None:
+                try:
+                    safe_size = float(cached_admission.get("safe_size"))
+                except (TypeError, ValueError):
+                    safe_size = None
+            p_hint = float(row.p_fill_hint)
+            fresh = evaluate_fresh_feasibility(
+                has_inventory=bool(row.has_inventory),
+                is_dust=bool(row.is_dust),
+                is_hard_risk=bool(row.is_hard_risk),
+                entry_feasible=bool(row.entry_feasible),
+                economics_ok=bool(row.economics_ok),
+                completion_ev_ok=bool(row.completion_ev_ok),
+                p_fill=p_hint if p_hint > 0.0 else None,
+                min_order=float(min_size),
+                safe_size=safe_size,
+                volume_headroom=1.0,
+                inventory_headroom=1.0 if not (actual_nonflat >= max(1, int(getattr(self, "research_max_total_open_books", 8)))) else 0.0,
+                lifecycle_ev=float(row.lifecycle_ev),
+                fill_floor=fill_floor,
+            )
+            entry_ok = bool(row.entry_feasible)
+            if not (row.has_inventory or row.is_dust or row.is_hard_risk):
+                entry_ok = bool(entry_ok and fresh.feasible)
+            proj = project_completion_quality(
+                observations_remaining=remaining,
+                realized_sum=float(row.recent_realized_pnl or 0.0),
+                realized_count=int(row.rolling_observation_count or 0),
+                rolling_downside_m3=float(row.rolling_downside_m3 or 0.0),
+                lifecycle_ev=float(row.lifecycle_ev),
+                p_fill=float(row.p_fill_hint),
+            )
+            annotated.append(
+                replace(
+                    row,
+                    entry_feasible=bool(entry_ok),
+                    fresh_feasible=bool(fresh.feasible),
+                    fresh_feasible_reason=str(fresh.reason),
+                    projected_completion_pnl=float(proj.projected_completion_pnl),
+                    projected_completion_downside=float(proj.projected_completion_downside),
+                    projected_completion_quality=float(proj.projected_completion_quality),
+                    projected_completion_healthy=proj.projected_completion_healthy,
+                    projected_completion_reason=str(proj.projected_completion_reason),
+                )
+            )
+        lane_rows = annotated
         # TOTAL_SCORE_FRONTIER is the sole score-acquisition authority.
         lane_rows, total_score_plan = apply_total_score_frontier(
             lane_rows,
@@ -3619,6 +3803,7 @@ class Strategy1_Research(Strategy1_Debug):
             and bool(row.economics_ok)
             and not bool(row.has_inventory)
             and max(0, int(row.observations_remaining or 0)) in {1, 2}
+            and row.projected_completion_healthy is not False
         )
         self._research_lane_budgets = self._research_execution_lane_budgets()
 
@@ -3718,8 +3903,27 @@ class Strategy1_Research(Strategy1_Debug):
         # below the reserved+overflow total the phase budget promises.
         if screen_budgets is not None:
             cap = max(int(cap), int(screen_budgets.total_cap))
-        allocation = select_lane_candidates(
+        self._research_lane_funnel = empty_funnel()
+        self._research_lane_by_book = {
+            int(row.book_id): classify_execution_lane(row) for row in lane_rows
+        }
+        for row in lane_rows:
+            lane = self._research_lane_by_book[int(row.book_id)]
+            funnel_bump(self._research_funnel(), lane, "lane_screened")
+            if bool(row.fresh_feasible):
+                funnel_bump(self._research_funnel(), lane, "lane_fresh_feasible")
+        shortlisted = shortlist_fresh_candidates(
             lane_rows,
+            cheap_shortlist=int(getattr(self, "research_cheap_shortlist_count", DEFAULT_CHEAP_SHORTLIST)),
+        )
+        for row in shortlisted:
+            funnel_bump(
+                self._research_funnel(),
+                self._research_lane_by_book.get(int(row.book_id), EXEC_LANE_COVERAGE),
+                "lane_shortlisted",
+            )
+        allocation = select_lane_candidates(
+            shortlisted,
             screen_budgets,
             max_candidates=cap,
         )
@@ -3728,11 +3932,27 @@ class Strategy1_Research(Strategy1_Debug):
         # V4.15 same-request success backfill. Predict a small reserve from
         # each acquisition lane. Reserve books do not consume capacity here;
         # execution admits them only if earlier candidates fail to place.
+        # Rank the cheap universe by fresh executability × lifecycle EV ×
+        # projected completion quality × Total Score, then deep-predict only
+        # the bounded allocated set plus a few reserves.
+        by_shortlist = {int(row.book_id): row for row in shortlisted}
         full_pool = dict(getattr(allocation, "pool_by_lane", {}) or {})
+        for _lane in (EXEC_LANE_COMPLETION, EXEC_LANE_COVERAGE):
+            ranked = list(full_pool.get(_lane, []) or [])
+            ranked.sort(
+                key=lambda bid: (
+                    -reserve_rank_score(by_shortlist.get(int(bid))),
+                    int(bid),
+                )
+            )
+            full_pool[_lane] = ranked
         authorized_pool = {
             lane: list((allocation.by_lane or {}).get(lane, []) or [])
             for lane in EXEC_LANES
         }
+        for lane, bids in (allocation.by_lane or {}).items():
+            for bid in bids or []:
+                funnel_bump(self._research_funnel(), lane, "lane_total_score_selected")
         if bool(getattr(self, "research_candidate_backfill", True)):
             reserve_n = int(getattr(self, "research_backfill_predict_reserve_per_lane", 3) or 0)
             selected_set = {int(x) for x in selected}
@@ -3812,6 +4032,7 @@ class Strategy1_Research(Strategy1_Debug):
         for book_id, book in books.items():
             if int(book_id) in selected:
                 predictions[book_id] = self.predict_direction(book_id, book, timestamp)
+                self._research_funnel_bump(int(book_id), "lane_deep_predicted")
             else:
                 self._research_keep_cheap_state(book_id, book, timestamp)
         self._last_predictions = predictions
@@ -5166,6 +5387,7 @@ class Strategy1_Research(Strategy1_Debug):
         prow = self._research_execution_quality_row(int(book_id))
         prow["maker_fills"] = int(prow.get("maker_fills", 0) or 0) + 1
         self._research_actionable_maker_fills += 1
+        self._research_funnel_bump(int(book_id), "lane_filled")
         self._research_actionable_fills += int(is_actionable)
         self._research_dust_maker_fills += int(is_dust)
         snap = self._actionable_fill_snapshot(int(book_id))
@@ -5691,6 +5913,8 @@ class Strategy1_Research(Strategy1_Debug):
             )
         except Exception:
             pass
+        fees_bps = self._research_lifecycle_entry_cost_bps(int(book_id), spread_bps)
+        cost = (getattr(self, "_research_lifecycle_cost_last", {}) or {}).get(int(book_id))
         return score_velocity_priority(
             book=int(book_id),
             side=side,
@@ -5707,7 +5931,7 @@ class Strategy1_Research(Strategy1_Debug):
             markout_samples=markout_n,
             expected_markout_override=expected_override,
             ofi_against=ofi_against,
-            fees_bps=self._research_lifecycle_entry_cost_bps(int(book_id), spread_bps),
+            fees_bps=fees_bps,
             realized_observation_count=self._completion_observation_count(book_id),
             required=self._research_required_observation_count(),
             inventory_util=inv_util,
@@ -5735,6 +5959,9 @@ class Strategy1_Research(Strategy1_Debug):
             realization_time_reference=realization_time_reference,
             score_velocity_weight=float(self.research_score_velocity_weight),
             enable_score_velocity=bool(self.research_enable_score_velocity),
+            taker_exit_probability=self._research_live_lifecycle_taker_probability(),
+            expected_cross_bps=float(getattr(cost, "expected_cross_bps", 0.0) or 0.0) if cost is not None else 0.0,
+            holding_risk_bps=float(getattr(cost, "holding_risk_bps", 0.0) or 0.0) if cost is not None else 0.0,
         )
 
     def _global_book_rank(self, expected_alpha: float, mem) -> float:
@@ -6033,7 +6260,10 @@ class Strategy1_Research(Strategy1_Debug):
                 "first_tick": tick,
                 "last_tick": tick,
                 "last_emit_tick": tick,
+                "last_progress_tick": tick,
                 "net_base": qty,
+                "compact_attempts": 0,
+                "compact_successes": 0,
             }
             self._research_parked_dust[book_id] = prior
             self._research_dust_entries += 1
@@ -6050,10 +6280,17 @@ class Strategy1_Research(Strategy1_Debug):
                     age_ticks=0,
                     parked=True,
                     stale=False,
+                    **self._research_dust_liveness_fields(book_id),
                 )
             return True
 
         prior["last_tick"] = tick
+        try:
+            prev_qty = abs(float(prior.get("net_base", qty) or qty))
+        except (TypeError, ValueError):
+            prev_qty = abs(float(qty))
+        if abs(float(qty)) + 1e-12 < prev_qty:
+            prior["last_progress_tick"] = tick
         prior["net_base"] = qty
         age = max(0, tick - int(prior.get("first_tick", tick)))
         last_emit = int(prior.get("last_emit_tick", tick))
@@ -6071,6 +6308,7 @@ class Strategy1_Research(Strategy1_Debug):
                 age_ticks=age,
                 parked=True,
                 stale=(age >= self.research_dust_warn_ticks),
+                **self._research_dust_liveness_fields(book_id),
             )
         return True
 
@@ -6883,6 +7121,7 @@ class Strategy1_Research(Strategy1_Debug):
                 )
             if compact_selected:
                 self._research_dust_compact_attempts += 1
+                self._research_note_dust_compact(int(book_id), success=False)
                 before_ix = len(response.instructions)
                 n = super()._place_passive_inventory_exit(
                     response,
@@ -8816,6 +9055,35 @@ class Strategy1_Research(Strategy1_Debug):
             return max(0, int(getattr(inventory, "position_ticks", 0) or 0))
         return max(0, tick - int(first or tick))
 
+    def _research_dust_liveness_fields(self, book_id: int, inventory=None) -> dict[str, Any]:
+        parked = (getattr(self, "_research_parked_dust", {}) or {}).get(int(book_id)) or {}
+        tick = int(getattr(self, "_tick", 0) or 0)
+        first = int(parked.get("first_tick", tick) or tick)
+        last_progress = int(parked.get("last_progress_tick", first) or first)
+        unreal = None
+        if inventory is not None:
+            unreal = getattr(inventory, "unrealized_bps", None)
+        return {
+            "dust_age_ticks": max(0, tick - first),
+            "dust_first_seen_tick": first,
+            "dust_last_progress_tick": last_progress,
+            "dust_unrealized_bps": unreal,
+            "dust_compaction_attempts": int(parked.get("compact_attempts", 0) or 0),
+            "dust_compaction_successes": int(parked.get("compact_successes", 0) or 0),
+            "dust_park_duration": max(0, tick - first),
+        }
+
+    def _research_note_dust_compact(self, book_id: int, *, success: bool = False) -> None:
+        row = (getattr(self, "_research_parked_dust", {}) or {}).get(int(book_id))
+        if not isinstance(row, dict):
+            return
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if success:
+            row["compact_successes"] = int(row.get("compact_successes", 0) or 0) + 1
+            row["last_progress_tick"] = tick
+        else:
+            row["compact_attempts"] = int(row.get("compact_attempts", 0) or 0) + 1
+
     def _research_evaluate_dust(
         self,
         book_id: int,
@@ -8916,6 +9184,7 @@ class Strategy1_Research(Strategy1_Debug):
                 book=int(book_id),
                 compact_selected=int(bool(compact_selected)),
                 **decision.as_log(),
+                **self._research_dust_liveness_fields(int(book_id), inventory),
             )
         except Exception:
             pass
@@ -8951,6 +9220,7 @@ class Strategy1_Research(Strategy1_Debug):
         qty = float(decision.reduce_qty)
         if decision.action in {DUST_ACTION_PASSIVE, DUST_ACTION_COMPETITIVE}:
             self._research_dust_compact_attempts += 1
+            self._research_note_dust_compact(int(book_id), success=False)
             maker_action = (
                 ACTION_COMPETITIVE
                 if decision.action == DUST_ACTION_COMPETITIVE
@@ -9084,6 +9354,7 @@ class Strategy1_Research(Strategy1_Debug):
         state = register_contract_reject(previous, current_tick=now)
         self._research_contract_reject_state[key] = state
         self._research_contract_rejects += 1
+        funnel_bump_reject(self._research_funnel(), "CONTRACT_REJECT")
         prow = self._research_execution_quality_row(int(book_id))
         prow["contract_rejects"] = int(prow.get("contract_rejects", 0) or 0) + 1
         self._emit(
@@ -9406,12 +9677,14 @@ class Strategy1_Research(Strategy1_Debug):
         elif abs(before) >= eps and abs(after) < eps:
             transition = "FLAT"
             self._research_round_trip_closes += 1
+            self._research_funnel_bump(int(book_id), "lane_rt_completed")
             self._research_position_reductions += 1
             self._research_round_trip_samples_by_book[book_id] = (
                 self._research_round_trip_samples_by_book.get(book_id, 0) + 1
             )
             if before_was_dust and self._dust_fill_matches_recent_compaction(book_id):
                 self._research_dust_compact_fills += 1
+                self._research_note_dust_compact(int(book_id), success=True)
                 if self.research_dust_compact_adaptive:
                     self._record_dust_compaction_success(book_id)
         elif before * after < 0.0:
@@ -9421,6 +9694,7 @@ class Strategy1_Research(Strategy1_Debug):
             self._research_position_reductions += 1
             if abs(realized_delta) > 1e-12:
                 self._research_round_trip_closes += 1
+                self._research_funnel_bump(int(book_id), "lane_rt_completed")
                 self._research_round_trip_samples_by_book[book_id] = (
                     self._research_round_trip_samples_by_book.get(book_id, 0) + 1
                 )
@@ -9428,6 +9702,7 @@ class Strategy1_Research(Strategy1_Debug):
             self._research_position_tick_seen[book_id] = int(getattr(self, "_tick", 0) or 0)
             if before_was_dust and self._dust_fill_matches_recent_compaction(book_id):
                 self._research_dust_compact_fills += 1
+                self._research_note_dust_compact(int(book_id), success=True)
                 if self.research_dust_compact_adaptive:
                     self._record_dust_compaction_success(book_id)
                 self._inventory_reason[book_id] = "DUST_COMPACT"
@@ -9436,6 +9711,7 @@ class Strategy1_Research(Strategy1_Debug):
             self._research_position_reductions += 1
             if before_was_dust and self._dust_fill_matches_recent_compaction(book_id):
                 self._research_dust_compact_fills += 1
+                self._research_note_dust_compact(int(book_id), success=True)
                 if self.research_dust_compact_adaptive:
                     self._record_dust_compaction_success(book_id)
         elif abs(after) > abs(before) + eps:
@@ -10751,6 +11027,8 @@ class Strategy1_Research(Strategy1_Debug):
 
         if self._research_backfill_active and placed:
             self._research_quote_successes += 1
+            self._research_funnel_bump(int(book_id), "lane_quote_submitted")
+            self._research_funnel_bump(int(book_id), "lane_quote_accepted")
             if self._research_lanes_on() and lane in EXEC_LANES:
                 used = getattr(self, "_research_lane_used", None)
                 if not isinstance(used, dict):
@@ -12042,6 +12320,28 @@ class Strategy1_Research(Strategy1_Debug):
                 f"selected={r.get('selected_count')} "
                 f"actual_nonflat={r.get('actual_nonflat_inventory')} "
                 f"stale_fifo_keys={r.get('stale_empty_position_keys')}"
+            )
+        if typ == "FUNNEL":
+            return (
+                f"[S1R_FUNNEL] tick={r.get('tick')} "
+                f"lane={self._short(r.get('lane', 'ALL'))} "
+                f"selected={r.get('selected', r.get('coverage_selected', 0))} "
+                f"fresh_feasible={r.get('fresh_feasible', r.get('coverage_fresh_feasible', 0))} "
+                f"predicted={r.get('predicted', r.get('coverage_predicted', 0))} "
+                f"ev_pass={r.get('ev_pass', r.get('coverage_ev_pass', 0))} "
+                f"size_valid={r.get('size_valid', r.get('coverage_size_valid', 0))} "
+                f"quoted={r.get('quoted', r.get('coverage_quoted', 0))} "
+                f"submitted={r.get('submitted', r.get('coverage_submitted', 0))} "
+                f"filled={r.get('filled', r.get('coverage_filled', 0))} "
+                f"rt={r.get('rt', r.get('coverage_rt', 0))} "
+                f"cov={r.get('coverage_selected')}/{r.get('coverage_quoted')}/{r.get('coverage_filled')} "
+                f"cmp={r.get('completion_selected')}/{r.get('completion_quoted')}/{r.get('completion_filled')} "
+                f"real={r.get('realization_selected')}/{r.get('realization_quoted')}/{r.get('realization_filled')} "
+                f"reject_negative_ev={r.get('reject_negative_ev')} "
+                f"reject_size_zero={r.get('reject_size_zero')} "
+                f"reject_fill_prob={r.get('reject_fill_prob')} "
+                f"reject_ttl={r.get('reject_ttl')} "
+                f"reject_adverse={r.get('reject_adverse')}"
             )
         if typ == "CANCEL_DECISION":
             return (

@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from research_clean_authority import execution_reject_cooldown, posterior_taker_exit_probability
+from research_clean_authority import (
+    CLEAN_AUTHORITY_VERSION,
+    execution_reject_cooldown,
+    posterior_taker_exit_probability,
+)
 from research_execution_lanes import (
     LANE_COMPLETION,
     LANE_COVERAGE,
@@ -28,8 +32,8 @@ LAUNCHER = (ROOT / "run_strategy1_research_test_multi.sh").read_text()
 
 
 def test_release_versions_and_single_authority_contract():
-    assert 'RESEARCH_POLICY_VERSION = "lean_authority_cleanup_v4_15_1"' in STRATEGY
-    assert TOTAL_SCORE_FRONTIER_VERSION == "total_score_frontier_v4_15_1"
+    assert 'RESEARCH_POLICY_VERSION = "acquisition_quality_v4_15_2"' in STRATEGY
+    assert TOTAL_SCORE_FRONTIER_VERSION == "total_score_frontier_v4_15_2"
     assert "apply_total_score_frontier" in STRATEGY
     for legacy in (
         "update_sticky_cohort",
@@ -91,12 +95,59 @@ def test_total_score_phase_geometry_and_lane_ownership():
 
 
 def test_execution_cooldown_and_success_backfill_pool():
+    assert CLEAN_AUTHORITY_VERSION == "clean_authority_v4_15_1_completion_requote"
     assert execution_reject_cooldown({"tick": 10, "reason": "ZERO_ORDER_SIZE"}, tick=11).blocked
     assert not execution_reject_cooldown({"tick": 10, "reason": "TOXIC"}, tick=11).blocked
     rows = [LaneBook(book_id=i, total_score_phase="IGNITION", total_score_due=True, economics_ok=True) for i in range(1, 5)]
     alloc = select_lane_candidates(rows, normalize_lane_budgets(coverage_slots=0, completion_slots=1, realization_slots=0, shared_overflow_slots=0), max_candidates=1)
     assert alloc.by_lane[LANE_COMPLETION] == [1]
     assert alloc.pool_by_lane[LANE_COMPLETION] == [1, 2, 3, 4]
+
+
+def test_ttl_and_low_fill_cooldown_exempt_one_away_and_two_away():
+    rec_ttl = {"tick": 10, "reason": "TTL_STALE"}
+    rec_fill = {"tick": 10, "reason": "LOW_FILL_PROBABILITY"}
+    rec_size = {"tick": 10, "reason": "ZERO_ORDER_SIZE"}
+    rec_edge = {"tick": 10, "reason": "NON_POSITIVE_EDGE"}
+    for remaining in (1, 2):
+        assert not execution_reject_cooldown(
+            rec_ttl, tick=11, observations_remaining=remaining,
+        ).blocked
+        assert not execution_reject_cooldown(
+            rec_fill, tick=11, observations_remaining=remaining,
+        ).blocked
+        assert execution_reject_cooldown(
+            rec_size, tick=11, observations_remaining=remaining,
+        ).blocked
+        assert execution_reject_cooldown(
+            rec_edge, tick=11, observations_remaining=remaining,
+        ).blocked
+    assert execution_reject_cooldown(
+        rec_ttl, tick=11, observations_remaining=3,
+    ).blocked
+    assert execution_reject_cooldown(
+        rec_fill, tick=11, observations_remaining=0,
+    ).blocked
+    one_away = LaneBook(
+        book_id=9,
+        rolling_observation_count=2,
+        observations_remaining=1,
+        economics_ok=True,
+        completion_ev_ok=True,
+        entry_feasible=True,
+    )
+    blocked = LaneBook(
+        book_id=10,
+        rolling_observation_count=2,
+        observations_remaining=1,
+        economics_ok=True,
+        completion_ev_ok=True,
+        entry_feasible=False,
+    )
+    rows, _plan = apply_total_score_frontier([one_away, blocked], qualified_books=10)
+    by_id = {r.book_id: r for r in rows}
+    assert by_id[9].total_score_due is True
+    assert by_id[10].total_score_due is False
 
 
 def test_lifecycle_taker_probability_prices_observed_exit_path():

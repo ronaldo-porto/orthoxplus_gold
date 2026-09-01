@@ -4,7 +4,9 @@
 Centralizes two cross-cutting behaviors that were previously scattered across
 scheduler/execution code:
   * short cooldowns for repeated downstream execution vetoes, so impossible
-    books do not repeatedly consume score-acquisition prediction/attempt budget;
+    books do not repeatedly consume score-acquisition prediction/attempt budget.
+    TTL_STALE and LOW_FILL_PROBABILITY are exempt for one-away / two-away
+    Kappa books so QUIET requotes can still mark total_score_due;
   * empirical lifecycle Taker-exit probability with Bayesian shrinkage to the
     configured prior, so entry EV prices the observed realization path.
 
@@ -14,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-CLEAN_AUTHORITY_VERSION = "clean_authority_v4_15_1"
+CLEAN_AUTHORITY_VERSION = "clean_authority_v4_15_1_completion_requote"
 LIFECYCLE_TAKER_PRIOR_STRENGTH = 8.0
 LIFECYCLE_TAKER_MIN_SAMPLES = 4
 LIFECYCLE_TAKER_PROB_CAP = 0.90
@@ -27,6 +29,17 @@ EXECUTION_REJECT_COOLDOWNS = {
     "NEGATIVE_EXPECTED_PNL": 8,
     "ADVERSE_SELECTION": 6,
 }
+
+# TTL expiry and a zero predicted-fill print are the normal QUIET requote
+# path, not proof the book is unexecutable. Applying those cooldowns to
+# one-away / two-away books clears entry_feasible, which TOTAL_SCORE then
+# treats as a hard due-gate, so KAPPA_COMPLETION never spends a slot.
+# Keep the cooldown for fresh coverage (remaining not in {1,2}).
+COMPLETION_REQUOTE_EXEMPT_REASONS = frozenset({
+    "TTL_STALE",
+    "LOW_FILL_PROBABILITY",
+})
+COMPLETION_REQUOTE_REMAINING = frozenset({1, 2})
 
 @dataclass(frozen=True)
 class RejectCooldown:
@@ -41,6 +54,7 @@ def execution_reject_cooldown(
     tick: int,
     enabled: bool = True,
     cooldowns: dict[str, int] | None = None,
+    observations_remaining: int | None = None,
 ) -> RejectCooldown:
     if not enabled or not record:
         return RejectCooldown(False)
@@ -51,6 +65,12 @@ def execution_reject_cooldown(
         return RejectCooldown(False)
     last_tick = int(record.get("tick", -10**9) or -10**9)
     until = last_tick + span
+    remaining = max(0, int(observations_remaining or 0))
+    if (
+        remaining in COMPLETION_REQUOTE_REMAINING
+        and reason in COMPLETION_REQUOTE_EXEMPT_REASONS
+    ):
+        return RejectCooldown(False, reason=reason, until_tick=until)
     return RejectCooldown(int(tick) < until, reason=reason, until_tick=until)
 
 

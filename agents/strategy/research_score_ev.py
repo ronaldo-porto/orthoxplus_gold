@@ -26,12 +26,14 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from research_kappa_state import build_kappa_universe, kappa_book_state, kappa_progress
+from research_lifecycle_ev import required_entry_ev
 from research_markout import (
     CONSERVATIVE_MARKOUT_FALLBACK_BPS,
     MIN_MARKOUT_SAMPLES,
     conservative_expected_markout_bps,
 )
 
+SCORE_EV_VERSION = "lifecycle_total_score_split_v4_15_2"
 PROTOCOL_DEFAULT_MIN_REALIZED_OBSERVATIONS = 3
 LANE_COVERAGE = "COVERAGE"
 LANE_COMPLETION = "COMPLETION"
@@ -388,6 +390,9 @@ class ScoreEVBreakdown:
     score_velocity_value: float = 0.0
     expected_realization_time: float | None = None
     realization_time_reference: float | None = None
+    lifecycle_ev: float = 0.0
+    total_score_component: float = 0.0
+    required_entry_ev: float = 0.0
 
     @property
     def final_priority(self) -> float:
@@ -431,6 +436,16 @@ class ScoreEVBreakdown:
             "score_velocity_value": self.score_velocity_value,
             "expected_realization_time": self.expected_realization_time,
             "realization_time_reference": self.realization_time_reference,
+            "lifecycle_ev": (
+                self.lifecycle_ev if math.isfinite(self.lifecycle_ev) else None
+            ),
+            "total_score_component": (
+                self.total_score_component
+                if math.isfinite(self.total_score_component)
+                else None
+            ),
+            "required_entry_ev": float(self.required_entry_ev),
+            "score_ev_version": SCORE_EV_VERSION,
         }
 
 
@@ -480,6 +495,9 @@ def compute_score_ev(
     stale_weight: float = 0.03,
     stale_ms: float = 30_000.0,
     adverse_weight: float = 0.05,
+    taker_exit_probability: float | None = None,
+    expected_cross_bps: float = 0.0,
+    holding_risk_bps: float = 0.0,
 ) -> ScoreEVBreakdown:
     realized, req, remaining = observation_progress(realized_observation_count, required)
     p_act = conservative_actionable_probability(
@@ -540,6 +558,18 @@ def compute_score_ev(
     if not math.isfinite(headroom):
         headroom = 1.0
     capped = bool(volume_capped) or headroom <= 0.0
+    entry_bar = max(0.0, float(min_trading_ev))
+    if taker_exit_probability is not None:
+        entry_bar = max(
+            entry_bar,
+            required_entry_ev(
+                base_required_ev=min_trading_ev,
+                taker_exit_probability=taker_exit_probability,
+                expected_cross_bps=expected_cross_bps,
+                holding_risk_bps=holding_risk_bps,
+                adverse_selection_cost=a_risk,
+            ),
+        )
     reason = hard_safety_blocks(
         toxic=toxic,
         inventory_blocked=inventory_blocked,
@@ -547,14 +577,12 @@ def compute_score_ev(
         invalid_size=invalid_size,
         volume_capped=capped,
         trading_ev_value=t_ev,
-        min_trading_ev=min_trading_ev,
+        min_trading_ev=entry_bar,
     )
     eligible = reason is None
-    final = (
-        t_ev + c_val + a_def - d_cost - i_cost - l_cost - a_risk
-        if eligible
-        else float("-inf")
-    )
+    lifecycle = t_ev - d_cost - i_cost - l_cost - a_risk
+    total_score = c_val + a_def
+    final = (lifecycle + total_score) if eligible else float("-inf")
     return ScoreEVBreakdown(
         book=int(book),
         side=str(side),
@@ -584,6 +612,9 @@ def compute_score_ev(
         final_score=final,
         eligible=eligible,
         reject_reason=reason,
+        lifecycle_ev=lifecycle if eligible else float("-inf"),
+        total_score_component=total_score,
+        required_entry_ev=float(entry_bar),
     )
 
 
@@ -648,6 +679,7 @@ def score_velocity_priority(
     return replace(
         base,
         final_score=base.final_score + bonus,
+        total_score_component=base.total_score_component + bonus,
         score_velocity_value=velocity_value,
         expected_realization_time=t_book,
         realization_time_reference=t_ref,

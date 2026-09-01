@@ -1,0 +1,36 @@
+{
+  "release": "SN79 St6.5 Research V4.15.2 ACQUISITION_QUALITY",
+  "date": "2026-09-01",
+  "policy": "acquisition_quality_v4_15_2",
+  "engine": "acquisition_quality_p1_v4_15_2",
+  "workflow": [
+    "HARD_SAFETY",
+    "CHEAP_SCREEN",
+    "FRESH_EXECUTABILITY",
+    "PURE_LIFECYCLE_EV",
+    "PROJECTED_COMPLETION_QUALITY",
+    "TOTAL_SCORE_VALUE",
+    "LANE_ALLOCATION",
+    "BOUNDED_BACKFILL",
+    "EXECUTION",
+    "REALIZATION"
+  ],
+  "new_modules": [
+    "agents/strategy/research_projected_completion.py",
+    "agents/strategy/research_fresh_feasibility.py",
+    "agents/strategy/research_lane_funnel.py"
+  ],
+  "protected_unchanged": {
+    "taos/im/validator/trade.py": "137a4a7f26de9395a0028539a95411992c6ed0fa16ddd21682c04838121af0b8",
+    "agents/strategy/BaseStrategy.py": "76941d948ce3bac0057e9ef788a3c6e93dab4f4bc79ce7b5b00733a67211f0cb",
+    "agents/strategy/AdaptiveAgent.py": "6421fe403c4a51cb80ffd67bc37cd92be9dcbe646968819ceeabd42f1eb234c1"
+  },
+  "verification_workspace": {
+    "research_pytest": "375 PASS / 0 FAIL",
+    "compileall_agents_strategy": "PASS",
+    "compileall_validator_trade": "PASS",
+    "launcher_bash_n": "PASS",
+    "v4_15_2_preflight": "PASS",
+    "v4_14_4_realnet_safety_preflight": "PASS"
+  }
+}

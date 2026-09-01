@@ -46,14 +46,15 @@ done
 
 [[ -f "$REPO_ROOT/run_miner_multi.sh" ]] || { echo "run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research.py" ]] || { echo "Strategy1_Research.py missing" >&2; exit 1; }
-grep -q 'RESEARCH_POLICY_VERSION = "lean_authority_cleanup_v4_15_1"' "$AGENT_PATH/Strategy1_Research.py" || {
-  echo "ERROR: Strategy1_Research.py is not lean_authority_cleanup_v4_15_1" >&2
+grep -q 'RESEARCH_POLICY_VERSION = "acquisition_quality_v4_15_2"' "$AGENT_PATH/Strategy1_Research.py" || {
+  echo "ERROR: Strategy1_Research.py is not acquisition_quality_v4_15_2" >&2
   exit 1
 }
 for required in \
   research_execution_lanes.py research_total_score_frontier.py research_clean_authority.py \
   research_entry_size.py research_quote_hysteresis.py research_realnet_exit_authority.py \
-  research_scheduler_retry.py research_unified_exit.py; do
+  research_scheduler_retry.py research_unified_exit.py research_projected_completion.py \
+  research_fresh_feasibility.py research_lane_funnel.py research_lifecycle_ev.py; do
   [[ -f "$AGENT_PATH/$required" ]] || { echo "ERROR: missing $AGENT_PATH/$required" >&2; exit 1; }
 done
 
@@ -259,8 +260,8 @@ from research_total_score_frontier import (
     TOTAL_SCORE_FRONTIER_VERSION, PHASE_IGNITION, PHASE_SURVIVAL, PHASE_FRONTIER,
     apply_total_score_frontier, phase_budget_tuple, scoring_pivot_indices,
 )
-if TOTAL_SCORE_FRONTIER_VERSION != "total_score_frontier_v4_15_1":
-    raise SystemExit("ERROR: stale V4.15.1 total-score helper")
+if TOTAL_SCORE_FRONTIER_VERSION != "total_score_frontier_v4_15_2":
+    raise SystemExit("ERROR: stale V4.15.2 total-score helper")
 if phase_budget_tuple(PHASE_IGNITION) != (4, 3, 3, 1):
     raise SystemExit("ERROR: V4.15.1 ignition budgets changed")
 if phase_budget_tuple(PHASE_SURVIVAL) != (2, 5, 3, 1):
@@ -296,7 +297,7 @@ stress, _ = apply_total_score_frontier(stress, qualified_books=10)
 alloc = select_lane_candidates(stress, budgets, max_candidates=budgets.total_cap)
 if alloc.used[LANE_COVERAGE] != cov:
     raise SystemExit("ERROR: V4.15.1 IGNITION coverage reserve collapsed under the candidate cap")
-print("V4.15.1 TOTAL_SCORE_FRONTIER API OK")
+print("V4.15.2 TOTAL_SCORE_FRONTIER API OK")
 PYV4145TOTALSCORE
 
 PYTHONPATH="$AGENT_PATH${PYTHONPATH:+:$PYTHONPATH}" python - <<'PYV415CLEAN'
@@ -314,7 +315,7 @@ from research_entry_size import (
 from research_quote_hysteresis import (
     TOTAL_SCORE_STALE_TTL_VERSION, total_score_stale_completion_ttl,
 )
-if CLEAN_AUTHORITY_VERSION != "clean_authority_v4_15_1":
+if CLEAN_AUTHORITY_VERSION != "clean_authority_v4_15_1_completion_requote":
     raise SystemExit("ERROR: stale V4.15 clean-authority helper")
 if TOTAL_SCORE_FRONTIER_EXACT_MIN_VERSION != "total_score_frontier_exact_min_v4_15_1":
     raise SystemExit("ERROR: stale V4.15.1 TOTAL_SCORE exact-min helper")
@@ -324,6 +325,18 @@ if not execution_reject_cooldown({"tick": 10, "reason": "ZERO_ORDER_SIZE"}, tick
     raise SystemExit("ERROR: V4.15 mechanical executability cooldown failed")
 if execution_reject_cooldown({"tick": 10, "reason": "TOXIC"}, tick=11).blocked:
     raise SystemExit("ERROR: V4.15 hard-risk/quarantine reason leaked into mechanical cooldown")
+if execution_reject_cooldown(
+    {"tick": 10, "reason": "TTL_STALE"}, tick=11, observations_remaining=1,
+).blocked:
+    raise SystemExit("ERROR: TTL_STALE cooldown must not block one-away requotes")
+if execution_reject_cooldown(
+    {"tick": 10, "reason": "LOW_FILL_PROBABILITY"}, tick=11, observations_remaining=2,
+).blocked:
+    raise SystemExit("ERROR: LOW_FILL_PROBABILITY cooldown must not block two-away requotes")
+if not execution_reject_cooldown(
+    {"tick": 10, "reason": "TTL_STALE"}, tick=11, observations_remaining=3,
+).blocked:
+    raise SystemExit("ERROR: TTL_STALE cooldown must still block fresh coverage")
 p = posterior_taker_exit_probability(
     maker_exits=28, taker_exits=117, prior=0.30, prior_strength=8, min_samples=4, cap=0.90,
 )
@@ -354,6 +367,69 @@ if not used or ttl != 250.0 or not reason.startswith("TOTAL_SCORE"):
     raise SystemExit("ERROR: V4.15.1 TOTAL_SCORE stale-TTL privilege failed")
 print("V4.15.1 lean-authority + adaptive lifecycle + success-backfill API OK")
 PYV415CLEAN
+
+PYTHONPATH="$AGENT_PATH${PYTHONPATH:+:$PYTHONPATH}" python - <<'PYV4152ACQ'
+from research_projected_completion import project_completion_quality, REASON_HEALTHY, REASON_UNHEALTHY
+from research_lifecycle_ev import required_entry_ev, RESEARCH_LIFECYCLE_ENTRY_VERSION
+from research_score_ev import compute_score_ev
+from research_fresh_feasibility import DEFAULT_CHEAP_SHORTLIST, shortlist_fresh_candidates
+from research_execution_lanes import LaneBook
+from research_total_score_frontier import apply_total_score_frontier, TOTAL_SCORE_FRONTIER_VERSION
+from research_lane_funnel import empty_funnel, bump, compact_log
+if TOTAL_SCORE_FRONTIER_VERSION != "total_score_frontier_v4_15_2":
+    raise SystemExit("ERROR: stale V4.15.2 frontier version")
+if RESEARCH_LIFECYCLE_ENTRY_VERSION != "lifecycle_ev_v4_15_2":
+    raise SystemExit("ERROR: stale V4.15.2 lifecycle EV version")
+if DEFAULT_CHEAP_SHORTLIST != 22:
+    raise SystemExit("ERROR: cheap shortlist is not 22")
+healthy = project_completion_quality(
+    observations_remaining=1, realized_sum=0.20, realized_count=2,
+    lifecycle_ev=0.15, p_fill=0.40,
+)
+if healthy.projected_completion_healthy is not True or healthy.projected_completion_reason != REASON_HEALTHY:
+    raise SystemExit("ERROR: healthy ONE_AWAY projection failed")
+unhealthy = project_completion_quality(
+    observations_remaining=1, realized_sum=-0.40, realized_count=2,
+    lifecycle_ev=-0.12, p_fill=0.40,
+)
+if unhealthy.projected_completion_healthy is not False or unhealthy.projected_completion_reason != REASON_UNHEALTHY:
+    raise SystemExit("ERROR: unhealthy ONE_AWAY projection failed")
+rows = [
+    LaneBook(book_id=1, rolling_observation_count=2, observations_remaining=1, economics_ok=True, completion_ev_ok=True, projected_completion_healthy=True, projected_completion_reason="PROJECTED_HEALTHY"),
+    LaneBook(book_id=2, rolling_observation_count=2, observations_remaining=1, economics_ok=True, completion_ev_ok=True, projected_completion_healthy=False, projected_completion_reason="PROJECTED_UNHEALTHY"),
+]
+planned, _ = apply_total_score_frontier(rows, qualified_books=10)
+by_id = {r.book_id: r for r in planned}
+if not by_id[1].total_score_due or by_id[2].total_score_due:
+    raise SystemExit("ERROR: projected completion due-policy failed")
+if required_entry_ev(taker_exit_probability=0.78) <= required_entry_ev(taker_exit_probability=0.30):
+    raise SystemExit("ERROR: taker probability must raise the entry EV bar")
+strong = compute_score_ev(
+    book=1, fill_prob_old=0.80, learned_actionable_p=0.80, learned_actionable_samples=20,
+    spread_capture_bps=12.0, fees_bps=0.5, markout_mean_bps=0.0, markout_samples=20,
+    taker_exit_probability=0.90,
+)
+if not strong.eligible:
+    raise SystemExit("ERROR: high taker probability became a hard veto")
+one = compute_score_ev(book=1, realized_observation_count=2, fill_prob_old=0.4, spread_capture_bps=6.0, fees_bps=0.5)
+fresh = compute_score_ev(book=2, realized_observation_count=0, fill_prob_old=0.4, spread_capture_bps=6.0, fees_bps=0.5)
+if abs(one.lifecycle_ev - fresh.lifecycle_ev) > 1e-12:
+    raise SystemExit("ERROR: LifecycleEV still contains completion bonuses")
+if abs(one.trading_ev - fresh.trading_ev) > 1e-12:
+    raise SystemExit("ERROR: TotalScoreValue leaked into trading EV")
+kept = shortlist_fresh_candidates([
+    LaneBook(book_id=1, fresh_feasible=True, entry_feasible=True, cheap_score=0.2),
+    LaneBook(book_id=2, fresh_feasible=False, entry_feasible=False, cheap_score=0.9),
+], cheap_shortlist=22)
+if {r.book_id for r in kept} != {1}:
+    raise SystemExit("ERROR: infeasible book consumed cheap shortlist priority")
+funnel = empty_funnel()
+bump(funnel, "COMPLETION", "lane_total_score_selected")
+rec = compact_log(funnel, tick=1, lane="COMPLETION")
+if rec.get("selected") != 1:
+    raise SystemExit("ERROR: funnel compact record missing selected")
+print("V4.15.2 acquisition-quality API OK")
+PYV4152ACQ
 [[ -f "$REPO_ROOT/taos/im/validator/trade.py" ]] || { echo "validator trade.py missing" >&2; exit 1; }
 grep -q 'Preserve EVERY timestamp' "$REPO_ROOT/taos/im/validator/trade.py" || {
   echo "ERROR: validator trade.py missing restart empty-timestamp preservation fix" >&2
@@ -516,7 +592,7 @@ research_dust_compact_prior_fill=0.02 research_dust_compact_prior_strength=8.0 \
 research_enable_fill_hazard=1 \
 research_completion_ev_cache_ticks=20 research_total_score_ignition_books=41 research_total_score_full_breadth_books=80 research_total_score_frontier_band=2 research_enable_score_velocity=1 research_score_velocity_weight=0.08 research_enable_quote_hysteresis=1 \
 research_enable_adaptive_ttl=1 research_ttl_min_ms=250 research_ttl_max_ms=1500 research_quiet_ttl_ms=1000 research_quiet_exit_ttl_ms=950 research_one_away_exit_ttl_ms=975 \
-research_enable_fast_candidate_screen=1 research_candidate_count=11 research_max_open_books=6 research_max_active_open_books=6 research_max_total_open_books=8 research_max_parked_open_books=4 research_max_total_abs_base=2.0 research_persistent_maker_enabled=1 research_hysteresis_min_price_ticks=3 research_post_only_safety_ticks=2 \
+research_enable_fast_candidate_screen=1 research_candidate_count=11 research_cheap_shortlist_count=22 research_max_open_books=6 research_max_active_open_books=6 research_max_total_open_books=8 research_max_parked_open_books=4 research_max_total_abs_base=2.0 research_persistent_maker_enabled=1 research_hysteresis_min_price_ticks=3 research_post_only_safety_ticks=2 \
 \
 research_lifecycle_taker_exit_prob=0.30 research_lifecycle_slippage_bps=0.75 research_lifecycle_holding_bps=0.50 \
 research_backfill_predict_reserve_per_lane=3 \
@@ -596,11 +672,11 @@ grep -q 'from research_rt_phase_timing import RoundTripPhaseState' agents/strate
   exit 1
 }
 
-echo "[Strategy1_Research] version=lean_authority_cleanup_v4_15_1"
+echo "[Strategy1_Research] version=acquisition_quality_v4_15_2"
 echo "[Strategy1_Research] log_dir=$RESEARCH_DIR"
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
-  echo "V4.15.1 lean-authority + V4.14.4 RealNet safety preflight-only PASS"
+  echo "V4.15.2 acquisition-quality + V4.14.4 RealNet safety preflight-only PASS"
   exit 0
 fi
 

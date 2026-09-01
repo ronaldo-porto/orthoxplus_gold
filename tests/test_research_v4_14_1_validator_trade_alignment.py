@@ -50,7 +50,7 @@ def test_validator_rebase_keeps_realized_pnl_and_empty_sparse_buckets():
 
 def test_v4141_carries_scoring_evidence_but_keeps_long_run_risk_profile():
     assert VALIDATOR_HISTORY_ALIGNMENT_VERSION == "validator_history_alignment_v4_14_1"
-    assert 'RESEARCH_POLICY_VERSION = "lean_authority_cleanup_v4_15_1"' in SRC
+    assert 'RESEARCH_POLICY_VERSION = "acquisition_quality_v4_15_2"' in SRC
     assert '== REASON_SIM_ID_CHANGE' in SRC
     assert '"VALIDATOR_HISTORY_CARRY"' in SRC
     assert "_research_preserve_validator_pnl_history_on_start" in SRC
