@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.1 Research candidate.
+"""Strategy1-Direct V4.16.2 A1.2 Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
 its hot orchestration path with the shortest useful authority chain:
 
-    selected book -> hard safety -> LifecycleEV/TotalScore rank
-                  -> Maker/Taker/Skip -> final contract validation
+    selected book -> hard safety -> LifecycleEV -> bounded Maker quality
+                  -> TotalScore rank -> Maker/Taker/Skip -> final validation
 
 For non-flat inventory the existing V4.16 PositionExitController remains the
 only realization authority.
@@ -16,6 +16,7 @@ A/B tested against the V4.16.2 baseline.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 import os
 import sys
@@ -41,8 +42,14 @@ from research_direct_economics import (
     ACTION_TAKER as EXEC_ACTION_TAKER,
     DIRECT_ECONOMICS_VERSION,
     DIRECT_EXECUTION_CONTROLLER_VERSION,
+    DIRECT_MAKER_MIN_EV,
     choose_direct_execution,
     direct_lifecycle_breakdown,
+)
+from research_direct_quality import (
+    DIRECT_QUALITY_VERSION,
+    MakerLifecycleStats,
+    maker_quality_adjustment,
 )
 from research_neutral_prediction import is_neutral_forecast, prediction_source_of
 from research_position_exit import BAND_ABSOLUTE, new_exposure_allowed
@@ -50,12 +57,12 @@ from research_risk_guard import evaluate_risk_guard
 from research_role_size import maker_entry_size, taker_clip_size
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_2"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 state/learning with corrected A1.1 direct economics.
+    """V4.16.2 state/learning with A1.2 Maker lifecycle quality control.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -68,8 +75,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
     What remains authoritative:
       * Research fast screen / Kappa workload selection;
       * hard mechanical risk checks;
-      * A1.1 Direct LifecycleEV + TotalScore rank;
-      * A1.1 separate Maker/Taker economic chooser;
+      * A1.2 Direct LifecycleEV + bounded Maker-quality rank adjustment;
+      * A1.2 separate Maker/Taker economic chooser with Maker EV margin;
       * V4.16 PositionExitController for every non-flat position;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -83,12 +90,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         super().initialize()
         # Marker only.  Do not mutate strategy thresholds or risk limits here.
         self._simple_direct_mode = True
+        # Overlay-only learning.  It intentionally starts sparse and bounded;
+        # restart-safe rolling PnL below supplies historical productivity context.
+        self._direct_maker_open: dict[int, dict[str, float | int]] = {}
+        self._direct_maker_quality_by_book: dict[int, MakerLifecycleStats] = {}
+        self._direct_quality_last: dict[int, Any] = {}
         try:
             self._emit(
                 "SIMPLE_CONFIG",
                 force=True,
                 simple_policy_version=SIMPLE_POLICY_VERSION,
-                authority="HARD_SAFETY>DIRECT_LIFECYCLE_EV>TOTAL_SCORE>SEPARATE_MAKER_TAKER_EV",
+                authority="HARD_SAFETY>DIRECT_LIFECYCLE_EV>MAKER_QUALITY>TOTAL_SCORE>SEPARATE_MAKER_TAKER_EV",
                 direct_economics_version=DIRECT_ECONOMICS_VERSION,
                 execution_controller_version=DIRECT_EXECUTION_CONTROLLER_VERSION,
                 exit_authority="POSITION_EXIT_CONTROLLER",
@@ -98,20 +110,113 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 latency_hard_gate=0,
                 duplicate_adverse_hard_gate=0,
                 taker_kappa_subsidy=0,
+                direct_quality_version=DIRECT_QUALITY_VERSION,
+                maker_min_ev=DIRECT_MAKER_MIN_EV,
+                maker_quality_max_penalty=0.04,
             )
         except Exception:
             pass
 
     # ------------------------------------------------------------------
-    # A1.1 LifecycleEV: keep baseline state/telemetry, but latency is no longer
-    # a universal per-book veto and expected markout is not charged twice.
+    # A1.2 Maker lifecycle learning.  A Maker-opened position teaches the Direct
+    # overlay its actual gross drift and whether realization required a Taker.
+    # The inherited trade accounting remains untouched.
     # ------------------------------------------------------------------
+    def _research_on_own_fill(
+        self, *, event, book_id: int, before: float, after: float,
+        kappa_before: int, kappa_after: int, is_maker: bool,
+    ) -> None:
+        super()._research_on_own_fill(
+            event=event, book_id=book_id, before=before, after=after,
+            kappa_before=kappa_before, kappa_after=kappa_after, is_maker=is_maker,
+        )
+        try:
+            bid = int(book_id)
+            eps = float(self._execution_flat_epsilon())
+            px = float(getattr(event, "price", 0.0) or 0.0)
+            if px <= 0.0:
+                return
+            was_flat = abs(float(before)) <= eps
+            is_flat = abs(float(after)) <= eps
+            row = self._direct_maker_open.get(bid)
+
+            if row is not None and (is_flat or float(before) * float(after) < -(eps * eps)):
+                entry_px = float(row.get("entry_price", 0.0) or 0.0)
+                sign = 1.0 if float(row.get("sign", 1.0) or 1.0) >= 0.0 else -1.0
+                if entry_px > 0.0:
+                    gross_bps = sign * (px - entry_px) / entry_px * 10_000.0
+                    stats = self._direct_maker_quality_by_book.setdefault(
+                        bid, MakerLifecycleStats()
+                    )
+                    stats.observe(gross_bps=gross_bps, exit_is_taker=(not bool(is_maker)))
+                    try:
+                        self._emit(
+                            "DIRECT_MAKER_LIFECYCLE", force=True,
+                            tick=getattr(self, "_tick", None), book=bid,
+                            gross_bps=float(gross_bps),
+                            exit_style=("TAKER" if not is_maker else "MAKER"),
+                            lifecycle_samples=int(stats.count),
+                            maker_exit_count=int(stats.maker_exit_count),
+                            taker_exit_count=int(stats.taker_exit_count),
+                            taker_exit_rate=float(stats.taker_exit_rate),
+                            gross_bps_ewma=float(stats.gross_bps_ewma),
+                            taker_gross_bps_ewma=float(stats.taker_gross_bps_ewma),
+                        )
+                    except Exception:
+                        pass
+                self._direct_maker_open.pop(bid, None)
+                row = None
+
+            # Only Maker fills may open a lifecycle tracked by this quality model.
+            # Direct entry authority prevents normal same-side stacking while non-flat.
+            if is_maker and (was_flat or float(before) * float(after) < -(eps * eps)) and not is_flat:
+                self._direct_maker_open[bid] = {
+                    "entry_price": float(px),
+                    "sign": (1.0 if float(after) > 0.0 else -1.0),
+                    "tick": int(getattr(self, "_tick", 0) or 0),
+                }
+        except Exception:
+            # Learning can never break authoritative fill accounting.
+            return
+
+    def _direct_quality_for_book(self, book_id: int):
+        stats = (getattr(self, "_direct_maker_quality_by_book", {}) or {}).get(int(book_id))
+        rolling_n = 0
+        rolling_loss = 0.0
+        rolling_mean = 0.0
+        try:
+            roll = self._research_rolling_book_economics(int(book_id))
+            rolling_n = int(getattr(roll, "nonzero_count", 0) or 0)
+            rolling_loss = float(getattr(roll, "loss_rate", 0.0) or 0.0)
+            rolling_mean = float(getattr(roll, "realized_mean", 0.0) or 0.0)
+        except Exception:
+            pass
+        quality = maker_quality_adjustment(
+            stats=stats,
+            rolling_samples=rolling_n,
+            rolling_loss_rate=rolling_loss,
+            rolling_realized_mean=rolling_mean,
+        )
+        self._direct_quality_last[int(book_id)] = quality
+        return quality
+
+    # ------------------------------------------------------------------
+    # A1.2 LifecycleEV: A1.1 latency/adverse correction stays intact.  Maker
+    # quality is a bounded rank deduction, not a new hard lifecycle veto.
+        # ------------------------------------------------------------------
     def _research_score_ev_for_book(self, book_id: int, expected_alpha: float, mem):
         base = super()._research_score_ev_for_book(book_id, expected_alpha, mem)
-        return direct_lifecycle_breakdown(
+        direct = direct_lifecycle_breakdown(
             base,
             min_trading_ev=float(getattr(self, "research_score_ev_min_trading", 0.0) or 0.0),
         )
+        quality = self._direct_quality_for_book(int(book_id))
+        final = float(getattr(direct, "final_score", float("-inf")))
+        if bool(getattr(direct, "eligible", False)) and math.isfinite(final):
+            # Downrank repeated poor Maker lifecycles without blocking an
+            # independently positive directional Taker opportunity.
+            direct = replace(direct, final_score=final - float(quality.total_penalty))
+        return direct
 
     # ------------------------------------------------------------------
     # Inventory: one owner.  Any real position goes to PositionExitController.
@@ -312,12 +417,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
             inventory_qty=max(min_size, 0.25),
             min_order=min_size,
         )
-        # A1.1 splits execution economics.  Maker uses the already fill-weighted
+        # A1.2 preserves separate execution economics.  Maker uses the already fill-weighted
         # Direct LifecycleEV.  Taker must independently earn its actual half-spread
         # crossing + fee + slippage from the raw directional forecast.  Kappa is
         # upstream ranking only and cannot rescue negative Taker economics.
+        quality = (getattr(self, "_direct_quality_last", {}) or {}).get(int(book_id))
+        if quality is None:
+            quality = self._direct_quality_for_book(int(book_id))
+        maker_lifecycle_ev = life - float(getattr(quality, "total_penalty", 0.0) or 0.0)
         decision = choose_direct_execution(
-            maker_lifecycle_ev=life,
+            maker_lifecycle_ev=maker_lifecycle_ev,
             directional_score=float(getattr(prediction, "score", 0.0) or 0.0),
             crossing_bps=max(0.0, float(getattr(ev, "spread_capture_bps", 0.0) or 0.0)),
             maker_size=float(maker_role.size),
@@ -338,6 +447,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 lane="DIRECT",
                 safe=1,
                 lifecycle_ev=life,
+                maker_lifecycle_ev_adjusted=maker_lifecycle_ev,
+                **quality.as_log(),
                 total_score_value=float(getattr(ev, "total_score_component", 0.0) or 0.0),
                 prediction_source=prediction_source_of(prediction),
                 neutral_fallback_used=int(is_neutral_forecast(prediction)),
@@ -414,6 +525,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "instructions": 0,
             "skipped_negative_lifecycle": 0,
             "skipped_hard_safety": 0,
+            "portfolio_open_slots": 0,
+            "portfolio_headroom_stop": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -462,8 +575,30 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 stats["managed"] += 1
                 stats["instructions"] += int(n)
 
+        # A1.2 early portfolio admission.  Final contract validation remains the
+        # last authority, but do not build more new-exposure books than the
+        # current portfolio can possibly admit in this request.
+        diag = getattr(self, "_research_inventory_lane_diag", {}) or {}
+        abs_now = float(diag.get("total_abs_base_inventory", 0.0) or 0.0)
+        open_now = int(diag.get("actual_nonflat_inventory", 0) or 0)
+        active_now = int(diag.get("active_nonflat_inventory", 0) or 0)
+        max_abs = float(getattr(self, "research_max_total_abs_base", 2.0) or 2.0)
+        max_open = int(getattr(self, "research_max_total_open_books", 8) or 8)
+        max_active = int(getattr(self, "research_max_active_open_books", 6) or 6)
+        min_size = max(1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25))
+        abs_slots = max(0, int(math.floor((max_abs - abs_now + 1e-12) / min_size)))
+        portfolio_slots = max(
+            0, min(abs_slots, max_open - open_now, max_active - active_now)
+        )
+        stats["portfolio_open_slots"] = int(portfolio_slots)
+
         # One flat-entry path.  No maintenance branch and no separate alpha branch.
-        for book_id in selected_ids:
+        if portfolio_slots > 0:
+            candidate_ids = selected_ids
+        else:
+            candidate_ids = set()
+            stats["portfolio_headroom_stop"] = 1
+        for book_id in candidate_ids:
             book = (getattr(state, "books", None) or {}).get(book_id)
             profile = profile_by_id.get(book_id)
             prediction = (predictions or {}).get(book_id)
@@ -516,7 +651,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             int(getattr(self, "max_mm_books_per_tick", 4) or 4),
             int(getattr(self, "research_candidate_count", 11) or 11),
         )
-        success_cap = max(1, int(getattr(self, "max_mm_books_per_tick", 4) or 4))
+        success_cap = min(
+            max(1, int(getattr(self, "max_mm_books_per_tick", 4) or 4)),
+            int(portfolio_slots),
+        ) if portfolio_slots > 0 else 0
         successful_books = 0
 
         for row in candidates[:attempt_cap]:

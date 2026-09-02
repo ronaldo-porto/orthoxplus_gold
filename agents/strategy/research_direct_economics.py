@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct A1.1 economics overlay.
+"""Strategy1-Direct A1.2 economics overlay.
 
 This module intentionally does not modify the frozen V4.16.2 Research baseline.
 It corrects only the Direct candidate's two runtime defects observed on Agent 68:
@@ -20,8 +20,8 @@ from dataclasses import dataclass, replace
 import math
 from typing import Any
 
-DIRECT_ECONOMICS_VERSION = "direct_economics_v4_16_2_a1_1"
-DIRECT_EXECUTION_CONTROLLER_VERSION = "direct_execution_controller_v4_16_2_a1_1"
+DIRECT_ECONOMICS_VERSION = "direct_economics_v4_16_2_a1_2"
+DIRECT_EXECUTION_CONTROLLER_VERSION = "direct_execution_controller_v4_16_2_a1_2"
 
 ACTION_MAKER = "MAKER"
 ACTION_TAKER = "TAKER"
@@ -33,9 +33,13 @@ ACTION_SKIP = "SKIP"
 TAKER_ALPHA_SCALE_BPS = 8.0
 TAKER_EDGE_SCALE_BPS = 8.0
 NEGATIVE_UTILITY = -1.0e9
+# A1.1 accepted any MakerEV > 0.  Agent-68 showed the 0-0.04 region was
+# negative in aggregate.  A1.2 keeps a small model-error margin while leaving
+# Taker economics independent.
+DIRECT_MAKER_MIN_EV = 0.030
 
 # These reasons are mechanical/risk authorities and may never be rescued by the
-# Direct overlay.  NEGATIVE_EV is deliberately absent because A1.1 recomputes
+# Direct overlay.  NEGATIVE_EV is deliberately absent because A1.2 recomputes
 # Direct LifecycleEV without global latency and duplicate adverse penalties.
 HARD_REJECT_REASONS = {
     "TOXIC",
@@ -71,7 +75,7 @@ def direct_lifecycle_breakdown(base: Any, *, min_trading_ev: float = 0.0):
       actionable fill probability × (spread capture + expected markout
       - expected future Taker realization cost - holding risk).
 
-    Therefore A1.1 does *not* subtract global strategy latency from per-book
+    Therefore Direct A1.2 preserves A1.1 and does *not* subtract global strategy latency from per-book
     economics and does *not* charge adverse selection a second time after
     expected markout.  Both remain logged telemetry for diagnosis.
 
@@ -124,6 +128,8 @@ class DirectExecutionDecision:
     expected_directional_move_bps: float
     taker_crossing_bps: float
     taker_total_cost_bps: float
+    maker_min_ev: float
+    maker_ev_margin: float
 
     def as_log(self) -> dict[str, Any]:
         return {
@@ -142,6 +148,8 @@ class DirectExecutionDecision:
             "expected_directional_move_bps": self.expected_directional_move_bps,
             "taker_crossing_bps": self.taker_crossing_bps,
             "taker_total_cost_bps": self.taker_total_cost_bps,
+            "maker_min_ev": self.maker_min_ev,
+            "maker_ev_margin": self.maker_ev_margin,
         }
 
 
@@ -196,6 +204,7 @@ def choose_direct_execution(
     expected_markout_bps: float = 0.0,
     neutral_fallback: bool = False,
     skip_utility: float = 0.0,
+    maker_min_ev: float = DIRECT_MAKER_MIN_EV,
 ) -> DirectExecutionDecision:
     """Choose Maker / Taker / Skip from separate positive economics.
 
@@ -225,16 +234,18 @@ def choose_direct_execution(
         )
 
     skip_u = _finite(skip_utility)
-    maker_u = maker_ev if maker_ev > 0.0 else NEGATIVE_UTILITY
+    maker_floor = max(0.0, _finite(maker_min_ev, DIRECT_MAKER_MIN_EV))
+    maker_u = maker_ev if maker_ev + 1e-12 >= maker_floor else NEGATIVE_UTILITY
     taker_u = taker_ev if taker_ev > 0.0 else NEGATIVE_UTILITY
 
     # Prefer Maker on an exact tie: it avoids crossing and preserves optionality.
     if maker_u >= taker_u and maker_u > skip_u:
         return DirectExecutionDecision(
             ACTION_MAKER, maker_u, taker_u, skip_u,
-            float(maker_size), 0.0, "MAKER_POSITIVE_EV",
+            float(maker_size), 0.0, "MAKER_MARGIN_EV",
             maker_ev, taker_ev, signal, expected_move,
             max(0.0, _finite(crossing_bps)), total_cost,
+            maker_floor, maker_ev - maker_floor,
         )
     if taker_u > maker_u and taker_u > skip_u:
         return DirectExecutionDecision(
@@ -242,10 +253,12 @@ def choose_direct_execution(
             0.0, float(taker_clip), "TAKER_POSITIVE_DIRECTIONAL_EV",
             maker_ev, taker_ev, signal, expected_move,
             max(0.0, _finite(crossing_bps)), total_cost,
+            maker_floor, maker_ev - maker_floor,
         )
     return DirectExecutionDecision(
         ACTION_SKIP, maker_u, taker_u, skip_u,
         0.0, 0.0, "NO_POSITIVE_EXECUTION_EV",
         maker_ev, taker_ev, signal, expected_move,
         max(0.0, _finite(crossing_bps)), total_cost,
+        maker_floor, maker_ev - maker_floor,
     )

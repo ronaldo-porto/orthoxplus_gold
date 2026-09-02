@@ -1,0 +1,89 @@
+{
+  "STRATEGY1_DIRECT_V4_16_2_A1_2.md": {
+    "bytes": 5742,
+    "sha256": "b261af80b48daaac4ea6c54577aa13ffb09a5c15ae7211bcd268d5e81d45998d"
+  },
+  "a12_parameters": {
+    "combined_quality_max_penalty": 0.04,
+    "maker_min_ev": 0.03,
+    "productivity_max_penalty": 0.02,
+    "quality_state": "maker lifecycle EWMA session-local; rolling PnL restart-safe",
+    "realization_drift_max_penalty": 0.03
+  },
+  "agents/strategy/AdaptiveAgent.py": {
+    "bytes": 104426,
+    "sha256": "6421fe403c4a51cb80ffd67bc37cd92be9dcbe646968819ceeabd42f1eb234c1"
+  },
+  "agents/strategy/BaseStrategy.py": {
+    "bytes": 1922,
+    "sha256": "76941d948ce3bac0057e9ef788a3c6e93dab4f4bc79ce7b5b00733a67211f0cb"
+  },
+  "agents/strategy/Strategy1.py": {
+    "bytes": 75357,
+    "sha256": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d"
+  },
+  "agents/strategy/Strategy1_Research.py": {
+    "bytes": 650477,
+    "sha256": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5"
+  },
+  "agents/strategy/Strategy1_Research_Simple.py": {
+    "bytes": 30100,
+    "sha256": "242c4b5c6b1da5f8f002b9844191072e84e2eecaeaf2b70fbfe02a15890015e9"
+  },
+  "agents/strategy/research_direct_economics.py": {
+    "bytes": 10424,
+    "sha256": "87d07811c77d6269c8d128e2fda1d4ac03e631acf90b381066f1731343d129d4"
+  },
+  "agents/strategy/research_direct_quality.py": {
+    "bytes": 6434,
+    "sha256": "e9ca10e15b6082759b772d8ff55f09311da411e7acdc7077ad4cb776bd3cb007"
+  },
+  "calibration": {
+    "a11_maker_decisions_surviving_0_030_margin": 620,
+    "a11_maker_decisions_total": 1006,
+    "survival_fraction_before_quality_penalty": 0.6163021868787276
+  },
+  "run_strategy1_research_simple_multi.sh": {
+    "bytes": 4798,
+    "sha256": "ab9107d56d6e37e0213cedc350180f1aba356b156d7b4715a4be0f9795325bfb"
+  },
+  "runtime_basis": {
+    "completed_round_trips": 120,
+    "entry_decisions": 1425,
+    "fills": 275,
+    "final_contract_rejects": 999,
+    "maker_decisions": 1006,
+    "maker_to_maker_round_trips": 29,
+    "maker_to_taker_round_trips": 74,
+    "negative_round_trips": 70,
+    "positive_round_trips": 50,
+    "qualified_books_final": 20,
+    "ranked_candidates": 2820,
+    "source_log": "strategy1_research_agent_68_20260902_224816.jsonl",
+    "taker_decisions": 30,
+    "ticks": 265
+  },
+  "taos/im/validator/trade.py": {
+    "bytes": 41485,
+    "sha256": "137a4a7f26de9395a0028539a95411992c6ed0fa16ddd21682c04838121af0b8"
+  },
+  "tests/test_research_strategy1_direct_a1_2.py": {
+    "bytes": 9488,
+    "sha256": "19c0c4cd1e22292c985359081da8eed4767c174663ebc7a6124cfe55bcac3a42"
+  },
+  "validation": {
+    "baseline_core_files": "UNCHANGED vs A1.1",
+    "compileall_agents_strategy": "PASS",
+    "direct_tests": "21 passed",
+    "focused_preflight": "91 passed",
+    "research_regression": "463 passed",
+    "simple_launcher_bash_n": "PASS"
+  },
+  "version": {
+    "baseline_research": "simplified_hybrid_authority_v4_16_2",
+    "direct_economics": "direct_economics_v4_16_2_a1_2",
+    "direct_quality": "direct_maker_quality_v4_16_2_a1_2",
+    "execution_controller": "direct_execution_controller_v4_16_2_a1_2",
+    "policy": "strategy1_direct_v4_16_2_a1_2"
+  }
+}
