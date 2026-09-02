@@ -13,10 +13,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-RESEARCH_LIFECYCLE_ENTRY_VERSION = "lifecycle_ev_v4_16_0"
+RESEARCH_LIFECYCLE_ENTRY_VERSION = "lifecycle_ev_v4_16_2"
 LIFECYCLE_EV_MARGIN = 0.0
 
 LIFECYCLE_TAKER_PRIOR = 0.30
+LIFECYCLE_TAKER_PRIOR_STRENGTH = 8.0
+LIFECYCLE_TAKER_MIN_SAMPLES = 4
 TAKER_PENALTY_WEIGHT = 0.12
 TAKER_COST_FLOOR = 0.20
 TAKER_ENTRY_PENALTY_CAP = 0.06
@@ -40,6 +42,62 @@ def _bps_to_ev(bps: float, scale: float = BPS_TO_EV_SCALE) -> float:
     return math.tanh(max(0.0, _finite(bps)) / max(1e-6, _finite(scale, BPS_TO_EV_SCALE)))
 
 
+def effective_taker_probability(
+    *,
+    prior: float = LIFECYCLE_TAKER_PRIOR,
+    live: float | None = None,
+    samples: int = 0,
+    prior_strength: float = LIFECYCLE_TAKER_PRIOR_STRENGTH,
+    min_samples: int = LIFECYCLE_TAKER_MIN_SAMPLES,
+    cap: float = 0.90,
+) -> float:
+    """One posterior used by entry LifecycleEV.
+
+    No samples → configured prior (never silent zero). Enough samples → the
+    existing Bayesian shrinkage already used by Research realization.
+    """
+    from research_clean_authority import posterior_taker_exit_probability
+
+    p0 = max(0.0, min(1.0, _finite(prior, LIFECYCLE_TAKER_PRIOR)))
+    n = max(0, int(samples or 0))
+    if live is None or n <= 0:
+        taker_exits = 0
+        maker_exits = 0
+    else:
+        p_live = max(0.0, min(1.0, _finite(live)))
+        taker_exits = int(round(p_live * n))
+        maker_exits = max(0, n - taker_exits)
+    return posterior_taker_exit_probability(
+        maker_exits=maker_exits,
+        taker_exits=taker_exits,
+        prior=p0,
+        prior_strength=prior_strength,
+        min_samples=min_samples,
+        floor=p0,
+        cap=max(p0, cap),
+    )
+
+
+def expected_future_taker_cost_bps(
+    *,
+    p_taker_effective: float,
+    taker_fee_bps: float = 0.0,
+    crossing_bps: float = 0.0,
+    slippage_bps: float = 0.0,
+    adverse_bps: float = 0.0,
+) -> float:
+    """p_effective × (taker fee + crossing + slippage + adverse).
+
+    Maker rebate is excluded. Taker fee cannot go negative.
+    """
+    p = max(0.0, min(1.0, _finite(p_taker_effective)))
+    taker_fee = max(0.0, _finite(taker_fee_bps))
+    cross = max(0.0, _finite(crossing_bps))
+    slip = max(0.0, _finite(slippage_bps))
+    adverse = max(0.0, _finite(adverse_bps))
+    return p * (taker_fee + cross + slip + adverse)
+
+
 def lifecycle_is_executable(
     lifecycle_ev: float,
     *,
@@ -52,30 +110,37 @@ def lifecycle_is_executable(
 @dataclass(frozen=True)
 class LifecycleCost:
     maker_entry_fee_bps: float
+    taker_fee_bps: float
     expected_exit_fee_bps: float
     expected_cross_bps: float
     expected_slippage_bps: float
     holding_risk_bps: float
     taker_exit_probability: float
+    expected_future_taker_cost_bps: float
+
+    @property
+    def base_cost_bps(self) -> float:
+        """LifecycleEV fee input: future Taker realization + holding.
+
+        Maker rebate is excluded so it cannot subsidize TakerUtility.
+        """
+        return self.expected_future_taker_cost_bps + self.holding_risk_bps
 
     @property
     def total_bps(self) -> float:
-        return (
-            self.maker_entry_fee_bps
-            + self.expected_exit_fee_bps
-            + self.expected_cross_bps
-            + self.expected_slippage_bps
-            + self.holding_risk_bps
-        )
+        # Alias used by the entry scorer. Intentionally excludes maker rebate.
+        return self.base_cost_bps
 
     def as_log(self) -> dict[str, float]:
         return {
             "lifecycle_entry_fee_bps": self.maker_entry_fee_bps,
+            "lifecycle_taker_fee_bps": self.taker_fee_bps,
             "lifecycle_exit_fee_bps": self.expected_exit_fee_bps,
             "lifecycle_cross_bps": self.expected_cross_bps,
             "lifecycle_slippage_bps": self.expected_slippage_bps,
             "lifecycle_holding_bps": self.holding_risk_bps,
             "lifecycle_taker_prob": self.taker_exit_probability,
+            "expected_future_taker_cost_bps": self.expected_future_taker_cost_bps,
             "lifecycle_cost_bps": self.total_bps,
         }
 
@@ -85,32 +150,43 @@ def lifecycle_entry_cost_bps(
     maker_fee_bps: float,
     taker_fee_bps: float,
     spread_bps: float,
-    taker_exit_probability: float = 0.30,
+    taker_exit_probability: float = LIFECYCLE_TAKER_PRIOR,
     slippage_bps: float = 0.75,
     holding_risk_bps: float = 0.50,
 ) -> LifecycleCost:
-    """Expected maker-entry + mixed maker/taker realization cost.
+    """Maker-entry fee is recorded, not mixed into LifecycleEV.
 
-    Maker rebates are preserved. A taker exit pays its live fee and roughly half
-    the spread plus slippage; a maker exit pays the live maker fee.  This is a
-    bounded expectation, not a promise to cross the spread.
+    Expected future Taker cost is ``p_effective × (taker fee + half-spread +
+    slippage)``. A missing/None probability falls back to the configured prior,
+    never a silent zero.
     """
-    p = max(0.0, min(1.0, _finite(taker_exit_probability, 0.30)))
+    if taker_exit_probability is None:
+        p = LIFECYCLE_TAKER_PRIOR
+    else:
+        p = max(0.0, min(1.0, _finite(taker_exit_probability, LIFECYCLE_TAKER_PRIOR)))
     maker = _finite(maker_fee_bps)
     taker = max(0.0, _finite(taker_fee_bps))
     spread = max(0.0, _finite(spread_bps))
     slip = max(0.0, _finite(slippage_bps))
     hold = max(0.0, _finite(holding_risk_bps))
-    expected_exit_fee = (1.0 - p) * maker + p * taker
+    expected_exit_fee = p * taker
     expected_cross = p * 0.5 * spread
     expected_slip = p * slip
+    future = expected_future_taker_cost_bps(
+        p_taker_effective=p,
+        taker_fee_bps=taker,
+        crossing_bps=0.5 * spread,
+        slippage_bps=slip,
+    )
     return LifecycleCost(
         maker_entry_fee_bps=maker,
+        taker_fee_bps=taker,
         expected_exit_fee_bps=expected_exit_fee,
         expected_cross_bps=expected_cross,
         expected_slippage_bps=expected_slip,
         holding_risk_bps=hold,
         taker_exit_probability=p,
+        expected_future_taker_cost_bps=future,
     )
 
 

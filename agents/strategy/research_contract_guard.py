@@ -196,6 +196,46 @@ def guarded_post_only_price(
     return None
 
 
+def round_price_to_tick(
+    price: float,
+    tick_size: float,
+    price_decimals: int | None = None,
+) -> float:
+    """Round a limit price to the exchange tick / decimal grid."""
+    px = _finite(price, -1.0)
+    tick = _finite(tick_size, -1.0)
+    if px <= 0.0:
+        return px
+    if price_decimals is not None:
+        try:
+            return round(px, max(0, int(price_decimals)))
+        except (TypeError, ValueError):
+            pass
+    if tick > 0.0:
+        return round(px / tick) * tick
+    return px
+
+
+def post_only_is_safe(
+    *,
+    side: str,
+    price: float,
+    best_bid: float,
+    best_ask: float,
+) -> bool:
+    px = _finite(price, -1.0)
+    bid = _finite(best_bid, -1.0)
+    ask = _finite(best_ask, -1.0)
+    if px <= 0.0 or bid <= 0.0 or ask <= 0.0:
+        return False
+    token = str(side or "").strip().lower()
+    if token == "buy":
+        return px < ask - 1e-12
+    if token == "sell":
+        return px > bid + 1e-12
+    return False
+
+
 def sanitize_post_only_limit_price(
     *,
     side: str,
@@ -204,11 +244,13 @@ def sanitize_post_only_limit_price(
     best_ask: float,
     tick_size: float,
     safety_ticks: int = 1,
+    price_decimals: int | None = None,
 ) -> float | None:
     """Reprice a Maker order against the latest authoritative L1.
 
+    Price is rounded to the tick/decimal grid *before* the final cross check.
     BUY must stay strictly below best ask. SELL must stay strictly above best
-    bid. One safety tick is applied. Returns None when no legal price exists.
+    bid. Returns None when no legal price exists.
     """
     original = _finite(original_price, -1.0)
     bid = _finite(best_bid, -1.0)
@@ -218,17 +260,52 @@ def sanitize_post_only_limit_price(
         return None
     cushion = max(1, int(safety_ticks or 1))
     token = str(side or "").strip().lower()
+    original = round_price_to_tick(original, tick, price_decimals)
     if token == "buy":
-        cap = ask - cushion * tick
+        cap = round_price_to_tick(ask - cushion * tick, tick, price_decimals)
         price = min(original, cap)
-        if price <= 0.0 or price >= ask - 1e-12:
+        price = round_price_to_tick(price, tick, price_decimals)
+        if price <= 0.0 or not post_only_is_safe(side="buy", price=price, best_bid=bid, best_ask=ask):
+            price = round_price_to_tick(cap - tick, tick, price_decimals)
+        if price <= 0.0 or not post_only_is_safe(side="buy", price=price, best_bid=bid, best_ask=ask):
             return None
         return price
     if token == "sell":
-        floor = bid + cushion * tick
+        floor = round_price_to_tick(bid + cushion * tick, tick, price_decimals)
         price = max(original, floor)
-        if price <= bid + 1e-12:
+        price = round_price_to_tick(price, tick, price_decimals)
+        if not post_only_is_safe(side="sell", price=price, best_bid=bid, best_ask=ask):
+            price = round_price_to_tick(floor + tick, tick, price_decimals)
+        if not post_only_is_safe(side="sell", price=price, best_bid=bid, best_ask=ask):
             return None
         return price
     return None
+
+
+def same_request_exposure_allows(
+    *,
+    current_abs_base: float,
+    current_open_books: int,
+    current_active_books: int,
+    add_abs_base: float,
+    adds_open_book: bool,
+    adds_active_book: bool,
+    max_abs_base: float,
+    max_total_open_books: float,
+    max_active_open_books: float,
+    volume_headroom: float = 1.0,
+) -> tuple[bool, str | None]:
+    """Shadow-check limits after earlier accepted orders in this response."""
+    projected_abs = _finite(current_abs_base) + max(0.0, _finite(add_abs_base))
+    if projected_abs > _finite(max_abs_base) + 1e-12:
+        return False, "EXPOSURE_HEADROOM"
+    if _finite(volume_headroom) <= 1e-12 and _finite(add_abs_base) > 1e-12:
+        return False, "VOLUME_HEADROOM"
+    open_books = int(current_open_books) + (1 if adds_open_book else 0)
+    if open_books > int(max_total_open_books):
+        return False, "OPEN_BOOK_CAP"
+    active_books = int(current_active_books) + (1 if adds_active_book else 0)
+    if active_books > int(max_active_open_books):
+        return False, "ACTIVE_BOOK_CAP"
+    return True, None
 

@@ -216,6 +216,6 @@ def test_regression_frozen_surfaces():
     adaptive_src = ADAPTIVE.read_text(encoding="utf-8")
     assert "simplified_hybrid_authority_v4_16_0" not in base_src
     assert "simplified_hybrid_authority_v4_16_0" not in adaptive_src
-    assert "simplified_hybrid_authority_v4_16_1" not in base_src
-    assert "simplified_hybrid_authority_v4_16_1" not in adaptive_src
+    assert "simplified_hybrid_authority_v4_16_2" not in base_src
+    assert "simplified_hybrid_authority_v4_16_2" not in adaptive_src
     assert "choose_position_exit" not in adaptive_src

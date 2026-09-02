@@ -281,6 +281,7 @@ from research_contract_guard import (
     register_contract_reject,
     resolve_book_from_state_mapping,
     sanitize_post_only_limit_price,
+    same_request_exposure_allows,
 )
 from research_inventory_liveness import (
     FRESH_MAKER_GRACE_VERSION,
@@ -354,14 +355,14 @@ from research_total_score_frontier import (
 )
 
 class Strategy1_Research(Strategy1_Debug):
-    RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_1"
-    RESEARCH_ENGINE_REVISION = "simplified_hybrid_authority_v4_16_1"
+    RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_2"
+    RESEARCH_ENGINE_REVISION = "simplified_hybrid_authority_v4_16_2"
     RESEARCH_REALNET_EXIT_AUTHORITY_VERSION = REALNET_EXIT_AUTHORITY_VERSION
     RESEARCH_SCHEDULER_RETRY_VERSION = SCHEDULER_RETRY_VERSION
     RESEARCH_TOTAL_SCORE_FRONTIER_VERSION = TOTAL_SCORE_FRONTIER_VERSION
     RESEARCH_CLEAN_AUTHORITY_VERSION = CLEAN_AUTHORITY_VERSION
     # === V4.16 SIMPLIFIED HYBRID AUTHORITY ===
-    RESEARCH_ENGINE_VERSION = "simplified_hybrid_authority_v4_16_1"
+    RESEARCH_ENGINE_VERSION = "simplified_hybrid_authority_v4_16_2"
     RESEARCH_SCORE_EV_VERSION = SCORE_EV_VERSION
     RESEARCH_POSITION_EXIT_VERSION = POSITION_EXIT_VERSION
     RESEARCH_EXECUTION_CONTROLLER_VERSION = EXECUTION_CONTROLLER_VERSION
@@ -1688,6 +1689,9 @@ class Strategy1_Research(Strategy1_Debug):
         self._research_lifecycle_taker_prob_live = float(self.research_lifecycle_taker_exit_prob)
         self._research_lifecycle_taker_prob_tick: int | None = None
         self._research_lifecycle_exit_samples = 0
+        self._research_lifecycle_taker_prob_prior = float(self.research_lifecycle_taker_exit_prob)
+        self._research_lifecycle_taker_prob_raw = 0.0
+        self._research_completion_entry_books: set[int] = set()
         self._research_aggressive_context: dict[int, dict[str, Any]] = {}
 
         # V4.12.13: pending-reprice post-only hygiene. This state is populated only
@@ -3384,6 +3388,9 @@ class Strategy1_Research(Strategy1_Debug):
             except (TypeError, ValueError):
                 pass
         prior = float(getattr(self, "research_lifecycle_taker_exit_prob", 0.30))
+        if not math.isfinite(prior) or prior < 0.0:
+            prior = 0.30
+        prior = max(0.0, min(1.0, prior))
         maker = taker = 0
         try:
             vel = self._research_velocity_state()
@@ -3395,15 +3402,19 @@ class Strategy1_Research(Strategy1_Debug):
             taker = int(getattr(getattr(vel, "taker", None), "count", 0) or 0)
         except Exception:
             pass
+        samples = int(maker + taker)
+        raw_live = (float(taker) / float(samples)) if samples > 0 else 0.0
         p = posterior_taker_exit_probability(
             maker_exits=maker, taker_exits=taker, prior=prior,
             prior_strength=LIFECYCLE_TAKER_PRIOR_STRENGTH,
             min_samples=LIFECYCLE_TAKER_MIN_SAMPLES,
             floor=prior, cap=max(prior, LIFECYCLE_TAKER_PROB_CAP),
         )
+        self._research_lifecycle_taker_prob_prior = float(prior)
+        self._research_lifecycle_taker_prob_raw = float(raw_live)
         self._research_lifecycle_taker_prob_live = float(p)
         self._research_lifecycle_taker_prob_tick = tick
-        self._research_lifecycle_exit_samples = int(maker + taker)
+        self._research_lifecycle_exit_samples = samples
         return float(p)
 
     # === V4.14.4 REALNET DEFECT FIX P1: scheduler retry rotation ===
@@ -4180,6 +4191,8 @@ class Strategy1_Research(Strategy1_Debug):
             "exit_continuation_penalty_sum", "exit_continuation_penalty_n",
             "absolute_protection_reduce", "absolute_protection_park",
             "contract_reject_count",
+            "completion_selected", "completion_submitted", "completion_filled",
+            "completion_rt_completed", "completion_qualified",
         )
         out = {key: float(src.get(key, 0.0) or 0.0) for key in keys}
         n = max(1.0, out["exit_continuation_penalty_n"])
@@ -6203,7 +6216,13 @@ class Strategy1_Research(Strategy1_Debug):
             score_velocity_weight=float(self.research_score_velocity_weight),
             enable_score_velocity=bool(self.research_enable_score_velocity),
             taker_exit_probability=self._research_live_lifecycle_taker_probability(),
-            expected_cross_bps=float(getattr(cost, "expected_cross_bps", 0.0) or 0.0) if cost is not None else 0.0,
+            taker_prob_prior=float(getattr(self, "_research_lifecycle_taker_prob_prior", getattr(self, "research_lifecycle_taker_exit_prob", 0.30))),
+            taker_prob_live=float(getattr(self, "_research_lifecycle_taker_prob_raw", 0.0) or 0.0),
+            lifecycle_exit_samples=int(getattr(self, "_research_lifecycle_exit_samples", 0) or 0),
+            maker_fee_bps=float(getattr(cost, "maker_entry_fee_bps", 0.0) or 0.0) if cost is not None else 0.0,
+            taker_fee_bps=float(getattr(cost, "taker_fee_bps", 0.0) or 0.0) if cost is not None else 0.0,
+            expected_cross_bps=0.5 * max(0.0, float(spread_bps or 0.0)),
+            expected_slippage_bps=float(getattr(self, "research_lifecycle_slippage_bps", 0.75)),
             holding_risk_bps=float(getattr(cost, "holding_risk_bps", 0.0) or 0.0) if cost is not None else 0.0,
             projected_completion_healthy=(
                 getattr(self, "_research_projected_by_book", {}) or {}
@@ -6321,7 +6340,9 @@ class Strategy1_Research(Strategy1_Debug):
             ),
             "mm_candidates": stats.get("mm_candidates"),
             "clean_authority_version": self.RESEARCH_CLEAN_AUTHORITY_VERSION,
-            "lifecycle_taker_prob_live": float(getattr(self, "_research_lifecycle_taker_prob_live", getattr(self, "research_lifecycle_taker_exit_prob", 0.30))),
+            "lifecycle_taker_prob_live": float(getattr(self, "_research_lifecycle_taker_prob_raw", 0.0) or 0.0),
+            "lifecycle_taker_prob_prior": float(getattr(self, "_research_lifecycle_taker_prob_prior", getattr(self, "research_lifecycle_taker_exit_prob", 0.30))),
+            "lifecycle_taker_prob_effective": float(getattr(self, "_research_lifecycle_taker_prob_live", getattr(self, "research_lifecycle_taker_exit_prob", 0.30))),
             "lifecycle_exit_samples": int(getattr(self, "_research_lifecycle_exit_samples", 0) or 0),
             "execution_reject_cooldowns": sum(
                 1 for bid in (getattr(self, "_research_execution_reject_last", {}) or {})
@@ -9415,7 +9436,8 @@ class Strategy1_Research(Strategy1_Debug):
                 best_bid=best_bid,
                 best_ask=best_ask,
                 tick_size=tick_size,
-                safety_ticks=1,
+                safety_ticks=int(getattr(self, "research_post_only_safety_ticks", 2) or 2),
+                price_decimals=price_dec,
             )
             if new_price is None:
                 continue
@@ -9449,6 +9471,165 @@ class Strategy1_Research(Strategy1_Debug):
             response.instructions[:] = kept
         except Exception:
             object.__setattr__(response, "instructions", kept)
+
+    def _research_final_validate_instructions(self, response, state) -> None:
+        """Last-chance contract, qty, and same-request risk check before emit."""
+        instructions = list(getattr(response, "instructions", None) or [])
+        if not instructions:
+            return
+        books = getattr(state, "books", None) or {}
+        try:
+            price_dec = int(getattr(getattr(state, "config", None), "priceDecimals", 2) or 2)
+        except (TypeError, ValueError):
+            price_dec = 2
+        try:
+            vol_dec = int(getattr(getattr(state, "config", None), "volumeDecimals", 8) or 8)
+        except (TypeError, ValueError):
+            vol_dec = 8
+        tick_size = 10.0 ** (-max(0, price_dec))
+        min_size = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        safety = int(getattr(self, "research_post_only_safety_ticks", 2) or 2)
+        diag = getattr(self, "_research_inventory_lane_diag", {}) or {}
+        shadow_abs = float(diag.get("total_abs_base_inventory", 0.0) or 0.0)
+        shadow_open = int(diag.get("actual_nonflat_inventory", 0) or 0)
+        shadow_active = int(diag.get("active_nonflat_inventory", 0) or 0)
+        max_abs = float(getattr(self, "research_max_total_abs_base", 2.0) or 2.0)
+        max_open = int(getattr(self, "research_max_total_open_books", 8) or 8)
+        max_active = int(getattr(self, "research_max_active_open_books", 6) or 6)
+        open_books = set()
+        try:
+            for bid, book in (books.items() if hasattr(books, "items") else []):
+                if self._research_abs_inventory(int(bid)) > self._execution_flat_epsilon():
+                    open_books.add(int(bid))
+        except Exception:
+            pass
+        kept = []
+        for instruction in instructions:
+            raw_book = self._get(instruction, "bookId", "book_id")
+            try:
+                book_id = int(raw_book)
+            except (TypeError, ValueError):
+                kept.append(instruction)
+                continue
+            side = self._research_instruction_side(instruction)
+            qty = self._get(instruction, "quantity", "qty", "size")
+            try:
+                qty_f = round_volume(float(qty), vol_dec)
+            except (TypeError, ValueError):
+                self._research_log_final_contract_reject(
+                    book_id, side, None, None, None, "INVALID_QTY", False,
+                )
+                continue
+            if qty_f + 1e-12 < min_size:
+                self._research_log_final_contract_reject(
+                    book_id, side, None, None, None, "MIN_QUANTITY", False,
+                )
+                continue
+            if abs(qty_f - float(qty)) > 1e-12:
+                if not self._research_set_instruction_attr(instruction, "quantity", qty_f):
+                    self._research_log_final_contract_reject(
+                        book_id, side, None, None, None, "QTY_PRECISION", False,
+                    )
+                    continue
+            book = resolve_book_from_state_mapping(books, book_id)
+            bids = getattr(book, "bids", None) if book is not None else None
+            asks = getattr(book, "asks", None) if book is not None else None
+            best_bid = best_ask = None
+            if bids and asks:
+                try:
+                    best_bid = float(bids[0].price)
+                    best_ask = float(asks[0].price)
+                except (TypeError, ValueError, IndexError, AttributeError):
+                    best_bid = best_ask = None
+            is_maker = self._research_instruction_is_maker(instruction)
+            old_price = self._get(instruction, "price", "limitPrice", "limit_price")
+            try:
+                old_price_f = float(old_price) if old_price is not None else None
+            except (TypeError, ValueError):
+                old_price_f = None
+            if is_maker:
+                if best_bid is None or best_ask is None:
+                    self._research_log_final_contract_reject(
+                        book_id, side, old_price_f, best_bid, best_ask, "NO_L1", False,
+                    )
+                    continue
+                new_price = sanitize_post_only_limit_price(
+                    side=side,
+                    original_price=float(old_price_f or 0.0),
+                    best_bid=best_bid,
+                    best_ask=best_ask,
+                    tick_size=tick_size,
+                    safety_ticks=safety,
+                    price_decimals=price_dec,
+                )
+                if new_price is None:
+                    self._research_log_final_contract_reject(
+                        book_id, side, old_price_f, best_bid, best_ask,
+                        "POST_ONLY_CROSS", True,
+                    )
+                    continue
+                if abs(new_price - float(old_price_f or 0.0)) > max(1e-12, tick_size * 0.25):
+                    if not self._research_set_instruction_attr(instruction, "price", new_price):
+                        self._research_log_final_contract_reject(
+                            book_id, side, old_price_f, best_bid, best_ask,
+                            "REPRICE_FAILED", False,
+                        )
+                        continue
+            inv_now = self._research_abs_inventory(book_id)
+            adds_open = inv_now <= self._execution_flat_epsilon() and book_id not in open_books
+            headroom = 1.0
+            try:
+                headroom = float(self._research_volume_cap_headroom(state, book_id))
+            except Exception:
+                headroom = 1.0
+            ok, reason = same_request_exposure_allows(
+                current_abs_base=shadow_abs,
+                current_open_books=shadow_open,
+                current_active_books=shadow_active,
+                add_abs_base=qty_f if adds_open else 0.0,
+                adds_open_book=adds_open,
+                adds_active_book=adds_open,
+                max_abs_base=max_abs,
+                max_total_open_books=max_open,
+                max_active_open_books=max_active,
+                volume_headroom=headroom,
+            )
+            if not ok:
+                self._research_log_final_contract_reject(
+                    book_id, side, old_price_f, best_bid, best_ask,
+                    str(reason or "RISK"), False,
+                )
+                continue
+            if adds_open:
+                shadow_abs += qty_f
+                shadow_open += 1
+                shadow_active += 1
+                open_books.add(book_id)
+            kept.append(instruction)
+        try:
+            response.instructions[:] = kept
+        except Exception:
+            object.__setattr__(response, "instructions", kept)
+
+    def _research_log_final_contract_reject(
+        self, book, side, old_price, latest_bid, latest_ask, reason, reprice_possible,
+    ) -> None:
+        try:
+            self._emit(
+                "FINAL_CONTRACT_REJECT",
+                force=True,
+                tick=getattr(self, "_tick", None),
+                book=book,
+                side=side,
+                old_price=old_price,
+                latest_bid=latest_bid,
+                latest_ask=latest_ask,
+                reason=str(reason),
+                reprice_possible=int(bool(reprice_possible)),
+            )
+            funnel_bump_reject(self._research_funnel(), "CONTRACT_REJECT")
+        except Exception:
+            pass
 
     def onTrade(self, event, validator: str | None = None) -> None:
         book_id = getattr(event, "bookId", None)
@@ -9487,6 +9668,16 @@ class Strategy1_Research(Strategy1_Debug):
             ) + 1
             self._research_local_kappa_cache_value = None
         kappa_after_authoritative = self._research_kappa_book(int(book_id)).realized_observation_count
+        try:
+            required = int(self._research_required_observation_count())
+            if (
+                int(kappa_before_authoritative) < required
+                and int(kappa_after_authoritative) >= required
+                and int(book_id) in (getattr(self, "_research_completion_entry_books", set()) or set())
+            ):
+                self._research_p0_bump("completion_qualified")
+        except Exception:
+            pass
 
         before_was_dust = self._is_dust_qty(before)
         self._refresh_dust_state(book_id, after, emit=True)
@@ -9497,10 +9688,22 @@ class Strategy1_Research(Strategy1_Debug):
             self._research_position_opens += 1
             if int(book_id) in (getattr(self, "_research_neutral_quoted_books", set()) or set()):
                 self._research_p0_bump("neutral_filled")
+            try:
+                if int(book_id) in (getattr(self, "_research_completion_entry_books", set()) or set()):
+                    self._research_p0_bump("completion_filled")
+                    self._research_funnel_bump(int(book_id), "lane_filled")
+            except Exception:
+                pass
         elif abs(before) >= eps and abs(after) < eps:
             transition = "FLAT"
             self._research_round_trip_closes += 1
             self._research_funnel_bump(int(book_id), "lane_rt_completed")
+            try:
+                if int(book_id) in (getattr(self, "_research_completion_entry_books", set()) or set()):
+                    self._research_p0_bump("completion_rt_completed")
+                    self._research_completion_entry_books.discard(int(book_id))
+            except Exception:
+                pass
             self._research_position_reductions += 1
             self._research_round_trip_samples_by_book[book_id] = (
                 self._research_round_trip_samples_by_book.get(book_id, 0) + 1
@@ -10444,6 +10647,9 @@ class Strategy1_Research(Strategy1_Debug):
                 maker_size=float(role.size),
                 taker_clip=float(clip.size or min_size),
                 neutral_fallback=is_neutral_forecast(prediction),
+                maker_fee_bps=float(getattr(ev, "maker_fee_bps", 0.0) or 0.0),
+                taker_fee_bps=float(getattr(ev, "taker_fee_bps", 0.0) or 0.0),
+                slippage_bps=float(getattr(self, "research_lifecycle_slippage_bps", 0.75)),
             )
             try:
                 self._emit(
@@ -10451,6 +10657,7 @@ class Strategy1_Research(Strategy1_Debug):
                     book=int(book_id), lane=str(lane), safe=1,
                     hard_reject_reason=None,
                     lifecycle_ev=life,
+                    base_lifecycle_value=float(getattr(ev, "base_lifecycle_value", life) or life),
                     total_score_value=float(getattr(ev, "total_score_component", 0.0) or 0.0),
                     inventory_before=float(getattr(inventory, "net_base", 0.0) or 0.0),
                     maker_tier=str(role.tier),
@@ -10459,6 +10666,16 @@ class Strategy1_Research(Strategy1_Debug):
                     neutral_fallback_reason=getattr(prediction, "neutral_fallback_reason", None),
                     spread_capture=float(getattr(ev, "spread_capture_bps", 0.0) or 0.0),
                     fees=float(getattr(ev, "fees_bps", 0.0) or 0.0),
+                    maker_fee_bps=float(getattr(ev, "maker_fee_bps", 0.0) or 0.0),
+                    taker_fee_bps=float(getattr(ev, "taker_fee_bps", 0.0) or 0.0),
+                    p_taker_prior=float(getattr(ev, "taker_prob_prior", 0.30)),
+                    p_taker_live=float(getattr(ev, "taker_prob_live", 0.0)),
+                    p_taker_effective=float(getattr(ev, "taker_prob_effective", 0.30)),
+                    lifecycle_exit_samples=int(getattr(ev, "lifecycle_exit_samples", 0) or 0),
+                    expected_taker_exit_fee_bps=float(getattr(ev, "expected_taker_exit_fee_bps", 0.0)),
+                    expected_crossing_bps=float(getattr(ev, "expected_crossing_bps", 0.0)),
+                    expected_slippage_bps=float(getattr(ev, "expected_slippage_bps", 0.0)),
+                    expected_future_taker_cost_bps=float(getattr(ev, "expected_future_taker_cost_bps", 0.0)),
                     expected_markout=float(getattr(ev, "expected_markout_bps", 0.0) or 0.0),
                     fill_probability=p_fill,
                     **exec_d.as_log(),
@@ -10483,6 +10700,8 @@ class Strategy1_Research(Strategy1_Debug):
                     self._research_funnel_bump(int(book_id), "lane_skip_selected")
                     return 0
                 self._research_funnel_bump(int(book_id), "lane_taker_selected")
+                if completion_candidate:
+                    self._research_p0_bump("completion_selected")
                 if is_neutral_forecast(prediction):
                     self._research_p0_bump("neutral_taker_selected")
                 take_qty = float(exec_d.taker_size or min_size)
@@ -10493,6 +10712,13 @@ class Strategy1_Research(Strategy1_Debug):
                         book_id, getattr(state, "timestamp", None),
                         inventory_before=float(getattr(inventory, "net_base", 0.0) or 0.0),
                     )
+                    try:
+                        self._research_funnel_bump(int(book_id), "lane_quote_submitted")
+                        if completion_candidate:
+                            self._research_p0_bump("completion_submitted")
+                            self._research_completion_entry_books.add(int(book_id))
+                    except Exception:
+                        pass
                     if self.debug_enabled:
                         record = self._book_record(book_id)
                         record["action"] = "TAKER"
@@ -10506,6 +10732,8 @@ class Strategy1_Research(Strategy1_Debug):
                     record["scheduler_lane"] = lane
                 return 0
             self._research_funnel_bump(int(book_id), "lane_maker_selected")
+            if completion_candidate:
+                self._research_p0_bump("completion_selected")
             if is_neutral_forecast(prediction):
                 self._research_p0_bump("neutral_maker_selected")
 
@@ -11031,6 +11259,14 @@ class Strategy1_Research(Strategy1_Debug):
                 book_id, getattr(state, "timestamp", None),
                 inventory_before=float(getattr(inventory, "net_base", 0.0) or 0.0),
             )
+            try:
+                self._research_funnel_bump(int(book_id), "lane_quote_created")
+                self._research_funnel_bump(int(book_id), "lane_quote_submitted")
+                if completion_candidate:
+                    self._research_p0_bump("completion_submitted")
+                    self._research_completion_entry_books.add(int(book_id))
+            except Exception:
+                pass
             if is_neutral_forecast(prediction):
                 self._research_p0_bump("neutral_quoted")
                 try:
@@ -11185,6 +11421,7 @@ class Strategy1_Research(Strategy1_Debug):
             )
             contract_guard = self._research_apply_contract_reject_guard(response, state)
             self._research_sanitize_maker_instructions(response, state)
+            self._research_final_validate_instructions(response, state)
             if isinstance(stats, dict):
                 stats["research_contract_guard_version"] = self.RESEARCH_CONTRACT_GUARD_VERSION
                 stats["research_contract_rejects"] = self._research_contract_rejects

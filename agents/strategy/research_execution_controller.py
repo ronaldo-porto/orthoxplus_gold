@@ -12,7 +12,7 @@ from typing import Any
 
 from research_action_utility import kappa_completion_value
 
-EXECUTION_CONTROLLER_VERSION = "execution_controller_v4_16_1"
+EXECUTION_CONTROLLER_VERSION = "execution_controller_v4_16_2"
 
 ACTION_MAKER = "MAKER"
 ACTION_TAKER = "TAKER"
@@ -29,6 +29,14 @@ def _finite(value: Any, default: float = 0.0) -> float:
 
 def _clip01(value: Any) -> float:
     return max(0.0, min(1.0, _finite(value)))
+
+
+def _fee_term_ev(fee_bps: Any, *, allow_rebate: bool) -> float:
+    """Small signed EV term. Taker fees cannot go negative via a Maker rebate."""
+    bps = _finite(fee_bps)
+    if not allow_rebate:
+        bps = max(0.0, bps)
+    return 0.02 * math.tanh(bps / 8.0)
 
 
 @dataclass(frozen=True)
@@ -61,9 +69,14 @@ def maker_utility(
     spread_capture_bps: float = 0.0,
     score_value: float = 0.0,
     capital_efficiency: float = 0.0,
+    maker_fee_bps: float = 0.0,
 ) -> float:
     p = _clip01(p_fill)
-    edge = _finite(lifecycle_ev) + 0.02 * math.tanh(_finite(spread_capture_bps) / 8.0)
+    edge = (
+        _finite(lifecycle_ev)
+        + 0.02 * math.tanh(_finite(spread_capture_bps) / 8.0)
+        - _fee_term_ev(maker_fee_bps, allow_rebate=True)
+    )
     return p * edge + 0.15 * max(0.0, _finite(score_value)) + 0.10 * _clip01(capital_efficiency)
 
 
@@ -75,10 +88,20 @@ def taker_utility(
     required_observations: int = 3,
     expiry_urgency: float = 0.0,
     capital_release: float = 0.0,
+    taker_fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
 ) -> float:
-    """Immediate execution EV. Crossing is a cost, not a veto."""
+    """Immediate execution EV. Crossing is a cost, not a veto.
+
+    Maker rebate is not a parameter. Taker fee / slippage cannot go negative.
+    """
     kappa = kappa_completion_value(observations_remaining, required_observations)
-    immediate = _finite(lifecycle_ev) - max(0.0, _finite(crossing_cost))
+    immediate = (
+        _finite(lifecycle_ev)
+        - max(0.0, _finite(crossing_cost))
+        - _fee_term_ev(taker_fee_bps, allow_rebate=False)
+        - _fee_term_ev(slippage_bps, allow_rebate=False)
+    )
     return (
         immediate
         + 0.25 * kappa
@@ -103,6 +126,9 @@ def choose_execution(
     taker_clip: float = 0.25,
     skip_utility: float = 0.0,
     neutral_fallback: bool = False,
+    maker_fee_bps: float = 0.0,
+    taker_fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
 ) -> ExecutionDecision:
     maker_u = maker_utility(
         lifecycle_ev=lifecycle_ev,
@@ -110,19 +136,25 @@ def choose_execution(
         spread_capture_bps=spread_capture_bps,
         score_value=score_value,
         capital_efficiency=capital_efficiency,
+        maker_fee_bps=maker_fee_bps,
     )
+    taker_cross = max(0.0, _finite(crossing_cost))
+    taker_fee_term = _fee_term_ev(taker_fee_bps, allow_rebate=False)
+    slip_term = _fee_term_ev(slippage_bps, allow_rebate=False)
     if neutral_fallback:
         # Neutral Maker context: no invented directional Taker alpha.
-        immediate = _finite(lifecycle_ev) - max(0.0, _finite(crossing_cost))
+        immediate = _finite(lifecycle_ev) - taker_cross - taker_fee_term - slip_term
         taker_u = immediate if immediate > 0.0 else min(immediate, 0.0)
     else:
         taker_u = taker_utility(
             lifecycle_ev=lifecycle_ev,
-            crossing_cost=crossing_cost,
+            crossing_cost=taker_cross,
             observations_remaining=observations_remaining,
             required_observations=required_observations,
             expiry_urgency=expiry_urgency,
             capital_release=capital_release,
+            taker_fee_bps=taker_fee_bps,
+            slippage_bps=slippage_bps,
         )
     skip_u = _finite(skip_utility)
     if maker_u > taker_u and maker_u > skip_u and maker_u > 0.0:

@@ -26,7 +26,11 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from research_kappa_state import build_kappa_universe, kappa_book_state, kappa_progress
-from research_lifecycle_ev import LIFECYCLE_EV_MARGIN
+from research_lifecycle_ev import (
+    LIFECYCLE_EV_MARGIN,
+    LIFECYCLE_TAKER_PRIOR,
+    expected_future_taker_cost_bps,
+)
 from research_markout import (
     CONSERVATIVE_MARKOUT_FALLBACK_BPS,
     MIN_MARKOUT_SAMPLES,
@@ -394,9 +398,18 @@ class ScoreEVBreakdown:
     total_score_component: float = 0.0
     required_entry_ev: float = 0.0
     taker_prob_live: float = 0.0
-    taker_prob_prior: float = 0.0
+    taker_prob_prior: float = LIFECYCLE_TAKER_PRIOR
+    taker_prob_effective: float = LIFECYCLE_TAKER_PRIOR
     taker_prob_excess: float = 0.0
     expected_taker_cost: float = 0.0
+    expected_future_taker_cost_bps: float = 0.0
+    expected_taker_exit_fee_bps: float = 0.0
+    expected_crossing_bps: float = 0.0
+    expected_slippage_bps: float = 0.0
+    maker_fee_bps: float = 0.0
+    taker_fee_bps: float = 0.0
+    lifecycle_exit_samples: int = 0
+    base_lifecycle_value: float = 0.0
     raw_taker_penalty: float = 0.0
     capped_taker_penalty: float = 0.0
     adverse_penalty: float = 0.0
@@ -460,8 +473,21 @@ class ScoreEVBreakdown:
             "required_entry_ev": float(self.required_entry_ev),
             "taker_prob_live": float(self.taker_prob_live),
             "taker_prob_prior": float(self.taker_prob_prior),
+            "taker_prob_effective": float(self.taker_prob_effective),
             "taker_prob_excess": float(self.taker_prob_excess),
             "expected_taker_cost": float(self.expected_taker_cost),
+            "expected_future_taker_cost_bps": float(self.expected_future_taker_cost_bps),
+            "expected_taker_exit_fee_bps": float(self.expected_taker_exit_fee_bps),
+            "expected_crossing_bps": float(self.expected_crossing_bps),
+            "expected_slippage_bps": float(self.expected_slippage_bps),
+            "maker_fee_bps": float(self.maker_fee_bps),
+            "taker_fee_bps": float(self.taker_fee_bps),
+            "lifecycle_exit_samples": int(self.lifecycle_exit_samples),
+            "base_lifecycle_value": (
+                self.base_lifecycle_value
+                if math.isfinite(self.base_lifecycle_value)
+                else None
+            ),
             "raw_taker_penalty": float(self.raw_taker_penalty),
             "capped_taker_penalty": float(self.capped_taker_penalty),
             "adverse_penalty": float(self.adverse_penalty),
@@ -524,7 +550,13 @@ def compute_score_ev(
     stale_ms: float = 30_000.0,
     adverse_weight: float = 0.05,
     taker_exit_probability: float | None = None,
+    taker_prob_prior: float = LIFECYCLE_TAKER_PRIOR,
+    taker_prob_live: float | None = None,
+    lifecycle_exit_samples: int = 0,
+    maker_fee_bps: float = 0.0,
+    taker_fee_bps: float = 0.0,
     expected_cross_bps: float = 0.0,
+    expected_slippage_bps: float = 0.0,
     holding_risk_bps: float = 0.0,
     projected_completion_healthy: bool | None = None,
     one_away_entry_mult: float = 0.60,
@@ -589,6 +621,37 @@ def compute_score_ev(
     if not math.isfinite(headroom):
         headroom = 1.0
     capped = bool(volume_capped) or headroom <= 0.0
+    prior = max(0.0, min(1.0, float(taker_prob_prior if taker_prob_prior is not None else LIFECYCLE_TAKER_PRIOR)))
+    if not math.isfinite(prior):
+        prior = LIFECYCLE_TAKER_PRIOR
+    if taker_exit_probability is None:
+        p_effective = prior
+    else:
+        try:
+            p_effective = max(0.0, min(1.0, float(taker_exit_probability)))
+        except (TypeError, ValueError):
+            p_effective = prior
+        if not math.isfinite(p_effective):
+            p_effective = prior
+    if taker_prob_live is None:
+        p_live = 0.0
+    else:
+        try:
+            p_live = max(0.0, min(1.0, float(taker_prob_live)))
+        except (TypeError, ValueError):
+            p_live = 0.0
+        if not math.isfinite(p_live):
+            p_live = 0.0
+    maker_fee = float(maker_fee_bps or 0.0)
+    taker_fee = max(0.0, float(taker_fee_bps or 0.0))
+    cross_bps = max(0.0, float(expected_cross_bps or 0.0))
+    slip_bps = max(0.0, float(expected_slippage_bps or 0.0))
+    future_taker_bps = expected_future_taker_cost_bps(
+        p_taker_effective=p_effective,
+        taker_fee_bps=taker_fee,
+        crossing_bps=cross_bps,
+        slippage_bps=slip_bps,
+    )
     entry_bar = max(0.0, float(min_trading_ev), float(LIFECYCLE_EV_MARGIN))
     lifecycle = t_ev - d_cost - i_cost - l_cost - a_risk
     reason = hard_safety_blocks(
@@ -637,6 +700,19 @@ def compute_score_ev(
         lifecycle_ev=lifecycle if eligible else float("-inf"),
         total_score_component=total_score,
         required_entry_ev=float(entry_bar),
+        taker_prob_live=p_live,
+        taker_prob_prior=prior,
+        taker_prob_effective=p_effective,
+        taker_prob_excess=max(0.0, p_effective - prior),
+        expected_taker_cost=future_taker_bps,
+        expected_future_taker_cost_bps=future_taker_bps,
+        expected_taker_exit_fee_bps=p_effective * taker_fee,
+        expected_crossing_bps=p_effective * cross_bps,
+        expected_slippage_bps=p_effective * slip_bps,
+        maker_fee_bps=maker_fee,
+        taker_fee_bps=taker_fee,
+        lifecycle_exit_samples=max(0, int(lifecycle_exit_samples or 0)),
+        base_lifecycle_value=lifecycle,
         completion_multiplier=1.0,
         entry_ev_margin=entry_ev_margin,
         entry_ev_pass=entry_ev_pass,

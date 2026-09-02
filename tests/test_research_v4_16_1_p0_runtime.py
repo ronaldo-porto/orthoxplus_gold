@@ -79,9 +79,9 @@ def _ev(**kwargs):
 def test_versions_and_frozen_surfaces():
     assert NEUTRAL_PREDICTION_VERSION == "neutral_prediction_v4_16_1"
     assert POSITION_EXIT_VERSION == "position_exit_v4_16_1"
-    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_1"' in STRATEGY
-    assert 'RESEARCH_ENGINE_VERSION = "simplified_hybrid_authority_v4_16_1"' in STRATEGY
-    assert 'RESEARCH_ENGINE_REVISION = "simplified_hybrid_authority_v4_16_1"' in STRATEGY
+    assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_2"' in STRATEGY
+    assert 'RESEARCH_ENGINE_VERSION = "simplified_hybrid_authority_v4_16_2"' in STRATEGY
+    assert 'RESEARCH_ENGINE_REVISION = "simplified_hybrid_authority_v4_16_2"' in STRATEGY
     assert "_research_apply_neutral_predictions" in STRATEGY
     assert "sanitize_post_only_limit_price" in STRATEGY
     assert "_research_sanitize_maker_instructions" in STRATEGY
@@ -90,8 +90,8 @@ def test_versions_and_frozen_surfaces():
     assert digest == VALIDATOR_TRADE_SHA256
     base_src = BASE.read_text(encoding="utf-8")
     adaptive_src = ADAPTIVE.read_text(encoding="utf-8")
-    assert "simplified_hybrid_authority_v4_16_1" not in base_src
-    assert "simplified_hybrid_authority_v4_16_1" not in adaptive_src
+    assert "simplified_hybrid_authority_v4_16_2" not in base_src
+    assert "simplified_hybrid_authority_v4_16_2" not in adaptive_src
     assert "choose_position_exit" not in adaptive_src
 
 

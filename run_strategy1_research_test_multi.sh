@@ -46,8 +46,8 @@ done
 
 [[ -f "$REPO_ROOT/run_miner_multi.sh" ]] || { echo "run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research.py" ]] || { echo "Strategy1_Research.py missing" >&2; exit 1; }
-grep -q 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_1"' "$AGENT_PATH/Strategy1_Research.py" || {
-  echo "ERROR: Strategy1_Research.py is not simplified_hybrid_authority_v4_16_1" >&2
+grep -q 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_2"' "$AGENT_PATH/Strategy1_Research.py" || {
+  echo "ERROR: Strategy1_Research.py is not simplified_hybrid_authority_v4_16_2" >&2
   exit 1
 }
 for required in \
@@ -388,8 +388,8 @@ from research_total_score_frontier import apply_total_score_frontier, TOTAL_SCOR
 from research_lane_funnel import empty_funnel, bump, bump_reject, compact_log
 if TOTAL_SCORE_FRONTIER_VERSION != "total_score_frontier_v4_15_2":
     raise SystemExit("ERROR: stale V4.15.2 frontier version")
-if RESEARCH_LIFECYCLE_ENTRY_VERSION != "lifecycle_ev_v4_16_0":
-    raise SystemExit("ERROR: stale V4.16 lifecycle EV version")
+if RESEARCH_LIFECYCLE_ENTRY_VERSION != "lifecycle_ev_v4_16_2":
+    raise SystemExit("ERROR: stale V4.16.2 lifecycle EV version")
 if DEFAULT_CHEAP_SHORTLIST != 22:
     raise SystemExit("ERROR: cheap shortlist is not 22")
 healthy = project_completion_quality(
@@ -722,7 +722,7 @@ grep -q 'from research_rt_phase_timing import RoundTripPhaseState' agents/strate
   exit 1
 }
 
-echo "[Strategy1_Research] version=simplified_hybrid_authority_v4_16_1"
+echo "[Strategy1_Research] version=simplified_hybrid_authority_v4_16_2"
 echo "[Strategy1_Research] log_dir=$RESEARCH_DIR"
 
 PYTHONPATH="$AGENT_PATH${PYTHONPATH:+:$PYTHONPATH}" python - <<'PYV4161P0'
@@ -732,16 +732,31 @@ from research_neutral_prediction import (
 from research_position_exit import (
     POSITION_EXIT_VERSION, ACTION_TAKER_EXIT, ACTION_PARK_EXIT, choose_position_exit,
 )
+from research_lifecycle_ev import (
+    RESEARCH_LIFECYCLE_ENTRY_VERSION,
+    effective_taker_probability,
+    expected_future_taker_cost_bps,
+    lifecycle_entry_cost_bps,
+)
 from research_execution_controller import EXECUTION_CONTROLLER_VERSION, choose_execution, ACTION_SKIP
-from research_contract_guard import sanitize_post_only_limit_price
+from research_contract_guard import sanitize_post_only_limit_price, same_request_exposure_allows
 from types import SimpleNamespace
 
 if NEUTRAL_PREDICTION_VERSION != "neutral_prediction_v4_16_1":
     raise SystemExit("ERROR: stale V4.16.1 neutral prediction version")
 if POSITION_EXIT_VERSION != "position_exit_v4_16_1":
     raise SystemExit("ERROR: stale V4.16.1 position exit version")
-if EXECUTION_CONTROLLER_VERSION != "execution_controller_v4_16_1":
-    raise SystemExit("ERROR: stale V4.16.1 execution controller version")
+if EXECUTION_CONTROLLER_VERSION != "execution_controller_v4_16_2":
+    raise SystemExit("ERROR: stale V4.16.2 execution controller version")
+if RESEARCH_LIFECYCLE_ENTRY_VERSION != "lifecycle_ev_v4_16_2":
+    raise SystemExit("ERROR: stale V4.16.2 lifecycle EV version")
+if abs(effective_taker_probability(prior=0.30, samples=0) - 0.30) > 1e-12:
+    raise SystemExit("ERROR: V4.16.2 zero-sample prior must stay 0.30")
+if expected_future_taker_cost_bps(p_taker_effective=0.0, taker_fee_bps=8.0) != 0.0:
+    raise SystemExit("ERROR: V4.16.2 p=0 future taker cost must be 0")
+cost = lifecycle_entry_cost_bps(maker_fee_bps=-5.0, taker_fee_bps=4.0, spread_bps=4.0, taker_exit_probability=0.30)
+if cost.maker_entry_fee_bps >= 0.0:
+    raise SystemExit("ERROR: V4.16.2 maker rebate must remain signed")
 book = SimpleNamespace(bids=[SimpleNamespace(price=99.9)], asks=[SimpleNamespace(price=100.1)])
 ok, _ = can_use_neutral_fallback(book=book, inventory_flat=True)
 if not ok:
@@ -768,11 +783,11 @@ px = sanitize_post_only_limit_price(
 )
 if px is None or px >= 100.1:
     raise SystemExit("ERROR: V4.16.1 Maker BUY crossed ask")
-print("V4.16.1 P0 runtime corrections OK")
+print("V4.16.2 economics + contract wiring OK")
 PYV4161P0
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
-  echo "V4.16.1 P0 runtime corrections + V4.14.4 RealNet safety preflight-only PASS"
+  echo "V4.16.2 economics/contract corrections + V4.14.4 RealNet safety preflight-only PASS"
   exit 0
 fi
 
