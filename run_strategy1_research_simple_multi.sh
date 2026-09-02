@@ -87,6 +87,10 @@ echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 
+# Keep the strategy directory importable in the actual PM2/miner process, not
+# only in the preflight subprocess.
+export PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+
 exec "$SCRIPT_DIR/run_miner_multi.sh" \
   -i "$PM2_NAME" -e "$ENDPOINT" -w "$WALLET_NAME" -h "$HOTKEY_NAME" -u "$NETUID" -a "$AXON_PORT" \
   -g "$AGENT_PATH" -n Strategy1_Research_Simple -m "$PARAMS" "${EXTRA[@]}"

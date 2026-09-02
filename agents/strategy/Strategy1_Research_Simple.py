@@ -17,8 +17,17 @@ A/B tested against the V4.16.2 baseline.
 from __future__ import annotations
 
 import math
+import os
+import sys
 import time
 from typing import Any
+
+# TAOS loads this agent dynamically by file path, so the sibling strategy
+# directory is not guaranteed to be on sys.path. Make sibling imports robust
+# for both the miner runtime and direct/preflight imports.
+_AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _AGENT_DIR not in sys.path:
+    sys.path.insert(0, _AGENT_DIR)
 
 from taos.common.agents import launch
 from taos.im.protocol import FinanceAgentResponse, MarketSimulationStateUpdate
