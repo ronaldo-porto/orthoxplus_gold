@@ -1,0 +1,41 @@
+{
+  "agents/strategy/Strategy1.py": {
+    "sha256": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+    "bytes": 75357
+  },
+  "agents/strategy/Strategy1_Research.py": {
+    "sha256": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "bytes": 650477
+  },
+  "agents/strategy/Strategy1_Research_Simple.py": {
+    "sha256": "a53e1061ecbf74afbdb427f18a7bc8f531b75821ab739b0b6af0be59b0535c4d",
+    "bytes": 21214
+  },
+  "agents/strategy/BaseStrategy.py": {
+    "sha256": "76941d948ce3bac0057e9ef788a3c6e93dab4f4bc79ce7b5b00733a67211f0cb",
+    "bytes": 1922
+  },
+  "agents/strategy/AdaptiveAgent.py": {
+    "sha256": "6421fe403c4a51cb80ffd67bc37cd92be9dcbe646968819ceeabd42f1eb234c1",
+    "bytes": 104426
+  },
+  "taos/im/validator/trade.py": {
+    "sha256": "137a4a7f26de9395a0028539a95411992c6ed0fa16ddd21682c04838121af0b8",
+    "bytes": 41485
+  },
+  "run_strategy1_research_simple_multi.sh": {
+    "sha256": "433cb4dad67da59fb5513ad5b61a641b446344911d13de679dde93c46f7a4fc2",
+    "bytes": 4604
+  },
+  "tests/test_research_strategy1_direct_a1.py": {
+    "sha256": "09de41544eb0d4c3fe705204f62addaa9a11d008a050566dea7a9e2c4aab60d3",
+    "bytes": 2377
+  },
+  "validation": {
+    "research_tests": "449 passed",
+    "direct_preflight": "77 passed",
+    "compileall": "PASS",
+    "simple_launcher_bash_n": "PASS",
+    "baseline_launcher_bash_n_after_lf_normalization": "PASS"
+  }
+}
