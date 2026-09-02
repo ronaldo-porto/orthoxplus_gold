@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-direct Research candidate built on the proven V4.16.2 economics.
+"""Strategy1-Direct V4.16.2 A1.1 Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -35,11 +35,14 @@ from taos.im.protocol.models import LoanSettlementOption, OrderDirection, STP, T
 
 from Strategy1 import Strategy1
 from Strategy1_Research import Strategy1_Research
-from research_execution_controller import (
+from research_direct_economics import (
     ACTION_MAKER as EXEC_ACTION_MAKER,
     ACTION_SKIP as EXEC_ACTION_SKIP,
     ACTION_TAKER as EXEC_ACTION_TAKER,
-    choose_execution,
+    DIRECT_ECONOMICS_VERSION,
+    DIRECT_EXECUTION_CONTROLLER_VERSION,
+    choose_direct_execution,
+    direct_lifecycle_breakdown,
 )
 from research_neutral_prediction import is_neutral_forecast, prediction_source_of
 from research_position_exit import BAND_ABSOLUTE, new_exposure_allowed
@@ -47,12 +50,12 @@ from research_risk_guard import evaluate_risk_guard
 from research_role_size import maker_entry_size, taker_clip_size
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_1"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 economics with Strategy1-style direct orchestration.
+    """V4.16.2 state/learning with corrected A1.1 direct economics.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -65,8 +68,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
     What remains authoritative:
       * Research fast screen / Kappa workload selection;
       * hard mechanical risk checks;
-      * V4.16.2 LifecycleEV + TotalScore rank;
-      * V4.16.2 Maker/Taker/Skip chooser;
+      * A1.1 Direct LifecycleEV + TotalScore rank;
+      * A1.1 separate Maker/Taker economic chooser;
       * V4.16 PositionExitController for every non-flat position;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -85,14 +88,30 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "SIMPLE_CONFIG",
                 force=True,
                 simple_policy_version=SIMPLE_POLICY_VERSION,
-                authority="HARD_SAFETY>LIFECYCLE_EV>TOTAL_SCORE>MAKER_TAKER_SKIP",
+                authority="HARD_SAFETY>DIRECT_LIFECYCLE_EV>TOTAL_SCORE>SEPARATE_MAKER_TAKER_EV",
+                direct_economics_version=DIRECT_ECONOMICS_VERSION,
+                execution_controller_version=DIRECT_EXECUTION_CONTROLLER_VERSION,
                 exit_authority="POSITION_EXIT_CONTROLLER",
                 separate_maintenance_authority=0,
                 separate_alpha_authority=0,
                 lane_execution_caps=0,
+                latency_hard_gate=0,
+                duplicate_adverse_hard_gate=0,
+                taker_kappa_subsidy=0,
             )
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # A1.1 LifecycleEV: keep baseline state/telemetry, but latency is no longer
+    # a universal per-book veto and expected markout is not charged twice.
+    # ------------------------------------------------------------------
+    def _research_score_ev_for_book(self, book_id: int, expected_alpha: float, mem):
+        base = super()._research_score_ev_for_book(book_id, expected_alpha, mem)
+        return direct_lifecycle_breakdown(
+            base,
+            min_trading_ev=float(getattr(self, "research_score_ev_min_trading", 0.0) or 0.0),
+        )
 
     # ------------------------------------------------------------------
     # Inventory: one owner.  Any real position goes to PositionExitController.
@@ -293,20 +312,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
             inventory_qty=max(min_size, 0.25),
             min_order=min_size,
         )
-        decision = choose_execution(
-            lifecycle_ev=life,
-            p_fill=p_fill,
-            spread_capture_bps=float(getattr(ev, "spread_capture_bps", 0.0) or 0.0),
-            score_value=float(getattr(ev, "total_score_component", 0.0) or 0.0),
-            observations_remaining=remaining_obs,
-            required_observations=required_obs,
-            crossing_cost=0.12,
+        # A1.1 splits execution economics.  Maker uses the already fill-weighted
+        # Direct LifecycleEV.  Taker must independently earn its actual half-spread
+        # crossing + fee + slippage from the raw directional forecast.  Kappa is
+        # upstream ranking only and cannot rescue negative Taker economics.
+        decision = choose_direct_execution(
+            maker_lifecycle_ev=life,
+            directional_score=float(getattr(prediction, "score", 0.0) or 0.0),
+            crossing_bps=max(0.0, float(getattr(ev, "spread_capture_bps", 0.0) or 0.0)),
             maker_size=float(maker_role.size),
             taker_clip=float(taker_role.size or min_size),
             neutral_fallback=is_neutral_forecast(prediction),
             maker_fee_bps=float(getattr(ev, "maker_fee_bps", 0.0) or 0.0),
             taker_fee_bps=float(getattr(ev, "taker_fee_bps", 0.0) or 0.0),
             slippage_bps=float(getattr(self, "research_lifecycle_slippage_bps", 0.75) or 0.75),
+            expected_markout_bps=float(getattr(ev, "expected_markout_bps", 0.0) or 0.0),
         )
 
         try:
