@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
-"""Maker lifecycle learning for Strategy1-Direct A1.5.
+"""Maker lifecycle learning for Strategy1-Direct A1.5.1.
 
-A1.5 keeps the A1.4 principle that Taker-exit frequency is not intrinsically
+A1.5.1 keeps the A1.4 principle that Taker-exit frequency is not intrinsically
 bad, but fixes the learned target: downside is learned from *net realized bps*
 (including fees/partial reductions) rather than gross entry-to-final-price drift.
 A Kappa-3-like cubic downside proxy increases the penalty for rare large losses
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
-DIRECT_QUALITY_VERSION = "direct_maker_quality_v4_16_2_a1_5"
+DIRECT_QUALITY_VERSION = "direct_maker_quality_v4_16_2_a1_5_1"
 
 DRIFT_MAX_PENALTY = 0.015
 PRODUCTIVITY_MAX_PENALTY = 0.020
@@ -27,6 +27,9 @@ COLD_START_PRIOR_STRENGTH = 4.0
 COLD_START_TAKER_SHORTFALL_BPS = 3.0
 SHORTFALL_PRIOR_STRENGTH = 1.0
 DOWNSIDE_CUBIC_WEIGHT = 0.55
+MIGRATED_QUALITY_INITIAL_WEIGHT = 0.20
+MIGRATED_QUALITY_FULL_WEIGHT_SAMPLES = 8
+MIGRATED_QUALITY_GLOBAL_FULL_WEIGHT_SAMPLES = 64
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -240,6 +243,7 @@ def maker_realization_cost_estimate(
     prior_strength: float = COLD_START_PRIOR_STRENGTH,
     prior_shortfall_bps: float = COLD_START_TAKER_SHORTFALL_BPS,
     shortfall_prior_strength: float = SHORTFALL_PRIOR_STRENGTH,
+    authority_scale: float = 1.0,
 ) -> MakerRealizationCostEstimate:
     s = stats or MakerLifecycleStats()
     g = global_stats or MakerLifecycleStats()
@@ -268,7 +272,8 @@ def maker_realization_cost_estimate(
         short_strength * conditional_prior + float(book_taker_n) * book_severity
     ) / max(1e-12, short_strength + float(book_taker_n))
 
-    expected_shortfall = effective_rate * conditional_shortfall
+    authority = _clip01(authority_scale)
+    expected_shortfall = authority * effective_rate * conditional_shortfall
     expected_taker_fee = effective_rate * max(0.0, _finite(taker_fee_bps))
     holding = max(0.0, _finite(holding_risk_bps))
     total = expected_shortfall + expected_taker_fee + holding
@@ -334,6 +339,7 @@ def maker_quality_adjustment(
     rolling_realized_mean: float = 0.0,
     prior_taker_exit_rate: float = COLD_START_TAKER_RATE,
     prior_strength: float = COLD_START_PRIOR_STRENGTH,
+    authority_scale: float = 1.0,
 ) -> MakerQualityAdjustment:
     s = stats or MakerLifecycleStats()
     g = global_stats or MakerLifecycleStats()
@@ -354,6 +360,9 @@ def maker_quality_adjustment(
     pnl_bad = math.tanh(max(0.0, -mean_pnl) / PNL_MEAN_SCALE)
     productivity_score = 0.55 * loss_bad + 0.45 * pnl_bad
     productivity_penalty = PRODUCTIVITY_MAX_PENALTY * roll_conf * productivity_score
+    authority = _clip01(authority_scale)
+    drift_penalty *= authority
+    productivity_penalty *= authority
     total = min(TOTAL_MAX_PENALTY, max(0.0, drift_penalty + productivity_penalty))
     return MakerQualityAdjustment(
         realization_drift_penalty=float(drift_penalty), productivity_penalty=float(productivity_penalty),

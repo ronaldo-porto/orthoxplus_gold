@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct A1.5 low-latency candidate utilities.
+"""Strategy1-Direct A1.5.1 low-latency candidate utilities.
 
 The Direct fast path intentionally keeps score state cheap and bounded:
 * all books receive only a lightweight priority pass;
@@ -17,7 +17,7 @@ import heapq
 import math
 from typing import Any, Iterable
 
-DIRECT_FASTPATH_VERSION = "direct_fastpath_v4_16_2_a1_5"
+DIRECT_FASTPATH_VERSION = "direct_fastpath_v4_16_2_a1_5_1"
 DIRECT_FASTPATH_CANDIDATE_COUNT = 12
 DIRECT_FASTPATH_MIN_CANDIDATES = 8
 DIRECT_FASTPATH_MAX_CANDIDATES = 16

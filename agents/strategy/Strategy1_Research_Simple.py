@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.5 Research candidate.
+"""Strategy1-Direct V4.16.2 A1.5.1 Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -51,10 +51,14 @@ from research_direct_economics import (
     DIRECT_TAKER_ENTRY_ENABLED,
     choose_direct_execution,
     direct_lifecycle_breakdown,
+    maker_lifecycle_fee_cost_bps,
 )
 from research_direct_quality import (
     COLD_START_TAKER_RATE,
     DIRECT_QUALITY_VERSION,
+    MIGRATED_QUALITY_INITIAL_WEIGHT,
+    MIGRATED_QUALITY_FULL_WEIGHT_SAMPLES,
+    MIGRATED_QUALITY_GLOBAL_FULL_WEIGHT_SAMPLES,
     MakerLifecycleStats,
     maker_quality_adjustment,
     maker_realization_cost_estimate,
@@ -86,12 +90,12 @@ from research_role_size import maker_entry_size, taker_clip_size
 from research_lifecycle_ev import LifecycleCost
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_5"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_5"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_5_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_5_1"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 state/learning with A1.5 net-downside learning + Direct FastPath.
+    """V4.16.2 state/learning with A1.5.1 fee-accurate learning + Direct FastPath.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -104,8 +108,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
     What remains authoritative:
       * Research fast screen / Kappa workload selection;
       * hard mechanical risk checks;
-      * A1.5 net-realized/LPM3-aware Maker lifecycle cost;
-      * A1.5 Direct FastPath top-K screening/profile build;
+      * A1.5.1 net-realized/LPM3-aware Maker lifecycle cost;
+      * A1.5.1 Direct FastPath top-K screening/profile build;
       * Maker-only acquisition; PositionExitController retains Taker EXIT;
       * V4.16 PositionExitController for every non-flat position;
       * final authoritative contract validation;
@@ -125,8 +129,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_maker_open: dict[int, dict[str, float | int]] = {}
         self._direct_maker_quality_by_book: dict[int, MakerLifecycleStats] = {}
         self._direct_maker_quality_global = MakerLifecycleStats()
+        self._direct_quality_migration_baseline: dict[int, int] = {}
+        self._direct_quality_migration_global_baseline: int = 0
         self._direct_quality_last: dict[int, Any] = {}
         self._direct_realization_cost_last: dict[int, Any] = {}
+        self._direct_lifecycle_fee_last: dict[int, Any] = {}
         self._direct_quote_geometry_last: dict[int, dict[str, float]] = {}
         self._direct_fastpath_last_selected_tick: dict[int, int] = {}
         self._direct_fastpath_profile_cache: dict[int, Any] = {}
@@ -139,7 +146,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "SIMPLE_CONFIG",
                 force=True,
                 simple_policy_version=SIMPLE_POLICY_VERSION,
-                authority="DIRECT_FASTPATH>HARD_SAFETY>NET_DOWNSIDE_LIFECYCLE_EV>TOTAL_SCORE>MAKER_OR_SKIP",
+                authority="DIRECT_FASTPATH>HARD_SAFETY>SIGNED_FEE_NET_DOWNSIDE_EV>TOTAL_SCORE>MAKER_OR_SKIP",
                 direct_economics_version=DIRECT_ECONOMICS_VERSION,
                 execution_controller_version=DIRECT_EXECUTION_CONTROLLER_VERSION,
                 exit_authority="POSITION_EXIT_CONTROLLER",
@@ -153,6 +160,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 direct_execution_quality_version=DIRECT_EXECUTION_QUALITY_VERSION,
                 maker_min_ev=DIRECT_MAKER_MIN_EV,
                 maker_quality_max_penalty=0.03,
+                migrated_quality_initial_weight=MIGRATED_QUALITY_INITIAL_WEIGHT,
+                migrated_quality_full_weight_samples=MIGRATED_QUALITY_FULL_WEIGHT_SAMPLES,
+                migrated_quality_global_full_weight_samples=MIGRATED_QUALITY_GLOBAL_FULL_WEIGHT_SAMPLES,
                 maker_max_touch_improvement_bps=DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT_BPS,
                 maker_max_ttl_ms=DIRECT_MAKER_MAX_TTL_MS,
                 dust_exempt_cap=DIRECT_DUST_EXEMPT_CAP,
@@ -161,6 +171,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 taker_entry_min_edge_bps=DIRECT_TAKER_MIN_EDGE_BPS,
                 learned_taker_shortfall_cost=1,
                 net_realized_shortfall_cost=1,
+                signed_maker_lifecycle_fees=1,
+                expected_exit_fee_model=1,
                 kappa_lpm3_downside_cost=1,
                 taker_frequency_is_badness=0,
                 taker_entry_enabled=int(DIRECT_TAKER_ENTRY_ENABLED),
@@ -172,7 +184,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             pass
 
     # ------------------------------------------------------------------
-    # A1.5 Maker lifecycle learning.  Learn NET realized downside, including
+    # A1.5.1 Maker lifecycle learning.  Learn NET realized downside, including
     # partial reductions and fees, rather than gross entry-to-final-price drift.
     # ------------------------------------------------------------------
     def onTrade(self, event, validator: str | None = None) -> None:
@@ -275,6 +287,36 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             return
 
+    def _direct_quality_authority_scale(self, book_id: int) -> float:
+        """Downweight legacy A1.5/A1.4 quality until A1.5.1 earns fresh evidence.
+
+        Legacy global state affected even books with no book-specific samples, so
+        migration authority must be tempered globally as well as per book.
+        """
+        bid = int(book_id)
+        initial = float(MIGRATED_QUALITY_INITIAL_WEIGHT)
+        global_baseline = max(0, int(getattr(self, "_direct_quality_migration_global_baseline", 0) or 0))
+        global_stats = getattr(self, "_direct_maker_quality_global", None)
+        global_current = int(getattr(global_stats, "count", 0) or 0) if global_stats is not None else 0
+        if global_baseline > 0:
+            global_fresh = max(0, global_current - global_baseline)
+            global_full = max(1, int(MIGRATED_QUALITY_GLOBAL_FULL_WEIGHT_SAMPLES))
+            global_progress = min(1.0, global_fresh / float(global_full))
+            global_scale = initial + (1.0 - initial) * global_progress
+        else:
+            global_scale = 1.0
+
+        baseline = int((getattr(self, "_direct_quality_migration_baseline", {}) or {}).get(bid, 0) or 0)
+        if baseline <= 0:
+            return float(global_scale)
+        stats = (getattr(self, "_direct_maker_quality_by_book", {}) or {}).get(bid)
+        current = int(getattr(stats, "count", 0) or 0) if stats is not None else 0
+        fresh = max(0, current - baseline)
+        full = max(1, int(MIGRATED_QUALITY_FULL_WEIGHT_SAMPLES))
+        progress = min(1.0, fresh / float(full))
+        book_scale = initial + (1.0 - initial) * progress
+        return float(max(global_scale, book_scale))
+
     def _direct_quality_for_book(self, book_id: int):
         stats = (getattr(self, "_direct_maker_quality_by_book", {}) or {}).get(int(book_id))
         rolling_n = 0
@@ -287,12 +329,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
             rolling_mean = float(getattr(roll, "realized_mean", 0.0) or 0.0)
         except Exception:
             pass
+        authority_scale = self._direct_quality_authority_scale(int(book_id))
         quality = maker_quality_adjustment(
             stats=stats,
             global_stats=getattr(self, "_direct_maker_quality_global", None),
             rolling_samples=rolling_n,
             rolling_loss_rate=rolling_loss,
             rolling_realized_mean=rolling_mean,
+            authority_scale=authority_scale,
         )
         self._direct_quality_last[int(book_id)] = quality
         return quality
@@ -302,12 +346,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
     # quality is a bounded rank deduction, not a new hard lifecycle veto.
         # ------------------------------------------------------------------
     def _research_lifecycle_entry_cost_bps(self, book_id: int, spread_bps: float) -> float:
-        """A1.5 net-realized, Kappa-downside-aware Maker lifecycle cost.
+        """A1.5.1 signed Maker-fee + expected-exit + residual downside cost.
 
-        The inherited V4.16 model prices every Taker exit as fixed crossing +
-        slippage + fee.  A1.3 proved this suppresses profitable Maker->Taker
-        lifecycles.  Direct A1.5 prices net realized negative shortfall and a cubic downside
-        severity proxy; profitable Taker exits still contribute zero shortfall.
+        A1.5 used net-realized downside correctly but still compressed the live
+        Maker fee later in the execution utility.  That allowed a gross winning
+        trade to lose after two large Maker fees.  A1.5.1 prices the signed
+        Maker entry fee and role-weighted expected exit fee directly in bps,
+        then adds only learned net downside beyond those explicit fee costs.
         """
         bid = int(book_id)
         stats = (getattr(self, "_direct_maker_quality_by_book", {}) or {}).get(bid)
@@ -315,53 +360,69 @@ class Strategy1_Research_Simple(Strategy1_Research):
         taker_fee = float(self._research_live_fee_bps(bid, is_maker=False))
         maker_fee = float(self._research_live_fee_bps(bid, is_maker=True))
         holding = float(getattr(self, "research_lifecycle_holding_bps", 0.50) or 0.50)
+        authority_scale = self._direct_quality_authority_scale(bid)
         estimate = maker_realization_cost_estimate(
             stats=stats,
             global_stats=global_stats,
             taker_fee_bps=taker_fee,
             holding_risk_bps=holding,
+            authority_scale=authority_scale,
         )
         self._direct_realization_cost_last[bid] = estimate
-        # Preserve the inherited telemetry contract with a LifecycleCost object.
-        # Crossing/slippage are intentionally zero here because realized gross
-        # shortfall already learns their actual price impact from completed RTs.
+
+        fee_cost = maker_lifecycle_fee_cost_bps(
+            maker_entry_fee_bps=maker_fee,
+            maker_exit_fee_bps=maker_fee,
+            taker_exit_fee_bps=taker_fee,
+            taker_exit_probability=float(estimate.effective_taker_exit_rate),
+            learned_net_shortfall_bps=float(estimate.expected_negative_shortfall_bps),
+            holding_risk_bps=holding,
+        )
+        self._direct_lifecycle_fee_last[bid] = fee_cost
+
+        # Preserve the inherited LifecycleCost telemetry shape.  Its total_bps
+        # intentionally excludes Maker fees, so the Direct scorer returns the
+        # fee-accurate A1.5.1 total separately below.
         cost = LifecycleCost(
             maker_entry_fee_bps=maker_fee,
             taker_fee_bps=max(0.0, taker_fee),
-            expected_exit_fee_bps=float(estimate.expected_taker_fee_bps),
+            expected_exit_fee_bps=float(fee_cost.expected_exit_fee_bps),
             expected_cross_bps=0.0,
             expected_slippage_bps=0.0,
-            holding_risk_bps=float(estimate.holding_risk_bps),
+            holding_risk_bps=float(holding),
             taker_exit_probability=float(estimate.effective_taker_exit_rate),
             expected_future_taker_cost_bps=(
-                float(estimate.expected_negative_shortfall_bps)
-                + float(estimate.expected_taker_fee_bps)
+                float(fee_cost.residual_downside_bps)
+                + float(fee_cost.expected_taker_exit_fee_bps)
             ),
         )
         self._research_lifecycle_cost_last[bid] = cost
-        return float(cost.total_bps)
+        return float(fee_cost.total_cost_bps)
 
     def _research_score_ev_for_book(self, book_id: int, expected_alpha: float, mem):
         base = super()._research_score_ev_for_book(book_id, expected_alpha, mem)
         learned_cost = (getattr(self, "_direct_realization_cost_last", {}) or {}).get(int(book_id))
+        fee_cost = (getattr(self, "_direct_lifecycle_fee_last", {}) or {}).get(int(book_id))
         if learned_cost is not None:
-            # Make RANK telemetry describe the economics actually used in A1.5
-            # rather than the inherited fixed Taker-cost diagnostic fields.
+            # Make RANK telemetry describe the fee-accurate economics actually
+            # used in A1.5.1 rather than inherited fixed Taker-cost diagnostics.
             base = replace(
                 base,
-                fees_bps=float(learned_cost.total_cost_bps),
+                fees_bps=float(getattr(fee_cost, "total_cost_bps", learned_cost.total_cost_bps)),
                 taker_prob_effective=float(learned_cost.effective_taker_exit_rate),
                 taker_prob_excess=max(
                     0.0,
                     float(learned_cost.effective_taker_exit_rate)
                     - float(learned_cost.prior_taker_exit_rate),
                 ),
-                expected_taker_cost=float(learned_cost.total_cost_bps),
-                expected_future_taker_cost_bps=(
-                    float(learned_cost.expected_negative_shortfall_bps)
-                    + float(learned_cost.expected_taker_fee_bps)
+                expected_taker_cost=float(getattr(fee_cost, "total_cost_bps", learned_cost.total_cost_bps)),
+                expected_future_taker_cost_bps=float(
+                    getattr(fee_cost, "residual_downside_bps", learned_cost.expected_negative_shortfall_bps)
+                    + getattr(fee_cost, "expected_taker_exit_fee_bps", learned_cost.expected_taker_fee_bps)
                 ),
-                expected_taker_exit_fee_bps=float(learned_cost.expected_taker_fee_bps),
+                expected_taker_exit_fee_bps=float(
+                    getattr(fee_cost, "expected_taker_exit_fee_bps", learned_cost.expected_taker_fee_bps)
+                ),
                 expected_crossing_bps=0.0,
                 expected_slippage_bps=0.0,
             )
@@ -628,7 +689,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             inventory_qty=max(min_size, 0.25),
             min_order=min_size,
         )
-        # A1.5 preserves separate execution telemetry but disables Taker entry.  Maker uses the already fill-weighted
+        # A1.5.1 preserves separate execution telemetry but disables Taker entry.  Maker uses the already fill-weighted
         # Direct LifecycleEV.  Taker must independently earn its actual half-spread
         # crossing + fee + slippage from the raw directional forecast.  Kappa is
         # upstream ranking only and cannot rescue negative Taker economics.
@@ -667,6 +728,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         .get(int(book_id))
                         .as_log()
                         if (getattr(self, "_direct_realization_cost_last", {}) or {}).get(int(book_id)) is not None
+                        else {}
+                    ),
+                    **(
+                        (getattr(self, "_direct_lifecycle_fee_last", {}) or {})
+                        .get(int(book_id))
+                        .as_log()
+                        if (getattr(self, "_direct_lifecycle_fee_last", {}) or {}).get(int(book_id)) is not None
                         else {}
                     ),
                     total_score_value=float(getattr(ev, "total_score_component", 0.0) or 0.0),
@@ -794,7 +862,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 cached_alpha, cached_pnl, quality_penalty,
             ))
 
-        target = max(1, int(getattr(self, "research_kappa_completion_target", 80) or 80))
+        # Breadth target is number of qualified books (normally 80).
+        # ``research_kappa_completion_target`` is observations *per book* (3)
+        # and must never be used here.
+        target = max(1, int(
+            getattr(
+                self,
+                "research_score_target_books",
+                getattr(self, "research_total_score_full_breadth_books", 80),
+            )
+            or 80
+        ))
         score_deficit = max(0, target - qualified_count)
         rows: list[FastPathRow] = []
         for (bid, remaining, qualified, has_inv, is_dust, spread_bps,
@@ -851,6 +929,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 actual_nonflat=actual_nonflat, dust_nonflat=dust_nonflat,
             )),
             "direct_qualified_count": int(qualified_count),
+            "direct_score_target_books": int(target),
             "direct_score_deficit": int(score_deficit),
         }
         if tick <= 2 or tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
@@ -858,7 +937,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 self._emit(
                     "DIRECT_FASTPATH", force=True, tick=tick,
                     direct_fastpath_version=DIRECT_FASTPATH_VERSION, universe=len(rows),
-                    selected=len(selected), qualified=qualified_count, score_deficit=score_deficit,
+                    selected=len(selected), qualified=qualified_count, score_target=target, score_deficit=score_deficit,
                     inventory_books=actual_nonflat, dust_books=dust_nonflat,
                 )
             except Exception:
@@ -920,7 +999,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         raw = super()._research_read_session(identity)
         if not isinstance(raw, dict):
             return raw
-        direct = raw.get("direct_maker_quality_a1_5")
+        direct = raw.get("direct_maker_quality_a1_5_1")
+        same_version = isinstance(direct, dict)
+        if not isinstance(direct, dict):
+            direct = raw.get("direct_maker_quality_a1_5")  # migrate A1.5 session state
         if not isinstance(direct, dict):
             direct = raw.get("direct_maker_quality_a1_4")  # migrate A1.4 session state
         if not isinstance(direct, dict):
@@ -939,12 +1021,37 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._direct_maker_quality_global = MakerLifecycleStats.from_state(
                 direct.get("global")
             )
+            if same_version:
+                raw_baseline = direct.get("migration_baseline")
+                baseline: dict[int, int] = {}
+                if isinstance(raw_baseline, dict):
+                    for key, value in raw_baseline.items():
+                        try:
+                            baseline[int(key)] = max(0, int(value or 0))
+                        except (TypeError, ValueError):
+                            continue
+                self._direct_quality_migration_baseline = baseline
+                self._direct_quality_migration_global_baseline = max(
+                    0, int(direct.get("migration_global_baseline", 0) or 0)
+                )
+            else:
+                # Legacy quality came from a different fee/execution regime.
+                # Keep it as a weak prior and let 8 fresh A1.5.1 lifecycles per
+                # book ramp its authority back to full strength.
+                self._direct_quality_migration_baseline = {
+                    bid: int(stats.count) for bid, stats in restored.items() if int(stats.count) > 0
+                }
+                self._direct_quality_migration_global_baseline = int(
+                    getattr(self._direct_maker_quality_global, "count", 0) or 0
+                )
             try:
                 self._emit(
                     "DIRECT_QUALITY_RESTORE", force=True,
                     tick=getattr(self, "_tick", None), books=len(restored),
                     global_samples=int(self._direct_maker_quality_global.count),
                     direct_quality_version=DIRECT_QUALITY_VERSION,
+                    migrated_books=len(getattr(self, "_direct_quality_migration_baseline", {}) or {}),
+                    migration_global_baseline=int(getattr(self, "_direct_quality_migration_global_baseline", 0) or 0),
                 )
             except Exception:
                 pass
@@ -962,9 +1069,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         try:
             with open(path, encoding="utf-8") as handle:
                 payload = json.load(handle)
-            payload["direct_maker_quality_a1_5"] = {
+            payload["direct_maker_quality_a1_5_1"] = {
                 "version": DIRECT_QUALITY_VERSION,
                 "global": getattr(self, "_direct_maker_quality_global", MakerLifecycleStats()).as_state(),
+                "migration_baseline": {
+                    str(book): int(count)
+                    for book, count in sorted(
+                        (getattr(self, "_direct_quality_migration_baseline", {}) or {}).items()
+                    )
+                },
+                "migration_global_baseline": int(
+                    getattr(self, "_direct_quality_migration_global_baseline", 0) or 0
+                ),
                 "books": {
                     str(book): stats.as_state()
                     for book, stats in sorted(
@@ -984,8 +1100,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_maker_open = {}
         self._direct_maker_quality_by_book = {}
         self._direct_maker_quality_global = MakerLifecycleStats()
+        self._direct_quality_migration_baseline = {}
+        self._direct_quality_migration_global_baseline = 0
         self._direct_quality_last = {}
         self._direct_realization_cost_last = {}
+        self._direct_lifecycle_fee_last = {}
 
     # ------------------------------------------------------------------
     # Direct orchestration: no separate maintenance/alpha economic authority.

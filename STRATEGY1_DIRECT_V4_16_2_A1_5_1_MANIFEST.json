@@ -1,0 +1,38 @@
+{
+  "based_on": "strategy1_direct_v4_16_2_a1_5",
+  "phase": "Research",
+  "release": "strategy1_direct_v4_16_2_a1_5_1",
+  "runtime_fixes": [
+    "score_deficit_uses_80_book_breadth_target",
+    "true_signed_maker_entry_and_expected_exit_fee_budget",
+    "net_shortfall_residual_avoids_fee_double_count",
+    "migrated_quality_authority_tempered_and_persisted",
+    "directional_taker_entry_remains_disabled",
+    "fastpath_logic_preserved"
+  ],
+  "uid239_policy": "observation_only",
+  "unchanged_core_sha256": {
+    "agents/strategy/AdaptiveAgent.py": "6421fe403c4a51cb80ffd67bc37cd92be9dcbe646968819ceeabd42f1eb234c1",
+    "agents/strategy/BaseStrategy.py": "76941d948ce3bac0057e9ef788a3c6e93dab4f4bc79ce7b5b00733a67211f0cb",
+    "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+    "agents/strategy/Strategy1_Research.py": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "agents/strategy/research_position_exit.py": "c0c27ab88d18d84a2c425a0661152dd27f7f2a929b41d51bb8cf932dd62e7e6a"
+  },
+  "updated_files": {
+    "STRATEGY1_DIRECT_V4_16_2_A1_5_1.md": "3202199ac5de791461febedfd2444167ac325b4e797a666419f9770cd15a9555",
+    "agents/strategy/Strategy1_Research_Simple.py": "f3a471eefe835fceb66b1a4d07ecf6ec1d12e2be2c1d77b7b378d5b1cce87671",
+    "agents/strategy/research_direct_economics.py": "cc31b5a258b162e7008d15c47a6b45debd721dfb3ced476fb8607e871ea4dbb2",
+    "agents/strategy/research_direct_fastpath.py": "df96e131dc9e4fac4e4b826ab09311408f99a4f2baeed6591195bb356a5ce693",
+    "agents/strategy/research_direct_quality.py": "60169adeef451e5ce38f560be48a4e0a3037a7ff3a9cae423b8c9b20e0b7cbcd",
+    "run_strategy1_research_simple_multi.sh": "9c5de9c5d66a3012a6da89f86f4e8a636fb1313afd746810a53d3424ed9298f0",
+    "tests/test_research_strategy1_direct_a1_5.py": "394ce0c156d9b80f9bf40a59ba1e98ed76163ea71d069ebf9d17b240e039897b",
+    "tests/test_research_strategy1_direct_a1_5_1.py": "69820ffb73634f0a4906cba4b6d9b4875c75276c31edeaf469254f0a8c55e977"
+  },
+  "verification": {
+    "compileall": "PASS",
+    "direct_tests": "45/45 PASS",
+    "focused_preflight": "115/115 PASS",
+    "launcher_preflight": "PASS",
+    "research_regression": "487 PASS, 1 skipped historical A1.5 contract"
+  }
+}

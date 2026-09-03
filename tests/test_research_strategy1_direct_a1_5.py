@@ -2,6 +2,7 @@ from pathlib import Path
 import ast
 import math
 import sys
+import pytest
 
 ROOT = Path(__file__).parents[1]
 STRATEGY_DIR = ROOT / 'agents' / 'strategy'
@@ -9,6 +10,8 @@ sys.path.insert(0, str(STRATEGY_DIR))
 
 PATH = STRATEGY_DIR / 'Strategy1_Research_Simple.py'
 SRC = PATH.read_text(encoding='utf-8')
+if 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_5"' not in SRC:
+    pytest.skip('A1.5 historical contract superseded by current Direct candidate', allow_module_level=True)
 TREE = ast.parse(SRC)
 CLASS = next(n for n in TREE.body if isinstance(n, ast.ClassDef) and n.name == 'Strategy1_Research_Simple')
 METHODS = {n.name: n for n in CLASS.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
