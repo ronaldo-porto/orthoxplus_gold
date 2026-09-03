@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.4 Research candidate.
+"""Strategy1-Direct V4.16.2 A1.5 Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -37,6 +37,8 @@ from taos.im.protocol.models import LoanSettlementOption, OrderDirection, STP, T
 
 from Strategy1 import Strategy1
 from Strategy1_Research import Strategy1_Research
+from DetailedTemplateAgent import BookSelection
+from research_candidate_screen import ScreenResult
 from research_direct_economics import (
     ACTION_MAKER as EXEC_ACTION_MAKER,
     ACTION_SKIP as EXEC_ACTION_SKIP,
@@ -46,6 +48,7 @@ from research_direct_economics import (
     DIRECT_MAKER_MIN_EV,
     DIRECT_TAKER_MIN_EV,
     DIRECT_TAKER_MIN_EDGE_BPS,
+    DIRECT_TAKER_ENTRY_ENABLED,
     choose_direct_execution,
     direct_lifecycle_breakdown,
 )
@@ -66,6 +69,16 @@ from research_direct_execution_quality import (
     dust_exempt_count,
     effective_total_open_books,
 )
+from research_direct_fastpath import (
+    DIRECT_FASTPATH_VERSION,
+    DIRECT_FASTPATH_CANDIDATE_COUNT,
+    DIRECT_MAX_PRE_SUBMIT_AGE_MS,
+    DIRECT_TELEMETRY_SAMPLE_TICKS,
+    FastPathRow,
+    cheap_priority,
+    clamp_candidate_count as direct_fastpath_candidate_count,
+    select_fastpath_rows,
+)
 from research_neutral_prediction import is_neutral_forecast, prediction_source_of
 from research_position_exit import BAND_ABSOLUTE, new_exposure_allowed
 from research_risk_guard import evaluate_risk_guard
@@ -73,12 +86,12 @@ from research_role_size import maker_entry_size, taker_clip_size
 from research_lifecycle_ev import LifecycleCost
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_4"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_4"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_5"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_5"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 state/learning with A1.4 learned-shortfall + strict Taker-entry control.
+    """V4.16.2 state/learning with A1.5 net-downside learning + Direct FastPath.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -91,8 +104,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
     What remains authoritative:
       * Research fast screen / Kappa workload selection;
       * hard mechanical risk checks;
-      * A1.4 learned-shortfall LifecycleEV + bounded Maker-quality rank adjustment;
-      * A1.4 separate Maker/Taker economic chooser with Maker/Taker margins;
+      * A1.5 net-realized/LPM3-aware Maker lifecycle cost;
+      * A1.5 Direct FastPath top-K screening/profile build;
+      * Maker-only acquisition; PositionExitController retains Taker EXIT;
       * V4.16 PositionExitController for every non-flat position;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -114,12 +128,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_quality_last: dict[int, Any] = {}
         self._direct_realization_cost_last: dict[int, Any] = {}
         self._direct_quote_geometry_last: dict[int, dict[str, float]] = {}
+        self._direct_fastpath_last_selected_tick: dict[int, int] = {}
+        self._direct_fastpath_profile_cache: dict[int, Any] = {}
+        self._direct_request_wall_started: float | None = None
+        self._direct_event_pnl_before: dict[int, float] = {}
+        self._direct_fastpath_screen_calls = 0
+        self._direct_freshness_budget_skips = 0
         try:
             self._emit(
                 "SIMPLE_CONFIG",
                 force=True,
                 simple_policy_version=SIMPLE_POLICY_VERSION,
-                authority="HARD_SAFETY>DIRECT_LIFECYCLE_EV>MAKER_QUALITY>TOTAL_SCORE>SEPARATE_MAKER_TAKER_EV",
+                authority="DIRECT_FASTPATH>HARD_SAFETY>NET_DOWNSIDE_LIFECYCLE_EV>TOTAL_SCORE>MAKER_OR_SKIP",
                 direct_economics_version=DIRECT_ECONOMICS_VERSION,
                 execution_controller_version=DIRECT_EXECUTION_CONTROLLER_VERSION,
                 exit_authority="POSITION_EXIT_CONTROLLER",
@@ -140,16 +160,36 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 taker_entry_min_ev=DIRECT_TAKER_MIN_EV,
                 taker_entry_min_edge_bps=DIRECT_TAKER_MIN_EDGE_BPS,
                 learned_taker_shortfall_cost=1,
+                net_realized_shortfall_cost=1,
+                kappa_lpm3_downside_cost=1,
                 taker_frequency_is_badness=0,
+                taker_entry_enabled=int(DIRECT_TAKER_ENTRY_ENABLED),
+                direct_fastpath_version=DIRECT_FASTPATH_VERSION,
+                direct_fastpath_candidate_count=DIRECT_FASTPATH_CANDIDATE_COUNT,
+                direct_max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
             )
         except Exception:
             pass
 
     # ------------------------------------------------------------------
-    # A1.4 Maker lifecycle learning.  A Maker-opened position teaches the Direct
-    # overlay its actual gross drift and whether realization required a Taker.
-    # The inherited trade accounting remains untouched.
+    # A1.5 Maker lifecycle learning.  Learn NET realized downside, including
+    # partial reductions and fees, rather than gross entry-to-final-price drift.
     # ------------------------------------------------------------------
+    def onTrade(self, event, validator: str | None = None) -> None:
+        book_id = getattr(event, "bookId", None)
+        if book_id is not None:
+            try:
+                self._direct_event_pnl_before[int(book_id)] = float(
+                    self._pnl_tick_buffer.get(int(book_id), 0.0)
+                )
+            except Exception:
+                pass
+        try:
+            super().onTrade(event, validator)
+        finally:
+            if book_id is not None:
+                self._direct_event_pnl_before.pop(int(book_id), None)
+
     def _research_on_own_fill(
         self, *, event, book_id: int, before: float, after: float,
         kappa_before: int, kappa_after: int, is_maker: bool,
@@ -166,52 +206,73 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 return
             was_flat = abs(float(before)) <= eps
             is_flat = abs(float(after)) <= eps
+            crossed = float(before) * float(after) < -(eps * eps)
             row = self._direct_maker_open.get(bid)
 
-            if row is not None and (is_flat or float(before) * float(after) < -(eps * eps)):
+            pnl_before = float((getattr(self, "_direct_event_pnl_before", {}) or {}).get(bid, 0.0) or 0.0)
+            pnl_after = float((getattr(self, "_pnl_tick_buffer", {}) or {}).get(bid, 0.0) or 0.0)
+            realized_delta = pnl_after - pnl_before
+
+            if row is not None:
+                # Accumulate every realized reduction belonging to this Maker-opened lifecycle.
+                closed_qty = 0.0
+                if crossed or is_flat:
+                    closed_qty = abs(float(before))
+                elif abs(float(after)) + eps < abs(float(before)):
+                    closed_qty = max(0.0, abs(float(before)) - abs(float(after)))
+                if closed_qty > eps or abs(realized_delta) > 1e-12:
+                    row["realized_pnl"] = float(row.get("realized_pnl", 0.0) or 0.0) + float(realized_delta)
+                    entry_px = float(row.get("entry_price", 0.0) or 0.0)
+                    if entry_px > 0.0 and closed_qty > eps:
+                        row["realized_notional"] = float(row.get("realized_notional", 0.0) or 0.0) + closed_qty * entry_px
+                    if not bool(is_maker):
+                        row["used_taker_exit"] = 1
+
+            if row is not None and (is_flat or crossed):
                 entry_px = float(row.get("entry_price", 0.0) or 0.0)
                 sign = 1.0 if float(row.get("sign", 1.0) or 1.0) >= 0.0 else -1.0
-                if entry_px > 0.0:
-                    gross_bps = sign * (px - entry_px) / entry_px * 10_000.0
-                    stats = self._direct_maker_quality_by_book.setdefault(
-                        bid, MakerLifecycleStats()
+                gross_bps = sign * (px - entry_px) / entry_px * 10_000.0 if entry_px > 0.0 else 0.0
+                realized_notional = max(0.0, float(row.get("realized_notional", 0.0) or 0.0))
+                realized_pnl = float(row.get("realized_pnl", 0.0) or 0.0)
+                net_bps = (realized_pnl / realized_notional * 10_000.0) if realized_notional > 1e-12 else gross_bps
+                exit_is_taker = bool(row.get("used_taker_exit", 0)) or (not bool(is_maker))
+                stats = self._direct_maker_quality_by_book.setdefault(bid, MakerLifecycleStats())
+                stats.observe(net_bps=net_bps, gross_bps=gross_bps, exit_is_taker=exit_is_taker)
+                global_stats = getattr(self, "_direct_maker_quality_global", None)
+                if not isinstance(global_stats, MakerLifecycleStats):
+                    global_stats = MakerLifecycleStats()
+                    self._direct_maker_quality_global = global_stats
+                global_stats.observe(net_bps=net_bps, gross_bps=gross_bps, exit_is_taker=exit_is_taker)
+                try:
+                    self._emit(
+                        "DIRECT_MAKER_LIFECYCLE", force=True,
+                        tick=getattr(self, "_tick", None), book=bid,
+                        gross_bps=float(gross_bps), net_realized_bps=float(net_bps),
+                        realized_pnl=float(realized_pnl), realized_notional=float(realized_notional),
+                        exit_style=("TAKER" if exit_is_taker else "MAKER"),
+                        lifecycle_samples=int(stats.count), maker_exit_count=int(stats.maker_exit_count),
+                        taker_exit_count=int(stats.taker_exit_count), taker_exit_rate=float(stats.taker_exit_rate),
+                        taker_loss_rate=float(stats.taker_loss_rate), net_bps_ewma=float(stats.net_bps_ewma),
+                        taker_net_bps_ewma=float(stats.taker_net_bps_ewma),
+                        taker_net_shortfall_bps_ewma=float(stats.taker_net_shortfall_bps_ewma),
+                        taker_downside_lpm3_bps=float(stats.taker_downside_lpm3_bps),
                     )
-                    stats.observe(gross_bps=gross_bps, exit_is_taker=(not bool(is_maker)))
-                    global_stats = getattr(self, "_direct_maker_quality_global", None)
-                    if not isinstance(global_stats, MakerLifecycleStats):
-                        global_stats = MakerLifecycleStats()
-                        self._direct_maker_quality_global = global_stats
-                    global_stats.observe(gross_bps=gross_bps, exit_is_taker=(not bool(is_maker)))
-                    try:
-                        self._emit(
-                            "DIRECT_MAKER_LIFECYCLE", force=True,
-                            tick=getattr(self, "_tick", None), book=bid,
-                            gross_bps=float(gross_bps),
-                            exit_style=("TAKER" if not is_maker else "MAKER"),
-                            lifecycle_samples=int(stats.count),
-                            maker_exit_count=int(stats.maker_exit_count),
-                            taker_exit_count=int(stats.taker_exit_count),
-                            taker_exit_rate=float(stats.taker_exit_rate),
-                            taker_loss_rate=float(stats.taker_loss_rate),
-                            gross_bps_ewma=float(stats.gross_bps_ewma),
-                            taker_gross_bps_ewma=float(stats.taker_gross_bps_ewma),
-                            taker_shortfall_bps_ewma=float(stats.taker_shortfall_bps_ewma),
-                        )
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
                 self._direct_maker_open.pop(bid, None)
                 row = None
 
-            # Only Maker fills may open a lifecycle tracked by this quality model.
-            # Direct entry authority prevents normal same-side stacking while non-flat.
-            if is_maker and (was_flat or float(before) * float(after) < -(eps * eps)) and not is_flat:
+            # Only Maker fills may open a new Direct lifecycle.
+            if is_maker and (was_flat or crossed) and not is_flat:
                 self._direct_maker_open[bid] = {
                     "entry_price": float(px),
                     "sign": (1.0 if float(after) > 0.0 else -1.0),
                     "tick": int(getattr(self, "_tick", 0) or 0),
+                    "realized_pnl": 0.0,
+                    "realized_notional": 0.0,
+                    "used_taker_exit": 0,
                 }
         except Exception:
-            # Learning can never break authoritative fill accounting.
             return
 
     def _direct_quality_for_book(self, book_id: int):
@@ -237,16 +298,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return quality
 
     # ------------------------------------------------------------------
-    # A1.4 LifecycleEV: A1.1 latency/adverse correction stays intact.  Maker
+    # A1.5 LifecycleEV: A1.1 latency/adverse correction stays intact.  Maker
     # quality is a bounded rank deduction, not a new hard lifecycle veto.
         # ------------------------------------------------------------------
     def _research_lifecycle_entry_cost_bps(self, book_id: int, spread_bps: float) -> float:
-        """A1.4 learned Maker-lifecycle downside cost.
+        """A1.5 net-realized, Kappa-downside-aware Maker lifecycle cost.
 
         The inherited V4.16 model prices every Taker exit as fixed crossing +
         slippage + fee.  A1.3 proved this suppresses profitable Maker->Taker
-        lifecycles.  Direct A1.4 instead prices observed negative shortfall and
-        positive Taker fee; profitable Taker exits contribute zero shortfall.
+        lifecycles.  Direct A1.5 prices net realized negative shortfall and a cubic downside
+        severity proxy; profitable Taker exits still contribute zero shortfall.
         """
         bid = int(book_id)
         stats = (getattr(self, "_direct_maker_quality_by_book", {}) or {}).get(bid)
@@ -284,7 +345,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         base = super()._research_score_ev_for_book(book_id, expected_alpha, mem)
         learned_cost = (getattr(self, "_direct_realization_cost_last", {}) or {}).get(int(book_id))
         if learned_cost is not None:
-            # Make RANK telemetry describe the economics actually used in A1.4
+            # Make RANK telemetry describe the economics actually used in A1.5
             # rather than the inherited fixed Taker-cost diagnostic fields.
             base = replace(
                 base,
@@ -315,6 +376,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # independently positive directional Taker opportunity.
             direct = replace(direct, final_score=final - float(quality.total_penalty))
         return direct
+
+    def respond(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
+        # A1.5 measures the actual wall-clock age of the decision path. New Maker
+        # exposure is not submitted after the freshness budget is already spent.
+        self._direct_request_wall_started = time.perf_counter()
+        return super().respond(state)
 
     # ------------------------------------------------------------------
     # Inventory: one owner.  Any real position goes to PositionExitController.
@@ -351,6 +418,25 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if size <= 0.0 or not getattr(book, "bids", None) or not getattr(book, "asks", None):
             return 0
 
+        request_started = getattr(self, "_direct_request_wall_started", None)
+        if request_started is not None:
+            pre_submit_age_ms = (time.perf_counter() - float(request_started)) * 1000.0
+            if pre_submit_age_ms > DIRECT_MAX_PRE_SUBMIT_AGE_MS:
+                self._direct_freshness_budget_skips = int(
+                    getattr(self, "_direct_freshness_budget_skips", 0) or 0
+                ) + 1
+                tick = int(getattr(self, "_tick", 0) or 0)
+                if tick <= 2 or tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
+                    try:
+                        self._emit(
+                            "DIRECT_FRESHNESS_SKIP", force=True, tick=tick, book=int(book_id),
+                            pre_submit_age_ms=float(pre_submit_age_ms),
+                            max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
+                        )
+                    except Exception:
+                        pass
+                return 0
+
         bid = float(book.bids[0].price)
         ask = float(book.asks[0].price)
         if bid <= 0.0 or ask <= bid:
@@ -379,17 +465,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
         self._direct_quote_geometry_last[int(book_id)] = dict(geometry)
         expiry_ns = direct_maker_expiry_ns(int(self.mm_expiry_period))
-        try:
-            self._emit(
-                "DIRECT_MAKER_GEOMETRY", force=True,
-                tick=getattr(self, "_tick", None), book=int(book_id),
-                direct_execution_quality_version=DIRECT_EXECUTION_QUALITY_VERSION,
-                best_bid=bid, best_ask=ask, raw_bid_px=float(raw_bid_px),
-                raw_ask_px=float(raw_ask_px), bid_px=float(bid_px), ask_px=float(ask_px),
-                maker_ttl_ms=float(expiry_ns) / 1_000_000.0, **geometry,
-            )
-        except Exception:
-            pass
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if tick <= 2 or tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
+            try:
+                self._emit(
+                    "DIRECT_MAKER_GEOMETRY", force=True,
+                    tick=tick, book=int(book_id),
+                    direct_execution_quality_version=DIRECT_EXECUTION_QUALITY_VERSION,
+                    best_bid=bid, best_ask=ask, raw_bid_px=float(raw_bid_px),
+                    raw_ask_px=float(raw_ask_px), bid_px=float(bid_px), ask_px=float(ask_px),
+                    maker_ttl_ms=float(expiry_ns) / 1_000_000.0, **geometry,
+                )
+            except Exception:
+                pass
 
         qty = self._round_order_size(float(size), int(state.config.volumeDecimals))
         min_size = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
@@ -540,7 +628,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             inventory_qty=max(min_size, 0.25),
             min_order=min_size,
         )
-        # A1.4 preserves separate execution economics.  Maker uses the already fill-weighted
+        # A1.5 preserves separate execution telemetry but disables Taker entry.  Maker uses the already fill-weighted
         # Direct LifecycleEV.  Taker must independently earn its actual half-spread
         # crossing + fee + slippage from the raw directional forecast.  Kappa is
         # upstream ranking only and cannot rescue negative Taker economics.
@@ -561,32 +649,34 @@ class Strategy1_Research_Simple(Strategy1_Research):
             expected_markout_bps=float(getattr(ev, "expected_markout_bps", 0.0) or 0.0),
         )
 
-        try:
-            self._emit(
-                "ENTRY_DECISION",
-                force=True,
-                tick=getattr(self, "_tick", None),
-                book=int(book_id),
-                lane="DIRECT",
-                safe=1,
-                lifecycle_ev=life,
-                maker_lifecycle_ev_adjusted=maker_lifecycle_ev,
-                **quality.as_log(),
-                **(
-                    (getattr(self, "_direct_realization_cost_last", {}) or {})
-                    .get(int(book_id))
-                    .as_log()
-                    if (getattr(self, "_direct_realization_cost_last", {}) or {}).get(int(book_id)) is not None
-                    else {}
-                ),
-                total_score_value=float(getattr(ev, "total_score_component", 0.0) or 0.0),
-                prediction_source=prediction_source_of(prediction),
-                neutral_fallback_used=int(is_neutral_forecast(prediction)),
-                direct_mode=1,
-                **decision.as_log(),
-            )
-        except Exception:
-            pass
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if decision.action != EXEC_ACTION_SKIP or tick <= 2 or tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
+            try:
+                self._emit(
+                    "ENTRY_DECISION",
+                    force=True,
+                    tick=tick,
+                    book=int(book_id),
+                    lane="DIRECT",
+                    safe=1,
+                    lifecycle_ev=life,
+                    maker_lifecycle_ev_adjusted=maker_lifecycle_ev,
+                    **quality.as_log(),
+                    **(
+                        (getattr(self, "_direct_realization_cost_last", {}) or {})
+                        .get(int(book_id))
+                        .as_log()
+                        if (getattr(self, "_direct_realization_cost_last", {}) or {}).get(int(book_id)) is not None
+                        else {}
+                    ),
+                    total_score_value=float(getattr(ev, "total_score_component", 0.0) or 0.0),
+                    prediction_source=prediction_source_of(prediction),
+                    neutral_fallback_used=int(is_neutral_forecast(prediction)),
+                    direct_mode=1,
+                    **decision.as_log(),
+                )
+            except Exception:
+                pass
 
         if decision.action == EXEC_ACTION_SKIP:
             return 0
@@ -626,7 +716,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return placed
 
     # ------------------------------------------------------------------
-    # A1.4 keeps A1.3 dust liveness + session-persistent Direct quality.
+    # A1.5 keeps A1.3 dust liveness + session-persistent Direct quality.
     # ------------------------------------------------------------------
     def _direct_dust_count(self, state) -> int:
         min_size = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
@@ -642,30 +732,178 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return int(count)
 
     def _research_fast_screen(self, state):
-        # Base V4.16 correctly keeps dust in absolute BASE risk, but its total-open
-        # cap counts every non-flat key.  Agent-68 A1.2 deadlocked with eight dust
-        # books totaling only ~0.085 BASE.  Exempt only untradeable dust from the
-        # *book-count* cap; active-book and total-BASE caps remain unchanged.
-        base_cap = int(getattr(self, "research_max_total_open_books", 8) or 8)
-        dust = self._direct_dust_count(state)
-        exempt = dust_exempt_count(dust)
-        self.research_max_total_open_books = base_cap + exempt
-        try:
-            result = super()._research_fast_screen(state)
-        finally:
-            self.research_max_total_open_books = base_cap
-        try:
-            diag = getattr(self, "_research_inventory_lane_diag", {}) or {}
-            diag["direct_configured_total_open_cap"] = int(base_cap)
-            diag["direct_dust_exempt_count"] = int(exempt)
-            diag["direct_effective_open_books"] = effective_total_open_books(
-                actual_nonflat=int(diag.get("actual_nonflat_inventory", 0) or 0),
-                dust_nonflat=int(diag.get("dust_nonflat_inventory", 0) or 0),
+        """A1.5 Direct FastPath: cheap 128-book pass -> bounded top-K.
+
+        This intentionally bypasses the inherited heavy lane/rolling-economics
+        screen. Inventory management is still full-universe and authoritative in
+        ``build_mm_strategy_instructions``.
+        """
+        self._direct_fastpath_screen_calls = int(
+            getattr(self, "_direct_fastpath_screen_calls", 0) or 0
+        ) + 1
+        books = getattr(state, "books", None) or {}
+        tick = int(getattr(self, "_tick", 0) or 0)
+        eps = float(self._execution_flat_epsilon())
+        min_size = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        profile_cache = getattr(self, "_direct_fastpath_profile_cache", {}) or {}
+        quality_cache = getattr(self, "_direct_quality_last", {}) or {}
+        last_selected = getattr(self, "_direct_fastpath_last_selected_tick", {}) or {}
+
+        raw_rows = []
+        qualified_count = 0
+        actual_nonflat = 0
+        active_nonflat = 0
+        dust_nonflat = 0
+        total_abs_base = 0.0
+        for raw_id, book in books.items():
+            bid = int(raw_id)
+            try:
+                qty = abs(float(self._research_abs_inventory(bid)))
+            except Exception:
+                qty = 0.0
+            has_inv = qty > eps
+            is_dust = bool(has_inv and qty + 1e-12 < min_size)
+            if has_inv:
+                actual_nonflat += 1
+                total_abs_base += qty
+                if is_dust:
+                    dust_nonflat += 1
+                else:
+                    active_nonflat += 1
+
+            try:
+                kappa = self._research_kappa_book(bid)
+                remaining = max(0, int(getattr(kappa, "observations_remaining", 3) or 0))
+                qualified = bool(getattr(kappa, "eligible", False))
+            except Exception:
+                remaining, qualified = 3, False
+            if qualified:
+                qualified_count += 1
+
+            bpx = float(book.bids[0].price) if getattr(book, "bids", None) else 0.0
+            apx = float(book.asks[0].price) if getattr(book, "asks", None) else 0.0
+            mid = 0.5 * (bpx + apx) if bpx > 0.0 and apx > bpx else 0.0
+            spread_bps = ((apx - bpx) / mid * 10_000.0) if mid > 0.0 else 0.0
+            cached_profile = profile_cache.get(bid)
+            cached_alpha = float(getattr(cached_profile, "alpha_rank", 0.0) or 0.0)
+            cached_pnl = float(getattr(cached_profile, "realized_pnl", 0.0) or 0.0)
+            quality = quality_cache.get(bid)
+            quality_penalty = float(getattr(quality, "total_penalty", 0.0) or 0.0)
+            raw_rows.append((
+                bid, remaining, qualified, has_inv, is_dust, spread_bps,
+                cached_alpha, cached_pnl, quality_penalty,
+            ))
+
+        target = max(1, int(getattr(self, "research_kappa_completion_target", 80) or 80))
+        score_deficit = max(0, target - qualified_count)
+        rows: list[FastPathRow] = []
+        for (bid, remaining, qualified, has_inv, is_dust, spread_bps,
+             cached_alpha, cached_pnl, quality_penalty) in raw_rows:
+            stale_ticks = max(0, tick - int(last_selected.get(bid, 0) or 0))
+            priority = cheap_priority(
+                observations_remaining=remaining, qualified=qualified,
+                spread_bps=spread_bps, cached_alpha_rank=cached_alpha,
+                cached_realized_pnl=cached_pnl, quality_penalty=quality_penalty,
+                ticks_since_selected=stale_ticks, score_deficit=score_deficit,
             )
-            self._research_inventory_lane_diag = diag
-        except Exception:
-            pass
+            rows.append(FastPathRow(
+                book_id=bid, priority=priority, observations_remaining=remaining,
+                qualified=qualified, has_inventory=has_inv, is_dust=is_dust,
+            ))
+
+        configured = direct_fastpath_candidate_count(
+            getattr(self, "research_candidate_count", DIRECT_FASTPATH_CANDIDATE_COUNT)
+        )
+        selected = select_fastpath_rows(
+            rows, candidate_count=configured, score_deficit=score_deficit, tick=tick,
+        )
+        selected_set = {int(x) for x in selected}
+        for bid in selected_set:
+            last_selected[bid] = tick
+        self._direct_fastpath_last_selected_tick = last_selected
+
+        forced_inventory = [r.book_id for r in rows if r.has_inventory and r.book_id in selected_set]
+        forced_dust = [r.book_id for r in rows if r.is_dust and r.book_id in selected_set]
+        forced_kappa = [
+            r.book_id for r in rows
+            if (not r.qualified and r.observations_remaining in (1, 2) and r.book_id in selected_set)
+        ]
+        screened_extra = [
+            r.book_id for r in rows
+            if r.book_id in selected_set and r.book_id not in set(forced_inventory)
+            and r.book_id not in set(forced_kappa)
+        ]
+        result = ScreenResult(
+            selected=list(selected),
+            forced=list(dict.fromkeys(forced_inventory + forced_kappa)),
+            forced_inventory=forced_inventory, forced_dust=forced_dust,
+            forced_kappa=forced_kappa, forced_hard_risk=[], forced_live=[],
+            screened_extra=screened_extra, candidate_count=len(selected), universe=len(rows),
+        )
+        self._research_last_screen = result
+        self._research_inventory_lane_diag = {
+            **(getattr(self, "_research_inventory_lane_diag", {}) or {}),
+            "actual_nonflat_inventory": int(actual_nonflat),
+            "active_nonflat_inventory": int(active_nonflat),
+            "dust_nonflat_inventory": int(dust_nonflat),
+            "total_abs_base_inventory": float(total_abs_base),
+            "direct_effective_open_books": int(effective_total_open_books(
+                actual_nonflat=actual_nonflat, dust_nonflat=dust_nonflat,
+            )),
+            "direct_qualified_count": int(qualified_count),
+            "direct_score_deficit": int(score_deficit),
+        }
+        if tick <= 2 or tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
+            try:
+                self._emit(
+                    "DIRECT_FASTPATH", force=True, tick=tick,
+                    direct_fastpath_version=DIRECT_FASTPATH_VERSION, universe=len(rows),
+                    selected=len(selected), qualified=qualified_count, score_deficit=score_deficit,
+                    inventory_books=actual_nonflat, dust_books=dust_nonflat,
+                )
+            except Exception:
+                pass
         return result
+
+    def select_books_for_trading(self, state, predictions):
+        """Build expensive profiles only for the bounded Direct FastPath set."""
+        started = time.perf_counter()
+        screen = getattr(self, "_research_last_screen", None)
+        selected_ids = {int(x) for x in (getattr(screen, "selected", None) or [])}
+        if not selected_ids:
+            selected_ids = {int(x) for x in (predictions or {}).keys()}
+        profiles = []
+        cache = getattr(self, "_direct_fastpath_profile_cache", {}) or {}
+        for bid in selected_ids:
+            book = (getattr(state, "books", None) or {}).get(bid)
+            if book is None:
+                continue
+            try:
+                profile = self.build_book_profile(
+                    bid, book, state, (predictions or {}).get(bid),
+                    getattr(cache.get(bid), "raw_kappa", None),
+                )
+            except Exception:
+                continue
+            cache[bid] = profile
+            profiles.append(profile)
+        self._direct_fastpath_profile_cache = cache
+
+        tier_counts: dict[str, int] = {}
+        for p in profiles:
+            tier = str(getattr(p, "tier", "INACTIVE") or "INACTIVE")
+            tier_counts[tier] = int(tier_counts.get(tier, 0)) + 1
+        selection = BookSelection(
+            alpha_books=[int(p.book_id) for p in profiles if str(getattr(p, "tier", "")) != "RED"],
+            maintenance_books=[int(p.book_id) for p in profiles if str(getattr(p, "tier", "")) == "INACTIVE"],
+            avoid_books=[int(p.book_id) for p in profiles if str(getattr(p, "tier", "")) == "RED"],
+            tier_counts=tier_counts, profiles=profiles,
+        )
+        self._last_selection = selection
+        elapsed = (time.perf_counter() - started) * 1000.0
+        self._research_timing["selection_ms"] = elapsed
+        self._research_timing["ranking_ms"] = elapsed
+        return selection
 
     def _research_final_validate_instructions(self, response, state) -> None:
         # Preserve the authoritative validator, changing only total-open capacity
@@ -682,7 +920,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         raw = super()._research_read_session(identity)
         if not isinstance(raw, dict):
             return raw
-        direct = raw.get("direct_maker_quality_a1_4")
+        direct = raw.get("direct_maker_quality_a1_5")
+        if not isinstance(direct, dict):
+            direct = raw.get("direct_maker_quality_a1_4")  # migrate A1.4 session state
         if not isinstance(direct, dict):
             direct = raw.get("direct_maker_quality_a1_3")  # migrate A1.3 session state
         if isinstance(direct, dict):
@@ -722,7 +962,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         try:
             with open(path, encoding="utf-8") as handle:
                 payload = json.load(handle)
-            payload["direct_maker_quality_a1_4"] = {
+            payload["direct_maker_quality_a1_5"] = {
                 "version": DIRECT_QUALITY_VERSION,
                 "global": getattr(self, "_direct_maker_quality_global", MakerLifecycleStats()).as_state(),
                 "books": {
@@ -836,7 +1076,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 stats["managed"] += 1
                 stats["instructions"] += int(n)
 
-        # A1.4 keeps A1.3 early portfolio admission.  Final contract validation remains the
+        # A1.5 keeps A1.3 early portfolio admission.  Final contract validation remains the
         # last authority, but do not build more new-exposure books than the
         # current portfolio can possibly admit in this request.
         diag = getattr(self, "_research_inventory_lane_diag", {}) or {}

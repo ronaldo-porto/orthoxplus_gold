@@ -1,0 +1,46 @@
+{
+  "changed_files": {
+    "STRATEGY1_DIRECT_V4_16_2_A1_5.md": "206166edd61233fc175e1dc9a8bc36065c81a922fc796703f377a7049b993ad2",
+    "agents/strategy/Strategy1_Research_Simple.py": "177ef87f4eb246bc13461b10ecd40d476f9ac3b92cbb7aa2a7c33ffcad5ec8aa",
+    "agents/strategy/research_direct_economics.py": "e5d41c90be1e12aa09f96ec08c2d81c94c548137ac4e0ebe364ba48bb857eac0",
+    "agents/strategy/research_direct_fastpath.py": "a7aaf9a6bade8c1b45783107c63b0819cde552c84d37d4aeb0f74d2e8ea641c4",
+    "agents/strategy/research_direct_quality.py": "85e8a2fdad65931570bbd9772e40f471b6faf0e8b0127a04d8dc55d1b1ee38e6",
+    "run_strategy1_research_simple_multi.sh": "bca4187ad8cac9cda431fb3dc93861441fe41048e84c72281b40d586dcd573b9",
+    "tests/test_research_strategy1_direct_a1_5.py": "3c2ba8879268d460d49ce60bb79614778f6b86900bc0539450787a561873f4eb"
+  },
+  "direct_taker_entry_enabled": false,
+  "fastpath_candidate_bounds": [
+    8,
+    16
+  ],
+  "fastpath_default_candidate_count": 12,
+  "fastpath_launcher_candidate_count": 11,
+  "lifecycle_cost_model": "P(taker)*blend(E[net negative shortfall|taker], LPM3-like net downside) + P(taker)*positive taker fee + holding",
+  "maker_max_touch_improvement_bps": 6.0,
+  "maker_max_ttl_ms": 75.0,
+  "maker_min_ev": 0.03,
+  "max_pre_submit_age_ms": 100.0,
+  "policy": "strategy1_direct_v4_16_2_a1_5",
+  "qualified_cadence_ticks": 5,
+  "release": "Strategy1-Direct V4.16.2 A1.5",
+  "runtime_latency_status": "UNVERIFIED until Agent-68 A1.5 log; static hot-path reduction only",
+  "scope": "Agent-68 A1.4 runtime-history FastPath/net-downside patch; UID239 observation-only",
+  "uid239_features_implemented": false,
+  "unchanged_core_files": {
+    "agents/strategy/AdaptiveAgent.py": "6421fe403c4a51cb80ffd67bc37cd92be9dcbe646968819ceeabd42f1eb234c1",
+    "agents/strategy/BaseStrategy.py": "76941d948ce3bac0057e9ef788a3c6e93dab4f4bc79ce7b5b00733a67211f0cb",
+    "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+    "agents/strategy/Strategy1_Research.py": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "agents/strategy/research_direct_execution_quality.py": "39dbaafafe065a3d7d5ce609aae1ef9107ee34b004f50808d614ca5f8256b7d0",
+    "agents/strategy/research_position_exit.py": "c0c27ab88d18d84a2c425a0661152dd27f7f2a929b41d51bb8cf932dd62e7e6a"
+  },
+  "verification": {
+    "compileall": "PASS",
+    "direct_tests": "39/39 PASS",
+    "focused_safety": "145/145 PASS",
+    "full_repository_suite": "NOT COLLECTED: optional dependencies missing (transformers, pyarrow, bittensor, loky)",
+    "launcher_bash_n": "PASS",
+    "launcher_preflight": "109/109 PASS",
+    "research_tests": "481/481 PASS"
+  }
+}

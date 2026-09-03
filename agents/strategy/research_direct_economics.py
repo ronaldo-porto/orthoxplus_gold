@@ -1,13 +1,10 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct A1.4 execution economics overlay.
+"""Strategy1-Direct A1.5 execution economics overlay.
 
-A1.4 preserves the A1.1 lifecycle dead-gate correction and A1.2 separation of
-Maker/Taker economics.  The only execution change is stricter Taker *entry*
-admission after Agent-68 A1.3 produced three losing Taker-origin round trips.
-
-Taker entry now uses a 50% haircut to the previous full-scale directional move
-(4 bps instead of 8 bps) and must clear both a positive EV margin and a minimum
-net directional edge.  Kappa/coverage remains absent from the decision.
+A1.5 preserves the A1.1 lifecycle dead-gate correction and separate Maker/Taker
+telemetry, but disables Direct directional Taker *entry* after A1.3+A1.4 produced
+2 positive versus 32 negative Taker-origin round trips. Taker EXIT remains owned
+by PositionExitController. Kappa/coverage cannot re-enable Taker acquisition.
 """
 from __future__ import annotations
 
@@ -15,19 +12,19 @@ from dataclasses import dataclass, replace
 import math
 from typing import Any
 
-DIRECT_ECONOMICS_VERSION = "direct_economics_v4_16_2_a1_4"
-DIRECT_EXECUTION_CONTROLLER_VERSION = "direct_execution_controller_v4_16_2_a1_4"
+DIRECT_ECONOMICS_VERSION = "direct_economics_v4_16_2_a1_5"
+DIRECT_EXECUTION_CONTROLLER_VERSION = "direct_execution_controller_v4_16_2_a1_5"
 
 ACTION_MAKER = "MAKER"
 ACTION_TAKER = "TAKER"
 ACTION_SKIP = "SKIP"
 
-# A1.3 used 8 bps at full directional score and lost all three Taker-origin RTs.
-# A1.4 applies a 50% calibration haircut and requires explicit net-edge margin.
+# Retained only for counterfactual telemetry. A1.5 does not authorize Taker entry.
 TAKER_ALPHA_SCALE_BPS = 4.0
 TAKER_EDGE_SCALE_BPS = 8.0
 DIRECT_TAKER_MIN_EV = 0.20
 DIRECT_TAKER_MIN_EDGE_BPS = 2.0
+DIRECT_TAKER_ENTRY_ENABLED = False
 NEGATIVE_UTILITY = -1.0e9
 DIRECT_MAKER_MIN_EV = 0.030
 
@@ -61,7 +58,7 @@ def direct_lifecycle_breakdown(base: Any, *, min_trading_ev: float = 0.0):
     """Keep A1.1's corrected Direct LifecycleEV authority.
 
     Strategy-wide latency and duplicate adverse-selection telemetry are not hard
-    per-book deductions.  ``base.trading_ev`` already uses the Direct A1.4
+    per-book deductions.  ``base.trading_ev`` already uses the Direct A1.5
     learned lifecycle fee input supplied by the strategy overlay.
     """
     reason = str(getattr(base, "reject_reason", "") or "").upper()
@@ -222,7 +219,8 @@ def choose_direct_execution(
     net_edge = expected_move - total_cost
     maker_u = maker_ev if maker_ev + 1e-12 >= maker_floor else NEGATIVE_UTILITY
     taker_pass = (
-        (not neutral_fallback)
+        DIRECT_TAKER_ENTRY_ENABLED
+        and (not neutral_fallback)
         and taker_ev + 1e-12 >= taker_floor
         and net_edge + 1e-12 >= edge_floor
     )
