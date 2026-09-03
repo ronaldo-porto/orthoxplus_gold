@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Bounded Maker lifecycle quality learning for Strategy1-Direct A1.2.
+"""Bounded Maker lifecycle quality learning for Strategy1-Direct A1.3.
 
 The Direct strategy intentionally keeps one economic authority.  This module
 therefore does not create a toxicity/blacklist lane.  It learns two small,
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
-DIRECT_QUALITY_VERSION = "direct_maker_quality_v4_16_2_a1_2"
+DIRECT_QUALITY_VERSION = "direct_maker_quality_v4_16_2_a1_3"
 
 DRIFT_MAX_PENALTY = 0.030
 PRODUCTIVITY_MAX_PENALTY = 0.020
@@ -29,6 +29,11 @@ TOTAL_MAX_PENALTY = 0.040
 DRIFT_SCALE_BPS = 10.0
 PNL_MEAN_SCALE = 0.10
 EWMA_ALPHA = 0.25
+# Agent-68 A1.2 cold-start history: zero-sample books were the worst cohort,
+# while the realized Maker->Taker share was ~57%.  Use a weak hierarchical
+# prior rather than pretending a new/restarted book has zero exit hazard.
+COLD_START_TAKER_RATE = 0.55
+COLD_START_PRIOR_STRENGTH = 4.0
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -86,6 +91,31 @@ class MakerLifecycleStats:
     def win_rate(self) -> float:
         return 0.0 if self.count <= 0 else self.positive_count / float(self.count)
 
+    def as_state(self) -> dict[str, float | int]:
+        return {
+            "count": int(self.count),
+            "maker_exit_count": int(self.maker_exit_count),
+            "taker_exit_count": int(self.taker_exit_count),
+            "positive_count": int(self.positive_count),
+            "negative_count": int(self.negative_count),
+            "gross_bps_ewma": float(self.gross_bps_ewma),
+            "taker_gross_bps_ewma": float(self.taker_gross_bps_ewma),
+        }
+
+    @classmethod
+    def from_state(cls, raw: Any) -> "MakerLifecycleStats":
+        if not isinstance(raw, dict):
+            return cls()
+        return cls(
+            count=max(0, int(_finite(raw.get("count", 0)))),
+            maker_exit_count=max(0, int(_finite(raw.get("maker_exit_count", 0)))),
+            taker_exit_count=max(0, int(_finite(raw.get("taker_exit_count", 0)))),
+            positive_count=max(0, int(_finite(raw.get("positive_count", 0)))),
+            negative_count=max(0, int(_finite(raw.get("negative_count", 0)))),
+            gross_bps_ewma=_finite(raw.get("gross_bps_ewma", 0.0)),
+            taker_gross_bps_ewma=_finite(raw.get("taker_gross_bps_ewma", 0.0)),
+        )
+
 
 @dataclass(frozen=True)
 class MakerQualityAdjustment:
@@ -94,6 +124,8 @@ class MakerQualityAdjustment:
     total_penalty: float
     lifecycle_samples: int
     taker_exit_rate: float
+    effective_taker_exit_rate: float
+    prior_taker_exit_rate: float
     gross_bps_ewma: float
     taker_gross_bps_ewma: float
     rolling_samples: int
@@ -108,6 +140,8 @@ class MakerQualityAdjustment:
             "maker_quality_penalty": self.total_penalty,
             "maker_lifecycle_samples": self.lifecycle_samples,
             "maker_taker_exit_rate": self.taker_exit_rate,
+            "maker_effective_taker_exit_rate": self.effective_taker_exit_rate,
+            "maker_prior_taker_exit_rate": self.prior_taker_exit_rate,
             "maker_gross_bps_ewma": self.gross_bps_ewma,
             "maker_taker_gross_bps_ewma": self.taker_gross_bps_ewma,
             "rolling_samples": self.rolling_samples,
@@ -119,9 +153,12 @@ class MakerQualityAdjustment:
 def maker_quality_adjustment(
     *,
     stats: MakerLifecycleStats | None,
+    global_stats: MakerLifecycleStats | None = None,
     rolling_samples: int = 0,
     rolling_loss_rate: float = 0.0,
     rolling_realized_mean: float = 0.0,
+    prior_taker_exit_rate: float = COLD_START_TAKER_RATE,
+    prior_strength: float = COLD_START_PRIOR_STRENGTH,
 ) -> MakerQualityAdjustment:
     """Return one bounded Maker-quality deduction.
 
@@ -132,8 +169,19 @@ def maker_quality_adjustment(
     blacklisting them.
     """
     s = stats or MakerLifecycleStats()
+    g = global_stats or MakerLifecycleStats()
     n = max(0, int(s.count or 0))
     taker_n = max(0, int(s.taker_exit_count or 0))
+
+    # Hierarchical Taker-exit prior.  Current-run global evidence may move the
+    # cold-start prior, while per-book evidence gradually takes over.
+    p0 = _clip01(prior_taker_exit_rate)
+    g_n = max(0, int(g.count or 0))
+    if g_n > 0:
+        global_conf = min(1.0, g_n / 16.0)
+        p0 = (1.0 - global_conf) * p0 + global_conf * _clip01(g.taker_exit_rate)
+    strength = max(0.0, _finite(prior_strength, COLD_START_PRIOR_STRENGTH))
+    effective_taker_rate = (strength * p0 + float(taker_n)) / max(1e-12, strength + float(n))
 
     # Prefer the realized drift of Maker->Taker lifecycles once available.
     drift_bps = _finite(s.taker_gross_bps_ewma if taker_n > 0 else s.gross_bps_ewma)
@@ -157,8 +205,9 @@ def maker_quality_adjustment(
     loss_bad = _clip01((loss_rate - 0.50) / 0.50)
     pnl_bad = math.tanh(max(0.0, -mean_pnl) / PNL_MEAN_SCALE)
 
-    lifecycle_conf = min(1.0, n / 6.0)
-    taker_bad = _clip01((s.taker_exit_rate - 0.50) / 0.50) * lifecycle_conf
+    # The prior itself is weak evidence; book evidence increases confidence.
+    lifecycle_conf = min(1.0, (strength + n) / 10.0)
+    taker_bad = _clip01((effective_taker_rate - 0.50) / 0.50) * lifecycle_conf
     productivity_score = 0.45 * loss_bad + 0.35 * pnl_bad + 0.20 * taker_bad
     productivity_penalty = PRODUCTIVITY_MAX_PENALTY * roll_conf * productivity_score
 
@@ -169,6 +218,8 @@ def maker_quality_adjustment(
         total_penalty=float(total),
         lifecycle_samples=n,
         taker_exit_rate=float(s.taker_exit_rate),
+        effective_taker_exit_rate=float(effective_taker_rate),
+        prior_taker_exit_rate=float(p0),
         gross_bps_ewma=float(s.gross_bps_ewma),
         taker_gross_bps_ewma=float(s.taker_gross_bps_ewma),
         rolling_samples=roll_n,

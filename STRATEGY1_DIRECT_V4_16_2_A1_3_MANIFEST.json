@@ -1,0 +1,35 @@
+{
+  "changed_files": {
+    "STRATEGY1_DIRECT_V4_16_2_A1_3.md": "65f73c85a44b8667d6af5f7eb2479c103be191e88c4b0bbab088c6ab583587c6",
+    "agents/strategy/Strategy1_Research_Simple.py": "869974e513ad486b7bc6cf698a2d180bc151d3aa88b33904dffb2fd186da5815",
+    "agents/strategy/research_direct_execution_quality.py": "39dbaafafe065a3d7d5ce609aae1ef9107ee34b004f50808d614ca5f8256b7d0",
+    "agents/strategy/research_direct_quality.py": "8ed96d00ae7ef4f9a390584df14e0e7402dec00145fbd24d346c3cfa9ba68e3d",
+    "run_strategy1_research_simple_multi.sh": "56b85b5d8f51ca36d0c9c5a376b1f1b7fc1346d35e81188308a6f2bddb2bd015",
+    "tests/test_research_strategy1_direct_a1_3.py": "b6ef4d6f51066bdccc5e7b3a36374fdbf74a74009cb9d82084a188e56774593c"
+  },
+  "direct_cold_start_taker_rate": 0.55,
+  "direct_dust_exempt_cap": 8,
+  "direct_maker_max_touch_improvement_bps": 6.0,
+  "direct_maker_max_ttl_ms": 75.0,
+  "direct_maker_min_ev": 0.03,
+  "policy": "strategy1_direct_v4_16_2_a1_3",
+  "release": "Strategy1-Direct V4.16.2 A1.3",
+  "scope": "Agent-68 A1.2 runtime-history patch; UID239 observation-only",
+  "uid239_features_implemented": false,
+  "unchanged_core_files": {
+    "agents/strategy/AdaptiveAgent.py": "6421fe403c4a51cb80ffd67bc37cd92be9dcbe646968819ceeabd42f1eb234c1",
+    "agents/strategy/BaseStrategy.py": "76941d948ce3bac0057e9ef788a3c6e93dab4f4bc79ce7b5b00733a67211f0cb",
+    "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+    "agents/strategy/Strategy1_Research.py": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "agents/strategy/research_direct_economics.py": "87d07811c77d6269c8d128e2fda1d4ac03e631acf90b381066f1731343d129d4",
+    "agents/strategy/research_position_exit.py": "c0c27ab88d18d84a2c425a0661152dd27f7f2a929b41d51bb8cf932dd62e7e6a"
+  },
+  "verification": {
+    "compile": "PASS",
+    "direct_tests": "28/28 PASS",
+    "focused_preflight": "98/98 PASS",
+    "full_repository_suite": "NOT COLLECTABLE HERE: optional bittensor/loky dependencies unavailable",
+    "launcher_preflight": "PASS",
+    "research_tests": "470/470 PASS"
+  }
+}

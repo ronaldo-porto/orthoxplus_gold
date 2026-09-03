@@ -26,9 +26,19 @@ from research_direct_economics import (
     taker_economic_ev,
 )
 from research_direct_quality import (
+    COLD_START_TAKER_RATE,
     DIRECT_QUALITY_VERSION,
     MakerLifecycleStats,
     maker_quality_adjustment,
+)
+from research_direct_execution_quality import (
+    DIRECT_DUST_EXEMPT_CAP,
+    DIRECT_EXECUTION_QUALITY_VERSION,
+    DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT_BPS,
+    DIRECT_MAKER_MAX_TTL_MS,
+    cap_maker_quote_geometry,
+    direct_maker_expiry_ns,
+    effective_total_open_books,
 )
 from research_score_ev import compute_score_ev
 
@@ -53,20 +63,28 @@ def _ev(**kwargs):
 
 
 def test_direct_candidate_version():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_2"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_3"' in SRC
     assert 'RESEARCH_POLICY_VERSION = SIMPLE_POLICY_VERSION' in SRC
     assert DIRECT_ECONOMICS_VERSION == 'direct_economics_v4_16_2_a1_2'
     assert DIRECT_EXECUTION_CONTROLLER_VERSION == 'direct_execution_controller_v4_16_2_a1_2'
-    assert DIRECT_QUALITY_VERSION == 'direct_maker_quality_v4_16_2_a1_2'
+    assert DIRECT_QUALITY_VERSION == 'direct_maker_quality_v4_16_2_a1_3'
     assert abs(DIRECT_MAKER_MIN_EV - 0.030) < 1e-12
+    assert DIRECT_EXECUTION_QUALITY_VERSION == 'direct_execution_quality_v4_16_2_a1_3'
+    assert DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT_BPS == 6.0
+    assert DIRECT_MAKER_MAX_TTL_MS == 75.0
+    assert DIRECT_DUST_EXEMPT_CAP == 8
+    assert abs(COLD_START_TAKER_RATE - 0.55) < 1e-12
 
 
 def test_direct_candidate_remains_small_overlay():
-    assert len(SRC.splitlines()) < 750
+    assert len(SRC.splitlines()) < 950
     assert set(METHODS) == {
         'initialize', '_research_on_own_fill', '_direct_quality_for_book',
         '_research_score_ev_for_book', '_inventory_needs_management',
-        '_simple_place_maker', '_place_skewed_quotes', 'build_mm_strategy_instructions',
+        '_simple_place_maker', '_place_skewed_quotes', '_direct_dust_count',
+        '_research_fast_screen', '_research_final_validate_instructions',
+        '_research_read_session', '_research_save_session',
+        '_research_clear_session_observations', 'build_mm_strategy_instructions',
     }
 
 
@@ -251,6 +269,66 @@ def test_early_portfolio_headroom_prevents_doomed_entry_builds():
     assert 'portfolio_headroom_stop' in SRC
     assert 'candidate_ids = set()' in SRC
     assert 'success_cap = min(' in SRC
+
+
+def test_a13_maker_geometry_caps_inside_touch_at_six_bps():
+    bid, ask = 100.0, 100.20
+    bid_px, ask_px, meta = cap_maker_quote_geometry(
+        bid=bid, ask=ask, bid_px=100.15, ask_px=100.05, price_decimals=4,
+    )
+    assert meta['raw_buy_improvement_bps'] > 6.0
+    assert meta['raw_sell_improvement_bps'] > 6.0
+    assert meta['buy_improvement_bps'] <= 6.01
+    assert meta['sell_improvement_bps'] <= 6.01
+    assert bid_px < ask_px
+
+
+def test_a13_maker_ttl_caps_old_500ms_quote_at_75ms():
+    assert direct_maker_expiry_ns(500_000_000) == 75_000_000
+    assert direct_maker_expiry_ns(50_000_000) == 50_000_000
+
+
+def test_a13_dust_does_not_consume_productive_total_open_capacity():
+    assert effective_total_open_books(actual_nonflat=8, dust_nonflat=8) == 0
+    assert effective_total_open_books(actual_nonflat=10, dust_nonflat=8) == 2
+    # Exemption is bounded: ninth dust key starts consuming total-open capacity.
+    assert effective_total_open_books(actual_nonflat=9, dust_nonflat=9) == 1
+
+
+def test_a13_cold_start_uses_weak_hierarchical_taker_prior_without_hard_penalty():
+    q = maker_quality_adjustment(stats=None)
+    assert q.total_penalty == 0.0
+    assert abs(q.effective_taker_exit_rate - 0.55) < 1e-12
+    s = MakerLifecycleStats()
+    for gross in (6.0, 5.0, 7.0, 8.0):
+        s.observe(gross_bps=gross, exit_is_taker=False)
+    q2 = maker_quality_adjustment(stats=s)
+    assert q2.effective_taker_exit_rate < q.effective_taker_exit_rate
+
+
+def test_a13_quality_state_is_session_persistent():
+    assert 'direct_maker_quality_a1_3' in SRC
+    assert 'DIRECT_QUALITY_RESTORE' in SRC
+    assert 'MakerLifecycleStats.from_state' in SRC
+    assert '.as_state()' in SRC
+
+
+def test_a13_dust_is_not_sent_to_impossible_position_exit():
+    text = ast.get_source_segment(SRC, METHODS['_inventory_needs_management'])
+    assert '_research_exchange_min_order_size' in text
+    assert 'qty + 1e-12 < min_size' in text
+    build = ast.get_source_segment(SRC, METHODS['build_mm_strategy_instructions'])
+    assert 'direct_dust_skipped_management' in build
+    assert 'qty_abs + 1e-12 < min_size_local' in build
+
+
+def test_a13_preserves_base_final_validator_with_dust_adjusted_total_cap_only():
+    text = ast.get_source_segment(SRC, METHODS['_research_final_validate_instructions'])
+    assert 'super()._research_final_validate_instructions(response, state)' in text
+    assert 'dust_exempt_count(dust)' in text
+    fast = ast.get_source_segment(SRC, METHODS['_research_fast_screen'])
+    assert 'super()._research_fast_screen(state)' in fast
+    assert 'direct_dust_exempt_count' in fast
 
 
 def test_execution_log_is_finite_json_safe():
