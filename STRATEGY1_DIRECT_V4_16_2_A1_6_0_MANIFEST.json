@@ -1,0 +1,63 @@
+{
+  "strategy": "Strategy1-Direct",
+  "version": "V4.16.2 A1.6.0",
+  "policy_version": "strategy1_direct_v4_16_2_a1_6_0",
+  "purpose": "Observable FastPath simplification: current spread/fee/Kappa entry authority and observable normal exits.",
+  "changed_files": [
+    {
+      "path": "agents/strategy/Strategy1_Research_Simple.py",
+      "sha256": "da3916bc49933072f54bc962aab8ae661ec2116a5779f5b72bce26d26b8022a9"
+    },
+    {
+      "path": "agents/strategy/research_direct_fastpath.py",
+      "sha256": "61de33140ddec9c449cefefd3541c346dea70ebf1e452b2d11cdfabbd354f278"
+    },
+    {
+      "path": "agents/strategy/research_direct_economics.py",
+      "sha256": "f46732aab5959c4dcbb6a3c8a792dbf24fbaa2ee6627cfa40a5188f1bd067054"
+    },
+    {
+      "path": "agents/strategy/research_direct_exit.py",
+      "sha256": "136b491f29125c42a2ef0d4115dd18760673e891b54f650cf742912d111183b1"
+    },
+    {
+      "path": "run_strategy1_research_simple_multi.sh",
+      "sha256": "c74246d41ca64d9e5f3858099127f8f95eb77a919c1d5d8d56476ada4446fdaf"
+    },
+    {
+      "path": "tests/test_research_strategy1_direct_a1_6_0.py",
+      "sha256": "671e990c3d42f0d0f47361e71de1d16cd1da7cc11e982e30b1dd21cfc4a580d4"
+    },
+    {
+      "path": "tests/test_research_strategy1_direct_a1_5_1.py",
+      "sha256": "3f44b35a7d5048995f8f2b388b70c7a7b818f610944d44ac36fcbeadde32dd7a"
+    },
+    {
+      "path": "STRATEGY1_DIRECT_V4_16_2_A1_6_0.md",
+      "sha256": "3ba645faa18b0f055e39961d21fbc689ed943f0b4ba04b08616728f2e079f4a3"
+    }
+  ],
+  "frozen_files_unchanged": [
+    "agents/strategy/Strategy1.py",
+    "agents/strategy/Strategy1_Research.py",
+    "agents/strategy/BaseStrategy.py",
+    "agents/strategy/AdaptiveAgent.py"
+  ],
+  "verification": {
+    "a1_6_specific": "19 passed",
+    "research_regression": "461 passed, 2 skipped",
+    "launcher_preflight": "89 passed",
+    "compileall": "PASS",
+    "bash_syntax": "PASS"
+  },
+  "runtime_targets": {
+    "p50_ms_lt": 60,
+    "p95_ms_lt": 100,
+    "rt_velocity_min_per_s": 0.05,
+    "rt_velocity_target_per_s": 0.07,
+    "positive_rt_min_pct": 50,
+    "positive_rt_target_pct": "55-60",
+    "directional_taker_entries": 0,
+    "qualified_growth_per_1000_ticks_min": 10
+  }
+}

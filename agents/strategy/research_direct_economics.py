@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct A1.5.1 execution economics overlay.
+"""Strategy1-Direct A1.6.0 observable execution economics.
 
-A1.5.1 preserves the A1.1 lifecycle dead-gate correction and separate Maker/Taker
-telemetry, but disables Direct directional Taker *entry* after A1.3+A1.4 produced
-2 positive versus 32 negative Taker-origin round trips. Taker EXIT remains owned
-by PositionExitController. Kappa/coverage cannot re-enable Taker acquisition.
+Maker acquisition is authorized by current observable half-spread capture minus
+the signed current Maker entry fee. Learned lifecycle quality and future-exit
+forecasts are not entry authority. Directional Taker entry remains disabled.
+Legacy helper APIs are retained for regression compatibility and telemetry.
 """
 from __future__ import annotations
 
@@ -12,21 +12,22 @@ from dataclasses import dataclass, replace
 import math
 from typing import Any
 
-DIRECT_ECONOMICS_VERSION = "direct_economics_v4_16_2_a1_5_1"
-DIRECT_EXECUTION_CONTROLLER_VERSION = "direct_execution_controller_v4_16_2_a1_5_1"
+DIRECT_ECONOMICS_VERSION = "direct_economics_v4_16_2_a1_6_0"
+DIRECT_EXECUTION_CONTROLLER_VERSION = "direct_execution_controller_v4_16_2_a1_6_0"
 
 ACTION_MAKER = "MAKER"
 ACTION_TAKER = "TAKER"
 ACTION_SKIP = "SKIP"
 
-# Retained only for counterfactual telemetry. A1.5 does not authorize Taker entry.
+# Retained only for counterfactual telemetry. A1.6 does not authorize Taker entry.
 TAKER_ALPHA_SCALE_BPS = 4.0
 TAKER_EDGE_SCALE_BPS = 8.0
 DIRECT_TAKER_MIN_EV = 0.20
 DIRECT_TAKER_MIN_EDGE_BPS = 2.0
 DIRECT_TAKER_ENTRY_ENABLED = False
 NEGATIVE_UTILITY = -1.0e9
-DIRECT_MAKER_MIN_EV = 0.030
+DIRECT_MAKER_MIN_EV = 0.0
+DIRECT_MAKER_MIN_EDGE_BPS = 2.5
 
 HARD_REJECT_REASONS = {
     "TOXIC",
@@ -191,6 +192,9 @@ class DirectExecutionDecision:
     taker_ev_margin: float
     taker_min_edge_bps: float
     taker_edge_margin_bps: float
+    maker_current_edge_bps: float = 0.0
+    maker_min_edge_bps: float = DIRECT_MAKER_MIN_EDGE_BPS
+    maker_edge_margin_bps: float = 0.0
 
     def as_log(self) -> dict[str, Any]:
         return {
@@ -216,6 +220,9 @@ class DirectExecutionDecision:
             "taker_ev_margin": self.taker_ev_margin,
             "taker_min_edge_bps": self.taker_min_edge_bps,
             "taker_edge_margin_bps": self.taker_edge_margin_bps,
+            "maker_current_edge_bps": self.maker_current_edge_bps,
+            "maker_min_edge_bps": self.maker_min_edge_bps,
+            "maker_edge_margin_bps": self.maker_edge_margin_bps,
         }
 
 
@@ -270,6 +277,8 @@ def choose_direct_execution(
     neutral_fallback: bool = False,
     skip_utility: float = 0.0,
     maker_min_ev: float = DIRECT_MAKER_MIN_EV,
+    maker_current_edge_bps: float | None = None,
+    maker_min_edge_bps: float = DIRECT_MAKER_MIN_EDGE_BPS,
     taker_min_ev: float = DIRECT_TAKER_MIN_EV,
     taker_min_edge_bps: float = DIRECT_TAKER_MIN_EDGE_BPS,
 ) -> DirectExecutionDecision:
@@ -298,10 +307,16 @@ def choose_direct_execution(
 
     skip_u = _finite(skip_utility)
     maker_floor = max(0.0, _finite(maker_min_ev, DIRECT_MAKER_MIN_EV))
+    maker_edge = _finite(maker_current_edge_bps, maker_ev)
+    maker_edge_floor = max(0.0, _finite(maker_min_edge_bps, DIRECT_MAKER_MIN_EDGE_BPS))
     taker_floor = max(0.0, _finite(taker_min_ev, DIRECT_TAKER_MIN_EV))
     edge_floor = max(0.0, _finite(taker_min_edge_bps, DIRECT_TAKER_MIN_EDGE_BPS))
     net_edge = expected_move - total_cost
-    maker_u = maker_ev if maker_ev + 1e-12 >= maker_floor else NEGATIVE_UTILITY
+    # A1.6 entry authority is current observable Maker edge in bps.  Lifecycle
+    # EV remains telemetry/sizing only and cannot veto an otherwise good current
+    # spread/fee opportunity.
+    maker_pass = maker_edge + 1e-12 >= maker_edge_floor
+    maker_u = maker_ev if maker_pass else NEGATIVE_UTILITY
     taker_pass = (
         DIRECT_TAKER_ENTRY_ENABLED
         and (not neutral_fallback)
@@ -320,6 +335,9 @@ def choose_direct_execution(
         taker_net_edge_bps=net_edge,
         maker_min_ev=maker_floor,
         maker_ev_margin=maker_ev - maker_floor,
+        maker_current_edge_bps=maker_edge,
+        maker_min_edge_bps=maker_edge_floor,
+        maker_edge_margin_bps=maker_edge - maker_edge_floor,
         taker_min_ev=taker_floor,
         taker_ev_margin=taker_ev - taker_floor,
         taker_min_edge_bps=edge_floor,
@@ -330,7 +348,7 @@ def choose_direct_execution(
         return DirectExecutionDecision(
             action=ACTION_MAKER, maker_utility=maker_u, taker_utility=taker_u,
             skip_utility=skip_u, maker_size=float(maker_size), taker_size=0.0,
-            reason="MAKER_MARGIN_EV", **common,
+            reason="MAKER_CURRENT_EDGE", **common,
         )
     if taker_u > maker_u and taker_u > skip_u:
         return DirectExecutionDecision(
