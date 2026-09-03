@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.3 Research candidate.
+"""Strategy1-Direct V4.16.2 A1.4 Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -44,6 +44,8 @@ from research_direct_economics import (
     DIRECT_ECONOMICS_VERSION,
     DIRECT_EXECUTION_CONTROLLER_VERSION,
     DIRECT_MAKER_MIN_EV,
+    DIRECT_TAKER_MIN_EV,
+    DIRECT_TAKER_MIN_EDGE_BPS,
     choose_direct_execution,
     direct_lifecycle_breakdown,
 )
@@ -52,6 +54,7 @@ from research_direct_quality import (
     DIRECT_QUALITY_VERSION,
     MakerLifecycleStats,
     maker_quality_adjustment,
+    maker_realization_cost_estimate,
 )
 from research_direct_execution_quality import (
     DIRECT_DUST_EXEMPT_CAP,
@@ -67,14 +70,15 @@ from research_neutral_prediction import is_neutral_forecast, prediction_source_o
 from research_position_exit import BAND_ABSOLUTE, new_exposure_allowed
 from research_risk_guard import evaluate_risk_guard
 from research_role_size import maker_entry_size, taker_clip_size
+from research_lifecycle_ev import LifecycleCost
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_3"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_3"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_4"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_4"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 state/learning with A1.3 Maker execution-quality control.
+    """V4.16.2 state/learning with A1.4 learned-shortfall + strict Taker-entry control.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -87,8 +91,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
     What remains authoritative:
       * Research fast screen / Kappa workload selection;
       * hard mechanical risk checks;
-      * A1.3 Direct LifecycleEV + bounded Maker-quality rank adjustment;
-      * A1.3 separate Maker/Taker economic chooser with Maker EV margin;
+      * A1.4 learned-shortfall LifecycleEV + bounded Maker-quality rank adjustment;
+      * A1.4 separate Maker/Taker economic chooser with Maker/Taker margins;
       * V4.16 PositionExitController for every non-flat position;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -108,6 +112,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_maker_quality_by_book: dict[int, MakerLifecycleStats] = {}
         self._direct_maker_quality_global = MakerLifecycleStats()
         self._direct_quality_last: dict[int, Any] = {}
+        self._direct_realization_cost_last: dict[int, Any] = {}
         self._direct_quote_geometry_last: dict[int, dict[str, float]] = {}
         try:
             self._emit(
@@ -127,17 +132,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 direct_quality_version=DIRECT_QUALITY_VERSION,
                 direct_execution_quality_version=DIRECT_EXECUTION_QUALITY_VERSION,
                 maker_min_ev=DIRECT_MAKER_MIN_EV,
-                maker_quality_max_penalty=0.04,
+                maker_quality_max_penalty=0.03,
                 maker_max_touch_improvement_bps=DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT_BPS,
                 maker_max_ttl_ms=DIRECT_MAKER_MAX_TTL_MS,
                 dust_exempt_cap=DIRECT_DUST_EXEMPT_CAP,
                 cold_start_taker_rate=COLD_START_TAKER_RATE,
+                taker_entry_min_ev=DIRECT_TAKER_MIN_EV,
+                taker_entry_min_edge_bps=DIRECT_TAKER_MIN_EDGE_BPS,
+                learned_taker_shortfall_cost=1,
+                taker_frequency_is_badness=0,
             )
         except Exception:
             pass
 
     # ------------------------------------------------------------------
-    # A1.3 Maker lifecycle learning.  A Maker-opened position teaches the Direct
+    # A1.4 Maker lifecycle learning.  A Maker-opened position teaches the Direct
     # overlay its actual gross drift and whether realization required a Taker.
     # The inherited trade accounting remains untouched.
     # ------------------------------------------------------------------
@@ -183,8 +192,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                             maker_exit_count=int(stats.maker_exit_count),
                             taker_exit_count=int(stats.taker_exit_count),
                             taker_exit_rate=float(stats.taker_exit_rate),
+                            taker_loss_rate=float(stats.taker_loss_rate),
                             gross_bps_ewma=float(stats.gross_bps_ewma),
                             taker_gross_bps_ewma=float(stats.taker_gross_bps_ewma),
+                            taker_shortfall_bps_ewma=float(stats.taker_shortfall_bps_ewma),
                         )
                     except Exception:
                         pass
@@ -226,11 +237,73 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return quality
 
     # ------------------------------------------------------------------
-    # A1.3 LifecycleEV: A1.1 latency/adverse correction stays intact.  Maker
+    # A1.4 LifecycleEV: A1.1 latency/adverse correction stays intact.  Maker
     # quality is a bounded rank deduction, not a new hard lifecycle veto.
         # ------------------------------------------------------------------
+    def _research_lifecycle_entry_cost_bps(self, book_id: int, spread_bps: float) -> float:
+        """A1.4 learned Maker-lifecycle downside cost.
+
+        The inherited V4.16 model prices every Taker exit as fixed crossing +
+        slippage + fee.  A1.3 proved this suppresses profitable Maker->Taker
+        lifecycles.  Direct A1.4 instead prices observed negative shortfall and
+        positive Taker fee; profitable Taker exits contribute zero shortfall.
+        """
+        bid = int(book_id)
+        stats = (getattr(self, "_direct_maker_quality_by_book", {}) or {}).get(bid)
+        global_stats = getattr(self, "_direct_maker_quality_global", None)
+        taker_fee = float(self._research_live_fee_bps(bid, is_maker=False))
+        maker_fee = float(self._research_live_fee_bps(bid, is_maker=True))
+        holding = float(getattr(self, "research_lifecycle_holding_bps", 0.50) or 0.50)
+        estimate = maker_realization_cost_estimate(
+            stats=stats,
+            global_stats=global_stats,
+            taker_fee_bps=taker_fee,
+            holding_risk_bps=holding,
+        )
+        self._direct_realization_cost_last[bid] = estimate
+        # Preserve the inherited telemetry contract with a LifecycleCost object.
+        # Crossing/slippage are intentionally zero here because realized gross
+        # shortfall already learns their actual price impact from completed RTs.
+        cost = LifecycleCost(
+            maker_entry_fee_bps=maker_fee,
+            taker_fee_bps=max(0.0, taker_fee),
+            expected_exit_fee_bps=float(estimate.expected_taker_fee_bps),
+            expected_cross_bps=0.0,
+            expected_slippage_bps=0.0,
+            holding_risk_bps=float(estimate.holding_risk_bps),
+            taker_exit_probability=float(estimate.effective_taker_exit_rate),
+            expected_future_taker_cost_bps=(
+                float(estimate.expected_negative_shortfall_bps)
+                + float(estimate.expected_taker_fee_bps)
+            ),
+        )
+        self._research_lifecycle_cost_last[bid] = cost
+        return float(cost.total_bps)
+
     def _research_score_ev_for_book(self, book_id: int, expected_alpha: float, mem):
         base = super()._research_score_ev_for_book(book_id, expected_alpha, mem)
+        learned_cost = (getattr(self, "_direct_realization_cost_last", {}) or {}).get(int(book_id))
+        if learned_cost is not None:
+            # Make RANK telemetry describe the economics actually used in A1.4
+            # rather than the inherited fixed Taker-cost diagnostic fields.
+            base = replace(
+                base,
+                fees_bps=float(learned_cost.total_cost_bps),
+                taker_prob_effective=float(learned_cost.effective_taker_exit_rate),
+                taker_prob_excess=max(
+                    0.0,
+                    float(learned_cost.effective_taker_exit_rate)
+                    - float(learned_cost.prior_taker_exit_rate),
+                ),
+                expected_taker_cost=float(learned_cost.total_cost_bps),
+                expected_future_taker_cost_bps=(
+                    float(learned_cost.expected_negative_shortfall_bps)
+                    + float(learned_cost.expected_taker_fee_bps)
+                ),
+                expected_taker_exit_fee_bps=float(learned_cost.expected_taker_fee_bps),
+                expected_crossing_bps=0.0,
+                expected_slippage_bps=0.0,
+            )
         direct = direct_lifecycle_breakdown(
             base,
             min_trading_ev=float(getattr(self, "research_score_ev_min_trading", 0.0) or 0.0),
@@ -467,7 +540,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             inventory_qty=max(min_size, 0.25),
             min_order=min_size,
         )
-        # A1.3 preserves separate execution economics.  Maker uses the already fill-weighted
+        # A1.4 preserves separate execution economics.  Maker uses the already fill-weighted
         # Direct LifecycleEV.  Taker must independently earn its actual half-spread
         # crossing + fee + slippage from the raw directional forecast.  Kappa is
         # upstream ranking only and cannot rescue negative Taker economics.
@@ -499,6 +572,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 lifecycle_ev=life,
                 maker_lifecycle_ev_adjusted=maker_lifecycle_ev,
                 **quality.as_log(),
+                **(
+                    (getattr(self, "_direct_realization_cost_last", {}) or {})
+                    .get(int(book_id))
+                    .as_log()
+                    if (getattr(self, "_direct_realization_cost_last", {}) or {}).get(int(book_id)) is not None
+                    else {}
+                ),
                 total_score_value=float(getattr(ev, "total_score_component", 0.0) or 0.0),
                 prediction_source=prediction_source_of(prediction),
                 neutral_fallback_used=int(is_neutral_forecast(prediction)),
@@ -546,7 +626,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return placed
 
     # ------------------------------------------------------------------
-    # A1.3 dust liveness + session-persistent Direct quality.
+    # A1.4 keeps A1.3 dust liveness + session-persistent Direct quality.
     # ------------------------------------------------------------------
     def _direct_dust_count(self, state) -> int:
         min_size = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
@@ -602,7 +682,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         raw = super()._research_read_session(identity)
         if not isinstance(raw, dict):
             return raw
-        direct = raw.get("direct_maker_quality_a1_3")
+        direct = raw.get("direct_maker_quality_a1_4")
+        if not isinstance(direct, dict):
+            direct = raw.get("direct_maker_quality_a1_3")  # migrate A1.3 session state
         if isinstance(direct, dict):
             by_book = direct.get("books")
             restored: dict[int, MakerLifecycleStats] = {}
@@ -640,7 +722,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         try:
             with open(path, encoding="utf-8") as handle:
                 payload = json.load(handle)
-            payload["direct_maker_quality_a1_3"] = {
+            payload["direct_maker_quality_a1_4"] = {
                 "version": DIRECT_QUALITY_VERSION,
                 "global": getattr(self, "_direct_maker_quality_global", MakerLifecycleStats()).as_state(),
                 "books": {
@@ -663,6 +745,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_maker_quality_by_book = {}
         self._direct_maker_quality_global = MakerLifecycleStats()
         self._direct_quality_last = {}
+        self._direct_realization_cost_last = {}
 
     # ------------------------------------------------------------------
     # Direct orchestration: no separate maintenance/alpha economic authority.
@@ -753,7 +836,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 stats["managed"] += 1
                 stats["instructions"] += int(n)
 
-        # A1.3 early portfolio admission.  Final contract validation remains the
+        # A1.4 keeps A1.3 early portfolio admission.  Final contract validation remains the
         # last authority, but do not build more new-exposure books than the
         # current portfolio can possibly admit in this request.
         diag = getattr(self, "_research_inventory_lane_diag", {}) or {}

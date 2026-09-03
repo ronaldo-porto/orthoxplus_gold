@@ -1,0 +1,40 @@
+{
+  "changed_files": {
+    "STRATEGY1_DIRECT_V4_16_2_A1_4.md": "6fbb7f262e9cceebd88e0bc016734cdfe8d7585dec1f8bf3f3faf3a8a4f7ac63",
+    "agents/strategy/Strategy1_Research_Simple.py": "98360ff949ba399d4633624c9828d0d5dd56c8d058f7e092d9697a901c88bfa3",
+    "agents/strategy/research_direct_economics.py": "91d666cf9ce8c27b42359c295eccf267053c3a12c45f3c217dca8583eb6679d5",
+    "agents/strategy/research_direct_quality.py": "ec298cab4cd331d0da95301fddc6c6d947831b8aa116753a557934808fd97443",
+    "run_strategy1_research_simple_multi.sh": "48b80986549e5bfe06b307a67bf05398bc6158b7c670f7fa78b90377800e1299",
+    "tests/test_research_strategy1_direct_a1_4.py": "1e074b403b1cd29a4bbec3d005ccc2f256a21b47ce8dc8582bebaa5d63852bd1"
+  },
+  "cold_start_taker_rate": 0.55,
+  "cold_start_taker_shortfall_bps": 3.0,
+  "lifecycle_cost_model": "P(taker)*E[negative gross shortfall|taker] + P(taker)*positive taker fee + holding",
+  "maker_max_touch_improvement_bps": 6.0,
+  "maker_max_ttl_ms": 75.0,
+  "maker_min_ev": 0.03,
+  "policy": "strategy1_direct_v4_16_2_a1_4",
+  "release": "Strategy1-Direct V4.16.2 A1.4",
+  "scope": "Agent-68 A1.3 runtime-history patch; UID239 observation-only",
+  "taker_alpha_scale_bps": 4.0,
+  "taker_min_ev": 0.2,
+  "taker_min_net_edge_bps": 2.0,
+  "uid239_features_implemented": false,
+  "unchanged_core_files": {
+    "agents/strategy/AdaptiveAgent.py": "6421fe403c4a51cb80ffd67bc37cd92be9dcbe646968819ceeabd42f1eb234c1",
+    "agents/strategy/BaseStrategy.py": "76941d948ce3bac0057e9ef788a3c6e93dab4f4bc79ce7b5b00733a67211f0cb",
+    "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+    "agents/strategy/Strategy1_Research.py": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "agents/strategy/research_direct_execution_quality.py": "39dbaafafe065a3d7d5ce609aae1ef9107ee34b004f50808d614ca5f8256b7d0",
+    "agents/strategy/research_position_exit.py": "c0c27ab88d18d84a2c425a0661152dd27f7f2a929b41d51bb8cf932dd62e7e6a"
+  },
+  "verification": {
+    "a13_taker_entry_replay": "3/3 prior Taker entries removed as Taker: SKIP, MAKER, SKIP",
+    "compileall": "PASS",
+    "direct_tests": "32/32 PASS",
+    "focused_preflight": "102/102 PASS",
+    "full_repository_suite": "NOT COLLECTED: optional external dependencies not required for Research preflight",
+    "launcher_preflight": "PASS",
+    "research_tests": "474/474 PASS"
+  }
+}

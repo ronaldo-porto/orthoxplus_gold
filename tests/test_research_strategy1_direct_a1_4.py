@@ -20,6 +20,9 @@ from research_direct_economics import (
     DIRECT_ECONOMICS_VERSION,
     DIRECT_EXECUTION_CONTROLLER_VERSION,
     DIRECT_MAKER_MIN_EV,
+    DIRECT_TAKER_MIN_EV,
+    DIRECT_TAKER_MIN_EDGE_BPS,
+    TAKER_ALPHA_SCALE_BPS,
     choose_direct_execution,
     direct_lifecycle_breakdown,
     maker_economic_ev,
@@ -30,6 +33,7 @@ from research_direct_quality import (
     DIRECT_QUALITY_VERSION,
     MakerLifecycleStats,
     maker_quality_adjustment,
+    maker_realization_cost_estimate,
 )
 from research_direct_execution_quality import (
     DIRECT_DUST_EXEMPT_CAP,
@@ -63,12 +67,15 @@ def _ev(**kwargs):
 
 
 def test_direct_candidate_version():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_3"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_4"' in SRC
     assert 'RESEARCH_POLICY_VERSION = SIMPLE_POLICY_VERSION' in SRC
-    assert DIRECT_ECONOMICS_VERSION == 'direct_economics_v4_16_2_a1_2'
-    assert DIRECT_EXECUTION_CONTROLLER_VERSION == 'direct_execution_controller_v4_16_2_a1_2'
-    assert DIRECT_QUALITY_VERSION == 'direct_maker_quality_v4_16_2_a1_3'
+    assert DIRECT_ECONOMICS_VERSION == 'direct_economics_v4_16_2_a1_4'
+    assert DIRECT_EXECUTION_CONTROLLER_VERSION == 'direct_execution_controller_v4_16_2_a1_4'
+    assert DIRECT_QUALITY_VERSION == 'direct_maker_quality_v4_16_2_a1_4'
     assert abs(DIRECT_MAKER_MIN_EV - 0.030) < 1e-12
+    assert abs(DIRECT_TAKER_MIN_EV - 0.20) < 1e-12
+    assert abs(DIRECT_TAKER_MIN_EDGE_BPS - 2.0) < 1e-12
+    assert abs(TAKER_ALPHA_SCALE_BPS - 4.0) < 1e-12
     assert DIRECT_EXECUTION_QUALITY_VERSION == 'direct_execution_quality_v4_16_2_a1_3'
     assert DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT_BPS == 6.0
     assert DIRECT_MAKER_MAX_TTL_MS == 75.0
@@ -77,10 +84,10 @@ def test_direct_candidate_version():
 
 
 def test_direct_candidate_remains_small_overlay():
-    assert len(SRC.splitlines()) < 950
+    assert len(SRC.splitlines()) < 1000
     assert set(METHODS) == {
         'initialize', '_research_on_own_fill', '_direct_quality_for_book',
-        '_research_score_ev_for_book', '_inventory_needs_management',
+        '_research_score_ev_for_book', '_research_lifecycle_entry_cost_bps', '_inventory_needs_management',
         '_simple_place_maker', '_place_skewed_quotes', '_direct_dust_count',
         '_research_fast_screen', '_research_final_validate_instructions',
         '_research_read_session', '_research_save_session',
@@ -183,28 +190,48 @@ def test_book14_style_wide_spread_cannot_be_subsidized_into_taker():
     assert d.action == ACTION_MAKER
 
 
-def test_taker_remains_independent_of_maker_margin():
+def test_a14_moderate_directional_taker_is_rejected_after_calibration_haircut():
+    # A1.3-style full-score trade with ~2.4 bps costs previously looked strongly
+    # positive under the 8 bps alpha scale. A1.4 maps full score to 4 bps and
+    # requires >=2 bps net edge, so this acquisition is skipped.
     ev, move, cost = taker_economic_ev(
-        directional_score=0.95,
+        directional_score=1.0,
         crossing_bps=1.0,
-        taker_fee_bps=0.5,
-        slippage_bps=0.5,
-        expected_markout_bps=-1.0,
+        taker_fee_bps=0.4,
+        slippage_bps=0.75,
+        expected_markout_bps=-0.25,
     )
+    assert abs(move - 4.0) < 1e-12
     assert move > cost and ev > 0.0
     d = choose_direct_execution(
-        maker_lifecycle_ev=0.010,  # below Maker margin
-        directional_score=0.95,
+        maker_lifecycle_ev=0.010,
+        directional_score=1.0,
         crossing_bps=1.0,
         maker_size=0.25,
         taker_clip=0.25,
-        taker_fee_bps=0.5,
-        slippage_bps=0.5,
-        expected_markout_bps=-1.0,
+        taker_fee_bps=0.4,
+        slippage_bps=0.75,
+        expected_markout_bps=-0.25,
+    )
+    assert d.action == ACTION_SKIP
+    assert d.taker_net_edge_bps < DIRECT_TAKER_MIN_EDGE_BPS
+
+
+def test_a14_taker_still_allowed_when_directional_edge_is_exceptionally_strong():
+    d = choose_direct_execution(
+        maker_lifecycle_ev=0.010,
+        directional_score=1.0,
+        crossing_bps=0.20,
+        maker_size=0.25,
+        taker_clip=0.25,
+        taker_fee_bps=0.0,
+        slippage_bps=0.20,
+        expected_markout_bps=0.0,
     )
     assert d.action == ACTION_TAKER
-    assert d.reason == 'TAKER_POSITIVE_DIRECTIONAL_EV'
-
+    assert d.reason == 'TAKER_STRONG_DIRECTIONAL_EV'
+    assert d.taker_economic_ev >= DIRECT_TAKER_MIN_EV
+    assert d.taker_net_edge_bps >= DIRECT_TAKER_MIN_EDGE_BPS
 
 def test_neutral_forecast_can_never_create_taker_entry():
     d = choose_direct_execution(
@@ -255,6 +282,46 @@ def test_good_maker_lifecycles_are_not_penalized():
     assert q.total_penalty == 0.0
 
 
+def test_a14_profitable_taker_exits_are_not_badness_even_when_frequent():
+    s = MakerLifecycleStats()
+    for gross in (7.7, 6.3, 3.7, 9.6, 3.7, 1.5, 64.0, 59.9):
+        s.observe(gross_bps=gross, exit_is_taker=True)
+    assert s.taker_exit_rate == 1.0
+    assert s.taker_shortfall_bps_ewma == 0.0
+    q = maker_quality_adjustment(
+        stats=s,
+        rolling_samples=8,
+        rolling_loss_rate=0.0,
+        rolling_realized_mean=0.08,
+    )
+    assert q.total_penalty == 0.0
+    estimate = maker_realization_cost_estimate(
+        stats=s, global_stats=s, taker_fee_bps=0.0, holding_risk_bps=0.5,
+    )
+    assert estimate.effective_taker_exit_rate > 0.9
+    assert estimate.expected_negative_shortfall_bps < 0.2
+    assert estimate.total_cost_bps < 0.7
+
+
+def test_a14_losing_taker_exits_price_expected_negative_shortfall():
+    good = MakerLifecycleStats()
+    bad = MakerLifecycleStats()
+    for gross in (6.0, 8.0, 4.0, 10.0, 5.0, 7.0):
+        good.observe(gross_bps=gross, exit_is_taker=True)
+    for gross in (-8.0, -12.0, -6.0, -10.0, -7.0, -9.0):
+        bad.observe(gross_bps=gross, exit_is_taker=True)
+    good_cost = maker_realization_cost_estimate(
+        stats=good, global_stats=good, taker_fee_bps=0.0, holding_risk_bps=0.5,
+    )
+    bad_cost = maker_realization_cost_estimate(
+        stats=bad, global_stats=bad, taker_fee_bps=0.0, holding_risk_bps=0.5,
+    )
+    assert good_cost.taker_exit_rate == bad_cost.taker_exit_rate == 1.0
+    assert good_cost.expected_negative_shortfall_bps < 0.2
+    assert bad_cost.expected_negative_shortfall_bps > 5.0
+    assert bad_cost.total_cost_bps > good_cost.total_cost_bps + 5.0
+
+
 def test_quality_learning_is_single_bounded_authority_not_blacklist():
     assert 'DIRECT_MAKER_LIFECYCLE' in SRC
     assert 'maker_quality_adjustment(' in SRC
@@ -271,7 +338,7 @@ def test_early_portfolio_headroom_prevents_doomed_entry_builds():
     assert 'success_cap = min(' in SRC
 
 
-def test_a13_maker_geometry_caps_inside_touch_at_six_bps():
+def test_a14_maker_geometry_caps_inside_touch_at_six_bps():
     bid, ask = 100.0, 100.20
     bid_px, ask_px, meta = cap_maker_quote_geometry(
         bid=bid, ask=ask, bid_px=100.15, ask_px=100.05, price_decimals=4,
@@ -283,19 +350,19 @@ def test_a13_maker_geometry_caps_inside_touch_at_six_bps():
     assert bid_px < ask_px
 
 
-def test_a13_maker_ttl_caps_old_500ms_quote_at_75ms():
+def test_a14_maker_ttl_caps_old_500ms_quote_at_75ms():
     assert direct_maker_expiry_ns(500_000_000) == 75_000_000
     assert direct_maker_expiry_ns(50_000_000) == 50_000_000
 
 
-def test_a13_dust_does_not_consume_productive_total_open_capacity():
+def test_a14_dust_does_not_consume_productive_total_open_capacity():
     assert effective_total_open_books(actual_nonflat=8, dust_nonflat=8) == 0
     assert effective_total_open_books(actual_nonflat=10, dust_nonflat=8) == 2
     # Exemption is bounded: ninth dust key starts consuming total-open capacity.
     assert effective_total_open_books(actual_nonflat=9, dust_nonflat=9) == 1
 
 
-def test_a13_cold_start_uses_weak_hierarchical_taker_prior_without_hard_penalty():
+def test_a14_cold_start_uses_weak_hierarchical_taker_prior_without_hard_penalty():
     q = maker_quality_adjustment(stats=None)
     assert q.total_penalty == 0.0
     assert abs(q.effective_taker_exit_rate - 0.55) < 1e-12
@@ -306,14 +373,15 @@ def test_a13_cold_start_uses_weak_hierarchical_taker_prior_without_hard_penalty(
     assert q2.effective_taker_exit_rate < q.effective_taker_exit_rate
 
 
-def test_a13_quality_state_is_session_persistent():
-    assert 'direct_maker_quality_a1_3' in SRC
+def test_a14_quality_state_is_session_persistent():
+    assert 'direct_maker_quality_a1_4' in SRC
+    assert 'direct_maker_quality_a1_3' in SRC  # migration fallback
     assert 'DIRECT_QUALITY_RESTORE' in SRC
     assert 'MakerLifecycleStats.from_state' in SRC
     assert '.as_state()' in SRC
 
 
-def test_a13_dust_is_not_sent_to_impossible_position_exit():
+def test_a14_dust_is_not_sent_to_impossible_position_exit():
     text = ast.get_source_segment(SRC, METHODS['_inventory_needs_management'])
     assert '_research_exchange_min_order_size' in text
     assert 'qty + 1e-12 < min_size' in text
@@ -322,7 +390,7 @@ def test_a13_dust_is_not_sent_to_impossible_position_exit():
     assert 'qty_abs + 1e-12 < min_size_local' in build
 
 
-def test_a13_preserves_base_final_validator_with_dust_adjusted_total_cap_only():
+def test_a14_preserves_base_final_validator_with_dust_adjusted_total_cap_only():
     text = ast.get_source_segment(SRC, METHODS['_research_final_validate_instructions'])
     assert 'super()._research_final_validate_instructions(response, state)' in text
     assert 'dust_exempt_count(dust)' in text
@@ -343,6 +411,15 @@ def test_execution_log_is_finite_json_safe():
     for value in d.as_log().values():
         if isinstance(value, float):
             assert math.isfinite(value)
+
+
+def test_a14_strategy_overrides_fixed_taker_cost_with_learned_shortfall():
+    text = ast.get_source_segment(SRC, METHODS['_research_lifecycle_entry_cost_bps'])
+    assert 'maker_realization_cost_estimate(' in text
+    assert 'expected_negative_shortfall_bps' in text
+    assert 'expected_cross_bps=0.0' in text
+    assert 'expected_slippage_bps=0.0' in text
+    assert 'super()._research_lifecycle_entry_cost_bps' not in text
 
 
 def test_total_score_and_lifecycle_remain_upstream_of_execution():
