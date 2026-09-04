@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.6.1 Liveness Repair Research candidate.
+"""Strategy1-Direct V4.16.2 A1.6.2 Final Liveness Closure Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,7 +8,7 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-For non-flat inventory A1.6.1 reuses the inherited placement plumbing but
+For non-flat inventory A1.6.2 reuses the inherited placement plumbing but
 substitutes a simple observable Maker/Wait/risk-Taker decision for this overlay only.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -98,12 +98,12 @@ from research_position_exit import BAND_ABSOLUTE, new_exposure_allowed
 from research_risk_guard import evaluate_risk_guard
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_6_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_6_2"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 safety/session state with A1.6.1 observable trade authority + liveness repair.
+    """V4.16.2 safety/session state with A1.6.2 observable trade authority + final liveness closure.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -195,7 +195,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 observable_exit_version=DIRECT_OBSERVABLE_EXIT_VERSION,
                 maker_exit_target_bps=DIRECT_MAKER_EXIT_TARGET_BPS,
                 direct_max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
-                direct_liveness_version="direct_liveness_v4_16_2_a1_6_1",
+                direct_liveness_version="direct_liveness_v4_16_2_a1_6_2",
                 dust_fastpath_forced=0,
                 direct_dust_compaction=1,
                 placement_only_final_validation=1,
@@ -1242,12 +1242,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return placed
 
     def _research_final_validate_instructions(self, response, state) -> None:
-        """Validate order placements only; preserve cancel/control instructions.
+        """Placement-only validation with dust-aware total-open accounting.
 
-        The inherited final validator assumes every instruction has ``quantity``.
-        ``CANCEL_ORDERS`` does not, so it can be mislabeled ``INVALID_QTY``.
-        A1.6.1 keeps non-placement instructions untouched and sends only market/
-        limit placements through the authoritative Research contract validator.
+        A1.6.2 closes the split-authority bug exposed by the 2,381-tick run:
+        Direct pre-admission excluded sub-minimum dust from productive open-book
+        capacity, while the inherited final validator counted every non-flat dust
+        book toward ``research_max_total_open_books`` and rejected fresh entries.
+
+        Exact dust BASE remains in absolute-exposure accounting. Only the total
+        open-book cap is temporarily expanded by the current dust-book count while
+        placement instructions are passed through the authoritative validator.
+        Non-placement instructions (e.g. CANCEL_ORDERS) remain untouched.
         """
         original = list(getattr(response, "instructions", None) or [])
         if not original:
@@ -1268,7 +1273,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
             response.instructions[:] = placements
         except Exception:
             object.__setattr__(response, "instructions", placements)
-        super()._research_final_validate_instructions(response, state)
+
+        base_cap = int(getattr(self, "research_max_total_open_books", 8) or 8)
+        dust_books = self._direct_dust_count(state)
+        self.research_max_total_open_books = base_cap + int(dust_books)
+        try:
+            super()._research_final_validate_instructions(response, state)
+        finally:
+            self.research_max_total_open_books = base_cap
+
         validated = list(getattr(response, "instructions", None) or [])
         validated_ids = {id(item) for item in validated}
 
@@ -1331,9 +1344,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         manage_queue = []
         candidates = []
 
-        # A1.6.1: service the inherited bounded dust selector explicitly.
-        # Direct A1.6.0 skipped dust before the inherited placement path, which
-        # left compact_attempts/orders/fills at zero for the whole long run.
+        # A1.6.2: refresh the selector in Direct orchestration before servicing
+        # parked dust. A1.6.1 added the compaction executor but never populated
+        # ``_research_dust_compact_ids_this_tick`` in this overridden build path.
+        self._research_dust_compact_ids_this_tick = self._select_dust_compaction_books(state)
+        stats["direct_dust_compact_selected"] = len(self._research_dust_compact_ids_this_tick)
         compact_before = int(getattr(self, "_research_dust_compact_orders", 0) or 0)
         compact_instructions = self._direct_compact_selected_dust(response, state)
         stats["direct_dust_compact_instructions"] = int(compact_instructions)

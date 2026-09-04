@@ -1,0 +1,36 @@
+{
+  "changes": [
+    "initialize Direct dust compaction selector every request before compaction",
+    "exclude all current sub-minimum dust books from final total-open-book capacity while retaining exact absolute BASE risk",
+    "preserve placement-only final contract validation so cancel/control instructions are not quantity-validated",
+    "add regression proof for the exact 8-dust + fresh-entry OPEN_BOOK_CAP failure shape"
+  ],
+  "files": {
+    "STRATEGY1_DIRECT_V4_16_2_A1_6_2.md": "f2e2840196b7195cf4847618834635f967ec72842fc20bd07acd6349c3cc29cf",
+    "agents/strategy/Strategy1_Research_Simple.py": "e7215cc17efb687faf18ef9715ea3a9f05bd09c66b73b16828626bd4a46ec56d",
+    "run_strategy1_research_simple_multi.sh": "c7dfc312d720411acba69c2a3bd73bb090c285a4b9c79e50ef48b8f5546f6a5b",
+    "tests/test_research_strategy1_direct_a1_6_1.py": "2063b053de210bbf8531180f02ba222e3e3d1043c9feaf9e806cdaf85fa59dab",
+    "tests/test_research_strategy1_direct_a1_6_2.py": "9d79bfc75399c81b7516044de4bbb30e1c4baa7856a27c696e909183930447cf"
+  },
+  "frozen": [
+    "agents/strategy/Strategy1.py",
+    "agents/strategy/Strategy1_Research.py",
+    "agents/strategy/BaseStrategy.py",
+    "agents/strategy/AdaptiveAgent.py",
+    "agents/strategy/research_direct_economics.py",
+    "agents/strategy/research_direct_exit.py",
+    "agents/strategy/research_direct_fastpath.py",
+    "agents/strategy/research_direct_execution_quality.py"
+  ],
+  "policy_version": "strategy1_direct_v4_16_2_a1_6_2",
+  "purpose": "A1.6.1 final liveness closure only: wire dust selector and align final open-book accounting with Direct dust semantics",
+  "release": "Strategy1-Direct V4.16.2 A1.6.2",
+  "verification": {
+    "a162_specific": "32 passed",
+    "bash_syntax": "PASS",
+    "compileall": "PASS",
+    "launcher_preflight": "102 passed",
+    "research_regression": "516 passed, 4 skipped",
+    "zip_integrity": "PASS"
+  }
+}

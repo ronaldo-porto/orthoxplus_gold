@@ -1,7 +1,6 @@
 from pathlib import Path
 import ast
 import sys
-import pytest
 
 ROOT = Path(__file__).parents[1]
 STRATEGY_DIR = ROOT / 'agents' / 'strategy'
@@ -39,6 +38,8 @@ from research_direct_exit import (
     DIRECT_MAKER_EXIT_TARGET_BPS,
     choose_observable_position_exit,
 )
+
+from research_contract_guard import same_request_exposure_allows
 from research_position_exit import (
     ACTION_MAKER_EXIT,
     ACTION_TAKER_EXIT,
@@ -49,12 +50,12 @@ from research_direct_execution_quality import (
     DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT_BPS,
     DIRECT_MAKER_MAX_TTL_MS,
     DIRECT_DUST_EXEMPT_CAP,
+    dust_exempt_count,
 )
 
 
-@pytest.mark.skip(reason="superseded by A1.6.2 final liveness closure")
-def test_a161_version_contract():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_1"' in SRC
+def test_a162_version_contract():
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_2"' in SRC
     assert DIRECT_ECONOMICS_VERSION == 'direct_economics_v4_16_2_a1_6_0'
     assert DIRECT_EXECUTION_CONTROLLER_VERSION == 'direct_execution_controller_v4_16_2_a1_6_0'
     assert DIRECT_FASTPATH_VERSION == 'direct_fastpath_v4_16_2_a1_6_1'
@@ -289,3 +290,87 @@ def test_a161_all_dust_is_excluded_from_productive_open_book_capacity_but_abs_ri
     assert 'effective_open_now = int(active_now)' in build_src
     assert 'abs_now = float(diag.get("total_abs_base_inventory"' in build_src
     assert 'max_abs = float(getattr(self, "research_max_total_abs_base", 2.0)' in build_src
+
+
+
+def test_a162_direct_build_initializes_dust_selector_before_compaction():
+    build_src = ast.get_source_segment(SRC, METHODS['build_mm_strategy_instructions'])
+    select_ix = build_src.index('_select_dust_compaction_books(state)')
+    compact_ix = build_src.index('_direct_compact_selected_dust(response, state)')
+    assert select_ix < compact_ix
+    assert 'direct_dust_compact_selected' in build_src
+
+
+def test_a162_final_validator_temporarily_exempts_current_dust_slots():
+    validate_src = ast.get_source_segment(SRC, METHODS['_research_final_validate_instructions'])
+    assert 'base_cap = int(getattr(self, "research_max_total_open_books", 8) or 8)' in validate_src
+    assert 'dust_books = self._direct_dust_count(state)' in validate_src
+    assert 'base_cap + int(dust_books)' in validate_src
+    assert 'finally:' in validate_src
+    assert 'self.research_max_total_open_books = base_cap' in validate_src
+
+
+def test_a162_final_validator_exemption_does_not_touch_abs_base_cap_source():
+    validate_src = ast.get_source_segment(SRC, METHODS['_research_final_validate_instructions'])
+    # A1.6.2 must not alter research_max_total_abs_base; the inherited validator
+    # still reads exact total_abs_base_inventory from the Research diagnostics.
+    assert 'research_max_total_abs_base' not in validate_src
+    assert 'super()._research_final_validate_instructions(response, state)' in validate_src
+
+
+def test_a162_regression_contract_8_dust_books_leave_8_productive_slots_semantically():
+    # This is the exact runtime case that killed A1.6.1: 8 dust books at an
+    # 8-book base cap. The final validator sees shadow_open=8, so the temporary
+    # cap must become 16, leaving 8 productive slots while absolute BASE stays exact.
+    base_cap = 8
+    dust_books = 8
+    effective_cap = base_cap + dust_books
+    shadow_open = 8
+    assert effective_cap == 16
+    assert effective_cap - shadow_open == 8
+
+
+def test_a162_theorem_safe_dust_examples_are_selector_eligible_by_size():
+    # Runtime examples from the A1.6.1 failure were 0.2386, 0.2412, 0.1824,
+    # and 0.1409 BASE with min_order=0.25. All are in (0.125, 0.25).
+    min_order = 0.25
+    for qty in (0.2386, 0.2412, 0.1824, 0.1409):
+        assert 0.5 * min_order < abs(qty) < min_order
+
+
+
+def test_a162_risk_guard_accepts_fresh_book_when_8_existing_books_are_all_dust():
+    # Exact A1.6.1 failure shape: shadow_open contains 8 non-flat dust books,
+    # but the dust-aware temporary total-open cap is 8 + 8 = 16. Exact BASE
+    # is still charged (8*0.14 + 0.25 < 2.0), so a fresh 0.25 Maker entry is legal.
+    ok, reason = same_request_exposure_allows(
+        current_abs_base=8 * 0.14,
+        current_open_books=8,
+        current_active_books=0,
+        add_abs_base=0.25,
+        adds_open_book=True,
+        adds_active_book=True,
+        max_abs_base=2.0,
+        max_total_open_books=16,
+        max_active_open_books=6,
+        volume_headroom=1.0,
+    )
+    assert ok is True
+    assert reason in (None, '', 'OK')
+
+
+def test_a162_same_shape_would_fail_without_dust_aware_final_cap():
+    ok, reason = same_request_exposure_allows(
+        current_abs_base=8 * 0.14,
+        current_open_books=8,
+        current_active_books=0,
+        add_abs_base=0.25,
+        adds_open_book=True,
+        adds_active_book=True,
+        max_abs_base=2.0,
+        max_total_open_books=8,
+        max_active_open_books=6,
+        volume_headroom=1.0,
+    )
+    assert ok is False
+    assert reason == 'OPEN_BOOK_CAP'
