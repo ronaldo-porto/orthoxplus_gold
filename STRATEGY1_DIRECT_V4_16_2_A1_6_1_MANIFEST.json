@@ -1,0 +1,33 @@
+{
+  "changes": [
+    "activate theorem-safe Direct dust compaction",
+    "exclude all sub-minimum dust from productive FastPath/deep and open-book slots while retaining exact absolute BASE risk",
+    "validate only placement instructions in Direct final order contract validation"
+  ],
+  "files": {
+    "STRATEGY1_DIRECT_V4_16_2_A1_6_1.md": "1d07c34ed591610a31c9d50af92134e977fd67b0d798150dccfe5a6b366ab96f",
+    "agents/strategy/Strategy1_Research_Simple.py": "f68c7f563e05a6a03a3f6a450b3ca4cb56930e6b6b53810f89372d789b53b09a",
+    "agents/strategy/research_direct_fastpath.py": "bdcf9231e7d39405cb76616f0bbdcb84135ab33d537dbc66a10e6cb372df29fe",
+    "run_strategy1_research_simple_multi.sh": "fd869ebe184e32950dc0ab89d362ac06cdea1c731df9ce645f5811a97d18d16a",
+    "tests/test_research_strategy1_direct_a1_6_0.py": "a60e4e931aaf7bac1aba6cbf47efa3bec56107fef9c3005cb2368b1eaa9ea294",
+    "tests/test_research_strategy1_direct_a1_6_1.py": "b4414e259ae61e8a6ac224e3b9346e089ee44d8f17bf86ad829ebaa2789b0212"
+  },
+  "frozen": [
+    "agents/strategy/Strategy1.py",
+    "agents/strategy/Strategy1_Research.py",
+    "agents/strategy/BaseStrategy.py",
+    "agents/strategy/AdaptiveAgent.py",
+    "agents/strategy/research_direct_economics.py",
+    "agents/strategy/research_direct_exit.py"
+  ],
+  "policy_version": "strategy1_direct_v4_16_2_a1_6_1",
+  "purpose": "A1.6.0 long-run dust/inventory liveness repair only",
+  "release": "Strategy1-Direct V4.16.2 A1.6.1",
+  "verification": {
+    "a161_specific": "25 passed",
+    "bash_syntax": "PASS",
+    "compileall": "PASS",
+    "launcher_preflight": "95 passed",
+    "research_regression": "485 passed, 3 skipped"
+  }
+}

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.6.0 Observable FastPath Research candidate.
+"""Strategy1-Direct V4.16.2 A1.6.1 Liveness Repair Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,7 +8,7 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-For non-flat inventory A1.6 reuses the inherited placement plumbing but
+For non-flat inventory A1.6.1 reuses the inherited placement plumbing but
 substitutes a simple observable Maker/Wait/risk-Taker decision for this overlay only.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -98,12 +98,12 @@ from research_position_exit import BAND_ABSOLUTE, new_exposure_allowed
 from research_risk_guard import evaluate_risk_guard
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_0"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_6_0"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_6_1"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 safety/session state with A1.6 observable-only trade authority.
+    """V4.16.2 safety/session state with A1.6.1 observable trade authority + liveness repair.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -177,7 +177,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 migrated_quality_global_full_weight_samples=MIGRATED_QUALITY_GLOBAL_FULL_WEIGHT_SAMPLES,
                 maker_max_touch_improvement_bps=DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT_BPS,
                 maker_max_ttl_ms=DIRECT_MAKER_MAX_TTL_MS,
-                dust_exempt_cap=DIRECT_DUST_EXEMPT_CAP,
+                legacy_dust_exempt_cap=DIRECT_DUST_EXEMPT_CAP,
+                direct_dust_open_slot_exempt_all=1,
                 cold_start_taker_rate=COLD_START_TAKER_RATE,
                 taker_entry_min_ev=DIRECT_TAKER_MIN_EV,
                 taker_entry_min_edge_bps=DIRECT_TAKER_MIN_EDGE_BPS,
@@ -194,6 +195,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 observable_exit_version=DIRECT_OBSERVABLE_EXIT_VERSION,
                 maker_exit_target_bps=DIRECT_MAKER_EXIT_TARGET_BPS,
                 direct_max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
+                direct_liveness_version="direct_liveness_v4_16_2_a1_6_1",
+                dust_fastpath_forced=0,
+                direct_dust_compaction=1,
+                placement_only_final_validation=1,
             )
         except Exception:
             pass
@@ -959,9 +964,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "active_nonflat_inventory": int(active_nonflat),
             "dust_nonflat_inventory": int(dust_nonflat),
             "total_abs_base_inventory": float(total_abs_base),
-            "direct_effective_open_books": int(effective_total_open_books(
-                actual_nonflat=actual_nonflat, dust_nonflat=dust_nonflat,
-            )),
+            # A1.6.1: every sub-minimum dust book is excluded from productive
+            # open-book capacity. Exact BASE remains in total_abs_base_inventory.
+            "direct_effective_open_books": int(active_nonflat),
             "direct_qualified_count": int(qualified_count),
             "direct_score_target_books": int(target),
             "direct_score_deficit": int(score_deficit),
@@ -988,6 +993,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if not selected_all:
             selected_all = [int(x) for x in (predictions or {}).keys()]
         forced_inventory = [int(x) for x in (getattr(screen, "forced_inventory", None) or [])]
+        forced_dust = {int(x) for x in (getattr(screen, "forced_dust", None) or [])}
+        # A1.6.1: parked dust has its own lightweight maintenance lane and is
+        # never allowed to monopolize expensive deep-evaluation capacity.
+        forced_inventory = [bid for bid in forced_inventory if bid not in forced_dust]
         priority_map = getattr(self, "_direct_fastpath_priority_by_book", {}) or {}
         forced_set = set(forced_inventory)
         ranked = sorted(
@@ -1152,6 +1161,130 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_lifecycle_fee_last = {}
 
     # ------------------------------------------------------------------
+    # A1.6.1 liveness repair.
+    # ------------------------------------------------------------------
+    def _direct_compact_selected_dust(self, response, state) -> int:
+        """Execute theorem-safe passive compaction for selected parked dust.
+
+        A1.6.0 inherited the Research dust selector, but its Direct inventory
+        loop skipped dust before the inherited compaction placement path could
+        run.  A1.6.1 explicitly services only selector-approved dust whose
+        quantity is in (0.5 * min_order, min_order).  A full min-order fill can
+        cross zero, but the absolute residual cannot increase.
+        """
+        selected = {
+            int(x) for x in (getattr(self, "_research_dust_compact_ids_this_tick", None) or set())
+        }
+        if not selected:
+            return 0
+        books = getattr(state, "books", None) or {}
+        min_size = max(
+            0.0, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        )
+        if min_size <= 0.0:
+            return 0
+
+        placed = 0
+        for book_id in sorted(selected):
+            book = books.get(book_id)
+            if book is None or not getattr(book, "bids", None) or not getattr(book, "asks", None):
+                continue
+            mid = 0.5 * (float(book.bids[0].price) + float(book.asks[0].price))
+            inventory = self._net_inventory(book_id, mid)
+            net_base = float(getattr(inventory, "net_base", 0.0) or 0.0)
+            self._refresh_dust_state(book_id, net_base, emit=True)
+            if not self._is_dust_qty(net_base):
+                continue
+            if not self._dust_compaction_safe_for_any_fill(net_base):
+                continue
+
+            self._research_dust_compact_attempts = int(
+                getattr(self, "_research_dust_compact_attempts", 0) or 0
+            ) + 1
+            self._research_note_dust_compact(book_id, success=False)
+            before_ix = len(getattr(response, "instructions", None) or [])
+            n = super()._place_passive_inventory_exit(
+                response, state, book_id, book, inventory, min_size,
+            )
+            if not n:
+                try:
+                    self._emit(
+                        "POSITION_GUARD", force=True, tick=getattr(self, "_tick", None),
+                        book_id=book_id, reason="DIRECT_DUST_COMPACT_BLOCKED",
+                        net_base=net_base, min_order_size=min_size,
+                        exposure_nonincreasing=True,
+                    )
+                except Exception:
+                    pass
+                continue
+
+            self._research_dust_compact_orders = int(
+                getattr(self, "_research_dust_compact_orders", 0) or 0
+            ) + 1
+            self._research_dust_compact_active[book_id] = int(getattr(self, "_tick", 0) or 0)
+            if bool(getattr(self, "research_dust_compact_adaptive", False)):
+                self._record_dust_compaction_attempt(book_id)
+            self._inventory_reason[book_id] = "DIRECT_DUST_COMPACT"
+            placed += int(n)
+            try:
+                self._emit(
+                    "POSITION_GUARD", force=True, tick=getattr(self, "_tick", None),
+                    book_id=book_id, reason="DIRECT_DUST_COMPACT",
+                    net_base=net_base, min_order_size=min_size,
+                    projected_full_fill_net=(
+                        net_base - (min_size if net_base > 0.0 else -min_size)
+                    ),
+                    exposure_nonincreasing=True,
+                    instructions=len(getattr(response, "instructions", None) or []) - before_ix,
+                )
+            except Exception:
+                pass
+        return placed
+
+    def _research_final_validate_instructions(self, response, state) -> None:
+        """Validate order placements only; preserve cancel/control instructions.
+
+        The inherited final validator assumes every instruction has ``quantity``.
+        ``CANCEL_ORDERS`` does not, so it can be mislabeled ``INVALID_QTY``.
+        A1.6.1 keeps non-placement instructions untouched and sends only market/
+        limit placements through the authoritative Research contract validator.
+        """
+        original = list(getattr(response, "instructions", None) or [])
+        if not original:
+            return
+
+        def _kind(instruction) -> str:
+            value = getattr(instruction, "type", None)
+            if value is None and isinstance(instruction, dict):
+                value = instruction.get("type")
+            return str(value or "")
+
+        placement_types = {"PLACE_ORDER_LIMIT", "PLACE_ORDER_MARKET"}
+        placements = [item for item in original if _kind(item) in placement_types]
+        if not placements:
+            return
+
+        try:
+            response.instructions[:] = placements
+        except Exception:
+            object.__setattr__(response, "instructions", placements)
+        super()._research_final_validate_instructions(response, state)
+        validated = list(getattr(response, "instructions", None) or [])
+        validated_ids = {id(item) for item in validated}
+
+        merged = []
+        for item in original:
+            if _kind(item) in placement_types:
+                if id(item) in validated_ids:
+                    merged.append(item)
+            else:
+                merged.append(item)
+        try:
+            response.instructions[:] = merged
+        except Exception:
+            object.__setattr__(response, "instructions", merged)
+
+    # ------------------------------------------------------------------
     # Direct orchestration: no separate maintenance/alpha economic authority.
     # The fast screen still supplies workload/Kappa priority; TotalScore is the
     # final rank among economically valid flat candidates.
@@ -1197,6 +1330,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         regime_params = self.get_regime_params(regime)
         manage_queue = []
         candidates = []
+
+        # A1.6.1: service the inherited bounded dust selector explicitly.
+        # Direct A1.6.0 skipped dust before the inherited placement path, which
+        # left compact_attempts/orders/fills at zero for the whole long run.
+        compact_before = int(getattr(self, "_research_dust_compact_orders", 0) or 0)
+        compact_instructions = self._direct_compact_selected_dust(response, state)
+        stats["direct_dust_compact_instructions"] = int(compact_instructions)
+        stats["direct_dust_compact_orders_delta"] = max(
+            0, int(getattr(self, "_research_dust_compact_orders", 0) or 0) - compact_before
+        )
+        stats["instructions"] += int(compact_instructions)
 
         # Inventory is never dependent on acquisition shortlist membership.
         for raw_id, book in (getattr(state, "books", None) or {}).items():
@@ -1247,10 +1391,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         abs_now = float(diag.get("total_abs_base_inventory", 0.0) or 0.0)
         open_now = int(diag.get("actual_nonflat_inventory", 0) or 0)
         dust_now = int(diag.get("dust_nonflat_inventory", 0) or 0)
-        effective_open_now = effective_total_open_books(
-            actual_nonflat=open_now, dust_nonflat=dust_now,
-        )
         active_now = int(diag.get("active_nonflat_inventory", 0) or 0)
+        # Dust is exact BASE risk but not a productive open-book slot. This is
+        # the liveness repair exposed by the 4,229-tick A1.6.0 run.
+        effective_open_now = int(active_now)
         stats["direct_dust_nonflat"] = int(dust_now)
         stats["direct_effective_open_books"] = int(effective_open_now)
         max_abs = float(getattr(self, "research_max_total_abs_base", 2.0) or 2.0)

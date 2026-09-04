@@ -21,7 +21,7 @@ import heapq
 import math
 from typing import Any, Iterable
 
-DIRECT_FASTPATH_VERSION = "direct_fastpath_v4_16_2_a1_6_0"
+DIRECT_FASTPATH_VERSION = "direct_fastpath_v4_16_2_a1_6_1"
 DIRECT_FASTPATH_CANDIDATE_COUNT = 20
 DIRECT_FASTPATH_MIN_CANDIDATES = 16
 DIRECT_FASTPATH_MAX_CANDIDATES = 24
@@ -131,6 +131,10 @@ def select_fastpath_rows(
     incomplete: list[FastPathRow] = []
     qualified: list[FastPathRow] = []
     for row in rows:
+        # A1.6.1 liveness: true sub-minimum dust is maintained by the dedicated
+        # dust lane.  It must never consume productive FastPath/deep slots.
+        if row.is_dust:
+            continue
         if row.has_inventory:
             forced.append(row)
             continue
