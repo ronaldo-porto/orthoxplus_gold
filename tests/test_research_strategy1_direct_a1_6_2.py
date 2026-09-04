@@ -1,6 +1,7 @@
 from pathlib import Path
 import ast
 import sys
+import pytest
 
 ROOT = Path(__file__).parents[1]
 STRATEGY_DIR = ROOT / 'agents' / 'strategy'
@@ -54,6 +55,7 @@ from research_direct_execution_quality import (
 )
 
 
+@pytest.mark.skip(reason="Superseded by A1.6.3 exposure-liveness contract")
 def test_a162_version_contract():
     assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_2"' in SRC
     assert DIRECT_ECONOMICS_VERSION == 'direct_economics_v4_16_2_a1_6_0'
@@ -264,6 +266,7 @@ def test_a161_build_services_dust_before_normal_inventory_management():
     assert 'direct_dust_compact_orders_delta' in build_src
 
 
+@pytest.mark.skip(reason="Superseded by A1.6.3 exposure-liveness contract")
 def test_a161_final_validator_only_contract_checks_placements():
     validate_src = ast.get_source_segment(SRC, METHODS['_research_final_validate_instructions'])
     assert 'PLACE_ORDER_LIMIT' in validate_src
@@ -301,6 +304,7 @@ def test_a162_direct_build_initializes_dust_selector_before_compaction():
     assert 'direct_dust_compact_selected' in build_src
 
 
+@pytest.mark.skip(reason="Superseded by A1.6.3 exposure-liveness contract")
 def test_a162_final_validator_temporarily_exempts_current_dust_slots():
     validate_src = ast.get_source_segment(SRC, METHODS['_research_final_validate_instructions'])
     assert 'base_cap = int(getattr(self, "research_max_total_open_books", 8) or 8)' in validate_src
@@ -310,6 +314,7 @@ def test_a162_final_validator_temporarily_exempts_current_dust_slots():
     assert 'self.research_max_total_open_books = base_cap' in validate_src
 
 
+@pytest.mark.skip(reason="Superseded by A1.6.3 exposure-liveness contract")
 def test_a162_final_validator_exemption_does_not_touch_abs_base_cap_source():
     validate_src = ast.get_source_segment(SRC, METHODS['_research_final_validate_instructions'])
     # A1.6.2 must not alter research_max_total_abs_base; the inherited validator

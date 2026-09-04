@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.6.2 Final Liveness Closure Research candidate.
+"""Strategy1-Direct V4.16.2 A1.6.3 Exposure Liveness Closure Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,7 +8,7 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-For non-flat inventory A1.6.2 reuses the inherited placement plumbing but
+For non-flat inventory A1.6.3 reuses the inherited placement plumbing but
 substitutes a simple observable Maker/Wait/risk-Taker decision for this overlay only.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -96,14 +96,22 @@ from research_direct_exit import (
 import importlib
 from research_position_exit import BAND_ABSOLUTE, new_exposure_allowed
 from research_risk_guard import evaluate_risk_guard
+from research_exit_quantity import round_volume
+from research_contract_guard import resolve_book_from_state_mapping, sanitize_post_only_limit_price
+from research_direct_exposure import (
+    DIRECT_EXPOSURE_VERSION,
+    add_order_to_batch,
+    outstanding_reservation,
+    worst_case_abs_inventory,
+)
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_2"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_6_2"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_3"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_6_3"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 safety/session state with A1.6.2 observable trade authority + final liveness closure.
+    """V4.16.2 safety/session state with A1.6.3 observable trade authority + exposure liveness closure.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -195,7 +203,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 observable_exit_version=DIRECT_OBSERVABLE_EXIT_VERSION,
                 maker_exit_target_bps=DIRECT_MAKER_EXIT_TARGET_BPS,
                 direct_max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
-                direct_liveness_version="direct_liveness_v4_16_2_a1_6_2",
+                direct_liveness_version="direct_liveness_v4_16_2_a1_6_3",
+                directional_exposure_validation=1,
+                inflight_exposure_reservation=1,
+                one_live_order_batch_per_book=1,
+                isolated_dust_compaction=1,
+                direct_exposure_version=DIRECT_EXPOSURE_VERSION,
                 dust_fastpath_forced=0,
                 direct_dust_compaction=1,
                 placement_only_final_validation=1,
@@ -1186,6 +1199,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
         placed = 0
         for book_id in sorted(selected):
+            # Dust compaction owns the book only after every older order has
+            # disappeared from the account snapshot.
+            if self._direct_book_has_live_order(book_id):
+                continue
             book = books.get(book_id)
             if book is None or not getattr(book, "bids", None) or not getattr(book, "asks", None):
                 continue
@@ -1241,18 +1258,78 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 pass
         return placed
 
+    # ------------------------------------------------------------------
+    # A1.6.3 exposure-liveness helpers.
+    # ------------------------------------------------------------------
+    def _direct_signed_inventory(self, book_id: int) -> float:
+        try:
+            return float(self._position_tracker_snapshot(int(book_id)).net_qty)
+        except Exception:
+            try:
+                return float(self._research_signed_inventory(int(book_id)))
+            except Exception:
+                qty = float(self._research_abs_inventory(int(book_id)) or 0.0)
+                return qty
+
+    def _direct_account_orders(self, book_id: int) -> list:
+        account = (getattr(self, "accounts", {}) or {}).get(int(book_id))
+        return list(getattr(account, "orders", None) or []) if account is not None else []
+
+    def _direct_book_has_live_order(self, book_id: int) -> bool:
+        """True while the latest account snapshot still exposes any open order.
+
+        A same-request CANCEL does not clear this guard.  The cancellation must be
+        observed in a later state snapshot before another exposure-changing batch
+        is allowed on that book.
+        """
+        return bool(self._direct_account_orders(int(book_id)))
+
+    def _direct_outstanding_exposure_reservation(self, state) -> tuple[float, int]:
+        """Reserve worst-case BASE/open-book capacity for currently live orders."""
+        eps = float(self._execution_flat_epsilon())
+        min_size = max(
+            0.0, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        )
+        reserved_abs = 0.0
+        reserved_open = 0
+        books = getattr(state, "books", None) or {}
+        for raw_id in books.keys():
+            bid = int(raw_id)
+            orders = self._direct_account_orders(bid)
+            if not orders:
+                continue
+            net = self._direct_signed_inventory(bid)
+            buy = 0.0
+            sell = 0.0
+            for order in orders:
+                try:
+                    q = max(0.0, float(getattr(order, "quantity", 0.0) or 0.0))
+                    if int(getattr(order, "side", -1)) == 0:
+                        buy += q
+                    else:
+                        sell += q
+                except (TypeError, ValueError):
+                    continue
+            reserve_abs, reserve_open = outstanding_reservation(
+                net, buy, sell, min_order=min_size, eps=eps,
+            )
+            reserved_abs += reserve_abs
+            reserved_open += reserve_open
+        return float(reserved_abs), int(reserved_open)
+
+    def _direct_instruction_signed_qty(self, instruction, qty: float) -> float:
+        side = str(self._research_instruction_side(instruction) or "").lower()
+        return float(qty) if side in {"buy", "bid", "b", "0"} else -float(qty)
+
     def _research_final_validate_instructions(self, response, state) -> None:
-        """Placement-only validation with dust-aware total-open accounting.
+        """A1.6.3 final placement validator with directional exposure semantics.
 
-        A1.6.2 closes the split-authority bug exposed by the 2,381-tick run:
-        Direct pre-admission excluded sub-minimum dust from productive open-book
-        capacity, while the inherited final validator counted every non-flat dust
-        book toward ``research_max_total_open_books`` and rejected fresh entries.
-
-        Exact dust BASE remains in absolute-exposure accounting. Only the total
-        open-book cap is temporarily expanded by the current dust-book count while
-        placement instructions are passed through the authoritative validator.
-        Non-placement instructions (e.g. CANCEL_ORDERS) remain untouched.
+        Key invariants:
+        * existing open orders reserve their worst-case exposure before admission;
+        * a book with an unresolved prior order cannot receive another order batch;
+        * risk-reducing orders are allowed even when the portfolio is already over cap;
+        * dust is exact BASE risk but does not consume a productive open-book slot;
+        * non-placement instructions pass through untouched.
         """
         original = list(getattr(response, "instructions", None) or [])
         if not original:
@@ -1262,28 +1339,181 @@ class Strategy1_Research_Simple(Strategy1_Research):
             value = getattr(instruction, "type", None)
             if value is None and isinstance(instruction, dict):
                 value = instruction.get("type")
-            return str(value or "")
+            return str(value or "").upper()
 
         placement_types = {"PLACE_ORDER_LIMIT", "PLACE_ORDER_MARKET"}
         placements = [item for item in original if _kind(item) in placement_types]
         if not placements:
             return
 
+        books = getattr(state, "books", None) or {}
         try:
-            response.instructions[:] = placements
-        except Exception:
-            object.__setattr__(response, "instructions", placements)
-
-        base_cap = int(getattr(self, "research_max_total_open_books", 8) or 8)
-        dust_books = self._direct_dust_count(state)
-        self.research_max_total_open_books = base_cap + int(dust_books)
+            price_dec = int(getattr(getattr(state, "config", None), "priceDecimals", 2) or 2)
+        except (TypeError, ValueError):
+            price_dec = 2
         try:
-            super()._research_final_validate_instructions(response, state)
-        finally:
-            self.research_max_total_open_books = base_cap
+            vol_dec = int(getattr(getattr(state, "config", None), "volumeDecimals", 8) or 8)
+        except (TypeError, ValueError):
+            vol_dec = 8
+        tick_size = 10.0 ** (-max(0, price_dec))
+        min_size = max(
+            0.0, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        )
+        safety = int(getattr(self, "research_post_only_safety_ticks", 2) or 2)
+        eps = float(self._execution_flat_epsilon())
+        max_abs = float(getattr(self, "research_max_total_abs_base", 2.0) or 2.0)
+        max_open = int(getattr(self, "research_max_total_open_books", 8) or 8)
+        max_active = int(getattr(self, "research_max_active_open_books", 6) or 6)
 
-        validated = list(getattr(response, "instructions", None) or [])
-        validated_ids = {id(item) for item in validated}
+        shadow_net = {int(bid): self._direct_signed_inventory(int(bid)) for bid in books.keys()}
+        filled_abs = sum(abs(float(net)) for net in shadow_net.values())
+        filled_active = sum(1 for net in shadow_net.values() if abs(float(net)) + eps >= min_size)
+        reserved_abs, reserved_open = self._direct_outstanding_exposure_reservation(state)
+        shadow_abs = filled_abs + reserved_abs
+        shadow_open = filled_active + reserved_open
+        shadow_active = filled_active + reserved_open
+        preexisting_order_books = {
+            int(bid) for bid in books.keys() if self._direct_book_has_live_order(int(bid))
+        }
+        same_request_buy: dict[int, float] = {}
+        same_request_sell: dict[int, float] = {}
+        same_request_worst_abs: dict[int, float] = {
+            bid: abs(float(net)) for bid, net in shadow_net.items()
+        }
+
+        validated_ids: set[int] = set()
+        for instruction in placements:
+            raw_book = self._get(instruction, "bookId", "book_id")
+            try:
+                book_id = int(raw_book)
+            except (TypeError, ValueError):
+                continue
+            side = self._research_instruction_side(instruction)
+            qty = self._get(instruction, "quantity", "qty", "size")
+            try:
+                qty_f = round_volume(float(qty), vol_dec)
+            except (TypeError, ValueError):
+                self._research_log_final_contract_reject(
+                    book_id, side, None, None, None, "INVALID_QTY", False,
+                )
+                continue
+            if qty_f + 1e-12 < min_size:
+                self._research_log_final_contract_reject(
+                    book_id, side, None, None, None, "MIN_QUANTITY", False,
+                )
+                continue
+            if abs(qty_f - float(qty)) > 1e-12:
+                if not self._research_set_instruction_attr(instruction, "quantity", qty_f):
+                    self._research_log_final_contract_reject(
+                        book_id, side, None, None, None, "QTY_PRECISION", False,
+                    )
+                    continue
+
+            # Cancellation acknowledgement must be visible in a later state before
+            # a new placement can own this book.  This prevents stale entry/exit/
+            # compaction orders from racing a newer authority.
+            if book_id in preexisting_order_books:
+                self._research_log_final_contract_reject(
+                    book_id, side, None, None, None, "INFLIGHT_BOOK_ORDER", False,
+                )
+                continue
+
+            book = resolve_book_from_state_mapping(books, book_id)
+            bids = getattr(book, "bids", None) if book is not None else None
+            asks = getattr(book, "asks", None) if book is not None else None
+            best_bid = best_ask = None
+            if bids and asks:
+                try:
+                    best_bid = float(bids[0].price)
+                    best_ask = float(asks[0].price)
+                except (TypeError, ValueError, IndexError, AttributeError):
+                    best_bid = best_ask = None
+            is_maker = self._research_instruction_is_maker(instruction)
+            old_price = self._get(instruction, "price", "limitPrice", "limit_price")
+            try:
+                old_price_f = float(old_price) if old_price is not None else None
+            except (TypeError, ValueError):
+                old_price_f = None
+            if is_maker:
+                if best_bid is None or best_ask is None:
+                    self._research_log_final_contract_reject(
+                        book_id, side, old_price_f, best_bid, best_ask, "NO_L1", False,
+                    )
+                    continue
+                new_price = sanitize_post_only_limit_price(
+                    side=side,
+                    original_price=float(old_price_f or 0.0),
+                    best_bid=best_bid,
+                    best_ask=best_ask,
+                    tick_size=tick_size,
+                    safety_ticks=safety,
+                    price_decimals=price_dec,
+                )
+                if new_price is None:
+                    self._research_log_final_contract_reject(
+                        book_id, side, old_price_f, best_bid, best_ask, "POST_ONLY_CROSS", True,
+                    )
+                    continue
+                if abs(new_price - float(old_price_f or 0.0)) > max(1e-12, tick_size * 0.25):
+                    if not self._research_set_instruction_attr(instruction, "price", new_price):
+                        self._research_log_final_contract_reject(
+                            book_id, side, old_price_f, best_bid, best_ask, "REPRICE_FAILED", False,
+                        )
+                        continue
+
+            current_net = float(shadow_net.get(book_id, 0.0) or 0.0)
+            token = str(side or "").lower()
+            buy_before = float(same_request_buy.get(book_id, 0.0) or 0.0)
+            sell_before = float(same_request_sell.get(book_id, 0.0) or 0.0)
+            buy_after = buy_before + (qty_f if token in {"buy", "bid", "b", "0"} else 0.0)
+            sell_after = sell_before + (qty_f if token not in {"buy", "bid", "b", "0"} else 0.0)
+
+            # Orders can fill in any subset/order. Reserve the worst reachable
+            # absolute inventory rather than netting a symmetric Maker pair.
+            batch = add_order_to_batch(
+                net=current_net, buy_before=buy_before, sell_before=sell_before,
+                side=token, quantity=qty_f, min_order=min_size, eps=eps,
+            )
+            previous_worst = batch.previous_worst_abs
+            new_worst = batch.new_worst_abs
+            delta_worst = batch.delta_worst_abs
+            risk_reducing_batch = batch.risk_reducing
+            open_delta = 1 if batch.opens_productive_slot else 0
+
+            headroom = 1.0
+            try:
+                headroom = float(self._research_volume_cap_headroom(state, book_id))
+            except Exception:
+                headroom = 1.0
+
+            if not risk_reducing_batch:
+                projected_total_abs = shadow_abs + delta_worst
+                projected_open = shadow_open + open_delta
+                projected_active = shadow_active + open_delta
+                reason = None
+                if headroom <= 0.0:
+                    reason = "VOLUME_CAP"
+                elif projected_total_abs > max_abs + 1e-12:
+                    reason = "EXPOSURE_HEADROOM"
+                elif projected_open > max_open:
+                    reason = "OPEN_BOOK_CAP"
+                elif projected_active > max_active:
+                    reason = "ACTIVE_BOOK_CAP"
+                if reason is not None:
+                    self._research_log_final_contract_reject(
+                        book_id, side, old_price_f, best_bid, best_ask, reason, False,
+                    )
+                    continue
+
+            # Over-cap reductions are legal. They reserve no new risk, but we do
+            # not assume headroom is restored until a later state confirms fill.
+            shadow_abs += delta_worst
+            shadow_open += open_delta
+            shadow_active += open_delta
+            same_request_buy[book_id] = buy_after
+            same_request_sell[book_id] = sell_after
+            same_request_worst_abs[book_id] = new_worst
+            validated_ids.add(id(instruction))
 
         merged = []
         for item in original:
@@ -1371,6 +1601,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if qty_abs > eps and qty_abs + 1e-12 < min_size_local:
                     stats["direct_dust_skipped_management"] += 1
                     continue
+                # One unresolved order batch owns this book until the next state
+                # confirms it is gone. Do not race an old entry with a new exit.
+                if self._direct_book_has_live_order(book_id):
+                    continue
                 profile = profile_by_id.get(book_id)
                 prediction = (predictions or {}).get(book_id)
                 if profile is None:
@@ -1416,9 +1650,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         max_open = int(getattr(self, "research_max_total_open_books", 8) or 8)
         max_active = int(getattr(self, "research_max_active_open_books", 6) or 6)
         min_size = max(1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25))
-        abs_slots = max(0, int(math.floor((max_abs - abs_now + 1e-12) / min_size)))
+        reserved_abs, reserved_open = self._direct_outstanding_exposure_reservation(state)
+        effective_abs_now = abs_now + float(reserved_abs)
+        effective_open_now += int(reserved_open)
+        effective_active_now = active_now + int(reserved_open)
+        stats["direct_reserved_abs_base"] = float(reserved_abs)
+        stats["direct_reserved_open_books"] = int(reserved_open)
+        abs_slots = max(0, int(math.floor((max_abs - effective_abs_now + 1e-12) / min_size)))
         portfolio_slots = max(
-            0, min(abs_slots, max_open - effective_open_now, max_active - active_now)
+            0, min(abs_slots, max_open - effective_open_now, max_active - effective_active_now)
         )
         stats["portfolio_open_slots"] = int(portfolio_slots)
 
@@ -1439,6 +1679,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             mid = 0.5 * (float(book.bids[0].price) + float(book.asks[0].price))
             inventory = self._net_inventory(book_id, mid)
             if str(getattr(inventory, "band", "FLAT") or "FLAT").upper() != "FLAT":
+                continue
+            if self._direct_book_has_live_order(book_id):
                 continue
 
             archetype = self.classify_book_archetype(profile, regime)

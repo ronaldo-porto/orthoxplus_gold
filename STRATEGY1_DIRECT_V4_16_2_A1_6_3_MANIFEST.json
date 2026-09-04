@@ -1,0 +1,32 @@
+{
+  "changed_files": {
+    "STRATEGY1_DIRECT_V4_16_2_A1_6_3.md": "78321c969869a77db68d37e4e9b3fd1cd62daba10c3e09d92348b5cd3e75e295",
+    "agents/strategy/Strategy1_Research_Simple.py": "fd8ee7966d364ce74f48980e2f7461aa086bb2db071e20284992b62d223df5f4",
+    "agents/strategy/research_direct_exposure.py": "aa5f28be9ca9f2bedcedd3c720d512c54b08c91f963f08338caae22428ba16d3",
+    "run_strategy1_research_simple_multi.sh": "2d5f935fe2f9ff355d9d511edc8e4ff95da35cd33eabde89068e25cdb98f1855",
+    "tests/test_research_strategy1_direct_a1_6_1.py": "1c14a142d4d51950ea9b6260535fc7a86caa84cd9cf33f70d1397bd449191f02",
+    "tests/test_research_strategy1_direct_a1_6_2.py": "3f17345071447444ddea0c3c9f0a54d48c0642986b21a797711915f88b0681d4",
+    "tests/test_research_strategy1_direct_a1_6_3.py": "be2d673e353d2882a08020c52db7e214be6f962bef8ac15669498f8d800d4c74"
+  },
+  "frozen_parameters": {
+    "deep_candidates": 16,
+    "fastpath_candidates": 20,
+    "maker_max_touch_improvement_bps": 6.0,
+    "maker_size_base": 0.25,
+    "maker_ttl_ms": 75.0,
+    "max_active_open_books": 6,
+    "max_total_abs_base": 2.0,
+    "max_total_open_books": 8,
+    "taker_entry_enabled": false
+  },
+  "purpose": "Exposure liveness closure only",
+  "trading_logic_frozen": true,
+  "verification": {
+    "bash_syntax": "PASS",
+    "compileall": "PASS",
+    "launcher_preflight": "82/82 PASS",
+    "research_regression": "523 PASS / 9 SKIPPED",
+    "targeted_tests": "12/12 PASS"
+  },
+  "version": "strategy1_direct_v4_16_2_a1_6_3"
+}

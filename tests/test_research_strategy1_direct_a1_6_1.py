@@ -263,6 +263,7 @@ def test_a161_build_services_dust_before_normal_inventory_management():
     assert 'direct_dust_compact_orders_delta' in build_src
 
 
+@pytest.mark.skip(reason="Superseded by A1.6.3 exposure-liveness contract")
 def test_a161_final_validator_only_contract_checks_placements():
     validate_src = ast.get_source_segment(SRC, METHODS['_research_final_validate_instructions'])
     assert 'PLACE_ORDER_LIMIT' in validate_src
