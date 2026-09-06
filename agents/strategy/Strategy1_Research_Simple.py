@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.6.3 Exposure Liveness Closure Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.0 Persistent Maker Execution Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,7 +8,7 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-For non-flat inventory A1.6.3 reuses the inherited placement plumbing but
+For non-flat inventory A1.7 preserves A1.6.3 exposure plumbing and
 substitutes a simple observable Maker/Wait/risk-Taker decision for this overlay only.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -66,9 +66,7 @@ from research_direct_execution_quality import (
     DIRECT_DUST_EXEMPT_CAP,
     DIRECT_EXECUTION_QUALITY_VERSION,
     DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT_BPS,
-    DIRECT_MAKER_MAX_TTL_MS,
     cap_maker_quote_geometry,
-    direct_maker_expiry_ns,
     dust_exempt_count,
     effective_total_open_books,
 )
@@ -104,14 +102,22 @@ from research_direct_exposure import (
     outstanding_reservation,
     worst_case_abs_inventory,
 )
+from research_direct_quote_manager import (
+    DIRECT_QUOTE_MANAGER_VERSION,
+    DIRECT_QUOTE_MAX_TTL_MS,
+    ACTION_KEEP as QUOTE_ACTION_KEEP,
+    decide_quote_batch,
+    keep_unselected_quote,
+    maker_expiry_ns_for_regime,
+)
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_3"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_6_3"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_0"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_0"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 safety/session state with A1.6.3 observable trade authority + exposure liveness closure.
+    """V4.16.2 safety/session state with A1.7 deterministic persistent-Maker execution.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -160,6 +166,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_edge_fail_streak: dict[int, int] = {}
         self._direct_edge_cooldown_until: dict[int, int] = {}
         self._direct_fastpath_priority_by_book: dict[int, float] = {}
+        # A1.7 execution-only telemetry.  These counters are not learned
+        # authority and never influence entry economics.
+        self._direct_quote_keeps = 0
+        self._direct_quote_cancels = 0
+        self._direct_quote_reprices = 0
+        self._direct_quote_new_batches = 0
+        self._direct_quote_unselected_keeps = 0
         try:
             self._emit(
                 "SIMPLE_CONFIG",
@@ -184,7 +197,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 migrated_quality_full_weight_samples=MIGRATED_QUALITY_FULL_WEIGHT_SAMPLES,
                 migrated_quality_global_full_weight_samples=MIGRATED_QUALITY_GLOBAL_FULL_WEIGHT_SAMPLES,
                 maker_max_touch_improvement_bps=DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT_BPS,
-                maker_max_ttl_ms=DIRECT_MAKER_MAX_TTL_MS,
+                maker_max_ttl_ms=DIRECT_QUOTE_MAX_TTL_MS,
                 legacy_dust_exempt_cap=DIRECT_DUST_EXEMPT_CAP,
                 direct_dust_open_slot_exempt_all=1,
                 cold_start_taker_rate=COLD_START_TAKER_RATE,
@@ -204,6 +217,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 maker_exit_target_bps=DIRECT_MAKER_EXIT_TARGET_BPS,
                 direct_max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
                 direct_liveness_version="direct_liveness_v4_16_2_a1_6_3",
+                direct_quote_manager_version=DIRECT_QUOTE_MANAGER_VERSION,
+                persistent_maker_execution=1,
+                learned_quote_authority=0,
+                persistent_maker_max_ttl_ms=DIRECT_QUOTE_MAX_TTL_MS,
                 directional_exposure_validation=1,
                 inflight_exposure_reservation=1,
                 one_live_order_batch_per_book=1,
@@ -487,10 +504,27 @@ class Strategy1_Research_Simple(Strategy1_Research):
             setattr(module, "choose_position_exit", original)
 
     def respond(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
-        # A1.6 preserves the A1.5 freshness-budget measurement. New Maker
-        # exposure is not submitted after the freshness budget is already spent.
+        # A1.7 preserves A1.6.3 freshness protection.  Slow-request telemetry is
+        # diagnostic only and does not gate trading.
         self._direct_request_wall_started = time.perf_counter()
-        return super().respond(state)
+        response = super().respond(state)
+        elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
+        if elapsed_ms > 100.0:
+            try:
+                timing = dict(getattr(self, "_research_timing", {}) or {})
+                self._emit(
+                    "DIRECT_SLOW_REQUEST", force=True,
+                    tick=int(getattr(self, "_tick", 0) or 0),
+                    total_ms=float(elapsed_ms),
+                    screen_ms=float(timing.get("screen_ms", 0.0) or 0.0),
+                    ranking_ms=float(timing.get("ranking_ms", 0.0) or 0.0),
+                    full_predict_ms=float(timing.get("full_predict_ms", 0.0) or 0.0),
+                    build_orders_ms=float(timing.get("build_orders_ms", 0.0) or 0.0),
+                    logging_ms=float(timing.get("logging_ms", 0.0) or 0.0),
+                )
+            except Exception:
+                pass
+        return response
 
     # ------------------------------------------------------------------
     # Inventory: one owner.  Any real position goes to PositionExitController.
@@ -505,6 +539,122 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # A1.3: sub-minimum residuals are real absolute exposure but cannot be
         # legally reduced.  Do not repeatedly send them to PositionExitController.
         return not (qty > eps and qty + 1e-12 < min_size)
+
+    # ------------------------------------------------------------------
+    # A1.7 deterministic persistent-Maker quote ownership.
+    # ------------------------------------------------------------------
+    def _direct_order_client_id(self, order):
+        value = getattr(order, "clientOrderId", None)
+        if value is None:
+            value = getattr(order, "client_order_id", None)
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _direct_is_entry_quote_order(self, book_id: int, order) -> bool:
+        cid = self._direct_order_client_id(order)
+        return cid in {70000 + int(book_id) * 10 + 1, 70000 + int(book_id) * 10 + 2}
+
+    def _direct_entry_quote_orders(self, book_id: int) -> list:
+        return [
+            order for order in self._direct_account_orders(int(book_id))
+            if self._direct_is_entry_quote_order(int(book_id), order)
+        ]
+
+    def _direct_order_side_price(self, order) -> tuple[str, float] | None:
+        try:
+            side = "buy" if int(getattr(order, "side", -1)) == 0 else "sell"
+        except (TypeError, ValueError):
+            return None
+        price = getattr(order, "price", None)
+        if price is None:
+            price = getattr(order, "limit_price", None)
+        try:
+            px = float(price)
+        except (TypeError, ValueError):
+            return None
+        return side, px
+
+    def _direct_cancel_entry_quotes(self, response, book_id: int, *, reason: str) -> int:
+        orders = self._direct_entry_quote_orders(int(book_id))
+        order_ids = [getattr(order, "id", None) for order in orders]
+        order_ids = [oid for oid in order_ids if oid is not None]
+        if not order_ids:
+            return 0
+        if self._count_book_instructions(response, int(book_id)) >= self.max_instructions_per_book:
+            return 0
+        try:
+            response.cancel_orders(book_id=int(book_id), order_ids=order_ids, delay=0)
+        except Exception:
+            return 0
+        self._direct_quote_cancels = int(getattr(self, "_direct_quote_cancels", 0) or 0) + 1
+        if "REPRICE" in str(reason or "").upper():
+            self._direct_quote_reprices = int(getattr(self, "_direct_quote_reprices", 0) or 0) + 1
+        try:
+            self._emit(
+                "DIRECT_QUOTE_LIFECYCLE", force=True,
+                tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                action="CANCEL", reason=str(reason or "CANCEL"), resting_orders=len(order_ids),
+                quote_manager_version=DIRECT_QUOTE_MANAGER_VERSION,
+            )
+        except Exception:
+            pass
+        return 1
+
+    def _direct_maintain_unselected_entry_quotes(self, response, state, selected_ids: set[int]) -> int:
+        """Keep valid flat Maker batches through top-K rotation; cancel invalid ones.
+
+        This is deliberately cheap/current-only.  GTT expiry provides the hard age
+        ceiling; no historical win/loss data is consulted.
+        """
+        placed = 0
+        books = getattr(state, "books", None) or {}
+        eps = float(self._execution_flat_epsilon())
+        for raw_id, book in books.items():
+            book_id = int(raw_id)
+            if book_id in selected_ids:
+                continue
+            orders = self._direct_entry_quote_orders(book_id)
+            if not orders:
+                continue
+            try:
+                net = abs(float(self._direct_signed_inventory(book_id)))
+            except Exception:
+                net = 0.0
+            # Once inventory appears, entry quotes no longer own the book.
+            if net > eps:
+                placed += self._direct_cancel_entry_quotes(
+                    response, book_id, reason="INVENTORY_OPENED",
+                )
+                continue
+            if not getattr(book, "bids", None) or not getattr(book, "asks", None):
+                placed += self._direct_cancel_entry_quotes(response, book_id, reason="BAD_BOOK")
+                continue
+            bid = float(book.bids[0].price)
+            ask = float(book.asks[0].price)
+            mid = 0.5 * (bid + ask) if bid > 0.0 and ask > bid else 0.0
+            if mid <= 0.0:
+                placed += self._direct_cancel_entry_quotes(response, book_id, reason="BAD_BOOK")
+                continue
+            spread_bps = (ask - bid) / mid * 10_000.0
+            maker_fee_bps = float(self._research_live_fee_bps(book_id, is_maker=True))
+            edge_bps = 0.5 * max(0.0, spread_bps) - maker_fee_bps
+            pairs = [self._direct_order_side_price(order) for order in orders]
+            pairs = [row for row in pairs if row is not None]
+            if keep_unselected_quote(
+                existing=pairs, best_bid=bid, best_ask=ask, current_edge_bps=edge_bps,
+                min_edge_bps=DIRECT_MAKER_MIN_EDGE_BPS,
+            ):
+                self._direct_quote_keeps = int(getattr(self, "_direct_quote_keeps", 0) or 0) + 1
+                self._direct_quote_unselected_keeps = int(
+                    getattr(self, "_direct_quote_unselected_keeps", 0) or 0
+                ) + 1
+                continue
+            placed += self._direct_cancel_entry_quotes(
+                response, book_id, reason="UNSELECTED_INVALID",
+            )
+        return placed
 
     # ------------------------------------------------------------------
     # Direct Maker placement.  LifecycleEV/ExecutionController has already
@@ -526,25 +676,6 @@ class Strategy1_Research_Simple(Strategy1_Research):
     ) -> int:
         if size <= 0.0 or not getattr(book, "bids", None) or not getattr(book, "asks", None):
             return 0
-
-        request_started = getattr(self, "_direct_request_wall_started", None)
-        if request_started is not None:
-            pre_submit_age_ms = (time.perf_counter() - float(request_started)) * 1000.0
-            if pre_submit_age_ms > DIRECT_MAX_PRE_SUBMIT_AGE_MS:
-                self._direct_freshness_budget_skips = int(
-                    getattr(self, "_direct_freshness_budget_skips", 0) or 0
-                ) + 1
-                tick = int(getattr(self, "_tick", 0) or 0)
-                if tick <= 2 or tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
-                    try:
-                        self._emit(
-                            "DIRECT_FRESHNESS_SKIP", force=True, tick=tick, book=int(book_id),
-                            pre_submit_age_ms=float(pre_submit_age_ms),
-                            max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
-                        )
-                    except Exception:
-                        pass
-                return 0
 
         bid = float(book.bids[0].price)
         ask = float(book.asks[0].price)
@@ -573,7 +704,66 @@ class Strategy1_Research_Simple(Strategy1_Research):
             price_decimals=int(state.config.priceDecimals),
         )
         self._direct_quote_geometry_last[int(book_id)] = dict(geometry)
-        expiry_ns = direct_maker_expiry_ns(int(self.mm_expiry_period))
+
+        spread_bps = (spread / mid * 10_000.0) if mid > 0.0 else 0.0
+        maker_fee_bps = float(self._research_live_fee_bps(int(book_id), is_maker=True))
+        current_edge_bps = 0.5 * max(0.0, spread_bps) - maker_fee_bps
+        live_entry_orders = self._direct_entry_quote_orders(int(book_id))
+        if live_entry_orders:
+            pairs = [self._direct_order_side_price(order) for order in live_entry_orders]
+            pairs = [row for row in pairs if row is not None]
+            tick_size = 10.0 ** (-max(0, int(state.config.priceDecimals)))
+            decision = decide_quote_batch(
+                existing=pairs, desired_bid=float(bid_px), desired_ask=float(ask_px),
+                best_bid=bid, best_ask=ask, current_edge_bps=current_edge_bps,
+                min_edge_bps=DIRECT_MAKER_MIN_EDGE_BPS, tick_size=tick_size,
+            )
+            if decision.action == QUOTE_ACTION_KEEP:
+                self._direct_quote_keeps = int(getattr(self, "_direct_quote_keeps", 0) or 0) + 1
+                try:
+                    self._emit(
+                        "DIRECT_QUOTE_LIFECYCLE", force=True,
+                        tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                        action="KEEP", reason=decision.reason,
+                        current_edge_bps=float(current_edge_bps),
+                        max_price_delta=float(decision.max_price_delta),
+                        max_touch_drift_bps=float(decision.max_touch_drift_bps),
+                        quote_manager_version=DIRECT_QUOTE_MANAGER_VERSION,
+                    )
+                except Exception:
+                    pass
+                return 0
+            return self._direct_cancel_entry_quotes(
+                response, int(book_id), reason=str(decision.action),
+            )
+        if self._direct_book_has_live_order(int(book_id)):
+            # A non-entry order owns this flat book until the next state snapshot.
+            return 0
+
+        # Freshness protects only NEW exposure. KEEP/CANCEL decisions above must
+        # remain available even on a slow request.
+        request_started = getattr(self, "_direct_request_wall_started", None)
+        if request_started is not None:
+            pre_submit_age_ms = (time.perf_counter() - float(request_started)) * 1000.0
+            if pre_submit_age_ms > DIRECT_MAX_PRE_SUBMIT_AGE_MS:
+                self._direct_freshness_budget_skips = int(
+                    getattr(self, "_direct_freshness_budget_skips", 0) or 0
+                ) + 1
+                tick_now = int(getattr(self, "_tick", 0) or 0)
+                if tick_now <= 2 or tick_now % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
+                    try:
+                        self._emit(
+                            "DIRECT_FRESHNESS_SKIP", force=True, tick=tick_now, book=int(book_id),
+                            pre_submit_age_ms=float(pre_submit_age_ms),
+                            max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
+                        )
+                    except Exception:
+                        pass
+                return 0
+
+        expiry_ns = maker_expiry_ns_for_regime(
+            getattr(self, "_research_market_regime", "NORMAL")
+        )
         tick = int(getattr(self, "_tick", 0) or 0)
         if tick <= 2 or tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
             try:
@@ -651,6 +841,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             placed += 1
             mem.quote_count += 1
 
+        if placed:
+            self._direct_quote_new_batches = int(
+                getattr(self, "_direct_quote_new_batches", 0) or 0
+            ) + 1
         return placed
 
     def _place_skewed_quotes(
@@ -1570,6 +1764,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if not selected_ids:
             selected_ids = {int(x) for x in (predictions or {}).keys()}
 
+        # A1.7: a valid resting entry quote can survive a temporary top-K miss.
+        # Invalid/unprofitable resting entry quotes are canceled immediately.
+        quote_maintenance = self._direct_maintain_unselected_entry_quotes(
+            response, state, selected_ids,
+        )
+        stats_quote_maintenance = int(quote_maintenance)
+        stats["direct_quote_maintenance_instructions"] = stats_quote_maintenance
+        stats["instructions"] += stats_quote_maintenance
+
         regime_params = self.get_regime_params(regime)
         manage_queue = []
         candidates = []
@@ -1601,8 +1804,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if qty_abs > eps and qty_abs + 1e-12 < min_size_local:
                     stats["direct_dust_skipped_management"] += 1
                     continue
-                # One unresolved order batch owns this book until the next state
-                # confirms it is gone. Do not race an old entry with a new exit.
+                # Persistent entry quotes must be canceled as soon as inventory
+                # opens.  Legitimate inventory-exit orders remain authoritative.
+                if self._direct_entry_quote_orders(book_id):
+                    n_cancel = self._direct_cancel_entry_quotes(
+                        response, book_id, reason="INVENTORY_OPENED",
+                    )
+                    stats["instructions"] += int(n_cancel)
+                    continue
                 if self._direct_book_has_live_order(book_id):
                     continue
                 profile = profile_by_id.get(book_id)
@@ -1680,8 +1889,6 @@ class Strategy1_Research_Simple(Strategy1_Research):
             inventory = self._net_inventory(book_id, mid)
             if str(getattr(inventory, "band", "FLAT") or "FLAT").upper() != "FLAT":
                 continue
-            if self._direct_book_has_live_order(book_id):
-                continue
 
             archetype = self.classify_book_archetype(profile, regime)
             params = self.merge_regime_and_archetype_params(regime_params, archetype)
@@ -1757,6 +1964,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._research_sanitize_maker_instructions(response, state)
         self._research_final_validate_instructions(response, state)
 
+        stats["direct_quote_keeps"] = int(getattr(self, "_direct_quote_keeps", 0) or 0)
+        stats["direct_quote_cancels"] = int(getattr(self, "_direct_quote_cancels", 0) or 0)
+        stats["direct_quote_reprices"] = int(getattr(self, "_direct_quote_reprices", 0) or 0)
+        stats["direct_quote_new_batches"] = int(getattr(self, "_direct_quote_new_batches", 0) or 0)
+        stats["direct_quote_unselected_keeps"] = int(
+            getattr(self, "_direct_quote_unselected_keeps", 0) or 0
+        )
         self._last_mm_stats = stats
         self._research_timing["build_orders_ms"] = (time.perf_counter() - started) * 1000.0
         return stats
