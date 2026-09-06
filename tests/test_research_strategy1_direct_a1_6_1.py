@@ -206,7 +206,7 @@ def test_defensive_small_loss_waits_instead_of_utility_taker():
 def test_hard_escape_still_allows_negative_taker_for_risk():
     d = choose_observable_position_exit(
         maker_net_bps=-12.0, taker_net_bps=-19.0, p_maker_fill=0.01,
-        unrealized_bps=-19.0, inventory_qty=0.25,
+        unrealized_bps=-19.0, inventory_qty=0.25, inventory_age=2.0,
     )
     assert d.action == ACTION_TAKER_EXIT
     assert d.reason == 'HARD_ESCAPE_CLIP'

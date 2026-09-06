@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.0 Persistent Maker Execution Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.1 Exit Semantics Repair Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,8 +8,10 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-For non-flat inventory A1.7 preserves A1.6.3 exposure plumbing and
-substitutes a simple observable Maker/Wait/risk-Taker decision for this overlay only.
+For non-flat inventory A1.7.1 preserves A1.7.0 exposure/quote plumbing but
+separates true mark-to-market position risk from Taker liquidation economics.
+Fresh-position grace and the existing positive-Maker veto are applied only at
+the Direct overlay boundary; the frozen Strategy1_Research.py base remains untouched.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
 A/B tested against the V4.16.2 baseline.
@@ -112,12 +114,12 @@ from research_direct_quote_manager import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_0"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_0"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_1"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 safety/session state with A1.7 deterministic persistent-Maker execution.
+    """V4.16.2 safety/session state with A1.7.1 corrected Direct exit semantics.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -215,6 +217,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 direct_fastpath_deep_count=DIRECT_FASTPATH_DEEP_COUNT,
                 observable_exit_version=DIRECT_OBSERVABLE_EXIT_VERSION,
                 maker_exit_target_bps=DIRECT_MAKER_EXIT_TARGET_BPS,
+                position_risk_source="MID_MTM_EXCLUDES_CROSSING_COST",
+                hard_escape_min_age_ticks=float(getattr(self, "research_bounded_loss_escape_min_age_ticks", 2.0)),
+                positive_maker_veto_enabled=int(bool(getattr(self, "research_positive_maker_veto_enabled", True))),
+                positive_maker_veto_floor_bps=float(getattr(self, "research_positive_maker_veto_floor_bps", 1.0)),
+                positive_maker_veto_max_failed_exits=int(getattr(self, "research_positive_maker_veto_max_failed_exits", 4)),
                 direct_max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
                 direct_liveness_version="direct_liveness_v4_16_2_a1_6_3",
                 direct_quote_manager_version=DIRECT_QUOTE_MANAGER_VERSION,
@@ -489,19 +496,84 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
 
     def _research_apply_unified_exit(self, legacy, **kwargs):
-        """Use A1.6 observable exit chooser without mutating frozen Research code.
+        """Apply A1.7.1 Direct exit semantics without mutating frozen Research.
 
-        Strategy1_Research imports ``choose_position_exit`` at module scope.
-        Temporarily substitute the Direct pure chooser only for this call, then
-        restore the original symbol immediately.
+        ``Strategy1_Research`` still passes executable ``taker_net`` through its
+        historical ``unrealized_bps`` argument.  A1.7.1 fixes that semantic only
+        at this overlay boundary: the pure Direct chooser receives the inventory
+        snapshot's true mid-mark MTM instead, plus the already-configured fresh
+        age and positive-Maker veto limits.  The imported base symbol is restored
+        immediately after the call.
         """
         module = importlib.import_module("Strategy1_Research")
         original = getattr(module, "choose_position_exit")
-        setattr(module, "choose_position_exit", choose_observable_position_exit)
+
+        inventory = kwargs.get("inventory")
+        true_unrealized = getattr(inventory, "unrealized_bps", None)
+        captured: dict[str, Any] = {}
+
+        def a171_direct_chooser(**exit_kwargs):
+            caller_unrealized = exit_kwargs.get("unrealized_bps")
+            exit_kwargs["unrealized_bps"] = true_unrealized
+            exit_kwargs["hard_escape_min_age_ticks"] = float(
+                getattr(self, "research_bounded_loss_escape_min_age_ticks", 2.0)
+            )
+            exit_kwargs["positive_maker_veto_enabled"] = bool(
+                getattr(self, "research_positive_maker_veto_enabled", True)
+            )
+            exit_kwargs["positive_maker_veto_floor_bps"] = float(
+                getattr(self, "research_positive_maker_veto_floor_bps", 1.0)
+            )
+            exit_kwargs["positive_maker_veto_max_failed_exits"] = int(
+                getattr(self, "research_positive_maker_veto_max_failed_exits", 4)
+            )
+            decision = choose_observable_position_exit(**exit_kwargs)
+            captured.update(exit_kwargs)
+            captured["caller_unrealized_bps"] = caller_unrealized
+            captured["decision"] = decision
+            return decision
+
+        setattr(module, "choose_position_exit", a171_direct_chooser)
         try:
-            return super()._research_apply_unified_exit(legacy, **kwargs)
+            result = super()._research_apply_unified_exit(legacy, **kwargs)
         finally:
             setattr(module, "choose_position_exit", original)
+
+        # Dedicated A1.7.1 diagnostics make the risk/economics separation
+        # explicit in runtime logs without changing the frozen base logger.
+        try:
+            decision = captured.get("decision")
+            if decision is not None:
+                self._emit(
+                    "A171_EXIT_DIAGNOSTIC",
+                    force=True,
+                    tick=int(getattr(self, "_tick", 0) or 0),
+                    book=int(kwargs.get("book_id", -1)),
+                    position_risk_bps=(
+                        None if true_unrealized is None else float(true_unrealized)
+                    ),
+                    maker_net_bps=float(captured.get("maker_net_bps", 0.0) or 0.0),
+                    taker_net_bps=float(captured.get("taker_net_bps", 0.0) or 0.0),
+                    caller_unrealized_bps=float(captured.get("caller_unrealized_bps", 0.0) or 0.0),
+                    inventory_age=float(captured.get("inventory_age", 0.0) or 0.0),
+                    failed_exit_count=int(captured.get("failed_exit_count", 0) or 0),
+                    risk_band=str(getattr(decision, "risk_band", "")),
+                    selected_action=str(getattr(decision, "action", "")),
+                    exit_reason=str(getattr(decision, "reason", "")),
+                    hard_escape_min_age_ticks=float(
+                        captured.get("hard_escape_min_age_ticks", 2.0) or 2.0
+                    ),
+                    positive_maker_veto_floor_bps=float(
+                        captured.get("positive_maker_veto_floor_bps", 1.0) or 1.0
+                    ),
+                    positive_maker_veto_max_failed_exits=int(
+                        captured.get("positive_maker_veto_max_failed_exits", 4) or 4
+                    ),
+                    risk_source="MID_MTM_EXCLUDES_CROSSING_COST",
+                )
+        except Exception:
+            pass
+        return result
 
     def respond(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
         # A1.7 preserves A1.6.3 freshness protection.  Slow-request telemetry is

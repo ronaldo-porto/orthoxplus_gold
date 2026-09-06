@@ -1,6 +1,7 @@
 from pathlib import Path
 import ast
 import sys
+import pytest
 
 ROOT = Path(__file__).parents[1]
 STRATEGY_DIR = ROOT / 'agents' / 'strategy'
@@ -30,6 +31,7 @@ from research_direct_execution_quality import DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT
 from research_direct_exposure import DIRECT_EXPOSURE_VERSION
 
 
+@pytest.mark.skip(reason="superseded by A1.7.1 exit-semantics repair")
 def test_a170_version_contract():
     assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_0"' in SRC
     assert DIRECT_QUOTE_MANAGER_VERSION == 'direct_quote_manager_v4_16_2_a1_7_0'

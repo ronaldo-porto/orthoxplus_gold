@@ -1,10 +1,16 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct A1.6.0 observable position-exit authority.
+"""Strategy1-Direct A1.7.1 observable position-exit authority.
 
-Normal and defensive exits use only current executable net economics.  Losing
-Taker exits are reserved for hard risk bands.  This intentionally removes the
-normal Maker/Taker/Wait utility race from Direct A1.6 while preserving the
-existing PositionExitDecision interface used by Strategy1_Research.
+A1.7.1 separates *position risk* from *liquidation economics*.
+
+``unrealized_bps`` is the true mark-to-market move of the open inventory and is
+therefore the only input used to classify NORMAL / DEFENSIVE / HARD_ESCAPE /
+ABSOLUTE_PROTECTION.  ``taker_net_bps`` remains the executable completion
+value after spread/fees/slippage/impact and is never used as a proxy for risk.
+
+Fresh-position protection and the existing positive-Maker veto are restored for
+HARD_ESCAPE.  Genuine ABSOLUTE/catastrophic risk still has immediate reduction
+authority when mechanically executable.
 """
 from __future__ import annotations
 
@@ -25,8 +31,10 @@ from research_position_exit import (
     taker_clip_qty,
 )
 
-DIRECT_OBSERVABLE_EXIT_VERSION = "direct_observable_exit_v4_16_2_a1_6_0"
+DIRECT_OBSERVABLE_EXIT_VERSION = "direct_observable_exit_v4_16_2_a1_7_1"
 DIRECT_MAKER_EXIT_TARGET_BPS = 1.0
+DIRECT_HARD_ESCAPE_MIN_AGE_TICKS = 2.0
+DIRECT_POSITIVE_MAKER_VETO_MAX_FAILED_EXITS = 4
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -63,30 +71,46 @@ def choose_observable_position_exit(
     is_dust: bool = False,
     valid_opposite_touch: bool = True,
     allow_new_exposure: bool = True,
+    hard_escape_min_age_ticks: float = DIRECT_HARD_ESCAPE_MIN_AGE_TICKS,
+    positive_maker_veto_enabled: bool = True,
+    positive_maker_veto_floor_bps: float = DIRECT_MAKER_EXIT_TARGET_BPS,
+    positive_maker_veto_max_failed_exits: int = DIRECT_POSITIVE_MAKER_VETO_MAX_FAILED_EXITS,
 ) -> PositionExitDecision:
-    """Choose Maker / Taker / Wait from current net economics and hard risk.
+    """Choose Maker / Taker / Wait from true risk plus executable economics.
 
-    * NORMAL/DEFENSIVE: Maker when current Maker completion is >= +1 bps;
-      otherwise Taker only when its current net completion is non-negative;
-      otherwise WAIT.
-    * HARD_ESCAPE/ABSOLUTE (or catastrophic hard risk): Taker reduction when
-      mechanically executable, else PARK.
+    A1.7.1 rules:
 
-    Other arguments are accepted to preserve the inherited call contract but do
-    not create hidden utility authority.
+    * Risk bands come only from true mark-to-market ``unrealized_bps``.
+      Spread crossing, taker fees, slippage and impact may make ``taker_net_bps``
+      negative, but cannot by themselves create HARD_ESCAPE.
+    * NORMAL/DEFENSIVE: prefer an executable Maker completion >= +1 bps;
+      otherwise take only non-negative Taker completion, else WAIT.
+    * HARD_ESCAPE: a fresh position must first age to the configured minimum (or
+      have a failed exit attempt).  A positive executable Maker completion keeps
+      veto authority until the configured failed-exit limit is reached.
+    * ABSOLUTE_PROTECTION/catastrophic risk: reduce immediately when executable;
+      PARK only when mechanical reduction is impossible.
     """
     del (
-        p_maker_fill, inventory_age, failed_exit_count, observations_remaining,
-        required_observations, holding_bps, adverse_risk, expiry_urgency,
-        capital_release, inventory_risk, crossing_bps, allow_new_exposure,
+        p_maker_fill, observations_remaining, required_observations, holding_bps,
+        adverse_risk, expiry_urgency, capital_release, inventory_risk,
+        crossing_bps, allow_new_exposure,
     )
 
     maker_net = _finite(maker_net_bps)
     taker_net = _finite(taker_net_bps)
-    pnl = _finite(unrealized_bps, taker_net)
-    band = classify_risk_band(pnl)
+    # Critical A1.7.1 semantic: never fall back to taker_net.  Unknown MTM is
+    # neutral/normal rather than fabricating a loss from crossing economics.
+    position_risk_bps = _finite(unrealized_bps, 0.0)
+    band = classify_risk_band(position_risk_bps)
     if catastrophic_hard_risk:
         band = BAND_ABSOLUTE
+
+    age = max(0.0, _finite(inventory_age))
+    failed = max(0, int(failed_exit_count or 0))
+    min_age = max(0.0, _finite(hard_escape_min_age_ticks, DIRECT_HARD_ESCAPE_MIN_AGE_TICKS))
+    veto_floor = max(0.0, _finite(positive_maker_veto_floor_bps, DIRECT_MAKER_EXIT_TARGET_BPS))
+    veto_max_failed = max(0, int(positive_maker_veto_max_failed_exits or 0))
 
     qty_abs = max(0.0, abs(_finite(inventory_qty)))
     can_reduce = reduction_is_executable(
@@ -100,8 +124,8 @@ def choose_observable_position_exit(
         inventory_qty=qty_abs, min_order=min_order, taker_clip=taker_clip,
     )
 
-    # Keep the dataclass interface stable. These fields are telemetry only in
-    # A1.6 and intentionally equal the current net bps rather than modeled utility.
+    # Keep the dataclass interface stable.  These fields are telemetry only in
+    # Direct mode and intentionally equal current executable net bps.
     maker_u = maker_net if maker_executable else -1e9
     taker_u = taker_net if can_reduce else -1e9
     wait_u = 0.0
@@ -115,21 +139,43 @@ def choose_observable_position_exit(
             wait_utility=wait_u,
             selected_qty=qty,
             reason=reason,
-            corridor_action="DIRECT_OBSERVABLE",
+            corridor_action="DIRECT_OBSERVABLE_A171",
             corridor_stage=band,
             continuation_penalty=0.0,
             low_fill_maker_rejected=0,
         )
 
-    if band in {BAND_HARD_ESCAPE, BAND_ABSOLUTE}:
+    # True absolute/catastrophic risk keeps immediate reduction authority.
+    if band == BAND_ABSOLUTE:
         if can_reduce:
-            reason = "ABSOLUTE_PROTECTION_REDUCE" if band == BAND_ABSOLUTE else "HARD_ESCAPE_CLIP"
-            return pack(ACTION_TAKER_EXIT, taker_qty, reason)
-        reason = "ABSOLUTE_PROTECTION_PARK" if band == BAND_ABSOLUTE else "HARD_ESCAPE_NON_EXECUTABLE"
-        return pack(ACTION_PARK_EXIT, 0.0, reason)
+            return pack(ACTION_TAKER_EXIT, taker_qty, "ABSOLUTE_PROTECTION_REDUCE")
+        return pack(ACTION_PARK_EXIT, 0.0, "ABSOLUTE_PROTECTION_PARK")
 
-    # Stop-loss alone does not authorize a small negative Taker dump in Direct
-    # A1.6; the actual hard loss band remains the authority.
+    if band == BAND_HARD_ESCAPE:
+        maker_veto = (
+            bool(positive_maker_veto_enabled)
+            and maker_executable
+            and maker_net + 1e-12 >= veto_floor
+            and failed < veto_max_failed
+        )
+        if maker_veto:
+            return pack(ACTION_MAKER_EXIT, qty_abs, "HARD_ESCAPE_POSITIVE_MAKER_VETO")
+
+        # A fresh hard-loss observation gets one chance to mature/attempt a
+        # passive exit.  A failed prior attempt unlocks hard reduction even if
+        # the numerical age has not advanced as expected.
+        hard_mature = age + 1e-12 >= min_age or failed > 0
+        if not hard_mature:
+            if maker_executable and maker_net + 1e-12 >= DIRECT_MAKER_EXIT_TARGET_BPS:
+                return pack(ACTION_MAKER_EXIT, qty_abs, "HARD_ESCAPE_FRESH_MAKER")
+            return pack(ACTION_WAIT, 0.0, "HARD_ESCAPE_FRESH_GRACE")
+
+        if can_reduce:
+            return pack(ACTION_TAKER_EXIT, taker_qty, "HARD_ESCAPE_CLIP")
+        return pack(ACTION_PARK_EXIT, 0.0, "HARD_ESCAPE_NON_EXECUTABLE")
+
+    # Stop-loss alone does not authorize a negative Taker dump in Direct A1.7.1;
+    # actual mark-to-market risk band remains the authority.
     _ = stop_loss_hit
 
     if maker_executable and maker_net + 1e-12 >= DIRECT_MAKER_EXIT_TARGET_BPS:

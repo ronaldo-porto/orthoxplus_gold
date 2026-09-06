@@ -1,0 +1,52 @@
+{
+  "version": "strategy1_direct_v4_16_2_a1_7_1",
+  "label": "Strategy1-Direct V4.16.2 A1.7.1 Exit Semantics Repair",
+  "base": "strategy1_direct_v4_16_2_a1_7_0",
+  "scope": "exit-semantics-only repair; true MTM risk separated from Taker liquidation economics",
+  "frozen": {
+    "fastpath_candidates": 20,
+    "fastpath_deep": 16,
+    "maker_size_base": 0.25,
+    "max_total_abs_base": 2.0,
+    "max_total_open_books": 8,
+    "max_active_open_books": 6,
+    "touch_cap_bps": 6.0,
+    "taker_entry": false,
+    "maker_entry_edge_floor_bps": 2.5,
+    "persistent_quote_manager": "direct_quote_manager_v4_16_2_a1_7_0",
+    "exposure_version": "direct_exposure_v4_16_2_a1_6_3"
+  },
+  "exit_semantics": {
+    "version": "direct_observable_exit_v4_16_2_a1_7_1",
+    "risk_source": "inventory.unrealized_bps mid-mark MTM",
+    "taker_net_is_risk_input": false,
+    "hard_escape_min_age_ticks": 2.0,
+    "positive_maker_veto_floor_bps": 1.0,
+    "positive_maker_veto_max_failed_exits": 4,
+    "absolute_or_catastrophic_immediate_reduction": true
+  },
+  "no_new_learning": true,
+  "verification": {
+    "a171_targeted": "13 passed",
+    "a16_a17_compatibility": "94 passed, 8 skipped",
+    "launcher_preflight": "83 passed",
+    "research_regression": "547 passed, 11 skipped",
+    "compile": "PASS",
+    "bash_syntax": "PASS",
+    "frozen_Strategy1_Research_sha256": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "frozen_Strategy1_sha256": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d"
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research_Simple.py": "ae4669594bed3255817d9750c9cba27a9620fd234a0ed59de479916cd39cd5a0",
+    "agents/strategy/research_direct_exit.py": "0ff68855639845a3ab76c52e7a824555767a1d52eaac45a9a48be9528b780f05",
+    "agents/strategy/research_direct_quote_manager.py": "e957bac768eb92c4f874e6b91507e1363fa5d2cf08da98611375e59a500acf3c",
+    "run_strategy1_research_simple_multi.sh": "92a0c2c73e16e5aa4cb50bd0bf1ff10335590d0c3bc9ade9f1b745fb371d1bf0",
+    "tests/test_research_strategy1_direct_a1_7_1.py": "d6e41fd834b625ccb08c1f56748704bdaf874502249a4dd367f72fc5fff8d0fb",
+    "tests/test_research_strategy1_direct_a1_7_0.py": "3618298b2e71b569eeb54cd08667149635cc7b69b12746c529df01aa651e6da0",
+    "STRATEGY1_DIRECT_V4_16_2_A1_7_1.md": "93bb09457b967f5cafab5cfe95081f756c4c477d7e5a0a38ae92278c1a41d210"
+  },
+  "launcher": {
+    "pm2_name_argument": "--pm2_name (with -i retained as backward-compatible alias)",
+    "pins_exit_protection": true
+  }
+}
