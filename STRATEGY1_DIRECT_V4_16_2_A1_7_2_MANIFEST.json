@@ -1,0 +1,74 @@
+{
+  "version": "strategy1_direct_v4_16_2_a1_7_2",
+  "label": "Strategy1-Direct V4.16.2 A1.7.2 True-WAIT Execution Repair",
+  "base": "strategy1_direct_v4_16_2_a1_7_1",
+  "scope": "execution-authority-only repair: terminal WAIT, negative aggressive-Maker block, bounded MTM-absolute Maker grace",
+  "frozen": {
+    "fastpath_candidates": 20,
+    "fastpath_deep": 16,
+    "maker_size_base": 0.25,
+    "max_total_abs_base": 2.0,
+    "max_total_open_books": 8,
+    "max_active_open_books": 6,
+    "touch_cap_bps": 6.0,
+    "taker_entry": false,
+    "maker_entry_edge_floor_bps": 2.5,
+    "persistent_quote_manager": "direct_quote_manager_v4_16_2_a1_7_0",
+    "exposure_version": "direct_exposure_v4_16_2_a1_6_3",
+    "qualification_logic_changed": false,
+    "adaptive_sizing_added": false
+  },
+  "exit_semantics": {
+    "version": "direct_observable_exit_v4_16_2_a1_7_2",
+    "risk_source": "inventory.unrealized_bps mid-mark MTM",
+    "taker_net_is_risk_input": false,
+    "hard_escape_min_age_ticks": 2.0,
+    "positive_maker_veto_floor_bps": 1.0,
+    "positive_maker_veto_max_failed_exits": 4,
+    "absolute_mtm_positive_maker_grace": true,
+    "absolute_mtm_positive_maker_grace_max_failed_exits": 1,
+    "catastrophic_max_exposure_bypasses_absolute_grace": true
+  },
+  "execution_invariants": {
+    "wait_places_new_maker_order": false,
+    "wait_cancels_negative_resting_close_orders": true,
+    "wait_preserves_profitable_resting_close_orders": true,
+    "wait_cancel_counts_as_failed_exit_attempt": false,
+    "negative_aggressive_maker_allowed": false,
+    "positive_aggressive_maker_allowed": true
+  },
+  "no_new_learning": true,
+  "verification": {
+    "a16_a17_compatibility": "115 passed, 9 skipped",
+    "launcher_preflight": "93 passed",
+    "research_regression": "557 passed, 11 skipped",
+    "compile": "PASS",
+    "bash_syntax": "PASS",
+    "frozen_Strategy1_Research_sha256": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "frozen_Strategy1_sha256": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d"
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research_Simple.py": "85a4dd146da9b20449d9ab4d1d39399d9e709ad7210c7fcb3413ab9edf0beb7b",
+    "agents/strategy/research_direct_exit.py": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+    "run_strategy1_research_simple_multi.sh": "c23f97556cd29fc2dfd62255c1818fce92796c87e70a09c66497095377459497",
+    "tests/test_research_strategy1_direct_a1_7_1.py": "a946ba4c7138f2f9689d987bae67ac2edff5aa55a8b5d21a8097a8a8c6bf41a0",
+    "tests/test_research_strategy1_direct_a1_7_2.py": "ebf2e3519d6c795d48ff97ee65e334e9da6862093ee4cad39cc22a75fc98383f",
+    "STRATEGY1_DIRECT_V4_16_2_A1_7_2.md": "83ce4a3db5ac263fa2a31ef86320764e4a18292dad66cd0a8bb1e7f269c09b90"
+  },
+  "runtime_acceptance": {
+    "positive_rt_min": 0.55,
+    "positive_rt_target": 0.60,
+    "maker_ending_positive_min": 0.75,
+    "risk_taker_rt_share_max": 0.25,
+    "risk_taker_rt_share_target": 0.20,
+    "wait_to_actual_maker_leakage": 0,
+    "negative_aggressive_maker_placements": 0,
+    "rt_velocity_min_per_sim_second": 0.15,
+    "realized_rt_pnl_must_be_positive": true,
+    "p95_response_ms_max": 120
+  },
+  "launcher": {
+    "pm2_name_argument": "--pm2_name (with -i retained as backward-compatible alias)",
+    "pins_exit_protection": true
+  }
+}

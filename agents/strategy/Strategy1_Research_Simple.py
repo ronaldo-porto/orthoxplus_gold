@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.1 Exit Semantics Repair Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.2 True-WAIT Execution Repair Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,10 +8,11 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-For non-flat inventory A1.7.1 preserves A1.7.0 exposure/quote plumbing but
-separates true mark-to-market position risk from Taker liquidation economics.
-Fresh-position grace and the existing positive-Maker veto are applied only at
-the Direct overlay boundary; the frozen Strategy1_Research.py base remains untouched.
+For non-flat inventory A1.7.2 preserves the A1.7.1 true mark-to-market risk
+semantics and fixes the next execution leak: Direct ``WAIT`` is now a real hold
+authority.  WAIT cannot fall through to the legacy Maker realization ladder, and
+negative AGGRESSIVE Maker realization is blocked at the execution boundary.
+The frozen Strategy1_Research.py base remains untouched.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
 A/B tested against the V4.16.2 baseline.
@@ -94,7 +95,15 @@ from research_direct_exit import (
     choose_observable_position_exit,
 )
 import importlib
-from research_position_exit import BAND_ABSOLUTE, new_exposure_allowed
+from research_position_exit import (
+    ACTION_MAKER_EXIT,
+    ACTION_PARK_EXIT,
+    ACTION_TAKER_EXIT,
+    ACTION_WAIT,
+    BAND_ABSOLUTE,
+    new_exposure_allowed,
+)
+from research_unified_exit import completion_net_bps as unified_completion_net_bps
 from research_risk_guard import evaluate_risk_guard
 from research_exit_quantity import round_volume
 from research_contract_guard import resolve_book_from_state_mapping, sanitize_post_only_limit_price
@@ -114,12 +123,12 @@ from research_direct_quote_manager import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_2"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 safety/session state with A1.7.1 corrected Direct exit semantics.
+    """V4.16.2 safety/session state with A1.7.2 true-WAIT execution semantics.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -135,7 +144,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.6 observable spread/fee/Kappa FastPath;
       * current Maker edge in bps is the only economic entry authority;
       * Maker-only acquisition; directional Taker entry stays disabled;
-      * A1.6 observable Maker/Wait/Taker exit authority for non-flat inventory;
+      * A1.7.1 true-MTM Maker/Wait/Taker exit authority for non-flat inventory;
+      * A1.7.2 hard execution invariant: WAIT cannot place a new Maker exit;
       * final authoritative contract validation;
       * existing Research learning/session state.
     """
@@ -175,6 +185,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_quote_reprices = 0
         self._direct_quote_new_batches = 0
         self._direct_quote_unselected_keeps = 0
+        # A1.7.2 execution authority snapshot.  This is ephemeral per tick and
+        # is used only to enforce the Direct chooser's action at the final Maker
+        # placement boundary; it is not learned state.
+        self._direct_exit_authority_last: dict[int, dict[str, Any]] = {}
+        self._direct_wait_holds = 0
+        self._direct_wait_cancel_batches = 0
+        self._direct_negative_aggressive_blocks = 0
         try:
             self._emit(
                 "SIMPLE_CONFIG",
@@ -222,6 +239,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 positive_maker_veto_enabled=int(bool(getattr(self, "research_positive_maker_veto_enabled", True))),
                 positive_maker_veto_floor_bps=float(getattr(self, "research_positive_maker_veto_floor_bps", 1.0)),
                 positive_maker_veto_max_failed_exits=int(getattr(self, "research_positive_maker_veto_max_failed_exits", 4)),
+                absolute_positive_maker_veto_enabled=1,
+                absolute_positive_maker_veto_floor_bps=float(getattr(self, "research_positive_maker_veto_floor_bps", 1.0)),
+                absolute_positive_maker_veto_max_failed_exits=1,
+                true_wait_execution=1,
+                wait_falls_through_to_legacy_maker=0,
+                negative_aggressive_maker_block=1,
+                wait_resting_exit_floor_bps=DIRECT_MAKER_EXIT_TARGET_BPS,
                 direct_max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
                 direct_liveness_version="direct_liveness_v4_16_2_a1_6_3",
                 direct_quote_manager_version=DIRECT_QUOTE_MANAGER_VERSION,
@@ -496,14 +520,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
 
     def _research_apply_unified_exit(self, legacy, **kwargs):
-        """Apply A1.7.1 Direct exit semantics without mutating frozen Research.
+        """Apply A1.7.2 Direct exit semantics without mutating frozen Research.
 
-        ``Strategy1_Research`` still passes executable ``taker_net`` through its
-        historical ``unrealized_bps`` argument.  A1.7.1 fixes that semantic only
-        at this overlay boundary: the pure Direct chooser receives the inventory
-        snapshot's true mid-mark MTM instead, plus the already-configured fresh
-        age and positive-Maker veto limits.  The imported base symbol is restored
-        immediately after the call.
+        A1.7.1's true-MTM risk correction remains unchanged.  A1.7.2 additionally
+        records the Direct action for the final placement boundary and rewrites a
+        Direct WAIT into an explicit WAIT realization token so telemetry and
+        execution agree.  The imported base symbol is restored immediately.
         """
         module = importlib.import_module("Strategy1_Research")
         original = getattr(module, "choose_position_exit")
@@ -512,7 +534,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         true_unrealized = getattr(inventory, "unrealized_bps", None)
         captured: dict[str, Any] = {}
 
-        def a171_direct_chooser(**exit_kwargs):
+        def a172_direct_chooser(**exit_kwargs):
             caller_unrealized = exit_kwargs.get("unrealized_bps")
             exit_kwargs["unrealized_bps"] = true_unrealized
             exit_kwargs["hard_escape_min_age_ticks"] = float(
@@ -527,19 +549,55 @@ class Strategy1_Research_Simple(Strategy1_Research):
             exit_kwargs["positive_maker_veto_max_failed_exits"] = int(
                 getattr(self, "research_positive_maker_veto_max_failed_exits", 4)
             )
+            exit_kwargs["absolute_positive_maker_veto_enabled"] = True
+            exit_kwargs["absolute_positive_maker_veto_floor_bps"] = float(
+                getattr(self, "research_positive_maker_veto_floor_bps", 1.0)
+            )
+            exit_kwargs["absolute_positive_maker_veto_max_failed_exits"] = 1
             decision = choose_observable_position_exit(**exit_kwargs)
             captured.update(exit_kwargs)
             captured["caller_unrealized_bps"] = caller_unrealized
             captured["decision"] = decision
             return decision
 
-        setattr(module, "choose_position_exit", a171_direct_chooser)
+        setattr(module, "choose_position_exit", a172_direct_chooser)
         try:
             result = super()._research_apply_unified_exit(legacy, **kwargs)
         finally:
             setattr(module, "choose_position_exit", original)
 
-        # Dedicated A1.7.1 diagnostics make the risk/economics separation
+        # A1.7.2: persist only the current-tick Direct authority so the final
+        # Maker-placement boundary can enforce WAIT as a real hold.
+        try:
+            decision = captured.get("decision")
+            book_id = int(kwargs.get("book_id", -1))
+            if decision is not None and book_id >= 0:
+                self._direct_exit_authority_last[book_id] = {
+                    "tick": int(getattr(self, "_tick", 0) or 0),
+                    "action": str(getattr(decision, "action", "") or ""),
+                    "reason": str(getattr(decision, "reason", "") or ""),
+                    "risk_band": str(getattr(decision, "risk_band", "") or ""),
+                    "maker_net_bps": float(captured.get("maker_net_bps", 0.0) or 0.0),
+                    "taker_net_bps": float(captured.get("taker_net_bps", 0.0) or 0.0),
+                }
+                if str(getattr(decision, "action", "") or "") == ACTION_WAIT:
+                    # The frozen base maps every non-Taker decision back to the
+                    # legacy Maker rung.  Rewrite only the outward token; the
+                    # placement override below enforces the actual no-new-order
+                    # behavior and optionally cancels stale negative exits.
+                    result = replace(
+                        result, action=ACTION_WAIT, selected_action=ACTION_WAIT,
+                        taker_allowed=False, direct_taker_authorized=False,
+                        economic_taker_authorized=False, score_taker_authorized=False,
+                        risk_taker_authorized=False,
+                        aggressive_positive_ev_taker_authorized=False,
+                        taker_authority="NONE", trigger=str(getattr(decision, "reason", "WAIT")),
+                        hybrid_reason=str(getattr(decision, "reason", "WAIT")),
+                    )
+        except Exception:
+            pass
+
+        # Dedicated A1.7.1 diagnostics remain for cross-version log continuity.
         # explicit in runtime logs without changing the frozen base logger.
         try:
             decision = captured.get("decision")
@@ -573,7 +631,152 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 )
         except Exception:
             pass
+        try:
+            decision = captured.get("decision")
+            if decision is not None:
+                self._emit(
+                    "A172_EXIT_AUTHORITY", force=True,
+                    tick=int(getattr(self, "_tick", 0) or 0),
+                    book=int(kwargs.get("book_id", -1)),
+                    direct_action=str(getattr(decision, "action", "")),
+                    realization_action=str(getattr(result, "selected_action", "")),
+                    reason=str(getattr(decision, "reason", "")),
+                    maker_net_bps=float(captured.get("maker_net_bps", 0.0) or 0.0),
+                    taker_net_bps=float(captured.get("taker_net_bps", 0.0) or 0.0),
+                    wait_is_terminal=int(str(getattr(decision, "action", "")) == ACTION_WAIT),
+                )
+        except Exception:
+            pass
         return result
+
+    def _direct_current_exit_authority(self, book_id: int) -> dict[str, Any] | None:
+        row = (getattr(self, "_direct_exit_authority_last", {}) or {}).get(int(book_id))
+        if not isinstance(row, dict):
+            return None
+        if int(row.get("tick", -1)) != int(getattr(self, "_tick", 0) or 0):
+            return None
+        return row
+
+    def _direct_cancel_unsafe_wait_exits(self, response, book_id: int, inventory, *, reason: str) -> tuple[int, int]:
+        """Cancel only close-side resting orders whose current lifecycle net is unsafe.
+
+        A profitable resting Maker exit is allowed to keep its queue position while
+        Direct WAIT blocks *new* realization.  Negative/stale close-side orders are
+        cancelled so WAIT cannot be bypassed by an older legacy ladder order.
+        Returns ``(cancelled_orders, kept_profitable_orders)``.
+        """
+        account = (getattr(self, "accounts", {}) or {}).get(int(book_id))
+        orders = list(getattr(account, "orders", None) or []) if account is not None else []
+        if not orders:
+            return 0, 0
+        long_pos = float(getattr(inventory, "net_base", 0.0) or 0.0) > 0.0
+        close_side = 1 if long_pos else 0
+        entry = float(getattr(inventory, "vwap_entry", 0.0) or 0.0)
+        if entry <= 0.0:
+            return 0, 0
+        maker_fee = float(self._research_live_fee_bps(int(book_id), is_maker=True) or 0.0)
+        floor = float(DIRECT_MAKER_EXIT_TARGET_BPS)
+        cancel_ids = []
+        kept = 0
+        for order in orders:
+            try:
+                if int(getattr(order, "side", -1)) != close_side:
+                    continue
+                px = getattr(order, "price", None)
+                if px is None:
+                    px = getattr(order, "limit_price", None)
+                px = float(px)
+                order_net = unified_completion_net_bps(
+                    entry_price=entry, exit_price=px, long_position=long_pos,
+                    entry_fee_bps=maker_fee, exit_fee_bps=maker_fee,
+                )
+                if float(order_net) + 1e-12 >= floor:
+                    kept += 1
+                    continue
+                oid = getattr(order, "id", None)
+                if oid is not None:
+                    cancel_ids.append(oid)
+            except (TypeError, ValueError):
+                continue
+        if not cancel_ids:
+            return 0, kept
+        if self._count_book_instructions(response, int(book_id)) >= self.max_instructions_per_book:
+            return 0, kept
+        try:
+            response.cancel_orders(book_id=int(book_id), order_ids=cancel_ids, delay=0)
+        except Exception:
+            return 0, kept
+        self._direct_wait_cancel_batches = int(getattr(self, "_direct_wait_cancel_batches", 0) or 0) + 1
+        try:
+            self._emit(
+                "A172_WAIT_CANCEL", force=True,
+                tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                reason=str(reason or "WAIT"), cancelled_orders=len(cancel_ids),
+                kept_profitable_orders=int(kept), maker_floor_bps=float(floor),
+            )
+        except Exception:
+            pass
+        return len(cancel_ids), kept
+
+    def _research_place_maker_exit(
+        self, response, state, book_id: int, book, inventory, qty: float, action: str,
+        close_price: float | None = None, maker_net_bps: float | None = None,
+    ) -> int:
+        """A1.7.2 final execution invariant for Direct inventory realization."""
+        authority = self._direct_current_exit_authority(int(book_id))
+        if authority is not None and str(authority.get("action") or "") == ACTION_WAIT:
+            cancelled, kept = self._direct_cancel_unsafe_wait_exits(
+                response, int(book_id), inventory, reason=str(authority.get("reason") or "WAIT"),
+            )
+            self._direct_wait_holds = int(getattr(self, "_direct_wait_holds", 0) or 0) + 1
+            try:
+                self._emit(
+                    "A172_WAIT_HOLD", force=True,
+                    tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                    reason=str(authority.get("reason") or "WAIT"),
+                    maker_net_bps=float(authority.get("maker_net_bps", 0.0) or 0.0),
+                    taker_net_bps=float(authority.get("taker_net_bps", 0.0) or 0.0),
+                    cancelled_orders=int(cancelled), kept_profitable_orders=int(kept),
+                    new_maker_order=0,
+                )
+            except Exception:
+                pass
+            # Deliberately return zero even if a cancel instruction was emitted:
+            # the frozen caller treats any positive return as a newly placed exit
+            # attempt and increments failed-exit state.  WAIT cancellation is not
+            # a failed realization attempt.
+            return 0
+
+        # Independent belt-and-suspenders guard: a legacy path may still request
+        # AGGRESSIVE_MAKER_EXIT. Never allow that rung to realize a negative
+        # lifecycle merely because Taker authority was denied.
+        if str(action or "") == "AGGRESSIVE_MAKER_EXIT" and maker_net_bps is not None:
+            try:
+                negative_aggressive = float(maker_net_bps) < -1e-12
+            except (TypeError, ValueError):
+                negative_aggressive = False
+            if negative_aggressive:
+                cancelled, kept = self._direct_cancel_unsafe_wait_exits(
+                    response, int(book_id), inventory, reason="NEGATIVE_AGGRESSIVE_BLOCK",
+                )
+                self._direct_negative_aggressive_blocks = int(
+                    getattr(self, "_direct_negative_aggressive_blocks", 0) or 0
+                ) + 1
+                try:
+                    self._emit(
+                        "A172_NEGATIVE_AGGRESSIVE_BLOCK", force=True,
+                        tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                        maker_net_bps=float(maker_net_bps), cancelled_orders=int(cancelled),
+                        kept_profitable_orders=int(kept), new_maker_order=0,
+                    )
+                except Exception:
+                    pass
+                return 0
+
+        return super()._research_place_maker_exit(
+            response, state, book_id, book, inventory, qty, action,
+            close_price=close_price, maker_net_bps=maker_net_bps,
+        )
 
     def respond(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
         # A1.7 preserves A1.6.3 freshness protection.  Slow-request telemetry is

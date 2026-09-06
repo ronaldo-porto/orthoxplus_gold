@@ -1,16 +1,18 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct A1.7.1 observable position-exit authority.
+"""Strategy1-Direct A1.7.2 observable position-exit authority.
 
-A1.7.1 separates *position risk* from *liquidation economics*.
+A1.7.2 preserves A1.7.1 risk/economics separation and adds a bounded
+positive-Maker grace for MTM-only ABSOLUTE_PROTECTION. Catastrophic/MAX
+exposure still has immediate Taker reduction authority.
 
 ``unrealized_bps`` is the true mark-to-market move of the open inventory and is
 therefore the only input used to classify NORMAL / DEFENSIVE / HARD_ESCAPE /
 ABSOLUTE_PROTECTION.  ``taker_net_bps`` remains the executable completion
 value after spread/fees/slippage/impact and is never used as a proxy for risk.
 
-Fresh-position protection and the existing positive-Maker veto are restored for
-HARD_ESCAPE.  Genuine ABSOLUTE/catastrophic risk still has immediate reduction
-authority when mechanically executable.
+Fresh-position protection and the existing positive-Maker veto remain for
+HARD_ESCAPE. MTM-only ABSOLUTE gets one bounded positive-Maker attempt; genuine
+catastrophic/MAX exposure retains immediate reduction authority.
 """
 from __future__ import annotations
 
@@ -31,10 +33,11 @@ from research_position_exit import (
     taker_clip_qty,
 )
 
-DIRECT_OBSERVABLE_EXIT_VERSION = "direct_observable_exit_v4_16_2_a1_7_1"
+DIRECT_OBSERVABLE_EXIT_VERSION = "direct_observable_exit_v4_16_2_a1_7_2"
 DIRECT_MAKER_EXIT_TARGET_BPS = 1.0
 DIRECT_HARD_ESCAPE_MIN_AGE_TICKS = 2.0
 DIRECT_POSITIVE_MAKER_VETO_MAX_FAILED_EXITS = 4
+DIRECT_ABSOLUTE_POSITIVE_MAKER_VETO_MAX_FAILED_EXITS = 1
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -75,10 +78,13 @@ def choose_observable_position_exit(
     positive_maker_veto_enabled: bool = True,
     positive_maker_veto_floor_bps: float = DIRECT_MAKER_EXIT_TARGET_BPS,
     positive_maker_veto_max_failed_exits: int = DIRECT_POSITIVE_MAKER_VETO_MAX_FAILED_EXITS,
+    absolute_positive_maker_veto_enabled: bool = True,
+    absolute_positive_maker_veto_floor_bps: float = DIRECT_MAKER_EXIT_TARGET_BPS,
+    absolute_positive_maker_veto_max_failed_exits: int = DIRECT_ABSOLUTE_POSITIVE_MAKER_VETO_MAX_FAILED_EXITS,
 ) -> PositionExitDecision:
     """Choose Maker / Taker / Wait from true risk plus executable economics.
 
-    A1.7.1 rules:
+    A1.7.2 rules:
 
     * Risk bands come only from true mark-to-market ``unrealized_bps``.
       Spread crossing, taker fees, slippage and impact may make ``taker_net_bps``
@@ -88,8 +94,9 @@ def choose_observable_position_exit(
     * HARD_ESCAPE: a fresh position must first age to the configured minimum (or
       have a failed exit attempt).  A positive executable Maker completion keeps
       veto authority until the configured failed-exit limit is reached.
-    * ABSOLUTE_PROTECTION/catastrophic risk: reduce immediately when executable;
-      PARK only when mechanical reduction is impossible.
+    * ABSOLUTE_PROTECTION from MTM alone gets at most one positive-Maker
+      attempt when an executable Maker completion is already >= the configured
+      floor. Catastrophic/MAX exposure bypasses that grace and reduces now.
     """
     del (
         p_maker_fill, observations_remaining, required_observations, holding_bps,
@@ -99,11 +106,12 @@ def choose_observable_position_exit(
 
     maker_net = _finite(maker_net_bps)
     taker_net = _finite(taker_net_bps)
-    # Critical A1.7.1 semantic: never fall back to taker_net.  Unknown MTM is
+    # Critical A1.7.x semantic: never fall back to taker_net.  Unknown MTM is
     # neutral/normal rather than fabricating a loss from crossing economics.
     position_risk_bps = _finite(unrealized_bps, 0.0)
     band = classify_risk_band(position_risk_bps)
-    if catastrophic_hard_risk:
+    catastrophic = bool(catastrophic_hard_risk)
+    if catastrophic:
         band = BAND_ABSOLUTE
 
     age = max(0.0, _finite(inventory_age))
@@ -111,6 +119,12 @@ def choose_observable_position_exit(
     min_age = max(0.0, _finite(hard_escape_min_age_ticks, DIRECT_HARD_ESCAPE_MIN_AGE_TICKS))
     veto_floor = max(0.0, _finite(positive_maker_veto_floor_bps, DIRECT_MAKER_EXIT_TARGET_BPS))
     veto_max_failed = max(0, int(positive_maker_veto_max_failed_exits or 0))
+    abs_veto_floor = max(
+        0.0, _finite(absolute_positive_maker_veto_floor_bps, DIRECT_MAKER_EXIT_TARGET_BPS)
+    )
+    abs_veto_max_failed = max(
+        0, int(absolute_positive_maker_veto_max_failed_exits or 0)
+    )
 
     qty_abs = max(0.0, abs(_finite(inventory_qty)))
     can_reduce = reduction_is_executable(
@@ -139,14 +153,25 @@ def choose_observable_position_exit(
             wait_utility=wait_u,
             selected_qty=qty,
             reason=reason,
-            corridor_action="DIRECT_OBSERVABLE_A171",
+            corridor_action="DIRECT_OBSERVABLE_A172",
             corridor_stage=band,
             continuation_penalty=0.0,
             low_fill_maker_rejected=0,
         )
 
-    # True absolute/catastrophic risk keeps immediate reduction authority.
+    # MTM-only ABSOLUTE gets one short positive-Maker opportunity when the
+    # executable Maker completion is already profitable. Catastrophic/MAX
+    # exposure is mechanically different and always bypasses this veto.
     if band == BAND_ABSOLUTE:
+        absolute_maker_veto = (
+            not catastrophic
+            and bool(absolute_positive_maker_veto_enabled)
+            and maker_executable
+            and maker_net + 1e-12 >= abs_veto_floor
+            and failed < abs_veto_max_failed
+        )
+        if absolute_maker_veto:
+            return pack(ACTION_MAKER_EXIT, qty_abs, "ABSOLUTE_POSITIVE_MAKER_GRACE")
         if can_reduce:
             return pack(ACTION_TAKER_EXIT, taker_qty, "ABSOLUTE_PROTECTION_REDUCE")
         return pack(ACTION_PARK_EXIT, 0.0, "ABSOLUTE_PROTECTION_PARK")
@@ -174,7 +199,7 @@ def choose_observable_position_exit(
             return pack(ACTION_TAKER_EXIT, taker_qty, "HARD_ESCAPE_CLIP")
         return pack(ACTION_PARK_EXIT, 0.0, "HARD_ESCAPE_NON_EXECUTABLE")
 
-    # Stop-loss alone does not authorize a negative Taker dump in Direct A1.7.1;
+    # Stop-loss alone does not authorize a negative Taker dump in Direct A1.7.2;
     # actual mark-to-market risk band remains the authority.
     _ = stop_loss_hit
 

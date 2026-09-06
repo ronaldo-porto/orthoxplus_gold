@@ -25,8 +25,8 @@ from research_position_exit import ACTION_MAKER_EXIT, ACTION_TAKER_EXIT, ACTION_
 
 
 def test_a171_version_contract():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_1"' in SRC
-    assert DIRECT_OBSERVABLE_EXIT_VERSION == 'direct_observable_exit_v4_16_2_a1_7_1'
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_2"' in SRC
+    assert DIRECT_OBSERVABLE_EXIT_VERSION == 'direct_observable_exit_v4_16_2_a1_7_2'
 
 
 def test_a171_keeps_productivity_and_entry_authority_frozen():
@@ -140,9 +140,9 @@ def test_positive_maker_veto_releases_at_retry_limit():
     assert d.reason == 'HARD_ESCAPE_CLIP'
 
 
-def test_absolute_true_mtm_loss_reduces_immediately():
+def test_absolute_true_mtm_loss_with_negative_maker_reduces_immediately():
     d = choose_observable_position_exit(
-        maker_net_bps=4.0,
+        maker_net_bps=-4.0,
         taker_net_bps=-30.0,
         p_maker_fill=0.05,
         unrealized_bps=-26.0,
