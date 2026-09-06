@@ -19,6 +19,35 @@ RESEARCH_QUEUE="${RESEARCH_QUEUE:-65536}"
 RESEARCH_DIR="${RESEARCH_DIR:-$SCRIPT_DIR/logs/m1_strategy1_research_simple}"
 
 EXTRA=()
+
+# Support the explicit long-form PM2 process-name argument requested for
+# multi-miner launches.  Keep -i as a backwards-compatible alias.
+# Examples:
+#   ./run_strategy1_research_simple_multi.sh --pm2_name sn79-a17-m1 ...
+#   ./run_strategy1_research_simple_multi.sh --pm2_name=sn79-a17-m1 ...
+_normalized_args=()
+while (($#)); do
+  case "$1" in
+    --pm2_name)
+      [[ $# -ge 2 && -n "${2:-}" ]] || { echo "ERROR: --pm2_name requires a value" >&2; exit 2; }
+      _normalized_args+=(-i "$2")
+      shift 2
+      ;;
+    --pm2_name=*)
+      _pm2_value="${1#*=}"
+      [[ -n "$_pm2_value" ]] || { echo "ERROR: --pm2_name requires a value" >&2; exit 2; }
+      _normalized_args+=(-i "$_pm2_value")
+      shift
+      ;;
+    *)
+      _normalized_args+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${_normalized_args[@]}"
+unset _normalized_args
+
 while getopts "w:h:u:a:e:p:i:" flag; do
   case "$flag" in
     w) WALLET_NAME="$OPTARG" ;;

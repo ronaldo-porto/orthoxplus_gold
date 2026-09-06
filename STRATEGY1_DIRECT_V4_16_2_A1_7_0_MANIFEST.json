@@ -36,9 +36,12 @@
   "files": {
     "agents/strategy/Strategy1_Research_Simple.py": "ca4cf564fe859b8fedabd6dcc6e3636d22f2a3d8e24bb79a74a97bc4ea0de2bd",
     "agents/strategy/research_direct_quote_manager.py": "e957bac768eb92c4f874e6b91507e1363fa5d2cf08da98611375e59a500acf3c",
-    "run_strategy1_research_simple_multi.sh": "1601e7285cffddf47473551e85e0591551a1c449a885b7d3005fdad79de9af80",
+    "run_strategy1_research_simple_multi.sh": "3d357983d7cf1a91fc7090b5b0442821790fc73ca403d62d4dd48eb77ed1e094",
     "tests/test_research_strategy1_direct_a1_7_0.py": "6265249c1a3b367e57cea1e4499caa39649c287be573817ca86ff7098c38b391",
     "tests/test_research_strategy1_direct_a1_6_3.py": "2b7eb2644abe2943e0611bf402925edb4c724b0e1a19c989c68fddea9e49e852",
     "STRATEGY1_DIRECT_V4_16_2_A1_7_0.md": "81a24bdfddde2f9125dd9ec3a3d9cab450b1850c129a974cd35a07fb6901a515"
+  },
+  "launcher": {
+    "pm2_name_argument": "--pm2_name (with -i retained as backward-compatible alias)"
   }
 }
