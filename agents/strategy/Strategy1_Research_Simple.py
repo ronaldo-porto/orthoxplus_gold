@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.3 Partial-Fill + Portfolio Liveness Repair Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.3.1 Bound Partial-Remainder Publisher Repair Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,10 +8,12 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-A1.7.3 keeps the A1.7.1 true mark-to-market risk semantics and the A1.7.2
-TRUE-WAIT execution invariant frozen.  It repairs the long-run liveness failure
-created when a valid minimum-size order partially fills, its legal remainder
-expires, and sub-minimum dust permanently consumes the portfolio exposure cap.
+A1.7.3.1 keeps the A1.7.1 true mark-to-market risk semantics, A1.7.2
+TRUE-WAIT execution invariant, and A1.7.3 liveness parameters frozen.  It repairs
+the publisher handoff where a tracked legal partial remainder was still replaced
+by generic dust compaction.  It preserves the A1.7.3 repair for the underlying
+long-run failure where a valid minimum-size order partially fills, its legal
+remainder expires, and sub-minimum dust permanently consumes the portfolio cap.
 The frozen Strategy1_Research.py base remains untouched.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -135,15 +137,17 @@ from research_direct_liveness import (
     normalization_allowed as direct_normalization_allowed,
     partial_recovery_plan,
     recovery_expiry_ns as direct_recovery_expiry_ns,
+    bound_remainder_hold_active as direct_bound_remainder_hold_active,
+    partition_bound_remainder_orders as direct_partition_bound_remainder_orders,
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_3"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_3"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_3_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_3_1"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 safety/session state with A1.7.3 partial-fill/liveness repair.
+    """V4.16.2 safety/session state with A1.7.3.1 bound-remainder repair.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -161,7 +165,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * Maker-only acquisition; directional Taker entry stays disabled;
       * A1.7.1 true-MTM Maker/Wait/Taker exit authority for non-flat inventory;
       * A1.7.2 hard execution invariant: WAIT cannot place a new Maker exit;
-      * A1.7.3 legal partial-remainder preservation and bounded dust normalization;
+      * A1.7.3.1 exact-order partial-remainder ownership before dust normalization;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -209,11 +213,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_wait_holds = 0
         self._direct_wait_cancel_batches = 0
         self._direct_negative_aggressive_blocks = 0
-        # A1.7.3 liveness-only state.  This never changes alpha/risk economics.
+        # A1.7.3.1 liveness-only state.  This never changes alpha/risk economics.
         self._direct_partial_recovery: dict[int, dict[str, Any]] = {}
         self._direct_partial_hold_live = 0
         self._direct_partial_hold_releases = 0
         self._direct_partial_wrong_side_cancels = 0
+        self._direct_partial_bound_holds = 0
+        self._direct_partial_bound_pending = 0
+        self._direct_partial_bound_expired = 0
+        self._direct_partial_replacement_blocks = 0
+        self._direct_current_state_timestamp_ns = 0
         self._direct_dust_normalize_orders = 0
         self._direct_dust_normalize_fills = 0
         self._direct_liveness_blocked_ticks = 0
@@ -285,6 +294,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 isolated_dust_compaction=1,
                 direct_liveness_version=DIRECT_LIVENESS_VERSION,
                 direct_partial_remainder_hold=1,
+                direct_partial_bound_order_guard=1,
+                direct_partial_replacement_block=1,
                 direct_partial_remainder_hard_ttl_ms=float(DIRECT_PARTIAL_HOLD_MAX_NS) / 1_000_000.0,
                 direct_partial_remainder_publish_mult=int(DIRECT_PARTIAL_HOLD_PUBLISH_MULT),
                 direct_dust_recovery_reserve_clips=1,
@@ -325,7 +336,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             kappa_before=kappa_before, kappa_after=kappa_after, is_maker=is_maker,
         )
         self._direct_note_partial_fill_recovery(
-            book_id=int(book_id), before=float(before), after=float(after), is_maker=bool(is_maker),
+            book_id=int(book_id), before=float(before), after=float(after), is_maker=bool(is_maker), event=event,
         )
         try:
             bid = int(book_id)
@@ -730,7 +741,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     kept += 1
                     continue
                 oid = getattr(order, "id", None)
-                if oid is not None:
+                protected_id = self._direct_protected_partial_order_id(int(book_id))
+                if oid is not None and (protected_id is None or int(oid) != int(protected_id)):
                     cancel_ids.append(oid)
             except (TypeError, ValueError):
                 continue
@@ -759,6 +771,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         close_price: float | None = None, maker_net_bps: float | None = None,
     ) -> int:
         """A1.7.2 final execution invariant for Direct inventory realization."""
+        if self._direct_partial_hold_active(int(book_id), state):
+            self._direct_emit_partial_replacement_block(int(book_id), path="MAKER_EXIT")
+            return 0
+
         authority = self._direct_current_exit_authority(int(book_id))
         if authority is not None and str(authority.get("action") or "") == ACTION_WAIT:
             cancelled, kept = self._direct_cancel_unsafe_wait_exits(
@@ -817,6 +833,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def respond(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
         # A1.7 preserves A1.6.3 freshness protection.  Slow-request telemetry is
         # diagnostic only and does not gate trading.
+        self._direct_current_state_timestamp_ns = int(getattr(state, "timestamp", 0) or 0)
         self._direct_request_wall_started = time.perf_counter()
         response = super().respond(state)
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
@@ -889,8 +906,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _direct_cancel_entry_quotes(self, response, book_id: int, *, reason: str) -> int:
         orders = self._direct_entry_quote_orders(int(book_id))
+        protected_id = self._direct_protected_partial_order_id(int(book_id))
         order_ids = [getattr(order, "id", None) for order in orders]
-        order_ids = [oid for oid in order_ids if oid is not None]
+        order_ids = [
+            oid for oid in order_ids
+            if oid is not None and (protected_id is None or int(oid) != int(protected_id))
+        ]
         if not order_ids:
             return 0
         if self._count_book_instructions(response, int(book_id)) >= self.max_instructions_per_book:
@@ -1693,8 +1714,98 @@ class Strategy1_Research_Simple(Strategy1_Research):
     # ------------------------------------------------------------------
     # A1.7.3 partial-fill completion + irreducible-dust liveness.
     # ------------------------------------------------------------------
+    def _direct_partial_fill_bound_order_id(self, event, *, is_maker: bool) -> int | None:
+        """Return the exact resting order id that produced our Maker partial fill."""
+        if not bool(is_maker) or event is None:
+            return None
+        for name in ("makerOrderId", "Mi", "maker_order_id"):
+            value = getattr(event, name, None)
+            try:
+                if value is not None and int(value) > 0:
+                    return int(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def _direct_partial_fill_timestamp_ns(self, event) -> int:
+        if event is None:
+            return 0
+        for name in ("timestamp", "t"):
+            value = getattr(event, name, None)
+            try:
+                if value is not None and int(value) > 0:
+                    return int(value)
+            except (TypeError, ValueError):
+                continue
+        return 0
+
+    def _direct_partial_hold_active(self, book_id: int, state=None, *, expire: bool = True) -> bool:
+        """True while the exact legal partial remainder owns this book."""
+        row = (getattr(self, "_direct_partial_recovery", {}) or {}).get(int(book_id))
+        if not isinstance(row, dict):
+            return False
+        bound = row.get("bound_order_id")
+        if not bool(row.get("preserve_existing_remainder", False)) or bound is None:
+            return False
+        try:
+            bound = int(bound)
+        except (TypeError, ValueError):
+            return False
+        now_ts = getattr(state, "timestamp", None) if state is not None else None
+        if now_ts is None:
+            now_ts = getattr(self, "_direct_current_state_timestamp_ns", 0)
+        active = direct_bound_remainder_hold_active(
+            fill_timestamp_ns=int(row.get("hold_start_timestamp_ns", 0) or 0),
+            now_timestamp_ns=int(now_ts or 0),
+            hard_ttl_ns=DIRECT_PARTIAL_HOLD_MAX_NS,
+        )
+        if active or not expire:
+            return bool(active)
+        if not bool(row.get("hold_expired", False)):
+            row["hold_expired"] = True
+            row["preserve_existing_remainder"] = False
+            self._direct_partial_bound_expired = int(
+                getattr(self, "_direct_partial_bound_expired", 0) or 0
+            ) + 1
+            try:
+                self._emit(
+                    "A1731_PARTIAL_REMAINDER_EXPIRE", force=True,
+                    tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                    bound_order_id=int(bound),
+                    hold_start_timestamp_ns=int(row.get("hold_start_timestamp_ns", 0) or 0),
+                    now_timestamp_ns=int(now_ts or 0),
+                    hard_ttl_ns=int(DIRECT_PARTIAL_HOLD_MAX_NS),
+                )
+            except Exception:
+                pass
+        return False
+
+    def _direct_protected_partial_order_id(self, book_id: int, state=None) -> int | None:
+        if not self._direct_partial_hold_active(int(book_id), state):
+            return None
+        row = (getattr(self, "_direct_partial_recovery", {}) or {}).get(int(book_id)) or {}
+        try:
+            return int(row.get("bound_order_id"))
+        except (TypeError, ValueError):
+            return None
+
+    def _direct_emit_partial_replacement_block(self, book_id: int, *, path: str) -> None:
+        self._direct_partial_replacement_blocks = int(
+            getattr(self, "_direct_partial_replacement_blocks", 0) or 0
+        ) + 1
+        try:
+            row = (getattr(self, "_direct_partial_recovery", {}) or {}).get(int(book_id)) or {}
+            self._emit(
+                "A1731_PARTIAL_REPLACEMENT_BLOCK", force=True,
+                tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                path=str(path), bound_order_id=row.get("bound_order_id"),
+                mode=str(row.get("mode") or "UNKNOWN"), new_full_clip_order=0,
+            )
+        except Exception:
+            pass
+
     def _direct_note_partial_fill_recovery(
-        self, *, book_id: int, before: float, after: float, is_maker: bool,
+        self, *, book_id: int, before: float, after: float, is_maker: bool, event=None,
     ) -> None:
         """Track a legal order remainder whenever a fill leaves dust.
 
@@ -1713,6 +1824,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 before=float(before), after=float(after), min_order=min_size, eps=eps,
             )
             current = (getattr(self, "_direct_partial_recovery", {}) or {}).get(bid)
+            fill_order_id = self._direct_partial_fill_bound_order_id(event, is_maker=bool(is_maker))
+            fill_timestamp_ns = self._direct_partial_fill_timestamp_ns(event)
             if plan is None:
                 if current is not None and not direct_is_dust_inventory(
                     float(after), min_order=min_size, eps=eps,
@@ -1748,6 +1861,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 target = float(current.get("target_inventory", plan.target_inventory) or 0.0)
                 preserve = bool(current.get("preserve_existing_remainder", plan.preserve_existing_remainder))
                 first_tick = int(current.get("first_tick", tick) or tick)
+                bound_order_id = current.get("bound_order_id")
+                hold_start_timestamp_ns = int(current.get("hold_start_timestamp_ns", 0) or 0)
                 progressed_existing = (
                     abs(target - float(after)) <= abs(target - float(before)) + eps
                 )
@@ -1757,18 +1872,36 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 target = float(plan.target_inventory)
                 preserve = bool(plan.preserve_existing_remainder)
                 first_tick = tick
+                bound_order_id = None
+                hold_start_timestamp_ns = 0
                 self._research_partial_fill_hold_candidates = int(
                     getattr(self, "_research_partial_fill_hold_candidates", 0) or 0
                 ) + 1
 
-            # A crossed-through-zero/unexpected dust event invalidates the old
-            # remainder, unless the current tracked order demonstrably moved the
-            # position closer to its existing recovery target.
-            if not progressed_existing and not bool(plan.preserve_existing_remainder):
+            # A1.7.3.1: preservation is meaningful only for the exact resting
+            # Maker order that generated the partial.  Rebind on a later legal
+            # Maker partial; never claim that a Taker fill has a live remainder.
+            if fill_order_id is not None and bool(plan.preserve_existing_remainder):
+                if bound_order_id is None or int(bound_order_id) != int(fill_order_id):
+                    hold_start_timestamp_ns = int(fill_timestamp_ns or 0)
+                bound_order_id = int(fill_order_id)
+                preserve = True
+            elif bound_order_id is None:
+                preserve = False
+
+            # Crossing the recovery target invalidates the old remainder even
+            # if the fill reduced distance to target: continuing the same order
+            # would now increase opposite-side exposure.
+            crossed_recovery_target = (
+                (float(before) - float(target)) * (float(after) - float(target)) < -(eps * eps)
+            )
+            if (crossed_recovery_target or not progressed_existing) and not bool(plan.preserve_existing_remainder):
                 desired_side = plan.desired_side
                 mode = plan.mode
                 target = float(plan.target_inventory)
                 preserve = False
+                bound_order_id = None
+                hold_start_timestamp_ns = 0
 
             row = {
                 "mode": mode,
@@ -1779,6 +1912,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "last_progress_tick": tick,
                 "net_base": float(after),
                 "maker_origin": int(bool(is_maker)),
+                "bound_order_id": (None if bound_order_id is None else int(bound_order_id)),
+                "hold_start_timestamp_ns": int(hold_start_timestamp_ns or fill_timestamp_ns or 0),
+                "last_progress_timestamp_ns": int(fill_timestamp_ns or 0),
+                "hold_expired": False,
             }
             self._direct_partial_recovery[bid] = row
             try:
@@ -1790,6 +1927,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     desired_side=str(row["desired_side"]),
                     preserve_existing_remainder=int(bool(row["preserve_existing_remainder"])),
                     min_order_size=float(min_size), maker_origin=int(bool(is_maker)),
+                    bound_order_id=row.get("bound_order_id"),
+                    hold_start_timestamp_ns=int(row.get("hold_start_timestamp_ns", 0) or 0),
                     liveness_version=DIRECT_LIVENESS_VERSION,
                 )
             except Exception:
@@ -1798,7 +1937,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return
 
     def _direct_service_partial_fill_recovery(self, response, state) -> tuple[int, int]:
-        """Keep only the legal live remainder that moves dust toward its target."""
+        """Protect the exact legal partial remainder before any generic publisher path."""
         registry = getattr(self, "_direct_partial_recovery", {}) or {}
         if not registry:
             return 0, 0
@@ -1816,24 +1955,44 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     getattr(self, "_direct_partial_hold_releases", 0) or 0
                 ) + 1
                 continue
+
             desired = str(row.get("desired_side") or ("buy" if net > 0.0 else "sell")).lower()
-            preserve = bool(row.get("preserve_existing_remainder", False))
-            matching = []
-            wrong_ids = []
+            active = self._direct_partial_hold_active(int(book_id), state)
+            bound_id = row.get("bound_order_id") if active else None
+            try:
+                bound_id = int(bound_id) if bound_id is not None else None
+            except (TypeError, ValueError):
+                bound_id = None
+
+            account_orders = []
+            order_rows = []
+            order_by_id = {}
             for order in self._direct_account_orders(int(book_id)):
                 parsed = self._direct_order_side_price(order)
                 if parsed is None:
                     continue
                 side, _price = parsed
                 oid = getattr(order, "id", None)
-                if preserve and side == desired:
-                    matching.append(order)
-                elif oid is not None:
-                    wrong_ids.append(oid)
-
-            if wrong_ids and self._count_book_instructions(response, int(book_id)) < self.max_instructions_per_book:
                 try:
-                    response.cancel_orders(book_id=int(book_id), order_ids=wrong_ids, delay=0)
+                    oid_int = int(oid) if oid is not None else None
+                except (TypeError, ValueError):
+                    oid_int = None
+                if oid_int is None:
+                    continue
+                account_orders.append(order)
+                order_rows.append((oid_int, side))
+                order_by_id[oid_int] = order
+            kept_ids, conflicting_ids = (
+                direct_partition_bound_remainder_orders(
+                    order_rows, bound_order_id=int(bound_id), desired_side=desired,
+                )
+                if active and bound_id is not None else ([], [oid for oid, _side in order_rows])
+            )
+            matching = [order_by_id[oid] for oid in kept_ids if oid in order_by_id]
+
+            if conflicting_ids and self._count_book_instructions(response, int(book_id)) < self.max_instructions_per_book:
+                try:
+                    response.cancel_orders(book_id=int(book_id), order_ids=conflicting_ids, delay=0)
                     instructions += 1
                     self._direct_partial_wrong_side_cancels = int(
                         getattr(self, "_direct_partial_wrong_side_cancels", 0) or 0
@@ -1842,34 +2001,65 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         "A173_PARTIAL_REMAINDER_CANCEL", force=True,
                         tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
                         mode=str(row.get("mode") or "UNKNOWN"), desired_side=desired,
-                        cancelled_orders=len(wrong_ids), net_base=float(net),
+                        bound_order_id=bound_id, cancelled_orders=len(conflicting_ids),
+                        net_base=float(net),
                     )
                 except Exception:
                     pass
 
-            if matching:
+            if active and bound_id is not None:
+                # Even if the account snapshot lags the trade event, block every
+                # replacement path until the bounded hold expires.  This avoids
+                # the observed Book111 +0.2002 -> fresh SELL 0.25 over-close.
                 holds += 1
-                self._research_partial_fill_hold_quoted = int(
-                    getattr(self, "_research_partial_fill_hold_quoted", 0) or 0
-                ) + 1
-                self._direct_partial_hold_live = int(
-                    getattr(self, "_direct_partial_hold_live", 0) or 0
-                ) + 1
-                try:
-                    self._emit(
-                        "A173_PARTIAL_REMAINDER_HOLD", force=True,
-                        tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
-                        mode=str(row.get("mode") or "UNKNOWN"), desired_side=desired,
-                        live_remainder_orders=len(matching), net_base=float(net),
-                        target_inventory=float(row.get("target_inventory", 0.0) or 0.0),
-                        new_subminimum_order=0,
-                    )
-                except Exception:
-                    pass
+                if matching:
+                    self._research_partial_fill_hold_quoted = int(
+                        getattr(self, "_research_partial_fill_hold_quoted", 0) or 0
+                    ) + 1
+                    self._direct_partial_hold_live = int(
+                        getattr(self, "_direct_partial_hold_live", 0) or 0
+                    ) + 1
+                    self._direct_partial_bound_holds = int(
+                        getattr(self, "_direct_partial_bound_holds", 0) or 0
+                    ) + 1
+                    remaining = getattr(matching[0], "quantity", None)
+                    try:
+                        remaining = float(remaining) if remaining is not None else None
+                    except (TypeError, ValueError):
+                        remaining = None
+                    try:
+                        self._emit(
+                            "A173_PARTIAL_REMAINDER_HOLD", force=True,
+                            tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                            mode=str(row.get("mode") or "UNKNOWN"), desired_side=desired,
+                            bound_order_id=int(bound_id), live_remainder_orders=1,
+                            remaining_quantity=remaining, net_base=float(net),
+                            target_inventory=float(row.get("target_inventory", 0.0) or 0.0),
+                            new_subminimum_order=0, new_full_clip_order=0,
+                        )
+                    except Exception:
+                        pass
+                else:
+                    self._direct_partial_bound_pending = int(
+                        getattr(self, "_direct_partial_bound_pending", 0) or 0
+                    ) + 1
+                    try:
+                        self._emit(
+                            "A1731_PARTIAL_REMAINDER_PENDING", force=True,
+                            tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                            mode=str(row.get("mode") or "UNKNOWN"), desired_side=desired,
+                            bound_order_id=int(bound_id), net_base=float(net),
+                            replacement_blocked=1,
+                        )
+                    except Exception:
+                        pass
         return int(instructions), int(holds)
 
     def _direct_place_dust_normalizer(self, response, state, book_id: int, net_base: float) -> int:
         """Add one same-sign minimum Maker clip so irreducible dust becomes actionable."""
+        if self._direct_partial_hold_active(int(book_id), state):
+            self._direct_emit_partial_replacement_block(int(book_id), path="DUST_NORMALIZER")
+            return 0
         books = getattr(state, "books", None) or {}
         book = books.get(int(book_id))
         if book is None or not getattr(book, "bids", None) or not getattr(book, "asks", None):
@@ -1961,6 +2151,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         rows = []
         for raw_id, info in parked.items():
             book_id = int(raw_id)
+            if self._direct_partial_hold_active(book_id, state):
+                continue
             if self._direct_book_has_live_order(book_id):
                 continue
             net = float(self._direct_signed_inventory(book_id))
@@ -2041,6 +2233,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
         placed = 0
         for book_id in sorted(selected):
+            if self._direct_partial_hold_active(book_id, state):
+                self._direct_emit_partial_replacement_block(book_id, path="DUST_COMPACTOR")
+                continue
             # Dust compaction owns the book only after every older order has
             # disappeared from the account snapshot.
             if self._direct_book_has_live_order(book_id):
@@ -2429,7 +2624,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if not selected_ids:
             selected_ids = {int(x) for x in (predictions or {}).keys()}
 
-        # A1.7.3: service legal partial-order remainders before generic quote
+        # A1.7.3.1: service the exact bound partial-order remainder before generic quote
         # maintenance can cancel them. This path places no new sub-minimum order.
         partial_hold_instructions, partial_holds = self._direct_service_partial_fill_recovery(
             response, state,
@@ -2678,6 +2873,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_quote_unselected_keeps"] = int(
             getattr(self, "_direct_quote_unselected_keeps", 0) or 0
         )
+        stats["direct_partial_bound_holds"] = int(getattr(self, "_direct_partial_bound_holds", 0) or 0)
+        stats["direct_partial_bound_pending"] = int(getattr(self, "_direct_partial_bound_pending", 0) or 0)
+        stats["direct_partial_bound_expired"] = int(getattr(self, "_direct_partial_bound_expired", 0) or 0)
+        stats["direct_partial_replacement_blocks"] = int(getattr(self, "_direct_partial_replacement_blocks", 0) or 0)
         self._last_mm_stats = stats
         self._research_timing["build_orders_ms"] = (time.perf_counter() - started) * 1000.0
         return stats

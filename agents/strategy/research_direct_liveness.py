@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""A1.7.3 partial-fill and portfolio-liveness helpers.
+"""A1.7.3.1 partial-remainder publisher and portfolio-liveness helpers.
 
 The exchange minimum-order rule creates a one-way failure mode: once a valid
 0.25 order partially fills and its legal remainder expires, a sub-minimum
@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-DIRECT_LIVENESS_VERSION = "direct_partial_liveness_v4_16_2_a1_7_3"
+DIRECT_LIVENESS_VERSION = "direct_partial_liveness_v4_16_2_a1_7_3_1"
 DIRECT_PARTIAL_HOLD_MIN_NS = 2_500_000_000
 DIRECT_PARTIAL_HOLD_PUBLISH_MULT = 3
 DIRECT_PARTIAL_HOLD_MAX_NS = 4_000_000_000
@@ -20,6 +20,51 @@ DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS = 0.5
 DIRECT_DUST_NORMALIZE_MIN_AGE_TICKS = 4
 DIRECT_STALE_DUST_NORMALIZE_AGE_TICKS = 24
 DIRECT_LIVENESS_TRIGGER_TICKS = 12
+
+
+def bound_remainder_hold_active(
+    *, fill_timestamp_ns: int, now_timestamp_ns: int,
+    hard_ttl_ns: int = DIRECT_PARTIAL_HOLD_MAX_NS,
+) -> bool:
+    """Whether an exact partially-filled resting order still owns the book.
+
+    This is deliberately independent of quote economics.  A1.7.3.1 uses the
+    simulator timestamp carried by the fill and the current state timestamp so
+    generic cancel/reprice and dust-compaction paths cannot replace the legal
+    remainder before the bounded hold window ends.  Missing/lagged timestamps
+    are treated conservatively: the exchange order's own GTT remains the hard
+    external ceiling.
+    """
+    try:
+        start = int(fill_timestamp_ns or 0)
+        now = int(now_timestamp_ns or 0)
+        ttl = max(1, int(hard_ttl_ns or DIRECT_PARTIAL_HOLD_MAX_NS))
+    except (TypeError, ValueError):
+        return True
+    if start <= 0 or now <= 0 or now < start:
+        return True
+    return (now - start) <= ttl
+
+
+def partition_bound_remainder_orders(
+    orders: list[tuple[int, str]], *, bound_order_id: int, desired_side: str,
+) -> tuple[list[int], list[int]]:
+    """Split open-order ids into the exact legal remainder and conflicts."""
+    bound = int(bound_order_id)
+    desired = str(desired_side).lower()
+    keep: list[int] = []
+    conflicts: list[int] = []
+    for raw_id, raw_side in orders:
+        try:
+            oid = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        side = str(raw_side).lower()
+        if oid == bound and side == desired:
+            keep.append(oid)
+        else:
+            conflicts.append(oid)
+    return keep, conflicts
 
 
 @dataclass(frozen=True)

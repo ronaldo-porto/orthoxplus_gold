@@ -4,6 +4,7 @@ import sys
 
 ROOT = Path(__file__).parents[1]
 STRATEGY_DIR = ROOT / "agents" / "strategy"
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(STRATEGY_DIR))
 
 PATH = STRATEGY_DIR / "Strategy1_Research_Simple.py"
@@ -21,12 +22,14 @@ from research_direct_liveness import (
     normalization_allowed,
     partial_recovery_plan,
     recovery_expiry_ns,
+    bound_remainder_hold_active,
+    partition_bound_remainder_orders,
 )
 
 
 def test_a173_version_and_frozen_strategy_contract():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_3"' in SRC
-    assert DIRECT_LIVENESS_VERSION == "direct_partial_liveness_v4_16_2_a1_7_3"
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_3_1"' in SRC
+    assert DIRECT_LIVENESS_VERSION == "direct_partial_liveness_v4_16_2_a1_7_3_1"
     # Exit economics/authority are intentionally frozen from A1.7.2.
     assert DIRECT_OBSERVABLE_EXIT_VERSION == "direct_observable_exit_v4_16_2_a1_7_2"
     assert DIRECT_FASTPATH_CANDIDATE_COUNT == 20
@@ -215,3 +218,64 @@ def test_forced_recovery_overflow_is_scoped_to_normalizer_book_in_final_validato
     assert "DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS" in method
     normalize = ast.get_source_segment(SRC, METHODS["_direct_normalize_irreducible_dust"])
     assert '"A173_LIVENESS_RECOVERY"' in normalize
+
+
+def test_a1731_hold_window_uses_simulator_time_without_parameter_tuning():
+    assert bound_remainder_hold_active(
+        fill_timestamp_ns=10_000_000_000, now_timestamp_ns=13_999_999_999
+    )
+    assert not bound_remainder_hold_active(
+        fill_timestamp_ns=10_000_000_000, now_timestamp_ns=14_000_000_001
+    )
+
+
+def test_a1731_binds_maker_partial_to_exact_order_and_blocks_replacement_paths():
+    fill = ast.get_source_segment(SRC, METHODS["_research_on_own_fill"])
+    note = ast.get_source_segment(SRC, METHODS["_direct_note_partial_fill_recovery"])
+    service = ast.get_source_segment(SRC, METHODS["_direct_service_partial_fill_recovery"])
+    assert "event=event" in fill
+    compact = ast.get_source_segment(SRC, METHODS["_direct_compact_selected_dust"])
+    maker_exit = ast.get_source_segment(SRC, METHODS["_research_place_maker_exit"])
+    assert "bound_order_id" in note
+    assert "hold_start_timestamp_ns" in note
+    assert "_direct_partial_fill_bound_order_id" in note
+    assert "direct_partition_bound_remainder_orders" in service
+    assert '"A1731_PARTIAL_REMAINDER_PENDING"' in service
+    assert "_direct_partial_hold_active(book_id, state)" in compact
+    assert 'path="DUST_COMPACTOR"' in compact
+    assert 'path="MAKER_EXIT"' in maker_exit
+
+
+def test_a1731_book111_regression_keeps_bound_754818_and_cancels_only_sibling():
+    kept, conflicts = partition_bound_remainder_orders(
+        [(754818, "sell"), (754900, "buy")],
+        bound_order_id=754818, desired_side="sell",
+    )
+    assert kept == [754818]
+    assert conflicts == [754900]
+    # A same-side replacement is also conflicting: only the exact original
+    # partially-filled order owns the book during the hold window.
+    kept, conflicts = partition_bound_remainder_orders(
+        [(754818, "sell"), (754901, "sell")],
+        bound_order_id=754818, desired_side="sell",
+    )
+    assert kept == [754818]
+    assert conflicts == [754901]
+
+def test_a1731_keeps_all_liveness_and_trading_parameters_frozen():
+    import research_direct_liveness as live
+    assert live.DIRECT_PARTIAL_HOLD_MAX_NS == 4_000_000_000
+    assert live.DIRECT_PARTIAL_HOLD_PUBLISH_MULT == 3
+    assert live.DIRECT_DUST_RECOVERY_RESERVE_CLIPS == 1
+    assert live.DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS == 0.5
+    assert live.DIRECT_LIVENESS_TRIGGER_TICKS == 12
+    assert DIRECT_FASTPATH_CANDIDATE_COUNT == 20
+    assert DIRECT_FASTPATH_DEEP_COUNT == 16
+    assert DIRECT_MAKER_MIN_EDGE_BPS == 2.5
+    assert DIRECT_TAKER_ENTRY_ENABLED is False
+
+
+def test_a1731_crossing_recovery_target_invalidates_old_bound_remainder():
+    note = ast.get_source_segment(SRC, METHODS["_direct_note_partial_fill_recovery"])
+    assert "crossed_recovery_target" in note
+    assert "bound_order_id = None" in note
