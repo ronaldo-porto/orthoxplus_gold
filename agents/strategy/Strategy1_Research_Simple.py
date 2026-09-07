@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.3.1 Bound Partial-Remainder Publisher Repair Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.4 Genuine Tail-Risk Recovery Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,12 +8,12 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-A1.7.3.1 keeps the A1.7.1 true mark-to-market risk semantics, A1.7.2
-TRUE-WAIT execution invariant, and A1.7.3 liveness parameters frozen.  It repairs
-the publisher handoff where a tracked legal partial remainder was still replaced
-by generic dust compaction.  It preserves the A1.7.3 repair for the underlying
-long-run failure where a valid minimum-size order partially fills, its legal
-remainder expires, and sub-minimum dust permanently consumes the portfolio cap.
+A1.7.4 keeps the A1.7.1 true mark-to-market risk semantics, A1.7.2 TRUE-WAIT
+execution invariant, and A1.7.3.1 partial-remainder/liveness repair frozen.  It
+adds a narrow observation-driven recovery corridor before genuine HARD/ABSOLUTE
+losses: bounded Maker concessions, a tightly bounded failed-recovery Taker, and
+counterfactual tail diagnostics.  Entry economics, FastPath, size, and liveness
+parameters are intentionally unchanged.
 The frozen Strategy1_Research.py base remains untouched.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -123,6 +123,27 @@ from research_direct_quote_manager import (
     keep_unselected_quote,
     maker_expiry_ns_for_regime,
 )
+from research_direct_tail_recovery import (
+    DIRECT_TAIL_RECOVERY_VERSION,
+    DIRECT_RECOVERY_TRIGGER_BPS,
+    DIRECT_RECOVERY_FORCE_BPS,
+    DIRECT_RECOVERY_MIN_AGE_TICKS,
+    DIRECT_RECOVERY_WORSENING_BPS_PER_TICK,
+    DIRECT_RECOVERY_MAKER_FLOOR_BPS,
+    DIRECT_HARD_RECOVERY_MAKER_FLOOR_BPS,
+    DIRECT_ABSOLUTE_RECOVERY_MAKER_FLOOR_BPS,
+    DIRECT_RECOVERY_MAKER_ADVANTAGE_BPS,
+    DIRECT_RECOVERY_MAKER_MAX_FAILED_EXITS,
+    DIRECT_RECOVERY_TAKER_FLOOR_BPS,
+    DIRECT_RECOVERY_TAKER_MIN_FAILED_EXITS,
+    DIRECT_EXPECTED_HARD_TAKER_LOSS_BPS,
+    DIRECT_TAIL_HISTORY_MAX,
+    choose_tail_recovery_override,
+    is_recovery_maker_reason,
+    is_recovery_taker_reason,
+    recovery_maker_floor_for_reason,
+    risk_velocity_bps_per_tick as direct_tail_risk_velocity,
+)
 from research_direct_liveness import (
     DIRECT_LIVENESS_VERSION,
     DIRECT_DUST_NORMALIZE_MIN_AGE_TICKS,
@@ -142,12 +163,12 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_3_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_3_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 safety/session state with A1.7.3.1 bound-remainder repair.
+    """V4.16.2 A1.7.4 tail-recovery overlay on the A1.7.3.1 liveness base.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -166,6 +187,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.7.1 true-MTM Maker/Wait/Taker exit authority for non-flat inventory;
       * A1.7.2 hard execution invariant: WAIT cannot place a new Maker exit;
       * A1.7.3.1 exact-order partial-remainder ownership before dust normalization;
+      * A1.7.4 pre-HARD genuine tail-risk recovery with bounded concessions;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -213,6 +235,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_wait_holds = 0
         self._direct_wait_cancel_batches = 0
         self._direct_negative_aggressive_blocks = 0
+        # A1.7.4 tail-recovery state. This is bounded per-lifecycle telemetry and
+        # decision context; it does not modify the frozen A1.7.1 MTM bands.
+        self._direct_tail_history: dict[int, list[dict[str, float | int]]] = {}
+        self._direct_tail_recovery_active: dict[int, dict[str, Any]] = {}
+        self._direct_tail_recovery_maker_attempts = 0
+        self._direct_tail_recovery_taker_reductions = 0
+        self._direct_tail_counterfactual_events = 0
         # A1.7.3.1 liveness-only state.  This never changes alpha/risk economics.
         self._direct_partial_recovery: dict[int, dict[str, Any]] = {}
         self._direct_partial_hold_live = 0
@@ -281,6 +310,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 true_wait_execution=1,
                 wait_falls_through_to_legacy_maker=0,
                 negative_aggressive_maker_block=1,
+                direct_tail_recovery_version=DIRECT_TAIL_RECOVERY_VERSION,
+                recovery_trigger_bps=DIRECT_RECOVERY_TRIGGER_BPS,
+                recovery_force_bps=DIRECT_RECOVERY_FORCE_BPS,
+                recovery_min_age_ticks=DIRECT_RECOVERY_MIN_AGE_TICKS,
+                recovery_worsening_bps_per_tick=DIRECT_RECOVERY_WORSENING_BPS_PER_TICK,
+                recovery_maker_floor_bps=DIRECT_RECOVERY_MAKER_FLOOR_BPS,
+                hard_recovery_maker_floor_bps=DIRECT_HARD_RECOVERY_MAKER_FLOOR_BPS,
+                absolute_recovery_maker_floor_bps=DIRECT_ABSOLUTE_RECOVERY_MAKER_FLOOR_BPS,
+                recovery_maker_advantage_bps=DIRECT_RECOVERY_MAKER_ADVANTAGE_BPS,
+                recovery_maker_max_failed_exits=DIRECT_RECOVERY_MAKER_MAX_FAILED_EXITS,
+                recovery_taker_floor_bps=DIRECT_RECOVERY_TAKER_FLOOR_BPS,
+                recovery_taker_min_failed_exits=DIRECT_RECOVERY_TAKER_MIN_FAILED_EXITS,
+                observed_expected_hard_taker_loss_bps=DIRECT_EXPECTED_HARD_TAKER_LOSS_BPS,
                 wait_resting_exit_floor_bps=DIRECT_MAKER_EXIT_TARGET_BPS,
                 direct_max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
                 direct_exposure_liveness_version="direct_liveness_v4_16_2_a1_6_3",
@@ -383,6 +425,28 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     global_stats = MakerLifecycleStats()
                     self._direct_maker_quality_global = global_stats
                 global_stats.observe(net_bps=net_bps, gross_bps=gross_bps, exit_is_taker=exit_is_taker)
+                recovery_row = (getattr(self, "_direct_tail_recovery_active", {}) or {}).pop(bid, None)
+                if isinstance(recovery_row, dict):
+                    try:
+                        self._emit(
+                            "A174_RECOVERY_OUTCOME", force=True,
+                            tick=int(getattr(self, "_tick", 0) or 0), book=bid,
+                            recovery_version=DIRECT_TAIL_RECOVERY_VERSION,
+                            first_recovery_tick=int(recovery_row.get("first_tick", -1) or -1),
+                            last_recovery_tick=int(recovery_row.get("last_tick", -1) or -1),
+                            last_recovery_reason=str(recovery_row.get("last_reason", "") or ""),
+                            recovery_actions=int(recovery_row.get("actions", 0) or 0),
+                            best_recovery_maker_net_bps=float(recovery_row.get("best_maker_net_bps", 0.0) or 0.0),
+                            best_recovery_maker_tick=int(recovery_row.get("best_maker_tick", -1) or -1),
+                            net_realized_bps=float(net_bps), realized_pnl=float(realized_pnl),
+                            exit_style=("TAKER" if exit_is_taker else "MAKER"),
+                            positive=int(float(net_bps) > 0.0),
+                        )
+                    except Exception:
+                        pass
+                tail_history = getattr(self, "_direct_tail_history", None)
+                if isinstance(tail_history, dict):
+                    tail_history.pop(bid, None)
                 try:
                     self._emit(
                         "DIRECT_MAKER_LIFECYCLE", force=True,
@@ -412,6 +476,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     "realized_notional": 0.0,
                     "used_taker_exit": 0,
                 }
+            if is_flat or crossed:
+                tail_history = getattr(self, "_direct_tail_history", None)
+                if isinstance(tail_history, dict):
+                    tail_history.pop(bid, None)
+                recovery_table = getattr(self, "_direct_tail_recovery_active", None)
+                if isinstance(recovery_table, dict):
+                    recovery_table.pop(bid, None)
         except Exception:
             return
 
@@ -566,6 +637,98 @@ class Strategy1_Research_Simple(Strategy1_Research):
             entry_ev_pass=eligible,
         )
 
+    def _direct_tail_history_rows(self, book_id: int) -> list[dict[str, float | int]]:
+        table = getattr(self, "_direct_tail_history", None)
+        if not isinstance(table, dict):
+            table = {}
+            self._direct_tail_history = table
+        rows = table.get(int(book_id))
+        if not isinstance(rows, list):
+            rows = []
+            table[int(book_id)] = rows
+        return rows
+
+    def _direct_tail_note_observation(
+        self, *, book_id: int, tick: int, risk_bps: float, maker_net_bps: float,
+        taker_net_bps: float, failed_exit_count: int, action: str, reason: str,
+    ) -> None:
+        rows = self._direct_tail_history_rows(int(book_id))
+        row = {
+            "tick": int(tick), "risk_bps": float(risk_bps),
+            "maker_net_bps": float(maker_net_bps), "taker_net_bps": float(taker_net_bps),
+            "failed_exit_count": int(failed_exit_count), "action": str(action or ""),
+            "reason": str(reason or ""),
+        }
+        if rows and int(rows[-1].get("tick", -1)) == int(tick):
+            rows[-1] = row
+        else:
+            rows.append(row)
+        if len(rows) > int(DIRECT_TAIL_HISTORY_MAX):
+            del rows[:-int(DIRECT_TAIL_HISTORY_MAX)]
+
+    def _direct_tail_best_recovery_snapshot(self, book_id: int) -> dict[str, Any] | None:
+        rows = self._direct_tail_history_rows(int(book_id))
+        eligible = [r for r in rows if float(r.get("risk_bps", 0.0) or 0.0) <= DIRECT_RECOVERY_TRIGGER_BPS]
+        if not eligible:
+            return None
+        best = max(eligible, key=lambda r: float(r.get("maker_net_bps", -1e9) or -1e9))
+        return dict(best)
+
+    def _direct_tail_mark_recovery(self, book_id: int, *, reason: str, decision, captured: dict[str, Any]) -> None:
+        table = getattr(self, "_direct_tail_recovery_active", None)
+        if not isinstance(table, dict):
+            table = {}
+            self._direct_tail_recovery_active = table
+        bid = int(book_id)
+        now = int(getattr(self, "_tick", 0) or 0)
+        row = table.get(bid)
+        if not isinstance(row, dict):
+            row = {
+                "first_tick": now,
+                "best_maker_net_bps": float(captured.get("maker_net_bps", 0.0) or 0.0),
+                "best_maker_tick": now,
+                "actions": 0,
+            }
+            table[bid] = row
+        maker = float(captured.get("maker_net_bps", 0.0) or 0.0)
+        if maker > float(row.get("best_maker_net_bps", -1e9) or -1e9):
+            row["best_maker_net_bps"] = maker
+            row["best_maker_tick"] = now
+        row["last_tick"] = now
+        row["last_reason"] = str(reason or "")
+        row["last_action"] = str(getattr(decision, "action", "") or "")
+        row["actions"] = int(row.get("actions", 0) or 0) + 1
+
+    def _direct_tail_emit_counterfactual(self, *, book_id: int, decision, captured: dict[str, Any]) -> None:
+        reason = str(getattr(decision, "reason", "") or "")
+        if reason not in {"HARD_ESCAPE_CLIP", "ABSOLUTE_PROTECTION_REDUCE"}:
+            return
+        best = self._direct_tail_best_recovery_snapshot(int(book_id))
+        if best is None:
+            return
+        final_taker = float(captured.get("taker_net_bps", 0.0) or 0.0)
+        best_maker = float(best.get("maker_net_bps", 0.0) or 0.0)
+        avoided = best_maker - final_taker
+        self._direct_tail_counterfactual_events = int(
+            getattr(self, "_direct_tail_counterfactual_events", 0) or 0
+        ) + 1
+        try:
+            self._emit(
+                "A174_TAIL_COUNTERFACTUAL", force=True,
+                tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                final_reason=reason,
+                final_position_risk_bps=float(captured.get("position_risk_bps", 0.0) or 0.0),
+                final_taker_net_bps=final_taker,
+                best_prior_maker_net_bps=best_maker,
+                best_prior_maker_tick=int(best.get("tick", -1) or -1),
+                best_prior_risk_bps=float(best.get("risk_bps", 0.0) or 0.0),
+                potential_avoided_loss_bps=float(avoided),
+                observed_expected_hard_taker_loss_bps=DIRECT_EXPECTED_HARD_TAKER_LOSS_BPS,
+                recovery_version=DIRECT_TAIL_RECOVERY_VERSION,
+            )
+        except Exception:
+            pass
+
     def _research_apply_unified_exit(self, legacy, **kwargs):
         """Apply A1.7.2 Direct exit semantics without mutating frozen Research.
 
@@ -579,6 +742,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
         inventory = kwargs.get("inventory")
         true_unrealized = getattr(inventory, "unrealized_bps", None)
+        book_id_outer = int(kwargs.get("book_id", -1))
+        tick_outer = int(getattr(self, "_tick", 0) or 0)
         captured: dict[str, Any] = {}
 
         def a172_direct_chooser(**exit_kwargs):
@@ -601,9 +766,29 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 getattr(self, "research_positive_maker_veto_floor_bps", 1.0)
             )
             exit_kwargs["absolute_positive_maker_veto_max_failed_exits"] = 1
-            decision = choose_observable_position_exit(**exit_kwargs)
+            base_decision = choose_observable_position_exit(**exit_kwargs)
+            position_risk_bps = float(true_unrealized or 0.0)
+            history = self._direct_tail_history_rows(book_id_outer) if book_id_outer >= 0 else []
+            risk_velocity = direct_tail_risk_velocity(
+                history, tick=tick_outer, current_risk_bps=position_risk_bps,
+            )
+            decision = choose_tail_recovery_override(
+                base_decision=base_decision,
+                maker_net_bps=float(exit_kwargs.get("maker_net_bps", 0.0) or 0.0),
+                taker_net_bps=float(exit_kwargs.get("taker_net_bps", 0.0) or 0.0),
+                position_risk_bps=position_risk_bps,
+                risk_velocity_bps_per_tick_value=float(risk_velocity),
+                inventory_qty=float(exit_kwargs.get("inventory_qty", 0.0) or 0.0),
+                inventory_age=float(exit_kwargs.get("inventory_age", 0.0) or 0.0),
+                failed_exit_count=int(exit_kwargs.get("failed_exit_count", 0) or 0),
+                catastrophic_hard_risk=bool(exit_kwargs.get("catastrophic_hard_risk", False)),
+                reduction_executable=bool(exit_kwargs.get("reduction_executable", False)),
+            )
             captured.update(exit_kwargs)
             captured["caller_unrealized_bps"] = caller_unrealized
+            captured["position_risk_bps"] = position_risk_bps
+            captured["risk_velocity_bps_per_tick"] = float(risk_velocity)
+            captured["base_decision"] = base_decision
             captured["decision"] = decision
             return decision
 
@@ -619,14 +804,32 @@ class Strategy1_Research_Simple(Strategy1_Research):
             decision = captured.get("decision")
             book_id = int(kwargs.get("book_id", -1))
             if decision is not None and book_id >= 0:
+                reason_token = str(getattr(decision, "reason", "") or "")
+                recovery_floor = recovery_maker_floor_for_reason(reason_token)
                 self._direct_exit_authority_last[book_id] = {
                     "tick": int(getattr(self, "_tick", 0) or 0),
                     "action": str(getattr(decision, "action", "") or ""),
-                    "reason": str(getattr(decision, "reason", "") or ""),
+                    "reason": reason_token,
                     "risk_band": str(getattr(decision, "risk_band", "") or ""),
                     "maker_net_bps": float(captured.get("maker_net_bps", 0.0) or 0.0),
                     "taker_net_bps": float(captured.get("taker_net_bps", 0.0) or 0.0),
+                    "position_risk_bps": float(captured.get("position_risk_bps", 0.0) or 0.0),
+                    "risk_velocity_bps_per_tick": float(captured.get("risk_velocity_bps_per_tick", 0.0) or 0.0),
+                    "recovery_maker_authorized": int(is_recovery_maker_reason(reason_token)),
+                    "recovery_maker_floor_bps": recovery_floor,
+                    "recovery_taker_authorized": int(is_recovery_taker_reason(reason_token)),
                 }
+                if is_recovery_taker_reason(reason_token):
+                    # The frozen base sees DEFENSIVE as a non-hard band and would
+                    # label this as ordinary economic Taker with a zero loss
+                    # floor. Reclassify only the A1.7.4 bounded recovery Taker.
+                    result = replace(
+                        result, taker_allowed=True, direct_taker_authorized=True,
+                        economic_taker_authorized=False, score_taker_authorized=False,
+                        risk_taker_authorized=True, aggressive_positive_ev_taker_authorized=False,
+                        taker_authority="RECOVERY", allowed_loss_floor_bps=DIRECT_RECOVERY_TAKER_FLOOR_BPS,
+                        trigger=reason_token, hybrid_reason=reason_token,
+                    )
                 if str(getattr(decision, "action", "") or "") == ACTION_WAIT:
                     # The frozen base maps every non-Taker decision back to the
                     # legacy Maker rung.  Rewrite only the outward token; the
@@ -691,6 +894,64 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     maker_net_bps=float(captured.get("maker_net_bps", 0.0) or 0.0),
                     taker_net_bps=float(captured.get("taker_net_bps", 0.0) or 0.0),
                     wait_is_terminal=int(str(getattr(decision, "action", "")) == ACTION_WAIT),
+                )
+        except Exception:
+            pass
+
+        # A1.7.4 recovery/counterfactual telemetry and per-book MTM history.
+        try:
+            decision = captured.get("decision")
+            if decision is not None and book_id_outer >= 0:
+                reason_token = str(getattr(decision, "reason", "") or "")
+                base_decision = captured.get("base_decision")
+                risk_bps = float(captured.get("position_risk_bps", 0.0) or 0.0)
+                maker_bps = float(captured.get("maker_net_bps", 0.0) or 0.0)
+                taker_bps = float(captured.get("taker_net_bps", 0.0) or 0.0)
+                velocity = float(captured.get("risk_velocity_bps_per_tick", 0.0) or 0.0)
+                failed = int(captured.get("failed_exit_count", 0) or 0)
+                age = float(captured.get("inventory_age", 0.0) or 0.0)
+                is_recovery = (
+                    reason_token.startswith("RECOVERY_")
+                    or reason_token.startswith("HARD_RECOVERY_")
+                    or reason_token.startswith("ABSOLUTE_RECOVERY_")
+                )
+                if is_recovery:
+                    self._direct_tail_mark_recovery(
+                        book_id_outer, reason=reason_token, decision=decision, captured=captured,
+                    )
+                    if is_recovery_maker_reason(reason_token):
+                        self._direct_tail_recovery_maker_attempts = int(
+                            getattr(self, "_direct_tail_recovery_maker_attempts", 0) or 0
+                        ) + 1
+                    if is_recovery_taker_reason(reason_token):
+                        self._direct_tail_recovery_taker_reductions = int(
+                            getattr(self, "_direct_tail_recovery_taker_reductions", 0) or 0
+                        ) + 1
+                    self._emit(
+                        "A174_RECOVERY_DECISION", force=True,
+                        tick=tick_outer, book=book_id_outer,
+                        recovery_version=DIRECT_TAIL_RECOVERY_VERSION,
+                        base_action=str(getattr(base_decision, "action", "") or ""),
+                        base_reason=str(getattr(base_decision, "reason", "") or ""),
+                        selected_action=str(getattr(decision, "action", "") or ""),
+                        recovery_reason=reason_token,
+                        risk_band=str(getattr(decision, "risk_band", "") or ""),
+                        position_risk_bps=risk_bps,
+                        risk_velocity_bps_per_tick=velocity,
+                        maker_net_bps=maker_bps, taker_net_bps=taker_bps,
+                        inventory_age=age, failed_exit_count=failed,
+                        maker_floor_bps=recovery_maker_floor_for_reason(reason_token),
+                        maker_advantage_bps=DIRECT_RECOVERY_MAKER_ADVANTAGE_BPS,
+                        recovery_taker_floor_bps=DIRECT_RECOVERY_TAKER_FLOOR_BPS,
+                    )
+                self._direct_tail_emit_counterfactual(
+                    book_id=book_id_outer, decision=decision, captured=captured,
+                )
+                self._direct_tail_note_observation(
+                    book_id=book_id_outer, tick=tick_outer, risk_bps=risk_bps,
+                    maker_net_bps=maker_bps, taker_net_bps=taker_bps,
+                    failed_exit_count=failed, action=str(getattr(decision, "action", "") or ""),
+                    reason=reason_token,
                 )
         except Exception:
             pass
@@ -799,10 +1060,52 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # a failed realization attempt.
             return 0
 
+        # A1.7.4 bounded concession: negative Maker is legal only when the
+        # current-tick recovery authority explicitly approved it and the final
+        # executable net still respects the reason-specific floor.
+        recovery_maker_ok = False
+        if authority is not None and bool(authority.get("recovery_maker_authorized", 0)):
+            floor = authority.get("recovery_maker_floor_bps")
+            try:
+                floor_f = float(floor) if floor is not None else 0.0
+                maker_f = float(maker_net_bps) if maker_net_bps is not None else -1e9
+                recovery_maker_ok = maker_f + 1e-12 >= floor_f
+            except (TypeError, ValueError):
+                recovery_maker_ok = False
+            if not recovery_maker_ok:
+                try:
+                    self._emit(
+                        "A174_RECOVERY_MAKER_BLOCK", force=True,
+                        tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                        reason=str(authority.get("reason") or "RECOVERY_MAKER"),
+                        maker_net_bps=(None if maker_net_bps is None else float(maker_net_bps)),
+                        authorized_floor_bps=floor, action=str(action or ""),
+                    )
+                except Exception:
+                    pass
+                return 0
+            try:
+                self._emit(
+                    "A174_RECOVERY_MAKER_PLACE", force=True,
+                    tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                    reason=str(authority.get("reason") or "RECOVERY_MAKER"),
+                    maker_net_bps=float(maker_net_bps),
+                    authorized_floor_bps=floor_f, action=str(action or ""),
+                    position_risk_bps=float(authority.get("position_risk_bps", 0.0) or 0.0),
+                    risk_velocity_bps_per_tick=float(authority.get("risk_velocity_bps_per_tick", 0.0) or 0.0),
+                )
+            except Exception:
+                pass
+
         # Independent belt-and-suspenders guard: a legacy path may still request
         # AGGRESSIVE_MAKER_EXIT. Never allow that rung to realize a negative
-        # lifecycle merely because Taker authority was denied.
-        if str(action or "") == "AGGRESSIVE_MAKER_EXIT" and maker_net_bps is not None:
+        # lifecycle merely because Taker authority was denied. A1.7.4 recovery
+        # is the only bounded exception.
+        if (
+            str(action or "") == "AGGRESSIVE_MAKER_EXIT"
+            and maker_net_bps is not None
+            and not recovery_maker_ok
+        ):
             try:
                 negative_aggressive = float(maker_net_bps) < -1e-12
             except (TypeError, ValueError):
