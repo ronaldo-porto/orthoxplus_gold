@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.2 True-WAIT Execution Repair Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.3 Partial-Fill + Portfolio Liveness Repair Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,10 +8,10 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-For non-flat inventory A1.7.2 preserves the A1.7.1 true mark-to-market risk
-semantics and fixes the next execution leak: Direct ``WAIT`` is now a real hold
-authority.  WAIT cannot fall through to the legacy Maker realization ladder, and
-negative AGGRESSIVE Maker realization is blocked at the execution boundary.
+A1.7.3 keeps the A1.7.1 true mark-to-market risk semantics and the A1.7.2
+TRUE-WAIT execution invariant frozen.  It repairs the long-run liveness failure
+created when a valid minimum-size order partially fills, its legal remainder
+expires, and sub-minimum dust permanently consumes the portfolio exposure cap.
 The frozen Strategy1_Research.py base remains untouched.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -121,14 +121,29 @@ from research_direct_quote_manager import (
     keep_unselected_quote,
     maker_expiry_ns_for_regime,
 )
+from research_direct_liveness import (
+    DIRECT_LIVENESS_VERSION,
+    DIRECT_DUST_NORMALIZE_MIN_AGE_TICKS,
+    DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS,
+    DIRECT_STALE_DUST_NORMALIZE_AGE_TICKS,
+    DIRECT_LIVENESS_TRIGGER_TICKS,
+    DIRECT_PARTIAL_HOLD_MAX_NS,
+    DIRECT_PARTIAL_HOLD_PUBLISH_MULT,
+    admission_slots as direct_liveness_admission_slots,
+    dust_recovery_reserve_abs,
+    is_dust_inventory as direct_is_dust_inventory,
+    normalization_allowed as direct_normalization_allowed,
+    partial_recovery_plan,
+    recovery_expiry_ns as direct_recovery_expiry_ns,
+)
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_2"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_2"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_3"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_3"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 safety/session state with A1.7.2 true-WAIT execution semantics.
+    """V4.16.2 safety/session state with A1.7.3 partial-fill/liveness repair.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -146,6 +161,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * Maker-only acquisition; directional Taker entry stays disabled;
       * A1.7.1 true-MTM Maker/Wait/Taker exit authority for non-flat inventory;
       * A1.7.2 hard execution invariant: WAIT cannot place a new Maker exit;
+      * A1.7.3 legal partial-remainder preservation and bounded dust normalization;
+      * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
     """
@@ -192,6 +209,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_wait_holds = 0
         self._direct_wait_cancel_batches = 0
         self._direct_negative_aggressive_blocks = 0
+        # A1.7.3 liveness-only state.  This never changes alpha/risk economics.
+        self._direct_partial_recovery: dict[int, dict[str, Any]] = {}
+        self._direct_partial_hold_live = 0
+        self._direct_partial_hold_releases = 0
+        self._direct_partial_wrong_side_cancels = 0
+        self._direct_dust_normalize_orders = 0
+        self._direct_dust_normalize_fills = 0
+        self._direct_liveness_blocked_ticks = 0
+        self._direct_liveness_triggers = 0
+        self._direct_forced_recovery_books_this_tick: set[int] = set()
         try:
             self._emit(
                 "SIMPLE_CONFIG",
@@ -247,7 +274,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 negative_aggressive_maker_block=1,
                 wait_resting_exit_floor_bps=DIRECT_MAKER_EXIT_TARGET_BPS,
                 direct_max_pre_submit_age_ms=DIRECT_MAX_PRE_SUBMIT_AGE_MS,
-                direct_liveness_version="direct_liveness_v4_16_2_a1_6_3",
+                direct_exposure_liveness_version="direct_liveness_v4_16_2_a1_6_3",
                 direct_quote_manager_version=DIRECT_QUOTE_MANAGER_VERSION,
                 persistent_maker_execution=1,
                 learned_quote_authority=0,
@@ -256,6 +283,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 inflight_exposure_reservation=1,
                 one_live_order_batch_per_book=1,
                 isolated_dust_compaction=1,
+                direct_liveness_version=DIRECT_LIVENESS_VERSION,
+                direct_partial_remainder_hold=1,
+                direct_partial_remainder_hard_ttl_ms=float(DIRECT_PARTIAL_HOLD_MAX_NS) / 1_000_000.0,
+                direct_partial_remainder_publish_mult=int(DIRECT_PARTIAL_HOLD_PUBLISH_MULT),
+                direct_dust_recovery_reserve_clips=1,
+                direct_irreducible_dust_normalization=1,
                 direct_exposure_version=DIRECT_EXPOSURE_VERSION,
                 dust_fastpath_forced=0,
                 direct_dust_compaction=1,
@@ -290,6 +323,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         super()._research_on_own_fill(
             event=event, book_id=book_id, before=before, after=after,
             kappa_before=kappa_before, kappa_after=kappa_after, is_maker=is_maker,
+        )
+        self._direct_note_partial_fill_recovery(
+            book_id=int(book_id), before=float(before), after=float(after), is_maker=bool(is_maker),
         )
         try:
             bid = int(book_id)
@@ -897,7 +933,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 net = abs(float(self._direct_signed_inventory(book_id)))
             except Exception:
                 net = 0.0
-            # Once inventory appears, entry quotes no longer own the book.
+            # A1.7.3: if this is a tracked partial fill, the original legal
+            # remainder is the only sub-minimum order we are allowed to keep.
+            # The recovery service cancels the wrong-side sibling separately.
+            recovery = (getattr(self, "_direct_partial_recovery", {}) or {}).get(book_id)
+            if net > eps and recovery is not None and direct_is_dust_inventory(
+                net, min_order=float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25), eps=eps,
+            ):
+                continue
+            # Once ordinary inventory appears, entry quotes no longer own the book.
             if net > eps:
                 placed += self._direct_cancel_entry_quotes(
                     response, book_id, reason="INVENTORY_OPENED",
@@ -1036,8 +1080,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         pass
                 return 0
 
-        expiry_ns = maker_expiry_ns_for_regime(
+        baseline_expiry_ns = maker_expiry_ns_for_regime(
             getattr(self, "_research_market_regime", "NORMAL")
+        )
+        publish_ns = int(getattr(getattr(state, "config", None), "publish_interval", 0) or 0)
+        expiry_ns = direct_recovery_expiry_ns(
+            baseline_ns=int(baseline_expiry_ns), publish_interval_ns=publish_ns,
         )
         tick = int(getattr(self, "_tick", 0) or 0)
         if tick <= 2 or tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
@@ -1643,6 +1691,331 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_lifecycle_fee_last = {}
 
     # ------------------------------------------------------------------
+    # A1.7.3 partial-fill completion + irreducible-dust liveness.
+    # ------------------------------------------------------------------
+    def _direct_note_partial_fill_recovery(
+        self, *, book_id: int, before: float, after: float, is_maker: bool,
+    ) -> None:
+        """Track a legal order remainder whenever a fill leaves dust.
+
+        No sub-minimum order is ever created here.  The state only tells the next
+        request which *already legal* remainder may be preserved.  If that
+        remainder later expires, bounded same-sign normalization can convert the
+        dust into an actionable >= min-order position using reserved headroom.
+        """
+        try:
+            bid = int(book_id)
+            eps = float(self._execution_flat_epsilon())
+            min_size = max(
+                1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+            )
+            plan = partial_recovery_plan(
+                before=float(before), after=float(after), min_order=min_size, eps=eps,
+            )
+            current = (getattr(self, "_direct_partial_recovery", {}) or {}).get(bid)
+            if plan is None:
+                if current is not None and not direct_is_dust_inventory(
+                    float(after), min_order=min_size, eps=eps,
+                ):
+                    mode = str(current.get("mode") or "UNKNOWN")
+                    self._direct_partial_recovery.pop(bid, None)
+                    self._direct_partial_hold_releases = int(
+                        getattr(self, "_direct_partial_hold_releases", 0) or 0
+                    ) + 1
+                    if mode == "NORMALIZE" and abs(float(after)) + eps >= min_size:
+                        self._direct_dust_normalize_fills = int(
+                            getattr(self, "_direct_dust_normalize_fills", 0) or 0
+                        ) + 1
+                    try:
+                        self._emit(
+                            "A173_PARTIAL_FILL_RELEASE", force=True,
+                            tick=int(getattr(self, "_tick", 0) or 0), book=bid,
+                            mode=mode, net_before=float(before), net_after=float(after),
+                            actionable=int(abs(float(after)) + eps >= min_size),
+                            flat=int(abs(float(after)) <= eps),
+                        )
+                    except Exception:
+                        pass
+                return
+
+            tick = int(getattr(self, "_tick", 0) or 0)
+            # If an existing recovery is already making progress toward its
+            # target, preserve its intent rather than reclassifying every dust fill.
+            progressed_existing = False
+            if current is not None:
+                desired_side = str(current.get("desired_side") or plan.desired_side)
+                mode = str(current.get("mode") or plan.mode)
+                target = float(current.get("target_inventory", plan.target_inventory) or 0.0)
+                preserve = bool(current.get("preserve_existing_remainder", plan.preserve_existing_remainder))
+                first_tick = int(current.get("first_tick", tick) or tick)
+                progressed_existing = (
+                    abs(target - float(after)) <= abs(target - float(before)) + eps
+                )
+            else:
+                desired_side = plan.desired_side
+                mode = plan.mode
+                target = float(plan.target_inventory)
+                preserve = bool(plan.preserve_existing_remainder)
+                first_tick = tick
+                self._research_partial_fill_hold_candidates = int(
+                    getattr(self, "_research_partial_fill_hold_candidates", 0) or 0
+                ) + 1
+
+            # A crossed-through-zero/unexpected dust event invalidates the old
+            # remainder, unless the current tracked order demonstrably moved the
+            # position closer to its existing recovery target.
+            if not progressed_existing and not bool(plan.preserve_existing_remainder):
+                desired_side = plan.desired_side
+                mode = plan.mode
+                target = float(plan.target_inventory)
+                preserve = False
+
+            row = {
+                "mode": mode,
+                "target_inventory": float(target),
+                "desired_side": str(desired_side),
+                "preserve_existing_remainder": bool(preserve),
+                "first_tick": int(first_tick),
+                "last_progress_tick": tick,
+                "net_base": float(after),
+                "maker_origin": int(bool(is_maker)),
+            }
+            self._direct_partial_recovery[bid] = row
+            try:
+                self._emit(
+                    "A173_PARTIAL_FILL_RECOVERY", force=True,
+                    tick=tick, book=bid, mode=str(row["mode"]),
+                    net_before=float(before), net_after=float(after),
+                    target_inventory=float(row["target_inventory"]),
+                    desired_side=str(row["desired_side"]),
+                    preserve_existing_remainder=int(bool(row["preserve_existing_remainder"])),
+                    min_order_size=float(min_size), maker_origin=int(bool(is_maker)),
+                    liveness_version=DIRECT_LIVENESS_VERSION,
+                )
+            except Exception:
+                pass
+        except Exception:
+            return
+
+    def _direct_service_partial_fill_recovery(self, response, state) -> tuple[int, int]:
+        """Keep only the legal live remainder that moves dust toward its target."""
+        registry = getattr(self, "_direct_partial_recovery", {}) or {}
+        if not registry:
+            return 0, 0
+        eps = float(self._execution_flat_epsilon())
+        min_size = max(
+            1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        )
+        instructions = 0
+        holds = 0
+        for book_id, row in list(registry.items()):
+            net = float(self._direct_signed_inventory(int(book_id)))
+            if not direct_is_dust_inventory(net, min_order=min_size, eps=eps):
+                self._direct_partial_recovery.pop(int(book_id), None)
+                self._direct_partial_hold_releases = int(
+                    getattr(self, "_direct_partial_hold_releases", 0) or 0
+                ) + 1
+                continue
+            desired = str(row.get("desired_side") or ("buy" if net > 0.0 else "sell")).lower()
+            preserve = bool(row.get("preserve_existing_remainder", False))
+            matching = []
+            wrong_ids = []
+            for order in self._direct_account_orders(int(book_id)):
+                parsed = self._direct_order_side_price(order)
+                if parsed is None:
+                    continue
+                side, _price = parsed
+                oid = getattr(order, "id", None)
+                if preserve and side == desired:
+                    matching.append(order)
+                elif oid is not None:
+                    wrong_ids.append(oid)
+
+            if wrong_ids and self._count_book_instructions(response, int(book_id)) < self.max_instructions_per_book:
+                try:
+                    response.cancel_orders(book_id=int(book_id), order_ids=wrong_ids, delay=0)
+                    instructions += 1
+                    self._direct_partial_wrong_side_cancels = int(
+                        getattr(self, "_direct_partial_wrong_side_cancels", 0) or 0
+                    ) + 1
+                    self._emit(
+                        "A173_PARTIAL_REMAINDER_CANCEL", force=True,
+                        tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                        mode=str(row.get("mode") or "UNKNOWN"), desired_side=desired,
+                        cancelled_orders=len(wrong_ids), net_base=float(net),
+                    )
+                except Exception:
+                    pass
+
+            if matching:
+                holds += 1
+                self._research_partial_fill_hold_quoted = int(
+                    getattr(self, "_research_partial_fill_hold_quoted", 0) or 0
+                ) + 1
+                self._direct_partial_hold_live = int(
+                    getattr(self, "_direct_partial_hold_live", 0) or 0
+                ) + 1
+                try:
+                    self._emit(
+                        "A173_PARTIAL_REMAINDER_HOLD", force=True,
+                        tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                        mode=str(row.get("mode") or "UNKNOWN"), desired_side=desired,
+                        live_remainder_orders=len(matching), net_base=float(net),
+                        target_inventory=float(row.get("target_inventory", 0.0) or 0.0),
+                        new_subminimum_order=0,
+                    )
+                except Exception:
+                    pass
+        return int(instructions), int(holds)
+
+    def _direct_place_dust_normalizer(self, response, state, book_id: int, net_base: float) -> int:
+        """Add one same-sign minimum Maker clip so irreducible dust becomes actionable."""
+        books = getattr(state, "books", None) or {}
+        book = books.get(int(book_id))
+        if book is None or not getattr(book, "bids", None) or not getattr(book, "asks", None):
+            return 0
+        if self._direct_book_has_live_order(int(book_id)):
+            return 0
+        if self._count_book_instructions(response, int(book_id)) >= self.max_instructions_per_book:
+            return 0
+        min_size = max(
+            1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        )
+        vol_dec = int(getattr(getattr(state, "config", None), "volumeDecimals", 8) or 8)
+        qty = self._round_order_size(min_size, vol_dec)
+        if qty + 1e-12 < min_size:
+            return 0
+        bid = float(book.bids[0].price)
+        ask = float(book.asks[0].price)
+        if bid <= 0.0 or ask <= bid:
+            return 0
+        long_dust = float(net_base) > 0.0
+        direction = OrderDirection.BUY if long_dust else OrderDirection.SELL
+        price = bid if long_dust else ask
+        account = self.accounts.get(int(book_id))
+        if account is None:
+            return 0
+        if long_dust:
+            if float(getattr(account.quote_balance, "free", 0.0) or 0.0) + 1e-12 < price * qty:
+                return 0
+            side_code = 1
+        else:
+            if float(getattr(account.base_balance, "free", 0.0) or 0.0) + 1e-12 < qty:
+                return 0
+            side_code = 2
+        baseline = maker_expiry_ns_for_regime(getattr(self, "_research_market_regime", "NORMAL"))
+        publish = int(getattr(getattr(state, "config", None), "publish_interval", 0) or 0)
+        expiry = direct_recovery_expiry_ns(
+            baseline_ns=int(baseline), publish_interval_ns=publish,
+        )
+        response.limit_order(
+            book_id=int(book_id), direction=direction, quantity=float(qty), price=float(price),
+            clientOrderId=91000 + int(book_id) * 10 + side_code,
+            stp=STP.CANCEL_BOTH, postOnly=True, timeInForce=TimeInForce.GTT,
+            expiryPeriod=int(expiry), leverage=0.0,
+            settlement_option=LoanSettlementOption.NONE, delay=0,
+        )
+        tick = int(getattr(self, "_tick", 0) or 0)
+        self._direct_partial_recovery[int(book_id)] = {
+            "mode": "NORMALIZE",
+            "target_inventory": float(net_base + (qty if long_dust else -qty)),
+            "desired_side": "buy" if long_dust else "sell",
+            "preserve_existing_remainder": True,
+            "first_tick": tick,
+            "last_progress_tick": tick,
+            "net_base": float(net_base),
+            "maker_origin": 1,
+        }
+        self._direct_dust_normalize_orders = int(
+            getattr(self, "_direct_dust_normalize_orders", 0) or 0
+        ) + 1
+        try:
+            self._emit(
+                "A173_DUST_NORMALIZE", force=True, tick=tick, book=int(book_id),
+                net_base=float(net_base), normalize_side=("buy" if long_dust else "sell"),
+                quantity=float(qty), price=float(price), expiry_ns=int(expiry),
+                projected_abs_after_full_fill=abs(float(net_base)) + float(qty),
+                liveness_version=DIRECT_LIVENESS_VERSION,
+            )
+        except Exception:
+            pass
+        return 1
+
+    def _direct_normalize_irreducible_dust(
+        self, response, state, *, effective_abs: float, effective_active: int,
+        effective_open: int, force_liveness: bool,
+    ) -> int:
+        """Normalize at most one old/blocked irreducible dust book per request."""
+        parked = getattr(self, "_research_parked_dust", {}) or {}
+        if not parked:
+            return 0
+        tick = int(getattr(self, "_tick", 0) or 0)
+        eps = float(self._execution_flat_epsilon())
+        min_size = max(
+            1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        )
+        max_abs = float(getattr(self, "research_max_total_abs_base", 2.0) or 2.0)
+        max_active = int(getattr(self, "research_max_active_open_books", 6) or 6)
+        max_open = int(getattr(self, "research_max_total_open_books", 8) or 8)
+        registry = getattr(self, "_direct_partial_recovery", {}) or {}
+        rows = []
+        for raw_id, info in parked.items():
+            book_id = int(raw_id)
+            if self._direct_book_has_live_order(book_id):
+                continue
+            net = float(self._direct_signed_inventory(book_id))
+            if not direct_is_dust_inventory(net, min_order=min_size, eps=eps):
+                continue
+            if abs(net) + 1e-12 >= 0.5 * min_size:
+                continue
+            first_tick = int((info or {}).get("first_tick", tick) or tick)
+            age = max(0, tick - first_tick)
+            recovery = registry.get(book_id)
+            recovery_age = max(0, tick - int((recovery or {}).get("first_tick", tick) or tick))
+            from_partial = recovery is not None
+            ready = (
+                (from_partial and recovery_age >= DIRECT_DUST_NORMALIZE_MIN_AGE_TICKS)
+                or age >= DIRECT_STALE_DUST_NORMALIZE_AGE_TICKS
+                or bool(force_liveness)
+            )
+            if not ready:
+                continue
+            recovery_overflow = (
+                float(min_size) * DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS
+                if bool(force_liveness) else 0.0
+            )
+            if not direct_normalization_allowed(
+                net=net, total_effective_abs=float(effective_abs),
+                active_books=int(effective_active), effective_open_books=int(effective_open),
+                max_abs=max_abs, max_active=max_active, max_open=max_open,
+                min_order=min_size, eps=eps, recovery_overflow_abs=recovery_overflow,
+            ):
+                continue
+            rows.append((0 if from_partial else 1, -age, book_id, net))
+        if not rows:
+            return 0
+        rows.sort()
+        _source, _neg_age, book_id, net = rows[0]
+        if force_liveness:
+            self._direct_liveness_triggers = int(
+                getattr(self, "_direct_liveness_triggers", 0) or 0
+            ) + 1
+            self._direct_forced_recovery_books_this_tick.add(int(book_id))
+            try:
+                self._emit(
+                    "A173_LIVENESS_RECOVERY", force=True,
+                    tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                    blocked_ticks=int(getattr(self, "_direct_liveness_blocked_ticks", 0) or 0),
+                    temporary_recovery_overflow_abs=(
+                        float(min_size) * DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS
+                    ),
+                    max_total_abs_base=float(max_abs), net_base=float(net),
+                )
+            except Exception:
+                pass
+        return self._direct_place_dust_normalizer(response, state, book_id, net)
+
+    # ------------------------------------------------------------------
     # A1.6.1 liveness repair.
     # ------------------------------------------------------------------
     def _direct_compact_selected_dust(self, response, state) -> int:
@@ -1963,7 +2336,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if headroom <= 0.0:
                     reason = "VOLUME_CAP"
                 elif projected_total_abs > max_abs + 1e-12:
-                    reason = "EXPOSURE_HEADROOM"
+                    # A1.7.3 retains the strict A1.6.3 cap for every normal
+                    # placement. Only the single forced dust-recovery book may
+                    # use the bounded recovery overflow after a prolonged
+                    # capital-starvation trigger.
+                    recovery_overflow = (
+                        min_size * DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS
+                        if int(book_id) in (
+                            getattr(self, "_direct_forced_recovery_books_this_tick", set()) or set()
+                        )
+                        else 0.0
+                    )
+                    if projected_total_abs > max_abs + recovery_overflow + 1e-12:
+                        reason = "EXPOSURE_HEADROOM"
                 elif projected_open > max_open:
                     reason = "OPEN_BOOK_CAP"
                 elif projected_active > max_active:
@@ -2016,6 +2401,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._sync_exchange_constraints(state)
         self._research_bind_volume_state(state)
         self._research_score_ev_last = {}
+        self._direct_forced_recovery_books_this_tick = set()
 
         stats: dict[str, Any] = {
             "direct_mode": 1,
@@ -2031,6 +2417,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_dust_nonflat": 0,
             "direct_effective_open_books": 0,
             "direct_dust_skipped_management": 0,
+            "direct_partial_recovery_holds": 0,
+            "direct_dust_normalize_instructions": 0,
+            "direct_liveness_blocked_ticks": 0,
+            "direct_dust_recovery_reserve_abs": 0.0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -2038,6 +2428,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
         selected_ids = {int(x) for x in (getattr(screen, "selected", None) or [])}
         if not selected_ids:
             selected_ids = {int(x) for x in (predictions or {}).keys()}
+
+        # A1.7.3: service legal partial-order remainders before generic quote
+        # maintenance can cancel them. This path places no new sub-minimum order.
+        partial_hold_instructions, partial_holds = self._direct_service_partial_fill_recovery(
+            response, state,
+        )
+        stats["instructions"] += int(partial_hold_instructions)
+        stats["direct_partial_recovery_holds"] = int(partial_holds)
 
         # A1.7: a valid resting entry quote can survive a temporary top-K miss.
         # Invalid/unprofitable resting entry quotes are canceled immediately.
@@ -2140,13 +2538,47 @@ class Strategy1_Research_Simple(Strategy1_Research):
         effective_active_now = active_now + int(reserved_open)
         stats["direct_reserved_abs_base"] = float(reserved_abs)
         stats["direct_reserved_open_books"] = int(reserved_open)
-        abs_slots = max(0, int(math.floor((max_abs - effective_abs_now + 1e-12) / min_size)))
-        portfolio_slots = max(
-            0, min(abs_slots, max_open - effective_open_now, max_active - effective_active_now)
+        recovery_reserve_abs = dust_recovery_reserve_abs(
+            dust_count=dust_now, min_order=min_size,
         )
+        stats["direct_dust_recovery_reserve_abs"] = float(recovery_reserve_abs)
+        portfolio_slots = direct_liveness_admission_slots(
+            effective_abs=effective_abs_now,
+            active_books=effective_active_now,
+            effective_open_books=effective_open_now,
+            dust_count=dust_now,
+            max_abs=max_abs,
+            max_active=max_active,
+            max_open=max_open,
+            min_order=min_size,
+        )
+        if selected_ids and portfolio_slots <= 0:
+            self._direct_liveness_blocked_ticks = int(
+                getattr(self, "_direct_liveness_blocked_ticks", 0) or 0
+            ) + 1
+        else:
+            self._direct_liveness_blocked_ticks = 0
+        stats["direct_liveness_blocked_ticks"] = int(self._direct_liveness_blocked_ticks)
+
+        normalize_n = self._direct_normalize_irreducible_dust(
+            response,
+            state,
+            effective_abs=effective_abs_now,
+            effective_active=effective_active_now,
+            effective_open=effective_open_now,
+            force_liveness=bool(
+                selected_ids and self._direct_liveness_blocked_ticks >= DIRECT_LIVENESS_TRIGGER_TICKS
+            ),
+        )
+        if normalize_n:
+            stats["direct_dust_normalize_instructions"] = int(normalize_n)
+            stats["instructions"] += int(normalize_n)
+            # Recovery owns new exposure this request; do not compete with it by
+            # admitting a fresh acquisition in the same batch.
+            portfolio_slots = 0
         stats["portfolio_open_slots"] = int(portfolio_slots)
 
-        # One flat-entry path.  No maintenance branch and no separate alpha branch.
+        # One flat-entry path. No maintenance branch and no separate alpha branch.
         if portfolio_slots > 0:
             candidate_ids = selected_ids
         else:

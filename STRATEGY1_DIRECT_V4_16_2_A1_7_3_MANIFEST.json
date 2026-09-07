@@ -1,0 +1,78 @@
+{
+  "version": "strategy1_direct_v4_16_2_a1_7_3",
+  "label": "Strategy1-Direct V4.16.2 A1.7.3 Partial-Fill Completion + Portfolio Liveness Repair",
+  "base": "strategy1_direct_v4_16_2_a1_7_2",
+  "scope": "partial-fill remainder preservation, one-clip recovery reserve, irreducible-dust normalization, bounded warm-state liveness escape",
+  "frozen": {
+    "fastpath_candidates": 20,
+    "fastpath_deep": 16,
+    "maker_size_base": 0.25,
+    "maker_entry_edge_floor_bps": 2.5,
+    "taker_entry": false,
+    "normal_max_total_abs_base": 2.0,
+    "max_total_open_books": 8,
+    "max_active_open_books": 6,
+    "exit_version": "direct_observable_exit_v4_16_2_a1_7_2",
+    "true_wait_execution": true,
+    "negative_aggressive_maker_allowed": false,
+    "qualification_logic_changed": false,
+    "adaptive_sizing_added": false
+  },
+  "liveness": {
+    "version": "direct_partial_liveness_v4_16_2_a1_7_3",
+    "actual_partial_fill_tracking": true,
+    "new_subminimum_orders_allowed": false,
+    "partial_remainder_min_ttl_ms": 2500.0,
+    "partial_remainder_publish_multiplier": 3,
+    "partial_remainder_hard_ttl_ms": 4000.0,
+    "dust_recovery_reserved_abs_base": 0.25,
+    "dust_recovery_reserved_active_slots": 1,
+    "irreducible_dust_threshold_base": 0.125,
+    "normalization_size_base": 0.25,
+    "normalization_side": "same-sign Maker",
+    "liveness_trigger_ticks": 12,
+    "warm_state_recovery_overflow_max_base": 0.125,
+    "fresh_entries_may_use_recovery_overflow": false
+  },
+  "diagnostics": [
+    "A173_PARTIAL_FILL_RECOVERY",
+    "A173_PARTIAL_REMAINDER_HOLD",
+    "A173_PARTIAL_REMAINDER_CANCEL",
+    "A173_PARTIAL_FILL_RELEASE",
+    "A173_DUST_NORMALIZE",
+    "A173_LIVENESS_RECOVERY"
+  ],
+  "verification": {
+    "a171_a172_a173_targeted": "37 passed",
+    "launcher_preflight": "107 passed",
+    "research_regression": "571 passed, 11 skipped",
+    "compile": "PASS",
+    "bash_syntax": "PASS",
+    "frozen_Strategy1_Research_sha256": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "frozen_Strategy1_sha256": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+    "frozen_research_direct_exit_sha256": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3"
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research_Simple.py": "73da1a1cab9c59c398305177560868e3755ba06a611852edc8016a37da29b093",
+    "agents/strategy/research_direct_liveness.py": "84a7259e56aefdc9d7e1dee9ef342346177cbd3b7badea689ec4c256b069e2bd",
+    "agents/strategy/research_direct_exit.py": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+    "run_strategy1_research_simple_multi.sh": "520a1a79d950ba18eb1b95bd786305ef2282312a841de596d0d203a7dbe19b40",
+    "tests/test_research_strategy1_direct_a1_7_1.py": "eb4a0522dd4e8d4eb85ace8d49f3a6a9d321b4d13742b9c4bbc5ad7d0fc261b5",
+    "tests/test_research_strategy1_direct_a1_7_2.py": "f1e2a25aebeba048c574ff65a1d7d7cf23dfb096666997b8edfae91dbc5df6c8",
+    "tests/test_research_strategy1_direct_a1_7_3.py": "636463c600d1cba7a79036b2a1e8c4efdb5cf40629c4c0d69057935a5bec8456",
+    "STRATEGY1_DIRECT_V4_16_2_A1_7_3.md": "464bdd8a37496e825a328ba6fbcf2a2f93fbd4975265b418cf163d3239abcc70"
+  },
+  "runtime_acceptance": {
+    "recommended_min_ticks": 8000,
+    "persistent_dust_books_max": 3,
+    "parked_dust_abs_base_target_max": 0.2,
+    "candidate_present_no_placement_stretch_max_ticks": 100,
+    "rt_velocity_min_per_sim_second": 0.12,
+    "rt_velocity_target_per_sim_second": 0.15,
+    "maker_ending_positive_min": 0.9,
+    "overall_positive_rt_min": 0.6,
+    "realized_rt_pnl_must_remain_positive": true,
+    "qualified_books_min": 80,
+    "p95_response_ms_max": 120
+  }
+}
