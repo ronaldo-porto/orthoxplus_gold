@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.4 Genuine Tail-Risk Recovery Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.4.1 TradeEvent Replay De-duplication Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,12 +8,12 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-A1.7.4 keeps the A1.7.1 true mark-to-market risk semantics, A1.7.2 TRUE-WAIT
-execution invariant, and A1.7.3.1 partial-remainder/liveness repair frozen.  It
-adds a narrow observation-driven recovery corridor before genuine HARD/ABSOLUTE
-losses: bounded Maker concessions, a tightly bounded failed-recovery Taker, and
-counterfactual tail diagnostics.  Entry economics, FastPath, size, and liveness
-parameters are intentionally unchanged.
+A1.7.4.1 keeps A1.7.4 tail recovery, A1.7.1 true mark-to-market risk
+semantics, A1.7.2 TRUE-WAIT, and A1.7.3.1 partial-remainder/liveness frozen.
+It adds one correctness guard before all Research fill/accounting paths: exact
+own TradeEvent replays are processed once and skipped on subsequent delivery.
+Entry economics, recovery thresholds, FastPath, size, and liveness parameters
+are intentionally unchanged.
 The frozen Strategy1_Research.py base remains untouched.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -144,6 +144,11 @@ from research_direct_tail_recovery import (
     recovery_maker_floor_for_reason,
     risk_velocity_bps_per_tick as direct_tail_risk_velocity,
 )
+from research_direct_trade_dedup import (
+    DIRECT_TRADE_DEDUP_VERSION,
+    DIRECT_TRADE_DEDUP_MAX_EVENTS,
+    DirectTradeEventDeduper,
+)
 from research_direct_liveness import (
     DIRECT_LIVENESS_VERSION,
     DIRECT_DUST_NORMALIZE_MIN_AGE_TICKS,
@@ -163,12 +168,12 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_1"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 A1.7.4 tail-recovery overlay on the A1.7.3.1 liveness base.
+    """V4.16.2 A1.7.4.1 replay-safe tail-recovery overlay on A1.7.3.1.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -188,6 +193,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.7.2 hard execution invariant: WAIT cannot place a new Maker exit;
       * A1.7.3.1 exact-order partial-remainder ownership before dust normalization;
       * A1.7.4 pre-HARD genuine tail-risk recovery with bounded concessions;
+      * A1.7.4.1 exact own-TradeEvent replay de-dup before FIFO/PnL/fill learning;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -201,6 +207,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         super().initialize()
         # Marker only.  Do not mutate strategy thresholds or risk limits here.
         self._simple_direct_mode = True
+        # A1.7.4.1 correctness guard. This cache is intentionally owned by the
+        # Direct overlay and is NOT session-scoped: simulator timestamp/session
+        # rebases must not make a just-delivered TradeEvent process twice.
+        self._direct_trade_deduper = DirectTradeEventDeduper(
+            max_events=DIRECT_TRADE_DEDUP_MAX_EVENTS
+        )
+        self._direct_duplicate_trade_events_skipped = 0
         # Overlay-only learning.  It intentionally starts sparse and bounded;
         # restart-safe rolling PnL below supplies historical productivity context.
         self._direct_maker_open: dict[int, dict[str, float | int]] = {}
@@ -310,6 +323,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 true_wait_execution=1,
                 wait_falls_through_to_legacy_maker=0,
                 negative_aggressive_maker_block=1,
+                direct_trade_dedup_version=DIRECT_TRADE_DEDUP_VERSION,
+                direct_trade_dedup_max_events=DIRECT_TRADE_DEDUP_MAX_EVENTS,
+                duplicate_trade_event_accounting_guard=1,
                 direct_tail_recovery_version=DIRECT_TAIL_RECOVERY_VERSION,
                 recovery_trigger_bps=DIRECT_RECOVERY_TRIGGER_BPS,
                 recovery_force_bps=DIRECT_RECOVERY_FORCE_BPS,
@@ -350,12 +366,70 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             pass
 
+    def _console_allowed(self, record: dict[str, Any]) -> bool:
+        if str(record.get("type", "")) == "DUPLICATE_TRADE_EVENT_SKIPPED":
+            return True
+        return super()._console_allowed(record)
+
+    def _format_human(self, record: dict[str, Any]) -> str | None:
+        if str(record.get("type", "")) == "DUPLICATE_TRADE_EVENT_SKIPPED":
+            return (
+                f"[S1R_DUP_TRADE_SKIP] tick={record.get('tick')} "
+                f"book={record.get('book')} trade_id={record.get('trade_id')} "
+                f"maker_order={record.get('maker_order_id')} "
+                f"taker_order={record.get('taker_order_id')} "
+                f"qty={record.get('quantity')} px={record.get('price')} "
+                f"total={record.get('skipped_total')}"
+            )
+        return super()._format_human(record)
+
     # ------------------------------------------------------------------
     # A1.5.1 Maker lifecycle learning.  Learn NET realized downside, including
     # partial reductions and fees, rather than gross entry-to-final-price drift.
     # ------------------------------------------------------------------
     def onTrade(self, event, validator: str | None = None) -> None:
         book_id = getattr(event, "bookId", None)
+        own = (
+            getattr(event, "takerAgentId", None) == getattr(self, "uid", None)
+            or getattr(event, "makerAgentId", None) == getattr(self, "uid", None)
+        )
+        if own:
+            deduper = getattr(self, "_direct_trade_deduper", None)
+            if not isinstance(deduper, DirectTradeEventDeduper):
+                # Lazy fallback protects hot-reload/test objects without changing
+                # the normal initialize() lifecycle.
+                deduper = DirectTradeEventDeduper(max_events=DIRECT_TRADE_DEDUP_MAX_EVENTS)
+                self._direct_trade_deduper = deduper
+            duplicate, identity = deduper.check_and_note(event)
+            if duplicate:
+                self._direct_duplicate_trade_events_skipped = int(
+                    getattr(self, "_direct_duplicate_trade_events_skipped", 0) or 0
+                ) + 1
+                try:
+                    self._emit(
+                        "DUPLICATE_TRADE_EVENT_SKIPPED",
+                        force=True,
+                        tick=int(getattr(self, "_tick", 0) or 0),
+                        timestamp=getattr(event, "timestamp", None),
+                        book=book_id,
+                        trade_id=getattr(event, "tradeId", None),
+                        client_order_id=getattr(event, "clientOrderId", None),
+                        maker_agent_id=getattr(event, "makerAgentId", None),
+                        maker_order_id=getattr(event, "makerOrderId", None),
+                        taker_agent_id=getattr(event, "takerAgentId", None),
+                        taker_order_id=getattr(event, "takerOrderId", None),
+                        side=getattr(event, "side", None),
+                        quantity=getattr(event, "quantity", None),
+                        price=getattr(event, "price", None),
+                        identity_hash=deduper.identity_hash(identity),
+                        dedup_version=DIRECT_TRADE_DEDUP_VERSION,
+                        cache_size=len(deduper),
+                        skipped_total=int(self._direct_duplicate_trade_events_skipped),
+                    )
+                except Exception:
+                    pass
+                return
+
         if book_id is not None:
             try:
                 self._direct_event_pnl_before[int(book_id)] = float(
@@ -3180,6 +3254,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_partial_bound_pending"] = int(getattr(self, "_direct_partial_bound_pending", 0) or 0)
         stats["direct_partial_bound_expired"] = int(getattr(self, "_direct_partial_bound_expired", 0) or 0)
         stats["direct_partial_replacement_blocks"] = int(getattr(self, "_direct_partial_replacement_blocks", 0) or 0)
+        stats["direct_trade_dedup_version"] = DIRECT_TRADE_DEDUP_VERSION
+        stats["direct_duplicate_trade_events_skipped"] = int(
+            getattr(self, "_direct_duplicate_trade_events_skipped", 0) or 0
+        )
+        deduper = getattr(self, "_direct_trade_deduper", None)
+        stats["direct_trade_dedup_cache_size"] = len(deduper) if isinstance(deduper, DirectTradeEventDeduper) else 0
         self._last_mm_stats = stats
         self._research_timing["build_orders_ms"] = (time.perf_counter() - started) * 1000.0
         return stats

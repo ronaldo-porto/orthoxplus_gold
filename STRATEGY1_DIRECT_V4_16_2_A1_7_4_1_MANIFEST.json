@@ -1,0 +1,85 @@
+{
+  "version": "strategy1_direct_v4_16_2_a1_7_4_1",
+  "label": "Strategy1-Direct V4.16.2 A1.7.4.1 TradeEvent Replay De-duplication Repair",
+  "base": "strategy1_direct_v4_16_2_a1_7_4",
+  "scope": "exact own TradeEvent replay de-duplication before FIFO/PnL/fill/RT/Kappa accounting; no economic retune",
+  "runtime_evidence_basis": {
+    "trigger": "exact duplicate own TradeEvents observed after simulation/session clock reset",
+    "failure_mode": "same exchange fill mutated FIFO inventory and realized accounting twice, creating artificial doubled/opposite inventory",
+    "required_property": "idempotent own TradeEvent processing across ticks and timestamp/session rebases"
+  },
+  "trade_event_dedup": {
+    "version": "direct_trade_dedup_v4_16_2_a1_7_4_1",
+    "max_cached_events": 32768,
+    "cache_lifetime": "agent process lifetime; intentionally not cleared by simulator session/timestamp rebase",
+    "identity_fields": [
+      "bookId",
+      "tradeId",
+      "timestamp",
+      "clientOrderId",
+      "makerAgentId",
+      "makerOrderId",
+      "takerAgentId",
+      "takerOrderId",
+      "side",
+      "quantity_exact_float",
+      "price_exact_float"
+    ],
+    "missing_identity_policy": "fail open; process event normally",
+    "diagnostic": "DUPLICATE_TRADE_EVENT_SKIPPED",
+    "console_tag": "S1R_DUP_TRADE_SKIP"
+  },
+  "frozen_from_a174": {
+    "tail_recovery_version": "direct_tail_recovery_v4_16_2_a1_7_4",
+    "recovery_trigger_bps": -8.0,
+    "recovery_force_bps": -12.0,
+    "recovery_worsening_bps_per_tick": -0.5,
+    "defensive_recovery_maker_floor_bps": -25.0,
+    "hard_recovery_maker_floor_bps": -30.0,
+    "absolute_recovery_maker_floor_bps": -35.0,
+    "bounded_recovery_taker_floor_bps": -25.0,
+    "fastpath_candidates": 20,
+    "fastpath_deep": 16,
+    "maker_size_base": 0.25,
+    "maker_entry_edge_floor_bps": 2.5,
+    "taker_entry": false,
+    "normal_max_total_abs_base": 2.0,
+    "partial_liveness_version": "direct_partial_liveness_v4_16_2_a1_7_3_1",
+    "qualification_logic_changed": false
+  },
+  "verification": {
+    "a1741_targeted": "7 passed",
+    "launcher_preflight": "136 passed",
+    "research_regression": "600 passed, 11 skipped",
+    "python_compile": "PASS",
+    "bash_syntax": "PASS",
+    "frozen_Strategy1_Research_sha256": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "frozen_Strategy1_sha256": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+    "frozen_research_direct_exit_sha256": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+    "frozen_research_direct_liveness_sha256": "7e61f748fdb625d2e3e33768b45df47cc144bfc383dc6d8246458e22a1592c2c",
+    "frozen_research_direct_fastpath_sha256": "bdcf9231e7d39405cb76616f0bbdcb84135ab33d537dbc66a10e6cb372df29fe",
+    "frozen_research_direct_tail_recovery_sha256": "103c31af29710282207405cd0ebd363eb000a8a1a2ba7c036103bc800fdff7fb"
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research_Simple.py": "2ccf8a8fc19eaf2f9a9dbee742822475164f9b8852db6c979e8f416d424da0a9",
+    "agents/strategy/research_direct_trade_dedup.py": "2430e115d052152b4de209545a1b64a7bffbdb271154659225dc65dbf5cee43e",
+    "agents/strategy/research_direct_tail_recovery.py": "103c31af29710282207405cd0ebd363eb000a8a1a2ba7c036103bc800fdff7fb",
+    "agents/strategy/research_direct_liveness.py": "7e61f748fdb625d2e3e33768b45df47cc144bfc383dc6d8246458e22a1592c2c",
+    "agents/strategy/research_direct_exit.py": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+    "agents/strategy/research_direct_fastpath.py": "bdcf9231e7d39405cb76616f0bbdcb84135ab33d537dbc66a10e6cb372df29fe",
+    "run_strategy1_research_simple_multi.sh": "dc0821ecece02d644bb7a9034c1110345ee7ae2aed700c62190dac75555f154c",
+    "tests/test_research_strategy1_direct_a1_7_4_1.py": "803f76987ea6214fb0c52317115a3159cc069403a1903ce9363b62c875710cd7",
+    "tests/test_research_strategy1_direct_a1_7_4.py": "70a71812ed0c518c57310bdfd45844e4cbdcc3ec5515bb3bab09cfed37fdbb4f",
+    "STRATEGY1_DIRECT_V4_16_2_A1_7_4_1.md": "af51fcc5dff347219e9b746dfd3730e6a3f5e0dc1fa92acda280460670566945"
+  },
+  "first_runtime_acceptance": {
+    "clean_ticks": "1500-2000",
+    "duplicate_replay_parent_accounting_count": 0,
+    "replay_created_inventory_delta": 0.0,
+    "replay_created_realized_pnl_delta": 0.0,
+    "replay_created_round_trip_delta": 0,
+    "replay_created_kappa_observation_delta": 0,
+    "artificial_same_event_inventory_doubling": false,
+    "economic_threshold_retune_before_correctness_pass": false
+  }
+}
