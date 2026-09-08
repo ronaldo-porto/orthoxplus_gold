@@ -28,7 +28,7 @@ from research_direct_liveness import (
 
 
 def test_a173_version_and_frozen_strategy_contract():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_2"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3"' in SRC
     assert DIRECT_LIVENESS_VERSION == "direct_partial_liveness_v4_16_2_a1_7_3_1"
     # Exit economics/authority are intentionally frozen from A1.7.2.
     assert DIRECT_OBSERVABLE_EXIT_VERSION == "direct_observable_exit_v4_16_2_a1_7_2"
@@ -212,12 +212,13 @@ def test_forced_liveness_can_unlock_observed_legacy_saturation_with_bounded_over
     )
 
 
-def test_forced_recovery_overflow_is_scoped_to_normalizer_book_in_final_validator():
+def test_forced_recovery_liveness_signal_remains_but_a1743_final_cap_is_strict():
     method = ast.get_source_segment(SRC, METHODS["_research_final_validate_instructions"])
-    assert "_direct_forced_recovery_books_this_tick" in method
-    assert "DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS" in method
+    assert "STRICT_EXPOSURE_HEADROOM" in method
+    assert "DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS" not in method
     normalize = ast.get_source_segment(SRC, METHODS["_direct_normalize_irreducible_dust"])
     assert '"A173_LIVENESS_RECOVERY"' in normalize
+    assert "recovery_overflow_abs=0.0" in normalize
 
 
 def test_a1731_hold_window_uses_simulator_time_without_parameter_tuning():

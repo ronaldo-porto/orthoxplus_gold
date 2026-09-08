@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.4.2 Kappa-Safe Dust Compaction Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.4.3 Strict In-Flight Exposure Reservation Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -150,6 +150,12 @@ from research_direct_trade_dedup import (
     DIRECT_TRADE_DEDUP_MAX_EVENTS,
     DirectTradeEventDeduper,
 )
+from research_direct_inflight_reservation import (
+    DIRECT_INFLIGHT_RESERVATION_VERSION,
+    PendingExposureOrder,
+    pending_order_live,
+    reduce_pending_quantity,
+)
 from research_direct_dust_kappa import (
     DIRECT_DUST_KAPPA_VERSION,
     DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS,
@@ -158,8 +164,7 @@ from research_direct_dust_kappa import (
 from research_direct_liveness import (
     DIRECT_LIVENESS_VERSION,
     DIRECT_DUST_NORMALIZE_MIN_AGE_TICKS,
-    DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS,
-    DIRECT_STALE_DUST_NORMALIZE_AGE_TICKS,
+        DIRECT_STALE_DUST_NORMALIZE_AGE_TICKS,
     DIRECT_LIVENESS_TRIGGER_TICKS,
     DIRECT_PARTIAL_HOLD_MAX_NS,
     DIRECT_PARTIAL_HOLD_PUBLISH_MULT,
@@ -174,12 +179,12 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_2"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_2"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 A1.7.4.2 Kappa-safe tail-recovery overlay on A1.7.3.1.
+    """V4.16.2 A1.7.4.3 strict in-flight exposure overlay on A1.7.4.2.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -201,6 +206,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.7.4 pre-HARD genuine tail-risk recovery with bounded concessions;
       * A1.7.4.1 exact own-TradeEvent replay de-dup before FIFO/PnL/fill learning;
       * A1.7.4.2 Kappa loss-budget guard on moderate-dust sign-cross compaction;
+      * A1.7.4.3 local pending-order reservation so submitted-but-unacknowledged orders cannot race the hard portfolio cap;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -277,6 +283,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # A1.7.4.2 Kappa-safe moderate-dust sign-cross telemetry.
         self._direct_dust_kappa_allows = 0
         self._direct_dust_kappa_blocks = 0
+        # A1.7.4.3 local bridge for submitted placements that are not yet
+        # visible in account.orders.  The ledger is process-local and strictly
+        # mechanical; it does not alter trading economics.
+        self._direct_pending_exposure_orders: dict[tuple[int, str, str], PendingExposureOrder] = {}
+        self._direct_pending_exposure_recorded = 0
+        self._direct_pending_exposure_acked = 0
+        self._direct_pending_exposure_expired = 0
+        self._direct_pending_exposure_fill_reductions = 0
+        self._direct_strict_exposure_blocks = 0
         self._direct_liveness_blocked_ticks = 0
         self._direct_liveness_triggers = 0
         self._direct_forced_recovery_books_this_tick: set[int] = set()
@@ -360,6 +375,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 persistent_maker_max_ttl_ms=DIRECT_QUOTE_MAX_TTL_MS,
                 directional_exposure_validation=1,
                 inflight_exposure_reservation=1,
+                direct_inflight_reservation_version=DIRECT_INFLIGHT_RESERVATION_VERSION,
+                local_pending_exposure_reservation=1,
+                strict_max_total_abs_base=1,
+                liveness_overflow_abs=0.0,
                 one_live_order_batch_per_book=1,
                 isolated_dust_compaction=1,
                 direct_liveness_version=DIRECT_LIVENESS_VERSION,
@@ -442,6 +461,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     pass
                 return
 
+        if own:
+            # A1.7.4.3: consume the local bridge reservation only after the
+            # replay guard accepts this as a new TradeEvent. Partial fills reduce
+            # the reservation by the exact observed quantity.
+            try:
+                self._direct_pending_note_fill(event)
+            except Exception:
+                pass
+
         if book_id is not None:
             try:
                 self._direct_event_pnl_before[int(book_id)] = float(
@@ -454,6 +482,48 @@ class Strategy1_Research_Simple(Strategy1_Research):
         finally:
             if book_id is not None:
                 self._direct_event_pnl_before.pop(int(book_id), None)
+
+
+    def _log_notices(self, state, tick: int) -> None:
+        super()._log_notices(state, tick)
+        ledger = self._direct_pending_ledger()
+        if not ledger:
+            return
+        try:
+            notices = (getattr(state, "notices", None) or {}).get(self.uid, []) or []
+        except Exception:
+            notices = []
+        for notice in notices:
+            phase = type(notice).__name__.upper()
+            if not any(token in phase for token in ("CANCEL", "EXPIRE", "REJECT", "FAIL")):
+                continue
+            cid = None
+            for name in ("clientOrderId", "client_order_id", "clientId", "client_id"):
+                value = getattr(notice, name, None)
+                if value is not None:
+                    cid = value
+                    break
+            raw_book = getattr(notice, "bookId", getattr(notice, "book_id", None))
+            try:
+                bid = int(raw_book) if raw_book is not None else None
+            except (TypeError, ValueError):
+                bid = None
+            matches = []
+            for key in ledger:
+                if bid is not None and int(key[0]) != bid:
+                    continue
+                if cid is not None and str(key[1]) != str(cid):
+                    continue
+                matches.append(key)
+            # With neither stable book nor client id, do not guess. The bounded
+            # expiry reconciler will release the reservation safely.
+            if bid is None and cid is None:
+                continue
+            for key in matches:
+                ledger.pop(key, None)
+                self._direct_pending_exposure_expired = int(
+                    getattr(self, "_direct_pending_exposure_expired", 0) or 0
+                ) + 1
 
     def _research_on_own_fill(
         self, *, event, book_id: int, before: float, after: float,
@@ -2561,15 +2631,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             )
             if not ready:
                 continue
-            recovery_overflow = (
-                float(min_size) * DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS
-                if bool(force_liveness) else 0.0
-            )
+            # A1.7.4.3: the one-clip liveness reserve must supply recovery
+            # capacity; normalization itself receives no temporary cap overflow.
             if not direct_normalization_allowed(
                 net=net, total_effective_abs=float(effective_abs),
                 active_books=int(effective_active), effective_open_books=int(effective_open),
                 max_abs=max_abs, max_active=max_active, max_open=max_open,
-                min_order=min_size, eps=eps, recovery_overflow_abs=recovery_overflow,
+                min_order=min_size, eps=eps, recovery_overflow_abs=0.0,
             ):
                 continue
             rows.append((0 if from_partial else 1, -age, book_id, net))
@@ -2587,9 +2655,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     "A173_LIVENESS_RECOVERY", force=True,
                     tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
                     blocked_ticks=int(getattr(self, "_direct_liveness_blocked_ticks", 0) or 0),
-                    temporary_recovery_overflow_abs=(
-                        float(min_size) * DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS
-                    ),
+                    temporary_recovery_overflow_abs=0.0,
+                    strict_cap=1,
                     max_total_abs_base=float(max_abs), net_base=float(net),
                 )
             except Exception:
@@ -2744,17 +2811,155 @@ class Strategy1_Research_Simple(Strategy1_Research):
         account = (getattr(self, "accounts", {}) or {}).get(int(book_id))
         return list(getattr(account, "orders", None) or []) if account is not None else []
 
-    def _direct_book_has_live_order(self, book_id: int) -> bool:
-        """True while the latest account snapshot still exposes any open order.
+    def _direct_pending_ledger(self) -> dict[tuple[int, str, str], PendingExposureOrder]:
+        ledger = getattr(self, "_direct_pending_exposure_orders", None)
+        if not isinstance(ledger, dict):
+            ledger = {}
+            self._direct_pending_exposure_orders = ledger
+        return ledger
 
-        A same-request CANCEL does not clear this guard.  The cancellation must be
-        observed in a later state snapshot before another exposure-changing batch
-        is allowed on that book.
+    def _direct_order_client_id(self, order):
+        for name in ("clientOrderId", "client_order_id", "clientId", "client_id"):
+            value = getattr(order, name, None)
+            if value is not None:
+                return value
+        return None
+
+    def _direct_order_remaining_qty(self, order) -> float:
+        for name in ("remainingQuantity", "remaining_quantity", "quantity", "qty", "size"):
+            try:
+                value = float(getattr(order, name, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if value > 0.0:
+                return value
+        return 0.0
+
+    def _direct_reconcile_pending_exposure(self, state) -> None:
+        """Hand local bridge reservations to the authoritative account snapshot.
+
+        A submitted placement is locally reserved immediately. Once the same
+        client order appears in ``account.orders``, the account-side A1.6.3
+        reservation becomes authoritative and the local copy is removed.
         """
-        return bool(self._direct_account_orders(int(book_id)))
+        ledger = self._direct_pending_ledger()
+        if not ledger:
+            return
+        tick = int(getattr(self, "_tick", 0) or 0)
+        now_ts = int(getattr(state, "timestamp", 0) or 0)
+        visible: set[tuple[int, str, str]] = set()
+        books = getattr(state, "books", None) or {}
+        for raw_id in books.keys():
+            bid = int(raw_id)
+            for order in self._direct_account_orders(bid):
+                cid = self._direct_order_client_id(order)
+                if cid is None:
+                    continue
+                try:
+                    side = "buy" if int(getattr(order, "side", -1)) == 0 else "sell"
+                except (TypeError, ValueError):
+                    side = ""
+                visible.add((bid, str(cid), side))
+        for key, row in list(ledger.items()):
+            if key in visible:
+                ledger.pop(key, None)
+                self._direct_pending_exposure_acked = int(
+                    getattr(self, "_direct_pending_exposure_acked", 0) or 0
+                ) + 1
+                continue
+            if not pending_order_live(
+                row, current_tick=tick, current_timestamp_ns=now_ts,
+            ):
+                ledger.pop(key, None)
+                self._direct_pending_exposure_expired = int(
+                    getattr(self, "_direct_pending_exposure_expired", 0) or 0
+                ) + 1
+
+    def _direct_record_pending_placements(self, response, state) -> int:
+        """Reserve final emitted placements before the validator can acknowledge them."""
+        ledger = self._direct_pending_ledger()
+        tick = int(getattr(self, "_tick", 0) or 0)
+        now_ts = int(getattr(state, "timestamp", 0) or 0)
+        recorded = 0
+        for instruction in list(getattr(response, "instructions", None) or []):
+            kind = str(getattr(instruction, "type", "") or "").upper()
+            if kind not in {"PLACE_ORDER_LIMIT", "PLACE_ORDER_MARKET"}:
+                continue
+            raw_book = self._get(instruction, "bookId", "book_id")
+            try:
+                book_id = int(raw_book)
+                qty = max(0.0, float(self._get(instruction, "quantity", "qty", "size") or 0.0))
+            except (TypeError, ValueError):
+                continue
+            if qty <= 0.0:
+                continue
+            side = str(self._research_instruction_side(instruction) or "").lower()
+            cid = self._get(instruction, "clientOrderId", "client_order_id")
+            expiry = self._get(instruction, "expiryPeriod", "expiry_period")
+            try:
+                expiry_ns = max(0, int(expiry or 0))
+            except (TypeError, ValueError):
+                expiry_ns = 0
+            row = PendingExposureOrder(
+                book_id=book_id, side=side, quantity=qty, client_order_id=cid,
+                submitted_tick=tick, submitted_timestamp_ns=now_ts,
+                expiry_period_ns=expiry_ns, order_kind=kind,
+            )
+            ledger[row.key()] = row
+            recorded += 1
+        if recorded:
+            self._direct_pending_exposure_recorded = int(
+                getattr(self, "_direct_pending_exposure_recorded", 0) or 0
+            ) + recorded
+            try:
+                self._emit(
+                    "A1743_INFLIGHT_RESERVE", force=True, tick=tick,
+                    placements=int(recorded), pending_orders=len(ledger),
+                    inflight_version=DIRECT_INFLIGHT_RESERVATION_VERSION,
+                )
+            except Exception:
+                pass
+        return int(recorded)
+
+    def _direct_pending_note_fill(self, event) -> None:
+        """Reduce, but do not double-consume, a local reservation on own fill."""
+        ledger = self._direct_pending_ledger()
+        if not ledger:
+            return
+        book = getattr(event, "bookId", None)
+        cid = getattr(event, "clientOrderId", None)
+        qty = getattr(event, "quantity", None)
+        if book is None or cid is None or qty is None:
+            return
+        try:
+            bid = int(book)
+            q = max(0.0, float(qty or 0.0))
+        except (TypeError, ValueError):
+            return
+        if q <= 0.0:
+            return
+        matches = [k for k in ledger if k[0] == bid and k[1] == str(cid)]
+        for key in matches:
+            row = ledger.get(key)
+            if row is None:
+                continue
+            remaining = reduce_pending_quantity(row, q, eps=float(self._execution_flat_epsilon()))
+            self._direct_pending_exposure_fill_reductions = int(
+                getattr(self, "_direct_pending_exposure_fill_reductions", 0) or 0
+            ) + 1
+            if remaining <= 0.0:
+                ledger.pop(key, None)
+
+    def _direct_book_has_live_order(self, book_id: int) -> bool:
+        """True for acknowledged or locally pending placement ownership."""
+        bid = int(book_id)
+        if self._direct_account_orders(bid):
+            return True
+        return any(int(key[0]) == bid for key in self._direct_pending_ledger())
 
     def _direct_outstanding_exposure_reservation(self, state) -> tuple[float, int]:
-        """Reserve worst-case BASE/open-book capacity for currently live orders."""
+        """Reserve worst-case BASE/open-book capacity for live + pending orders."""
+        self._direct_reconcile_pending_exposure(state)
         eps = float(self._execution_flat_epsilon())
         min_size = max(
             0.0, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
@@ -2762,23 +2967,30 @@ class Strategy1_Research_Simple(Strategy1_Research):
         reserved_abs = 0.0
         reserved_open = 0
         books = getattr(state, "books", None) or {}
+        ledger = self._direct_pending_ledger()
         for raw_id in books.keys():
             bid = int(raw_id)
-            orders = self._direct_account_orders(bid)
-            if not orders:
-                continue
             net = self._direct_signed_inventory(bid)
             buy = 0.0
             sell = 0.0
-            for order in orders:
+            for order in self._direct_account_orders(bid):
                 try:
-                    q = max(0.0, float(getattr(order, "quantity", 0.0) or 0.0))
+                    q = max(0.0, float(self._direct_order_remaining_qty(order)))
                     if int(getattr(order, "side", -1)) == 0:
                         buy += q
                     else:
                         sell += q
                 except (TypeError, ValueError):
                     continue
+            for key, row in ledger.items():
+                if int(key[0]) != bid:
+                    continue
+                if str(row.side).lower() == "buy":
+                    buy += max(0.0, float(row.quantity))
+                else:
+                    sell += max(0.0, float(row.quantity))
+            if buy <= 0.0 and sell <= 0.0:
+                continue
             reserve_abs, reserve_open = outstanding_reservation(
                 net, buy, sell, min_order=min_size, eps=eps,
             )
@@ -2963,24 +3175,35 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if headroom <= 0.0:
                     reason = "VOLUME_CAP"
                 elif projected_total_abs > max_abs + 1e-12:
-                    # A1.7.3 retains the strict A1.6.3 cap for every normal
-                    # placement. Only the single forced dust-recovery book may
-                    # use the bounded recovery overflow after a prolonged
-                    # capital-starvation trigger.
-                    recovery_overflow = (
-                        min_size * DIRECT_DUST_RECOVERY_MAX_OVERFLOW_CLIPS
-                        if int(book_id) in (
-                            getattr(self, "_direct_forced_recovery_books_this_tick", set()) or set()
-                        )
-                        else 0.0
-                    )
-                    if projected_total_abs > max_abs + recovery_overflow + 1e-12:
-                        reason = "EXPOSURE_HEADROOM"
+                    # A1.7.4.3 makes the configured aggregate cap absolute. The
+                    # old A1.7.3 emergency overflow is intentionally disabled:
+                    # recovery may consume reserved headroom, but may never make
+                    # 2.0 BASE mean 2.125+ BASE.
+                    reason = "STRICT_EXPOSURE_HEADROOM"
                 elif projected_open > max_open:
                     reason = "OPEN_BOOK_CAP"
                 elif projected_active > max_active:
                     reason = "ACTIVE_BOOK_CAP"
                 if reason is not None:
+                    if reason == "STRICT_EXPOSURE_HEADROOM":
+                        self._direct_strict_exposure_blocks = int(
+                            getattr(self, "_direct_strict_exposure_blocks", 0) or 0
+                        ) + 1
+                        try:
+                            self._emit(
+                                "A1743_STRICT_EXPOSURE_BLOCK", force=True,
+                                tick=int(getattr(self, "_tick", 0) or 0),
+                                book=int(book_id), side=str(side), quantity=float(qty_f),
+                                filled_abs_base=float(filled_abs),
+                                reserved_abs_base=float(reserved_abs),
+                                shadow_abs_base=float(shadow_abs),
+                                projected_total_abs_base=float(projected_total_abs),
+                                max_total_abs_base=float(max_abs),
+                                pending_orders=len(self._direct_pending_ledger()),
+                                inflight_version=DIRECT_INFLIGHT_RESERVATION_VERSION,
+                            )
+                        except Exception:
+                            pass
                     self._research_log_final_contract_reject(
                         book_id, side, old_price_f, best_bid, best_ask, reason, False,
                     )
@@ -3297,6 +3520,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # Only contract/risk safety may veto the already-decided actions here.
         self._research_sanitize_maker_instructions(response, state)
         self._research_final_validate_instructions(response, state)
+        # A1.7.4.3: bridge the validator/account snapshot gap immediately after
+        # the final authoritative placement set has been frozen.
+        self._direct_record_pending_placements(response, state)
 
         stats["direct_quote_keeps"] = int(getattr(self, "_direct_quote_keeps", 0) or 0)
         stats["direct_quote_cancels"] = int(getattr(self, "_direct_quote_cancels", 0) or 0)
@@ -3313,6 +3539,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_dust_kappa_maker_floor_bps"] = float(DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS)
         stats["direct_dust_kappa_allows"] = int(getattr(self, "_direct_dust_kappa_allows", 0) or 0)
         stats["direct_dust_kappa_blocks"] = int(getattr(self, "_direct_dust_kappa_blocks", 0) or 0)
+        stats["direct_inflight_reservation_version"] = DIRECT_INFLIGHT_RESERVATION_VERSION
+        stats["direct_pending_exposure_orders"] = len(self._direct_pending_ledger())
+        stats["direct_pending_exposure_recorded"] = int(getattr(self, "_direct_pending_exposure_recorded", 0) or 0)
+        stats["direct_pending_exposure_acked"] = int(getattr(self, "_direct_pending_exposure_acked", 0) or 0)
+        stats["direct_pending_exposure_expired"] = int(getattr(self, "_direct_pending_exposure_expired", 0) or 0)
+        stats["direct_pending_exposure_fill_reductions"] = int(getattr(self, "_direct_pending_exposure_fill_reductions", 0) or 0)
+        stats["direct_strict_exposure_blocks"] = int(getattr(self, "_direct_strict_exposure_blocks", 0) or 0)
         stats["direct_trade_dedup_version"] = DIRECT_TRADE_DEDUP_VERSION
         stats["direct_duplicate_trade_events_skipped"] = int(
             getattr(self, "_direct_duplicate_trade_events_skipped", 0) or 0

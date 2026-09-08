@@ -19,7 +19,7 @@ from research_position_exit import ACTION_MAKER_EXIT, ACTION_TAKER_EXIT
 
 
 def test_a172_version_and_frozen_productivity_contract():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_2"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3"' in SRC
     assert DIRECT_OBSERVABLE_EXIT_VERSION == "direct_observable_exit_v4_16_2_a1_7_2"
     assert DIRECT_FASTPATH_CANDIDATE_COUNT == 20
     assert DIRECT_FASTPATH_DEEP_COUNT == 16

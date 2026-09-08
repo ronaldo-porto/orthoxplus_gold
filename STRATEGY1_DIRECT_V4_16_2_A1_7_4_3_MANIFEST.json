@@ -1,0 +1,78 @@
+{
+  "version": "strategy1_direct_v4_16_2_a1_7_4_3",
+  "label": "Strategy1-Direct V4.16.2 A1.7.4.3 Strict In-Flight Exposure Reservation",
+  "base": "strategy1_direct_v4_16_2_a1_7_4_2",
+  "scope": "strict mechanical aggregate-BASE reservation for submitted-but-unacknowledged placements; no entry, Maker edge, tail-recovery, dust-Kappa, FastPath, qualification, or sizing retune",
+  "runtime_evidence_basis": {
+    "trigger": "Agent67 extended A1.7.4.2 runtime observed research_total_abs_base above configured 2.0 BASE, including about 2.25 BASE, with reconstruction peaking near 2.50 BASE",
+    "existing_gap": "A1.6.3 reserved account.orders visible in the authoritative account snapshot but did not bridge a just-submitted placement before that snapshot acknowledged it",
+    "required_property": "filled inventory + acknowledged live-order worst-case + locally pending submitted-order worst-case must never admit a new risk-increasing placement beyond research_max_total_abs_base"
+  },
+  "strict_inflight_reservation": {
+    "version": "direct_inflight_reservation_v4_16_2_a1_7_4_3",
+    "pending_limit_fallback_ticks": 3,
+    "pending_market_fallback_ticks": 2,
+    "partial_fill_behavior": "reduce local reservation by exact de-duplicated fill quantity; keep unfilled remainder reserved",
+    "snapshot_ack_behavior": "remove local copy only when matching client order is visible in account.orders because account-side reservation then owns it",
+    "timestamp_reset_behavior": "do not release on timestamp regression; use bounded tick-age fallback",
+    "liveness_overflow_abs": 0.0,
+    "diagnostics": [
+      "A1743_INFLIGHT_RESERVE",
+      "A1743_STRICT_EXPOSURE_BLOCK"
+    ],
+    "summary_counters": [
+      "direct_pending_exposure_orders",
+      "direct_pending_exposure_recorded",
+      "direct_pending_exposure_acked",
+      "direct_pending_exposure_expired",
+      "direct_pending_exposure_fill_reductions",
+      "direct_strict_exposure_blocks"
+    ]
+  },
+  "frozen_from_a1742": {
+    "dust_kappa_version": "direct_dust_kappa_v4_16_2_a1_7_4_2",
+    "dust_kappa_maker_floor_bps": -60.0,
+    "trade_dedup_version": "direct_trade_dedup_v4_16_2_a1_7_4_1",
+    "tail_recovery_version": "direct_tail_recovery_v4_16_2_a1_7_4",
+    "recovery_trigger_bps": -8.0,
+    "recovery_force_bps": -12.0,
+    "defensive_recovery_maker_floor_bps": -25.0,
+    "hard_recovery_maker_floor_bps": -30.0,
+    "absolute_recovery_maker_floor_bps": -35.0,
+    "fastpath_candidates": 20,
+    "fastpath_deep": 16,
+    "maker_size_base": 0.25,
+    "taker_entry": false,
+    "max_total_abs_base": 2.0,
+    "qualification_logic_changed": false
+  },
+  "verification": {
+    "a1743_plus_prior_targeted": "34 passed, 1 skipped",
+    "launcher_preflight": "152 passed",
+    "research_regression": "616 passed, 11 skipped",
+    "python_compile": "PASS",
+    "bash_syntax": "PASS",
+    "frozen_Strategy1_sha256": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+    "frozen_Strategy1_Research_sha256": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "frozen_research_direct_exit_sha256": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+    "frozen_research_direct_liveness_sha256": "7e61f748fdb625d2e3e33768b45df47cc144bfc383dc6d8246458e22a1592c2c",
+    "frozen_research_direct_fastpath_sha256": "bdcf9231e7d39405cb76616f0bbdcb84135ab33d537dbc66a10e6cb372df29fe",
+    "frozen_research_direct_tail_recovery_sha256": "103c31af29710282207405cd0ebd363eb000a8a1a2ba7c036103bc800fdff7fb",
+    "frozen_research_direct_trade_dedup_sha256": "2430e115d052152b4de209545a1b64a7bffbdb271154659225dc65dbf5cee43e",
+    "frozen_research_direct_dust_kappa_sha256": "50c14d4d2cc7741cf98d58a5ecf801c15d58d5d5f7fb18a7539a1f1febb47fd2",
+    "frozen_research_direct_exposure_sha256": "aa5f28be9ca9f2bedcedd3c720d512c54b08c91f963f08338caae22428ba16d3"
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research_Simple.py": "dab1dbdca4a14fc5b18eed0efe7f5d415aadd95489a7f0dc4bd1634c28bbb4df",
+    "agents/strategy/research_direct_inflight_reservation.py": "28b9d57390e11e55239fc612b8177c08fbf159072b75174538ddcdaad5467dc0",
+    "run_strategy1_research_simple_multi.sh": "b3cc44241003e7b7167bdcdd22bee57029233573478dcabe18144349f884f87d",
+    "tests/test_research_strategy1_direct_a1_7_1.py": "79de4d245727bda9877a96b15f3cdcfd5da221a7042aea274c8b9cebd4f5f423",
+    "tests/test_research_strategy1_direct_a1_7_2.py": "bd3187264b3dfd72c4f7bf0b0355982f61bf28ee1ecf383a10ce6d0099b729d3",
+    "tests/test_research_strategy1_direct_a1_7_3.py": "4767f9b65d64ef921f020df466c1b3d967b74d6520092f8d0a092210ea55b08e",
+    "tests/test_research_strategy1_direct_a1_7_4.py": "8653ca6ecc7220e5800f5e607904c61b9abb7cd5cf1a85c554c004c083cb7c4a",
+    "tests/test_research_strategy1_direct_a1_7_4_1.py": "54574ae66fd1432eb15a84a622854ddbba67c008db7e6ec30d726ed1821c5cb0",
+    "tests/test_research_strategy1_direct_a1_7_4_2.py": "74bd4d8238a04434d6249fd045d3edc2e8e6d75933a0c70815da8e511bbf8a45",
+    "tests/test_research_strategy1_direct_a1_7_4_3.py": "51ae2e50117b4bb8d4eaeffc0bde83e8cee3e5a77607ccce8f34951080d9f6f2",
+    "STRATEGY1_DIRECT_V4_16_2_A1_7_4_3.md": "525975270183b6a3e8e9fb8eecc8ec2e531db16f5bfddd081088286e960ab8d7"
+  }
+}
