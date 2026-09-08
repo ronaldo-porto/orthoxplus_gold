@@ -1,0 +1,70 @@
+{
+  "version": "strategy1_direct_v4_16_2_a1_7_4_2",
+  "label": "Strategy1-Direct V4.16.2 A1.7.4.2 Kappa-Safe Dust Compaction Guard",
+  "base": "strategy1_direct_v4_16_2_a1_7_4_1",
+  "scope": "bound realized-loss economics only for Direct moderate-dust minimum-size sign-cross compaction; no entry, tail-recovery, de-dup, FastPath, qualification, or liveness retune",
+  "runtime_evidence_basis": {
+    "trigger": "Agent67 2445-tick A1.7.4.1 run: Book53 stale -0.1987 BASE residual crossed with a full 0.25 Maker BUY, reducing absolute exposure but realizing about -920 bps / -5.73 quote PnL",
+    "failure_mode": "mechanical exposure_nonincreasing theorem allowed an economically catastrophic sign-cross cleanup",
+    "required_property": "moderate-dust compaction must be both exposure-nonincreasing and inside a bounded Maker realization loss budget"
+  },
+  "dust_kappa_guard": {
+    "version": "direct_dust_kappa_v4_16_2_a1_7_4_2",
+    "maker_realization_floor_bps": -60.0,
+    "applies_to": "Direct selector-approved moderate-dust minimum-size sign-cross compaction only",
+    "unknown_cost_basis": "fail closed for sign-cross compaction",
+    "normal_cross_dust": "still allowed when projected Maker realization is within budget",
+    "diagnostics": [
+      "A1742_DUST_KAPPA_ALLOW",
+      "A1742_DUST_KAPPA_BLOCK"
+    ],
+    "summary_counters": [
+      "direct_dust_kappa_allows",
+      "direct_dust_kappa_blocks"
+    ]
+  },
+  "frozen_from_a1741": {
+    "trade_dedup_version": "direct_trade_dedup_v4_16_2_a1_7_4_1",
+    "tail_recovery_version": "direct_tail_recovery_v4_16_2_a1_7_4",
+    "recovery_trigger_bps": -8.0,
+    "recovery_force_bps": -12.0,
+    "defensive_recovery_maker_floor_bps": -25.0,
+    "hard_recovery_maker_floor_bps": -30.0,
+    "absolute_recovery_maker_floor_bps": -35.0,
+    "fastpath_candidates": 20,
+    "fastpath_deep": 16,
+    "maker_size_base": 0.25,
+    "taker_entry": false,
+    "normal_max_total_abs_base": 2.0,
+    "partial_liveness_version": "direct_partial_liveness_v4_16_2_a1_7_3_1",
+    "qualification_logic_changed": false
+  },
+  "verification": {
+    "a1742_plus_a1741_targeted": "14 passed",
+    "launcher_preflight": "143 passed",
+    "research_regression": "607 passed, 11 skipped",
+    "python_compile": "PASS",
+    "bash_syntax": "PASS",
+    "whole_repository_pytest": "not run to completion in artifact environment because optional external dependencies (bittensor, pyarrow, transformers, loky) are not installed",
+    "frozen_Strategy1_sha256": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+    "frozen_Strategy1_Research_sha256": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "frozen_research_direct_exit_sha256": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+    "frozen_research_direct_liveness_sha256": "7e61f748fdb625d2e3e33768b45df47cc144bfc383dc6d8246458e22a1592c2c",
+    "frozen_research_direct_fastpath_sha256": "bdcf9231e7d39405cb76616f0bbdcb84135ab33d537dbc66a10e6cb372df29fe",
+    "frozen_research_direct_tail_recovery_sha256": "103c31af29710282207405cd0ebd363eb000a8a1a2ba7c036103bc800fdff7fb",
+    "frozen_research_direct_trade_dedup_sha256": "2430e115d052152b4de209545a1b64a7bffbdb271154659225dc65dbf5cee43e"
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research_Simple.py": "16a98bb63be0bedd31b533e33d00d875732c2ab3490bb86a3016d989aa5318ec",
+    "agents/strategy/research_direct_dust_kappa.py": "50c14d4d2cc7741cf98d58a5ecf801c15d58d5d5f7fb18a7539a1f1febb47fd2",
+    "agents/strategy/research_direct_trade_dedup.py": "2430e115d052152b4de209545a1b64a7bffbdb271154659225dc65dbf5cee43e",
+    "agents/strategy/research_direct_tail_recovery.py": "103c31af29710282207405cd0ebd363eb000a8a1a2ba7c036103bc800fdff7fb",
+    "agents/strategy/research_direct_liveness.py": "7e61f748fdb625d2e3e33768b45df47cc144bfc383dc6d8246458e22a1592c2c",
+    "agents/strategy/research_direct_exit.py": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+    "agents/strategy/research_direct_fastpath.py": "bdcf9231e7d39405cb76616f0bbdcb84135ab33d537dbc66a10e6cb372df29fe",
+    "run_strategy1_research_simple_multi.sh": "185cae695680f5181778815d999da62eb3816bdead05233933f6a966a08d259b",
+    "tests/test_research_strategy1_direct_a1_7_4_2.py": "4b3f70e59148ac02d986677451617583908a8d9ece16a060f14a0b6d917de430",
+    "tests/test_research_strategy1_direct_a1_7_4_1.py": "6e239435001a131eaf660eb77e9a3ef082c8d75286eec6823375ef1f4ec539aa",
+    "STRATEGY1_DIRECT_V4_16_2_A1_7_4_2.md": "ed444c4f43b6de07b210bc022ce9d8df5b5c46080bbafb131072dddb99cc74b5"
+  }
+}

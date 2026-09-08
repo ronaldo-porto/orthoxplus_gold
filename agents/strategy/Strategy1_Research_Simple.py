@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.4.1 TradeEvent Replay De-duplication Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.4.2 Kappa-Safe Dust Compaction Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,12 +8,13 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-A1.7.4.1 keeps A1.7.4 tail recovery, A1.7.1 true mark-to-market risk
-semantics, A1.7.2 TRUE-WAIT, and A1.7.3.1 partial-remainder/liveness frozen.
-It adds one correctness guard before all Research fill/accounting paths: exact
-own TradeEvent replays are processed once and skipped on subsequent delivery.
-Entry economics, recovery thresholds, FastPath, size, and liveness parameters
-are intentionally unchanged.
+A1.7.4.2 keeps A1.7.4.1 replay de-duplication, A1.7.4 tail recovery, A1.7.1
+true mark-to-market risk semantics, A1.7.2 TRUE-WAIT, and A1.7.3.1
+partial-remainder/liveness frozen. It adds one economic invariant to the
+moderate-dust sign-cross compactor: exposure reduction alone is no longer
+sufficient when the projected Maker realization breaches the Kappa loss
+budget. Entry economics, recovery thresholds, FastPath, size, and all other
+liveness parameters are intentionally unchanged.
 The frozen Strategy1_Research.py base remains untouched.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -149,6 +150,11 @@ from research_direct_trade_dedup import (
     DIRECT_TRADE_DEDUP_MAX_EVENTS,
     DirectTradeEventDeduper,
 )
+from research_direct_dust_kappa import (
+    DIRECT_DUST_KAPPA_VERSION,
+    DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS,
+    decide_kappa_safe_dust_compaction,
+)
 from research_direct_liveness import (
     DIRECT_LIVENESS_VERSION,
     DIRECT_DUST_NORMALIZE_MIN_AGE_TICKS,
@@ -168,12 +174,12 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_2"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 A1.7.4.1 replay-safe tail-recovery overlay on A1.7.3.1.
+    """V4.16.2 A1.7.4.2 Kappa-safe tail-recovery overlay on A1.7.3.1.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -194,6 +200,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.7.3.1 exact-order partial-remainder ownership before dust normalization;
       * A1.7.4 pre-HARD genuine tail-risk recovery with bounded concessions;
       * A1.7.4.1 exact own-TradeEvent replay de-dup before FIFO/PnL/fill learning;
+      * A1.7.4.2 Kappa loss-budget guard on moderate-dust sign-cross compaction;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -267,6 +274,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_current_state_timestamp_ns = 0
         self._direct_dust_normalize_orders = 0
         self._direct_dust_normalize_fills = 0
+        # A1.7.4.2 Kappa-safe moderate-dust sign-cross telemetry.
+        self._direct_dust_kappa_allows = 0
+        self._direct_dust_kappa_blocks = 0
         self._direct_liveness_blocked_ticks = 0
         self._direct_liveness_triggers = 0
         self._direct_forced_recovery_books_this_tick: set[int] = set()
@@ -287,6 +297,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 taker_kappa_subsidy=0,
                 direct_quality_version=DIRECT_QUALITY_VERSION,
                 direct_execution_quality_version=DIRECT_EXECUTION_QUALITY_VERSION,
+                direct_dust_kappa_version=DIRECT_DUST_KAPPA_VERSION,
+                direct_dust_kappa_maker_floor_bps=DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS,
                 maker_min_ev=DIRECT_MAKER_MIN_EV,
                 maker_min_edge_bps=DIRECT_MAKER_MIN_EDGE_BPS,
                 maker_quality_max_penalty=0.0,
@@ -2629,6 +2641,45 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if not self._dust_compaction_safe_for_any_fill(net_base):
                 continue
 
+            # A1.7.4.2: theorem-safe exposure reduction is necessary but no
+            # longer sufficient.  A min-size fill crosses moderate dust through
+            # zero, so bound the realized loss at the exact passive touch.
+            maker_close_price = (
+                float(book.asks[0].price) if net_base > 0.0 else float(book.bids[0].price)
+            )
+            kappa_decision = decide_kappa_safe_dust_compaction(
+                net_base=net_base, min_order=min_size,
+                vwap_entry=getattr(inventory, "vwap_entry", None),
+                maker_close_price=maker_close_price,
+                age_ticks=int(getattr(inventory, "position_ticks", 0) or 0),
+                loss_floor_bps=DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS,
+                eps=float(self._execution_flat_epsilon()),
+            )
+            if not kappa_decision.allow:
+                self._direct_dust_kappa_blocks = int(
+                    getattr(self, "_direct_dust_kappa_blocks", 0) or 0
+                ) + 1
+                try:
+                    self._emit(
+                        "A1742_DUST_KAPPA_BLOCK", force=True,
+                        tick=getattr(self, "_tick", None), book_id=int(book_id),
+                        **kappa_decision.as_log(),
+                    )
+                except Exception:
+                    pass
+                continue
+            self._direct_dust_kappa_allows = int(
+                getattr(self, "_direct_dust_kappa_allows", 0) or 0
+            ) + 1
+            try:
+                self._emit(
+                    "A1742_DUST_KAPPA_ALLOW", force=True,
+                    tick=getattr(self, "_tick", None), book_id=int(book_id),
+                    **kappa_decision.as_log(),
+                )
+            except Exception:
+                pass
+
             self._research_dust_compact_attempts = int(
                 getattr(self, "_research_dust_compact_attempts", 0) or 0
             ) + 1
@@ -2666,6 +2717,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         net_base - (min_size if net_base > 0.0 else -min_size)
                     ),
                     exposure_nonincreasing=True,
+                    dust_kappa_guard=1,
+                    maker_realization_bps=kappa_decision.maker_realization_bps,
+                    projected_realized_quote_pnl=kappa_decision.projected_realized_quote_pnl,
+                    dust_kappa_loss_floor_bps=kappa_decision.loss_floor_bps,
                     instructions=len(getattr(response, "instructions", None) or []) - before_ix,
                 )
             except Exception:
@@ -3254,6 +3309,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_partial_bound_pending"] = int(getattr(self, "_direct_partial_bound_pending", 0) or 0)
         stats["direct_partial_bound_expired"] = int(getattr(self, "_direct_partial_bound_expired", 0) or 0)
         stats["direct_partial_replacement_blocks"] = int(getattr(self, "_direct_partial_replacement_blocks", 0) or 0)
+        stats["direct_dust_kappa_version"] = DIRECT_DUST_KAPPA_VERSION
+        stats["direct_dust_kappa_maker_floor_bps"] = float(DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS)
+        stats["direct_dust_kappa_allows"] = int(getattr(self, "_direct_dust_kappa_allows", 0) or 0)
+        stats["direct_dust_kappa_blocks"] = int(getattr(self, "_direct_dust_kappa_blocks", 0) or 0)
         stats["direct_trade_dedup_version"] = DIRECT_TRADE_DEDUP_VERSION
         stats["direct_duplicate_trade_events_skipped"] = int(
             getattr(self, "_direct_duplicate_trade_events_skipped", 0) or 0
