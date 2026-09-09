@@ -33,7 +33,7 @@ from research_direct_liveness import DIRECT_LIVENESS_VERSION
 
 
 def test_a1742_version_and_frozen_core_contracts():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3_1"' in SRC
     assert DIRECT_DUST_KAPPA_VERSION == "direct_dust_kappa_v4_16_2_a1_7_4_2"
     assert DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS == -60.0
     assert DIRECT_TRADE_DEDUP_VERSION == "direct_trade_dedup_v4_16_2_a1_7_4_1"

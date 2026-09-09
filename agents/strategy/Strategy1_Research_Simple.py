@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.4.3 Strict In-Flight Exposure Reservation Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.4.3.1 Same-Book Pending Order Ownership Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,13 +8,13 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-A1.7.4.2 keeps A1.7.4.1 replay de-duplication, A1.7.4 tail recovery, A1.7.1
-true mark-to-market risk semantics, A1.7.2 TRUE-WAIT, and A1.7.3.1
-partial-remainder/liveness frozen. It adds one economic invariant to the
-moderate-dust sign-cross compactor: exposure reduction alone is no longer
-sufficient when the projected Maker realization breaches the Kappa loss
-budget. Entry economics, recovery thresholds, FastPath, size, and all other
-liveness parameters are intentionally unchanged.
+A1.7.4.3.1 keeps A1.7.4.3 strict aggregate in-flight exposure reservation,
+A1.7.4.2 Kappa-safe dust compaction, A1.7.4.1 replay de-duplication, A1.7.4
+tail recovery, A1.7.2 TRUE-WAIT, and A1.7.3.1 partial-remainder/liveness
+frozen. It closes one mechanical publisher gap: a book/side that already owns
+a placement in the current response cannot receive another same-side placement
+before the pending ledger is recorded. Trading economics, recovery thresholds,
+FastPath, size, and portfolio limits are intentionally unchanged.
 The frozen Strategy1_Research.py base remains untouched.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -156,6 +156,12 @@ from research_direct_inflight_reservation import (
     pending_order_live,
     reduce_pending_quantity,
 )
+from research_direct_book_ownership import (
+    DIRECT_BOOK_OWNERSHIP_VERSION,
+    canonical_order_side,
+    ownership_key,
+    reserve_pending_order,
+)
 from research_direct_dust_kappa import (
     DIRECT_DUST_KAPPA_VERSION,
     DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS,
@@ -179,12 +185,12 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3_1"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 A1.7.4.3 strict in-flight exposure overlay on A1.7.4.2.
+    """V4.16.2 A1.7.4.3.1 same-book ownership overlay on A1.7.4.3.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -207,6 +213,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.7.4.1 exact own-TradeEvent replay de-dup before FIFO/PnL/fill learning;
       * A1.7.4.2 Kappa loss-budget guard on moderate-dust sign-cross compaction;
       * A1.7.4.3 local pending-order reservation so submitted-but-unacknowledged orders cannot race the hard portfolio cap;
+      * A1.7.4.3.1 same-book/side ownership across both current-response and pending placement gaps;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -292,6 +299,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_pending_exposure_expired = 0
         self._direct_pending_exposure_fill_reductions = 0
         self._direct_strict_exposure_blocks = 0
+        # A1.7.4.3.1 same-book/side ownership telemetry. The state itself is
+        # represented by acknowledged account.orders + the A1.7.4.3 pending
+        # ledger + a per-response ownership set in final validation.
+        self._direct_book_ownership_reserves = 0
+        self._direct_book_ownership_blocks = 0
+        self._direct_book_ownership_releases = 0
         self._direct_liveness_blocked_ticks = 0
         self._direct_liveness_triggers = 0
         self._direct_forced_recovery_books_this_tick: set[int] = set()
@@ -379,6 +392,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 local_pending_exposure_reservation=1,
                 strict_max_total_abs_base=1,
                 liveness_overflow_abs=0.0,
+                direct_book_ownership_version=DIRECT_BOOK_OWNERSHIP_VERSION,
+                same_book_pending_ownership=1,
+                same_request_same_side_ownership=1,
+                pending_duplicate_key_aggregates_quantity=1,
                 one_live_order_batch_per_book=1,
                 isolated_dust_compaction=1,
                 direct_liveness_version=DIRECT_LIVENESS_VERSION,
@@ -520,7 +537,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if bid is None and cid is None:
                 continue
             for key in matches:
-                ledger.pop(key, None)
+                row = ledger.pop(key, None)
+                if row is not None:
+                    self._direct_emit_book_ownership_release(row=row, reason=f"NOTICE_{phase}")
                 self._direct_pending_exposure_expired = int(
                     getattr(self, "_direct_pending_exposure_expired", 0) or 0
                 ) + 1
@@ -2835,6 +2854,38 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 return value
         return 0.0
 
+    def _direct_emit_book_ownership_block(self, *, book_id: int, side: str, reason: str, quantity: float = 0.0) -> None:
+        self._direct_book_ownership_blocks = int(
+            getattr(self, "_direct_book_ownership_blocks", 0) or 0
+        ) + 1
+        try:
+            self._emit(
+                "A17431_BOOK_OWNERSHIP_BLOCK", force=True,
+                tick=int(getattr(self, "_tick", 0) or 0),
+                book=int(book_id), side=canonical_order_side(side),
+                reason=str(reason), quantity=float(quantity or 0.0),
+                pending_orders=len(self._direct_pending_ledger()),
+                ownership_version=DIRECT_BOOK_OWNERSHIP_VERSION,
+            )
+        except Exception:
+            pass
+
+    def _direct_emit_book_ownership_release(self, *, row: PendingExposureOrder, reason: str) -> None:
+        self._direct_book_ownership_releases = int(
+            getattr(self, "_direct_book_ownership_releases", 0) or 0
+        ) + 1
+        try:
+            self._emit(
+                "A17431_BOOK_OWNERSHIP_RELEASE", force=True,
+                tick=int(getattr(self, "_tick", 0) or 0),
+                book=int(row.book_id), side=canonical_order_side(row.side),
+                client_order_id=row.client_order_id, reason=str(reason),
+                remaining_quantity=float(row.quantity or 0.0),
+                ownership_version=DIRECT_BOOK_OWNERSHIP_VERSION,
+            )
+        except Exception:
+            pass
+
     def _direct_reconcile_pending_exposure(self, state) -> None:
         """Hand local bridge reservations to the authoritative account snapshot.
 
@@ -2863,6 +2914,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         for key, row in list(ledger.items()):
             if key in visible:
                 ledger.pop(key, None)
+                self._direct_emit_book_ownership_release(row=row, reason="ACKNOWLEDGED")
                 self._direct_pending_exposure_acked = int(
                     getattr(self, "_direct_pending_exposure_acked", 0) or 0
                 ) + 1
@@ -2871,6 +2923,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 row, current_tick=tick, current_timestamp_ns=now_ts,
             ):
                 ledger.pop(key, None)
+                self._direct_emit_book_ownership_release(row=row, reason="LOCAL_EXPIRY")
                 self._direct_pending_exposure_expired = int(
                     getattr(self, "_direct_pending_exposure_expired", 0) or 0
                 ) + 1
@@ -2901,12 +2954,26 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except (TypeError, ValueError):
                 expiry_ns = 0
             row = PendingExposureOrder(
-                book_id=book_id, side=side, quantity=qty, client_order_id=cid,
+                book_id=book_id, side=canonical_order_side(side), quantity=qty, client_order_id=cid,
                 submitted_tick=tick, submitted_timestamp_ns=now_ts,
                 expiry_period_ns=expiry_ns, order_kind=kind,
             )
-            ledger[row.key()] = row
+            reserved_row, merged = reserve_pending_order(ledger, row)
             recorded += 1
+            self._direct_book_ownership_reserves = int(
+                getattr(self, "_direct_book_ownership_reserves", 0) or 0
+            ) + 1
+            try:
+                self._emit(
+                    "A17431_BOOK_OWNERSHIP_RESERVE", force=True, tick=tick,
+                    book=int(book_id), side=canonical_order_side(side),
+                    client_order_id=cid, quantity=float(qty),
+                    reserved_quantity=float(reserved_row.quantity),
+                    merged_duplicate_key=int(bool(merged)),
+                    ownership_version=DIRECT_BOOK_OWNERSHIP_VERSION,
+                )
+            except Exception:
+                pass
         if recorded:
             self._direct_pending_exposure_recorded = int(
                 getattr(self, "_direct_pending_exposure_recorded", 0) or 0
@@ -2948,7 +3015,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 getattr(self, "_direct_pending_exposure_fill_reductions", 0) or 0
             ) + 1
             if remaining <= 0.0:
-                ledger.pop(key, None)
+                released = ledger.pop(key, None)
+                if released is not None:
+                    self._direct_emit_book_ownership_release(row=released, reason="FILL_COMPLETE")
 
     def _direct_book_has_live_order(self, book_id: int) -> bool:
         """True for acknowledged or locally pending placement ownership."""
@@ -3058,6 +3127,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         }
         same_request_buy: dict[int, float] = {}
         same_request_sell: dict[int, float] = {}
+        # A1.7.4.3.1 closes the same-response gap that exists before final
+        # placements are copied into the A1.7.4.3 pending ledger. One BUY and
+        # one SELL may coexist as a two-sided Maker batch, but a second order on
+        # the same book/side is never allowed in the same response.
+        same_request_owned_sides: set[tuple[int, str]] = set()
         same_request_worst_abs: dict[int, float] = {
             bid: abs(float(net)) for bid, net in shadow_net.items()
         }
@@ -3094,8 +3168,22 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # a new placement can own this book.  This prevents stale entry/exit/
             # compaction orders from racing a newer authority.
             if book_id in preexisting_order_books:
+                self._direct_emit_book_ownership_block(
+                    book_id=book_id, side=str(side), reason="PREEXISTING_BOOK_ORDER", quantity=qty_f,
+                )
                 self._research_log_final_contract_reject(
                     book_id, side, None, None, None, "INFLIGHT_BOOK_ORDER", False,
+                )
+                continue
+
+            side_token = canonical_order_side(side)
+            owner_key = ownership_key(book_id, side_token)
+            if owner_key in same_request_owned_sides:
+                self._direct_emit_book_ownership_block(
+                    book_id=book_id, side=side_token, reason="SAME_REQUEST_BOOK_SIDE_OWNED", quantity=qty_f,
+                )
+                self._research_log_final_contract_reject(
+                    book_id, side, None, None, None, "SAME_REQUEST_BOOK_SIDE_OWNED", False,
                 )
                 continue
 
@@ -3143,7 +3231,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         continue
 
             current_net = float(shadow_net.get(book_id, 0.0) or 0.0)
-            token = str(side or "").lower()
+            token = canonical_order_side(side)
             buy_before = float(same_request_buy.get(book_id, 0.0) or 0.0)
             sell_before = float(same_request_sell.get(book_id, 0.0) or 0.0)
             buy_after = buy_before + (qty_f if token in {"buy", "bid", "b", "0"} else 0.0)
@@ -3217,6 +3305,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             same_request_buy[book_id] = buy_after
             same_request_sell[book_id] = sell_after
             same_request_worst_abs[book_id] = new_worst
+            same_request_owned_sides.add(owner_key)
             validated_ids.add(id(instruction))
 
         merged = []
@@ -3546,6 +3635,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_pending_exposure_expired"] = int(getattr(self, "_direct_pending_exposure_expired", 0) or 0)
         stats["direct_pending_exposure_fill_reductions"] = int(getattr(self, "_direct_pending_exposure_fill_reductions", 0) or 0)
         stats["direct_strict_exposure_blocks"] = int(getattr(self, "_direct_strict_exposure_blocks", 0) or 0)
+        stats["direct_book_ownership_version"] = DIRECT_BOOK_OWNERSHIP_VERSION
+        stats["direct_book_ownership_reserves"] = int(getattr(self, "_direct_book_ownership_reserves", 0) or 0)
+        stats["direct_book_ownership_blocks"] = int(getattr(self, "_direct_book_ownership_blocks", 0) or 0)
+        stats["direct_book_ownership_releases"] = int(getattr(self, "_direct_book_ownership_releases", 0) or 0)
         stats["direct_trade_dedup_version"] = DIRECT_TRADE_DEDUP_VERSION
         stats["direct_duplicate_trade_events_skipped"] = int(
             getattr(self, "_direct_duplicate_trade_events_skipped", 0) or 0

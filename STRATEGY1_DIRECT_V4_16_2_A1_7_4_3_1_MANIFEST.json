@@ -1,0 +1,76 @@
+{
+  "version": "strategy1_direct_v4_16_2_a1_7_4_3_1",
+  "label": "Strategy1-Direct V4.16.2 A1.7.4.3.1 Same-Book Pending Order Ownership",
+  "base": "strategy1_direct_v4_16_2_a1_7_4_3",
+  "scope": "mechanical same-book/side ownership across current-response and pending-placement gaps; no entry, Maker edge, tail-recovery, dust-Kappa, FastPath, qualification, sizing, or portfolio-cap retune",
+  "runtime_evidence_basis": {
+    "trigger": "Agent67 A1.7.4.3 runtime kept aggregate exposure under 2.0 BASE but Book2 stacked two same-side 0.25 orders inside one response/lifecycle and reached about 0.53 BASE on one book",
+    "existing_gap": "A1.7.4.3 local pending ownership begins only after final response validation/recording, so two same-side placements already present in the same response can pass before the ledger owns the book",
+    "required_property": "at most one placement per (book, side) in a response; acknowledged/pending ownership continues across requests; duplicate pending keys must aggregate quantity instead of overwriting it"
+  },
+  "same_book_ownership": {
+    "version": "direct_book_ownership_v4_16_2_a1_7_4_3_1",
+    "same_request_rule": "one accepted placement per (book, side); opposite BUY/SELL pair remains legal",
+    "across_request_rule": "any acknowledged or locally pending order continues to own the book until fill/cancel/reject/ack/expiry lifecycle resolves",
+    "partial_fill_behavior": "ownership persists while pending reserved quantity remains above zero",
+    "duplicate_pending_key_behavior": "sum quantity into the existing reservation; never overwrite/under-reserve",
+    "diagnostics": [
+      "A17431_BOOK_OWNERSHIP_RESERVE",
+      "A17431_BOOK_OWNERSHIP_BLOCK",
+      "A17431_BOOK_OWNERSHIP_RELEASE"
+    ],
+    "summary_counters": [
+      "direct_book_ownership_reserves",
+      "direct_book_ownership_blocks",
+      "direct_book_ownership_releases"
+    ]
+  },
+  "frozen": {
+    "inflight_reservation_version": "direct_inflight_reservation_v4_16_2_a1_7_4_3",
+    "dust_kappa_version": "direct_dust_kappa_v4_16_2_a1_7_4_2",
+    "dust_kappa_maker_floor_bps": -60.0,
+    "trade_dedup_version": "direct_trade_dedup_v4_16_2_a1_7_4_1",
+    "tail_recovery_version": "direct_tail_recovery_v4_16_2_a1_7_4",
+    "fastpath_candidates": 20,
+    "fastpath_deep": 16,
+    "maker_size_base": 0.25,
+    "taker_entry": false,
+    "max_total_abs_base": 2.0,
+    "qualification_logic_changed": false
+  },
+  "verification": {
+    "a17431_plus_prior_targeted": "30 passed",
+    "launcher_preflight": "159 passed",
+    "research_regression": "623 passed, 11 skipped",
+    "python_compile": "PASS",
+    "bash_syntax": "PASS",
+    "frozen_hashes": {
+      "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+      "agents/strategy/Strategy1_Research.py": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+      "agents/strategy/research_direct_exit.py": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+      "agents/strategy/research_direct_liveness.py": "7e61f748fdb625d2e3e33768b45df47cc144bfc383dc6d8246458e22a1592c2c",
+      "agents/strategy/research_direct_fastpath.py": "bdcf9231e7d39405cb76616f0bbdcb84135ab33d537dbc66a10e6cb372df29fe",
+      "agents/strategy/research_direct_tail_recovery.py": "103c31af29710282207405cd0ebd363eb000a8a1a2ba7c036103bc800fdff7fb",
+      "agents/strategy/research_direct_trade_dedup.py": "2430e115d052152b4de209545a1b64a7bffbdb271154659225dc65dbf5cee43e",
+      "agents/strategy/research_direct_dust_kappa.py": "50c14d4d2cc7741cf98d58a5ecf801c15d58d5d5f7fb18a7539a1f1febb47fd2",
+      "agents/strategy/research_direct_exposure.py": "aa5f28be9ca9f2bedcedd3c720d512c54b08c91f963f08338caae22428ba16d3",
+      "agents/strategy/research_direct_inflight_reservation.py": "28b9d57390e11e55239fc612b8177c08fbf159072b75174538ddcdaad5467dc0"
+    }
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research_Simple.py": "a3963ddc7d145caf8337f68c18d0e6741d386d6b7733990bb828beda77b8a0b1",
+    "agents/strategy/research_direct_book_ownership.py": "5598aeee33286193a1a3b6caec4f105315fe3fd73733b17a0721d739218fe652",
+    "agents/strategy/research_direct_inflight_reservation.py": "28b9d57390e11e55239fc612b8177c08fbf159072b75174538ddcdaad5467dc0",
+    "run_strategy1_research_simple_multi.sh": "c2744c1403be72de96108587ea3742609e6bb3ced86798c074490c33c2a41690",
+    "tests/test_research_strategy1_direct_a1_7_4_1.py": "3f45cca2808a4935d33d60bc10f98c6f2782519a0c83e53715af779b0997ea3a",
+    "tests/test_research_strategy1_direct_a1_7_3.py": "53d32e7c86b8e3f94ac1b2359ad26834179bf791a4cf2526f28b6a0f6637f9bc",
+    "tests/test_research_strategy1_direct_a1_7_4.py": "51c18d3b5dc0390e2a094f00a88121bc93d134836d41df2e4094d0eac28a716d",
+    "tests/test_research_strategy1_direct_a1_7_2.py": "70a6f5f89605af8b47114c784e3987572679b419f119d15a6cd1c7a753dafee3",
+    "tests/test_research_strategy1_direct_a1_7_1.py": "7510554019c24d217d4577f111c7c6a5090e65f87056d600327a69ca6bb62d40",
+    "tests/test_research_strategy1_direct_a1_7_4_3.py": "5f44a2bf1d90beed6438f2274ef6874f6983834946e69a61f34c4d225b118709",
+    "tests/test_research_strategy1_direct_a1_7_0.py": "3618298b2e71b569eeb54cd08667149635cc7b69b12746c529df01aa651e6da0",
+    "tests/test_research_strategy1_direct_a1_7_4_3_1.py": "7433333292b2e19a73130cbcd7e56aea83ae3b299f30105e7f7f025d3c29fcbd",
+    "tests/test_research_strategy1_direct_a1_7_4_2.py": "71457bb3f9e5ef8c669f3225c2d3dd3cb3f20d61492aaecf54469c01b0519e10",
+    "STRATEGY1_DIRECT_V4_16_2_A1_7_4_3_1.md": "5f516bde3a9801903b68b027ba3e67d36177766d0c5a13ad0e88ca6a73a03fc7"
+  }
+}
