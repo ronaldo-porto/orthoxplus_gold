@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.4.3.1 Same-Book Pending Order Ownership Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.4.3.2 Identity-Safe Ownership Release Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,12 +8,13 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-A1.7.4.3.1 keeps A1.7.4.3 strict aggregate in-flight exposure reservation,
+A1.7.4.3.2 keeps A1.7.4.3 strict aggregate in-flight exposure reservation,
 A1.7.4.2 Kappa-safe dust compaction, A1.7.4.1 replay de-duplication, A1.7.4
 tail recovery, A1.7.2 TRUE-WAIT, and A1.7.3.1 partial-remainder/liveness
-frozen. It closes one mechanical publisher gap: a book/side that already owns
-a placement in the current response cannot receive another same-side placement
-before the pending ledger is recorded. Trading economics, recovery thresholds,
+frozen. It closes the remaining ownership-release gap: cancellation/fill lifecycle
+messages may release ownership only when they match the exact exchange order
+identity. Stale or clientless cancellation messages can no longer release a
+newer order on the same book/side. Trading economics, recovery thresholds,
 FastPath, size, and portfolio limits are intentionally unchanged.
 The frozen Strategy1_Research.py base remains untouched.
 
@@ -161,6 +162,10 @@ from research_direct_book_ownership import (
     canonical_order_side,
     ownership_key,
     reserve_pending_order,
+    ExchangeOrderIdentity,
+    register_exchange_identity,
+    reduce_identity_quantity,
+    cancellation_identity_decision,
 )
 from research_direct_dust_kappa import (
     DIRECT_DUST_KAPPA_VERSION,
@@ -185,12 +190,12 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3_2"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 A1.7.4.3.1 same-book ownership overlay on A1.7.4.3.
+    """V4.16.2 A1.7.4.3.2 identity-safe ownership overlay on A1.7.4.3.1.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -214,6 +219,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.7.4.2 Kappa loss-budget guard on moderate-dust sign-cross compaction;
       * A1.7.4.3 local pending-order reservation so submitted-but-unacknowledged orders cannot race the hard portfolio cap;
       * A1.7.4.3.1 same-book/side ownership across both current-response and pending placement gaps;
+      * A1.7.4.3.2 exact exchange-order identity release; stale cancellation cannot release a newer owner;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -305,6 +311,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_book_ownership_reserves = 0
         self._direct_book_ownership_blocks = 0
         self._direct_book_ownership_releases = 0
+        # A1.7.4.3.2 exact exchange-order identity registry. This registry is
+        # mechanical and bounded; missing/unknown identities fail safe by keeping
+        # ownership until authoritative acknowledgement/fill/local expiry.
+        self._direct_exchange_order_ownership: dict[int, ExchangeOrderIdentity] = {}
+        self._direct_identity_releases = 0
+        self._direct_stale_cancels_ignored = 0
+        self._direct_release_mismatch_blocks = 0
         self._direct_liveness_blocked_ticks = 0
         self._direct_liveness_triggers = 0
         self._direct_forced_recovery_books_this_tick: set[int] = set()
@@ -396,6 +409,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 same_book_pending_ownership=1,
                 same_request_same_side_ownership=1,
                 pending_duplicate_key_aggregates_quantity=1,
+                identity_safe_ownership_release=1,
+                stale_cancel_book_only_release=0,
+                exact_exchange_order_release=1,
                 one_live_order_batch_per_book=1,
                 isolated_dust_compaction=1,
                 direct_liveness_version=DIRECT_LIVENESS_VERSION,
@@ -503,46 +519,38 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _log_notices(self, state, tick: int) -> None:
         super()._log_notices(state, tick)
-        ledger = self._direct_pending_ledger()
-        if not ledger:
-            return
         try:
             notices = (getattr(state, "notices", None) or {}).get(self.uid, []) or []
         except Exception:
             notices = []
         for notice in notices:
             phase = type(notice).__name__.upper()
-            if not any(token in phase for token in ("CANCEL", "EXPIRE", "REJECT", "FAIL")):
-                continue
-            cid = None
-            for name in ("clientOrderId", "client_order_id", "clientId", "client_id"):
-                value = getattr(notice, name, None)
-                if value is not None:
-                    cid = value
-                    break
-            raw_book = getattr(notice, "bookId", getattr(notice, "book_id", None))
             try:
-                bid = int(raw_book) if raw_book is not None else None
-            except (TypeError, ValueError):
-                bid = None
-            matches = []
-            for key in ledger:
-                if bid is not None and int(key[0]) != bid:
+                if "PLACEMENTEVENT" in phase:
+                    self._direct_note_placement_identity_notice(notice, phase=phase)
                     continue
-                if cid is not None and str(key[1]) != str(cid):
+                if "ORDERCANCELLATIONSEVENT" in phase:
+                    self._direct_note_cancellation_identity_notice(notice, phase=phase)
                     continue
-                matches.append(key)
-            # With neither stable book nor client id, do not guess. The bounded
-            # expiry reconciler will release the reservation safely.
-            if bid is None and cid is None:
+                # Other terminal notices may release only by an exact client id.
+                # Never fall back to book-only matching.
+                if any(token in phase for token in ("EXPIRE", "REJECT", "FAIL")):
+                    cid = self._direct_notice_client_id(notice)
+                    raw_book = getattr(notice, "bookId", getattr(notice, "book_id", None))
+                    if cid is None or raw_book is None:
+                        continue
+                    try:
+                        bid = int(raw_book)
+                    except (TypeError, ValueError):
+                        continue
+                    side = canonical_order_side(getattr(notice, "side", ""))
+                    self._direct_release_pending_exact(
+                        book_id=bid, client_order_id=cid, side=side or None,
+                        reason=f"NOTICE_{phase}", exchange_order_id=getattr(notice, "orderId", None),
+                    )
+            except Exception:
+                # Correctness guard must never make the miner fail the request.
                 continue
-            for key in matches:
-                row = ledger.pop(key, None)
-                if row is not None:
-                    self._direct_emit_book_ownership_release(row=row, reason=f"NOTICE_{phase}")
-                self._direct_pending_exposure_expired = int(
-                    getattr(self, "_direct_pending_exposure_expired", 0) or 0
-                ) + 1
 
     def _research_on_own_fill(
         self, *, event, book_id: int, before: float, after: float,
@@ -2886,6 +2894,147 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             pass
 
+    def _direct_exchange_identity_registry(self) -> dict[int, ExchangeOrderIdentity]:
+        registry = getattr(self, "_direct_exchange_order_ownership", None)
+        if not isinstance(registry, dict):
+            registry = {}
+            self._direct_exchange_order_ownership = registry
+        return registry
+
+    def _direct_notice_client_id(self, notice):
+        for name in ("clientOrderId", "client_order_id", "clientId", "client_id"):
+            value = getattr(notice, name, None)
+            if value is not None:
+                return value
+        return None
+
+    def _direct_emit_identity_diag(self, event_type: str, **fields) -> None:
+        try:
+            self._emit(
+                str(event_type), force=True,
+                tick=int(getattr(self, "_tick", 0) or 0),
+                ownership_version=DIRECT_BOOK_OWNERSHIP_VERSION,
+                **fields,
+            )
+        except Exception:
+            pass
+
+    def _direct_register_exchange_identity(
+        self, *, exchange_order_id, book_id, client_order_id, side, remaining_quantity: float = 0.0,
+    ) -> ExchangeOrderIdentity | None:
+        return register_exchange_identity(
+            self._direct_exchange_identity_registry(),
+            exchange_order_id=exchange_order_id, book_id=book_id,
+            client_order_id=client_order_id, side=side,
+            remaining_quantity=remaining_quantity,
+        )
+
+    def _direct_release_pending_exact(
+        self, *, book_id: int, client_order_id, side: str | None, reason: str, exchange_order_id=None,
+    ) -> bool:
+        ledger = self._direct_pending_ledger()
+        bid = int(book_id)
+        cid = str(client_order_id)
+        side_token = canonical_order_side(side) if side else ""
+        matches = [
+            key for key in ledger
+            if int(key[0]) == bid and str(key[1]) == cid
+            and (not side_token or canonical_order_side(key[2]) == side_token)
+        ]
+        if len(matches) != 1:
+            if len(matches) > 1:
+                self._direct_release_mismatch_blocks = int(getattr(self, "_direct_release_mismatch_blocks", 0) or 0) + 1
+                self._direct_emit_identity_diag(
+                    "A17432_RELEASE_MISMATCH_BLOCK", book=bid, client_order_id=cid,
+                    exchange_order_id=exchange_order_id, side=side_token, reason="AMBIGUOUS_PENDING_IDENTITY",
+                    matches=len(matches),
+                )
+            return False
+        key = matches[0]
+        row = ledger.pop(key, None)
+        if row is None:
+            return False
+        self._direct_emit_book_ownership_release(row=row, reason=str(reason))
+        self._direct_identity_releases = int(getattr(self, "_direct_identity_releases", 0) or 0) + 1
+        self._direct_emit_identity_diag(
+            "A17432_IDENTITY_RELEASE", book=bid, client_order_id=cid,
+            exchange_order_id=exchange_order_id, side=canonical_order_side(row.side), reason=str(reason),
+            remaining_quantity=float(row.quantity or 0.0),
+        )
+        return True
+
+    def _direct_note_placement_identity_notice(self, notice, *, phase: str) -> None:
+        bid = getattr(notice, "bookId", None)
+        cid = self._direct_notice_client_id(notice)
+        oid = getattr(notice, "orderId", None)
+        side = canonical_order_side(getattr(notice, "side", ""))
+        success = bool(getattr(notice, "success", False))
+        qty = getattr(notice, "quantity", 0.0)
+        if success:
+            self._direct_register_exchange_identity(
+                exchange_order_id=oid, book_id=bid, client_order_id=cid,
+                side=side, remaining_quantity=qty,
+            )
+            return
+        # Placement failure has an exact client id and is safe to release.
+        if bid is not None and cid is not None:
+            self._direct_release_pending_exact(
+                book_id=int(bid), client_order_id=cid, side=side or None,
+                reason=f"NOTICE_{phase}", exchange_order_id=oid,
+            )
+
+    def _direct_note_cancellation_identity_notice(self, notice, *, phase: str) -> None:
+        registry = self._direct_exchange_identity_registry()
+        notice_book = getattr(notice, "bookId", None)
+        cancellations = list(getattr(notice, "cancellations", None) or [])
+        for cancellation in cancellations:
+            oid = getattr(cancellation, "orderId", None)
+            try:
+                oid_int = int(oid)
+            except (TypeError, ValueError):
+                oid_int = None
+            decision, identity = cancellation_identity_decision(
+                registry, exchange_order_id=oid_int, notice_book_id=notice_book,
+                success=bool(getattr(cancellation, "success", False)),
+            )
+            if decision == "STALE_UNKNOWN":
+                self._direct_stale_cancels_ignored = int(getattr(self, "_direct_stale_cancels_ignored", 0) or 0) + 1
+                self._direct_emit_identity_diag(
+                    "A17432_STALE_CANCEL_IGNORED", book=notice_book, exchange_order_id=oid,
+                    reason="UNKNOWN_EXCHANGE_ORDER_ID", success=int(bool(getattr(cancellation, "success", False))),
+                )
+                continue
+            if decision == "BOOK_MISMATCH":
+                self._direct_release_mismatch_blocks = int(getattr(self, "_direct_release_mismatch_blocks", 0) or 0) + 1
+                self._direct_emit_identity_diag(
+                    "A17432_RELEASE_MISMATCH_BLOCK", book=notice_book, exchange_order_id=oid_int,
+                    mapped_book=int(identity.book_id), client_order_id=identity.client_order_id,
+                    side=identity.side, reason="CANCEL_BOOK_ID_MISMATCH",
+                )
+                continue
+            if decision == "FAILED_KEEP":
+                # A failed cancellation (e.g. old order no longer exists) is not
+                # proof that the *current* local owner is terminal. Keep ownership
+                # until exact fill/ack/local expiry and never guess by book/side.
+                self._direct_stale_cancels_ignored = int(getattr(self, "_direct_stale_cancels_ignored", 0) or 0) + 1
+                self._direct_emit_identity_diag(
+                    "A17432_STALE_CANCEL_IGNORED", book=int(identity.book_id),
+                    exchange_order_id=oid_int, client_order_id=identity.client_order_id,
+                    side=identity.side, reason="CANCEL_FAILED_NOT_RELEASE_AUTHORITY", success=0,
+                )
+                continue
+            self._direct_release_pending_exact(
+                book_id=int(identity.book_id), client_order_id=identity.client_order_id,
+                side=identity.side, reason=f"NOTICE_{phase}_EXACT", exchange_order_id=oid_int,
+            )
+            registry.pop(oid_int, None)
+            self._direct_identity_releases = int(getattr(self, "_direct_identity_releases", 0) or 0) + 1
+            self._direct_emit_identity_diag(
+                "A17432_IDENTITY_RELEASE", book=int(identity.book_id),
+                exchange_order_id=oid_int, client_order_id=identity.client_order_id,
+                side=identity.side, reason="EXCHANGE_CANCELLATION_EXACT", remaining_quantity=0.0,
+            )
+
     def _direct_reconcile_pending_exposure(self, state) -> None:
         """Hand local bridge reservations to the authoritative account snapshot.
 
@@ -2911,6 +3060,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 except (TypeError, ValueError):
                     side = ""
                 visible.add((bid, str(cid), side))
+                self._direct_register_exchange_identity(
+                    exchange_order_id=getattr(order, "id", None), book_id=bid,
+                    client_order_id=cid, side=side,
+                    remaining_quantity=self._direct_order_remaining_qty(order),
+                )
         for key, row in list(ledger.items()):
             if key in visible:
                 ledger.pop(key, None)
@@ -2989,14 +3143,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return int(recorded)
 
     def _direct_pending_note_fill(self, event) -> None:
-        """Reduce, but do not double-consume, a local reservation on own fill."""
+        """Reduce local ownership only for the exact own exchange order when known."""
         ledger = self._direct_pending_ledger()
-        if not ledger:
-            return
+        registry = self._direct_exchange_identity_registry()
         book = getattr(event, "bookId", None)
-        cid = getattr(event, "clientOrderId", None)
         qty = getattr(event, "quantity", None)
-        if book is None or cid is None or qty is None:
+        if book is None or qty is None:
             return
         try:
             bid = int(book)
@@ -3005,7 +3157,40 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return
         if q <= 0.0:
             return
-        matches = [k for k in ledger if k[0] == bid and k[1] == str(cid)]
+        own_oid = None
+        try:
+            if int(getattr(event, "makerAgentId", -1)) == int(self.uid):
+                own_oid = int(getattr(event, "makerOrderId", 0) or 0)
+            elif int(getattr(event, "takerAgentId", -1)) == int(self.uid):
+                own_oid = int(getattr(event, "takerOrderId", 0) or 0)
+        except (TypeError, ValueError):
+            own_oid = None
+        identity = registry.get(own_oid) if own_oid else None
+        matches = []
+        if identity is not None:
+            key = identity.pending_key()
+            if key in ledger:
+                matches = [key]
+            identity_remaining = reduce_identity_quantity(
+                identity, q, eps=float(self._execution_flat_epsilon())
+            )
+            if identity_remaining <= 0.0:
+                registry.pop(int(identity.exchange_order_id), None)
+        else:
+            # A fill can race the placement acknowledgement. Fall back only to
+            # one unambiguous exact client id; never match by book alone.
+            cid = getattr(event, "clientOrderId", None)
+            if cid is None:
+                return
+            matches = [k for k in ledger if int(k[0]) == bid and str(k[1]) == str(cid)]
+            if len(matches) != 1:
+                if len(matches) > 1:
+                    self._direct_release_mismatch_blocks = int(getattr(self, "_direct_release_mismatch_blocks", 0) or 0) + 1
+                    self._direct_emit_identity_diag(
+                        "A17432_RELEASE_MISMATCH_BLOCK", book=bid, client_order_id=str(cid),
+                        exchange_order_id=own_oid, reason="AMBIGUOUS_FILL_CLIENT_ID", matches=len(matches),
+                    )
+                return
         for key in matches:
             row = ledger.get(key)
             if row is None:
@@ -3017,7 +3202,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if remaining <= 0.0:
                 released = ledger.pop(key, None)
                 if released is not None:
-                    self._direct_emit_book_ownership_release(row=released, reason="FILL_COMPLETE")
+                    self._direct_emit_book_ownership_release(row=released, reason="FILL_COMPLETE_EXACT")
+                    self._direct_identity_releases = int(getattr(self, "_direct_identity_releases", 0) or 0) + 1
+                    self._direct_emit_identity_diag(
+                        "A17432_IDENTITY_RELEASE", book=int(released.book_id),
+                        client_order_id=released.client_order_id, exchange_order_id=own_oid,
+                        side=canonical_order_side(released.side), reason="FILL_COMPLETE_EXACT",
+                        remaining_quantity=0.0,
+                    )
 
     def _direct_book_has_live_order(self, book_id: int) -> bool:
         """True for acknowledged or locally pending placement ownership."""
@@ -3639,6 +3831,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_book_ownership_reserves"] = int(getattr(self, "_direct_book_ownership_reserves", 0) or 0)
         stats["direct_book_ownership_blocks"] = int(getattr(self, "_direct_book_ownership_blocks", 0) or 0)
         stats["direct_book_ownership_releases"] = int(getattr(self, "_direct_book_ownership_releases", 0) or 0)
+        stats["direct_exchange_order_identities"] = len(self._direct_exchange_identity_registry())
+        stats["direct_identity_releases"] = int(getattr(self, "_direct_identity_releases", 0) or 0)
+        stats["direct_stale_cancels_ignored"] = int(getattr(self, "_direct_stale_cancels_ignored", 0) or 0)
+        stats["direct_release_mismatch_blocks"] = int(getattr(self, "_direct_release_mismatch_blocks", 0) or 0)
         stats["direct_trade_dedup_version"] = DIRECT_TRADE_DEDUP_VERSION
         stats["direct_duplicate_trade_events_skipped"] = int(
             getattr(self, "_direct_duplicate_trade_events_skipped", 0) or 0

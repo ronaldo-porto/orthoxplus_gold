@@ -1,0 +1,69 @@
+{
+  "version": "strategy1_direct_v4_16_2_a1_7_4_3_2",
+  "label": "Strategy1-Direct V4.16.2 A1.7.4.3.2 Identity-Safe Ownership Release",
+  "base": "strategy1_direct_v4_16_2_a1_7_4_3_1",
+  "scope": "mechanical exact exchange-order identity release for same-book pending ownership; no trading economics, sizing, FastPath, qualification, tail-recovery, dust-Kappa, dedup, or aggregate-cap retune",
+  "runtime_evidence_basis": {
+    "trigger": "Agent67 A1.7.4.3.1 showed stale OrderCancellationsEvent responses for old exchange order IDs releasing newer same-book/side pending ownership, allowing real duplicate exchange placements and 0.50-0.56 BASE same-book stacking.",
+    "required_property": "Only the exact exchange order named by placement/cancel/fill lifecycle can release ownership. Unknown, stale, failed, or book-mismatched cancellation notices cannot release a newer owner."
+  },
+  "identity_safe_ownership": {
+    "version": "direct_book_ownership_v4_16_2_a1_7_4_3_2",
+    "mapping": "exchangeOrderId -> (bookId, clientOrderId, side, remaining_quantity)",
+    "unknown_cancel": "ignored; local owner remains until exact fill/ack/local expiry",
+    "failed_cancel": "not release authority",
+    "book_mismatch": "blocked",
+    "fill": "exchange-order identity first; exact-client fallback only when unique",
+    "diagnostics": [
+      "A17432_STALE_CANCEL_IGNORED",
+      "A17432_IDENTITY_RELEASE",
+      "A17432_RELEASE_MISMATCH_BLOCK"
+    ],
+    "summary_counters": [
+      "direct_exchange_order_identities",
+      "direct_identity_releases",
+      "direct_stale_cancels_ignored",
+      "direct_release_mismatch_blocks"
+    ]
+  },
+  "frozen": {
+    "inflight_reservation_version": "direct_inflight_reservation_v4_16_2_a1_7_4_3",
+    "dust_kappa_version": "direct_dust_kappa_v4_16_2_a1_7_4_2",
+    "dust_kappa_maker_floor_bps": -60.0,
+    "trade_dedup_version": "direct_trade_dedup_v4_16_2_a1_7_4_1",
+    "tail_recovery_version": "direct_tail_recovery_v4_16_2_a1_7_4",
+    "fastpath_candidates": 20,
+    "fastpath_deep": 16,
+    "maker_size_base": 0.25,
+    "taker_entry": false,
+    "max_total_abs_base": 2.0,
+    "qualification_logic_changed": false
+  },
+  "verification": {
+    "a17432_plus_prior_targeted": "57 passed",
+    "launcher_preflight": "162 passed",
+    "research_regression": "633 passed, 11 skipped",
+    "python_compile": "PASS",
+    "bash_syntax": "PASS",
+    "note": "Repository-wide tests include legacy Base/Adaptive suites inconsistent with the current V4.13.9 promoted Base and optional dependencies unavailable in this runtime; the Research regression is the release gate used here.",
+    "frozen_hashes": {
+      "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+      "agents/strategy/Strategy1_Research.py": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+      "agents/strategy/research_direct_exit.py": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+      "agents/strategy/research_direct_liveness.py": "7e61f748fdb625d2e3e33768b45df47cc144bfc383dc6d8246458e22a1592c2c",
+      "agents/strategy/research_direct_fastpath.py": "bdcf9231e7d39405cb76616f0bbdcb84135ab33d537dbc66a10e6cb372df29fe",
+      "agents/strategy/research_direct_tail_recovery.py": "103c31af29710282207405cd0ebd363eb000a8a1a2ba7c036103bc800fdff7fb",
+      "agents/strategy/research_direct_trade_dedup.py": "2430e115d052152b4de209545a1b64a7bffbdb271154659225dc65dbf5cee43e",
+      "agents/strategy/research_direct_dust_kappa.py": "50c14d4d2cc7741cf98d58a5ecf801c15d58d5d5f7fb18a7539a1f1febb47fd2",
+      "agents/strategy/research_direct_exposure.py": "aa5f28be9ca9f2bedcedd3c720d512c54b08c91f963f08338caae22428ba16d3",
+      "agents/strategy/research_direct_inflight_reservation.py": "28b9d57390e11e55239fc612b8177c08fbf159072b75174538ddcdaad5467dc0"
+    }
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research_Simple.py": "c490882eaddd26462443498e942afe1c77d9eb76af7ad9156928970717988e68",
+    "agents/strategy/research_direct_book_ownership.py": "3ade945fa7651a5b33b8cf10035750ffa8e325d5998db160a876a891bfa7be14",
+    "run_strategy1_research_simple_multi.sh": "946143c9197f94d94c2eaddb4d9c1d35fda1eae9938ce04451d1d94e0d03e0f6",
+    "tests/test_research_strategy1_direct_a1_7_4_3_2.py": "ea7ae49513e57493f67960180cae724a7bcfdf63fe36d879f4f6ea827981bd23",
+    "STRATEGY1_DIRECT_V4_16_2_A1_7_4_3_2.md": "bdc34b62a28bec5cc2db84d0f9d806c5a261dc3b1c8cfb82cb90a9c0178fc10d"
+  }
+}

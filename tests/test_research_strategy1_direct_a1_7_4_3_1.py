@@ -34,8 +34,8 @@ def _row(*, side="sell", qty=0.25, cid=91022):
 
 
 def test_a17431_version_and_prior_overlays_frozen():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3_1"' in SRC
-    assert DIRECT_BOOK_OWNERSHIP_VERSION == "direct_book_ownership_v4_16_2_a1_7_4_3_1"
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3_2"' in SRC
+    assert DIRECT_BOOK_OWNERSHIP_VERSION == "direct_book_ownership_v4_16_2_a1_7_4_3_2"
     assert DIRECT_INFLIGHT_RESERVATION_VERSION == "direct_inflight_reservation_v4_16_2_a1_7_4_3"
     assert DIRECT_DUST_KAPPA_VERSION == "direct_dust_kappa_v4_16_2_a1_7_4_2"
     assert DIRECT_TRADE_DEDUP_VERSION == "direct_trade_dedup_v4_16_2_a1_7_4_1"
