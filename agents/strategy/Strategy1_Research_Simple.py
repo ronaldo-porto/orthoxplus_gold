@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.4.4 Positive-Maker Kappa Risk Veto Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.4.5 Quiet/Zero-Rebate Entry Quality Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,14 +8,14 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-A1.7.4.4 keeps A1.7.4.3.2 identity-safe ownership and strict aggregate in-flight exposure reservation,
+A1.7.4.5 keeps A1.7.4.4 positive-Maker Kappa veto, A1.7.4.3.2 identity-safe ownership and strict aggregate in-flight exposure reservation,
 A1.7.4.2 Kappa-safe dust compaction, A1.7.4.1 replay de-duplication, A1.7.4
 tail recovery, A1.7.2 TRUE-WAIT, and A1.7.3.1 partial-remainder/liveness
-frozen. It adds one narrow Kappa-tail correction: a negative HARD/ABSOLUTE
-risk-authority Taker cannot override an executable strongly-positive Maker
-completion unless catastrophic/MAX-exposure protection is actually active.
-FastPath, entry economics, size, portfolio limits, ownership, and recovery
-thresholds are intentionally unchanged.
+frozen. A1.7.4.4 keeps its narrow Kappa-tail correction. A1.7.4.5 adds one
+regime-specific acquisition correction: only in QUIET + no meaningful Maker
+rebate + very-low trade activity + wide spread, the current observable Maker
+edge floor rises from 2.5 bps to 15 bps. Normal/rebate regimes, size, portfolio
+limits, ownership, exits, recovery thresholds, and FastPath remain unchanged.
 The frozen Strategy1_Research.py base remains untouched.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -152,6 +152,14 @@ from research_direct_positive_maker_kappa import (
     apply_positive_maker_kappa_veto,
     classify_a1744_outcome,
 )
+from research_direct_quiet_entry import (
+    DIRECT_QUIET_ENTRY_VERSION,
+    DIRECT_A1745_QUIET_ZERO_REBATE_MIN_EDGE_BPS,
+    DIRECT_A1745_ZERO_REBATE_FLOOR_BPS,
+    DIRECT_A1745_LOW_TRADE_RATE_MAX,
+    DIRECT_A1745_WIDE_SPREAD_MIN_BPS,
+    quiet_zero_rebate_entry_gate,
+)
 from research_direct_trade_dedup import (
     DIRECT_TRADE_DEDUP_VERSION,
     DIRECT_TRADE_DEDUP_MAX_EVENTS,
@@ -196,12 +204,12 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_4"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_4"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_5"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_5"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 A1.7.4.4 positive-Maker Kappa veto on proven A1.7.4.3.2 mechanics.
+    """V4.16.2 A1.7.4.5 quiet/no-rebate entry quality on proven A1.7.4.4.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -227,6 +235,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.7.4.3.1 same-book/side ownership across both current-response and pending placement gaps;
       * A1.7.4.3.2 exact exchange-order identity release; stale cancellation cannot release a newer owner;
       * A1.7.4.4 strongly-positive Maker veto over negative non-catastrophic HARD/ABSOLUTE Taker authority;
+      * A1.7.4.5 15 bps entry floor only in QUIET/no-rebate/low-trade/wide-spread books;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -282,6 +291,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_a1744_veto_count = 0
         self._direct_a1744_catastrophic_bypass_count = 0
         self._direct_a1744_maker_not_strong_bypass_count = 0
+        # A1.7.4.5 entry-quality telemetry only; no learned state or exit authority.
+        self._direct_a1745_gate_active = 0
+        self._direct_a1745_entry_blocks = 0
+        self._direct_a1745_entry_allows = 0
+        self._direct_a1745_regime_bypass = 0
         self._direct_wait_holds = 0
         self._direct_wait_cancel_batches = 0
         self._direct_negative_aggressive_blocks = 0
@@ -388,6 +402,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 a1744_strong_maker_floor_bps=float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS),
                 a1744_failed_exit_escalation_can_override_strong_maker=0,
                 a1744_catastrophic_bypass=1,
+                direct_quiet_entry_version=DIRECT_QUIET_ENTRY_VERSION,
+                a1745_quiet_zero_rebate_min_edge_bps=float(DIRECT_A1745_QUIET_ZERO_REBATE_MIN_EDGE_BPS),
+                a1745_zero_rebate_floor_bps=float(DIRECT_A1745_ZERO_REBATE_FLOOR_BPS),
+                a1745_low_trade_rate_max=float(DIRECT_A1745_LOW_TRADE_RATE_MAX),
+                a1745_wide_spread_min_bps=float(DIRECT_A1745_WIDE_SPREAD_MIN_BPS),
+                a1745_global_maker_edge_retune=0,
                 true_wait_execution=1,
                 wait_falls_through_to_legacy_maker=0,
                 negative_aggressive_maker_block=1,
@@ -1832,6 +1852,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         capture_bps = max(0.0, float(getattr(ev, "spread_capture_bps", 0.0) or 0.0))
         maker_fee_bps = float(getattr(ev, "maker_fee_bps", 0.0) or 0.0)
         current_edge_bps = capture_bps - maker_fee_bps
+        spread_bps = 2.0 * capture_bps
+        trade_rate = max(0.0, float(getattr(profile, "trade_rate", 0.0) or 0.0))
+        a1745_gate = quiet_zero_rebate_entry_gate(
+            regime=str(getattr(self, "_research_market_regime", "") or ""),
+            maker_fee_bps=maker_fee_bps,
+            spread_bps=spread_bps,
+            trade_rate=trade_rate,
+            base_min_edge_bps=DIRECT_MAKER_MIN_EDGE_BPS,
+        )
+        effective_maker_min_edge_bps = float(a1745_gate.effective_min_edge_bps)
 
         remaining_obs = int(getattr(ev, "observations_remaining", 3) or 3)
         required_obs = int(getattr(ev, "required_observation_count", 3) or 3)
@@ -1842,7 +1872,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         decision = choose_direct_execution(
             maker_lifecycle_ev=life,
             maker_current_edge_bps=current_edge_bps,
-            maker_min_edge_bps=DIRECT_MAKER_MIN_EDGE_BPS,
+            maker_min_edge_bps=effective_maker_min_edge_bps,
             directional_score=float(getattr(prediction, "score", 0.0) or 0.0),
             crossing_bps=capture_bps,
             maker_size=maker_size,
@@ -1855,6 +1885,43 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
 
         tick = int(getattr(self, "_tick", 0) or 0)
+        if a1745_gate.active:
+            self._direct_a1745_gate_active = int(getattr(self, "_direct_a1745_gate_active", 0) or 0) + 1
+            base_would_pass = current_edge_bps + 1e-12 >= DIRECT_MAKER_MIN_EDGE_BPS
+            blocked_by_a1745 = bool(
+                decision.action == EXEC_ACTION_SKIP
+                and base_would_pass
+                and current_edge_bps + 1e-12 < effective_maker_min_edge_bps
+            )
+            if blocked_by_a1745:
+                self._direct_a1745_entry_blocks = int(getattr(self, "_direct_a1745_entry_blocks", 0) or 0) + 1
+                a1745_event = "A1745_ENTRY_BLOCK_LOW_EDGE"
+            elif decision.action == EXEC_ACTION_MAKER:
+                self._direct_a1745_entry_allows = int(getattr(self, "_direct_a1745_entry_allows", 0) or 0) + 1
+                a1745_event = "A1745_ENTRY_ALLOWED"
+            else:
+                a1745_event = "A1745_QUIET_ZERO_REBATE_GATE"
+            try:
+                self._emit(
+                    a1745_event, force=True, tick=tick, book=int(book_id),
+                    current_maker_edge_bps=float(current_edge_bps),
+                    selected_action=str(decision.action),
+                    **a1745_gate.as_log(),
+                )
+            except Exception:
+                pass
+        elif decision.action == EXEC_ACTION_MAKER and (tick <= 2 or tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0):
+            self._direct_a1745_regime_bypass = int(getattr(self, "_direct_a1745_regime_bypass", 0) or 0) + 1
+            try:
+                self._emit(
+                    "A1745_REGIME_BYPASS", force=True, tick=tick, book=int(book_id),
+                    current_maker_edge_bps=float(current_edge_bps),
+                    selected_action=str(decision.action),
+                    **a1745_gate.as_log(),
+                )
+            except Exception:
+                pass
+
         if decision.action != EXEC_ACTION_SKIP or tick <= 2 or tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
             try:
                 self._emit(
@@ -1875,6 +1942,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     neutral_fallback_used=int(is_neutral_forecast(prediction)),
                     learned_entry_authority=0,
                     direct_mode=1,
+                    **a1745_gate.as_log(),
                     **decision.as_log(),
                 )
             except Exception:

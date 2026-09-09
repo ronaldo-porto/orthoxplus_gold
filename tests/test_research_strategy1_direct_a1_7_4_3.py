@@ -25,7 +25,7 @@ from research_direct_tail_recovery import DIRECT_TAIL_RECOVERY_VERSION
 
 
 def test_a1743_version_and_frozen_economic_overlays():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_4"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_5"' in SRC
     assert DIRECT_INFLIGHT_RESERVATION_VERSION == "direct_inflight_reservation_v4_16_2_a1_7_4_3"
     assert DIRECT_DUST_KAPPA_VERSION == "direct_dust_kappa_v4_16_2_a1_7_4_2"
     assert DIRECT_TRADE_DEDUP_VERSION == "direct_trade_dedup_v4_16_2_a1_7_4_1"

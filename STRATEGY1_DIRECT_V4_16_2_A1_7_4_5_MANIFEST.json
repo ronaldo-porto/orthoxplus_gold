@@ -1,0 +1,66 @@
+{
+  "version": "strategy1_direct_v4_16_2_a1_7_4_5",
+  "label": "Strategy1-Direct V4.16.2 A1.7.4.5 Quiet / Zero-Rebate Entry Quality",
+  "base": "strategy1_direct_v4_16_2_a1_7_4_4",
+  "scope": "regime-specific acquisition gate only: QUIET + no meaningful Maker rebate + trade_rate<=0.10 + spread>=20 bps raises current Maker entry edge floor from 2.5 to 15 bps; exits, ownership, sizing, aggregate cap, FastPath, and emergency mechanics unchanged",
+  "runtime_evidence_basis": {
+    "trigger": "Resumed Testnet session: Maker fee ~0 bps, median spread ~31.5 bps, median trade_rate ~0, 92% QUIET; 106/106 Maker-ending RT positive but 52/52 Taker-ending RT negative and RT velocity ~0.126/s.",
+    "required_property": "Reduce marginal acquisition in the quiet/no-rebate/low-activity wide-spread regime before positions age into negative Maker economics and risk-authority Taker exits, without globally suppressing the profitable rebate/trending regime."
+  },
+  "quiet_zero_rebate_entry_gate": {
+    "version": "direct_quiet_entry_v4_16_2_a1_7_4_5",
+    "base_maker_edge_floor_bps": 2.5,
+    "target_maker_edge_floor_bps": 15.0,
+    "maker_fee_floor_bps": -1.0,
+    "trade_rate_max": 0.1,
+    "spread_min_bps": 20.0,
+    "requires_regime": "QUIET",
+    "all_conditions_required": true,
+    "global_maker_edge_retune": false,
+    "diagnostics": [
+      "A1745_QUIET_ZERO_REBATE_GATE",
+      "A1745_ENTRY_BLOCK_LOW_EDGE",
+      "A1745_ENTRY_ALLOWED",
+      "A1745_REGIME_BYPASS"
+    ]
+  },
+  "frozen": {
+    "maker_size_base": 0.25,
+    "max_total_abs_base": 2.0,
+    "taker_entry": false,
+    "positive_maker_kappa": "direct_positive_maker_kappa_v4_16_2_a1_7_4_4",
+    "identity_safe_ownership": "direct_book_ownership_v4_16_2_a1_7_4_3_2",
+    "inflight_reservation": "direct_inflight_reservation_v4_16_2_a1_7_4_3",
+    "dust_kappa": "direct_dust_kappa_v4_16_2_a1_7_4_2",
+    "trade_dedup": "direct_trade_dedup_v4_16_2_a1_7_4_1",
+    "tail_recovery": "direct_tail_recovery_v4_16_2_a1_7_4"
+  },
+  "verification": {
+    "a1745_targeted": "12 passed",
+    "a1745_plus_a1744_identity_targeted": "28 passed before final integration additions; dedicated A1.7.4.5 final suite 12 passed",
+    "launcher_preflight": "182 passed",
+    "research_regression": "653 passed, 11 skipped",
+    "python_compile": "PASS",
+    "bash_syntax": "PASS",
+    "frozen_hashes": {
+      "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+      "agents/strategy/Strategy1_Research.py": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+      "agents/strategy/research_direct_exit.py": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+      "agents/strategy/research_direct_tail_recovery.py": "103c31af29710282207405cd0ebd363eb000a8a1a2ba7c036103bc800fdff7fb",
+      "agents/strategy/research_direct_book_ownership.py": "3ade945fa7651a5b33b8cf10035750ffa8e325d5998db160a876a891bfa7be14",
+      "agents/strategy/research_direct_inflight_reservation.py": "28b9d57390e11e55239fc612b8177c08fbf159072b75174538ddcdaad5467dc0",
+      "agents/strategy/research_direct_dust_kappa.py": "50c14d4d2cc7741cf98d58a5ecf801c15d58d5d5f7fb18a7539a1f1febb47fd2",
+      "agents/strategy/research_direct_trade_dedup.py": "2430e115d052152b4de209545a1b64a7bffbdb271154659225dc65dbf5cee43e",
+      "agents/strategy/research_direct_fastpath.py": "bdcf9231e7d39405cb76616f0bbdcb84135ab33d537dbc66a10e6cb372df29fe",
+      "agents/strategy/research_direct_exposure.py": "aa5f28be9ca9f2bedcedd3c720d512c54b08c91f963f08338caae22428ba16d3",
+      "agents/strategy/research_direct_positive_maker_kappa.py": "6ca23ef4213260cccaa09be9c5c4a5eb1d5f3963e0ef5d68ba644c90fcd343bb"
+    }
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research_Simple.py": "553781085089beeb1fe3dbeb81e460c78584ecef75eea8293e81247dde5e4a20",
+    "agents/strategy/research_direct_quiet_entry.py": "1f6ea7edb27790b8920fbfcba2c711223944bbc730ee6e3eb5bad8ba55e068b5",
+    "run_strategy1_research_simple_multi.sh": "71a751399ef261b3292fc9f985d8315f723f9bd13c8048225d8a30b0268f734d",
+    "tests/test_research_strategy1_direct_a1_7_4_5.py": "26600acafec2c04a5e60e349842200bdf36ff5f7e7e006efcf4abc41b5761a11",
+    "STRATEGY1_DIRECT_V4_16_2_A1_7_4_5.md": "5a890cf922fb8078da6e2c9aa891f65dde227fd31bb36d2b3f38cca294728189"
+  }
+}

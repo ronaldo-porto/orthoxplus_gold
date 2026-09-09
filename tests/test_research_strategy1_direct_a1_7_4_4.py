@@ -48,7 +48,7 @@ def _apply(base, *, maker, taker, catastrophic=False, maker_executable=True):
 
 
 def test_version_and_integration_markers_present():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_4"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_5"' in SRC
     assert DIRECT_POSITIVE_MAKER_KAPPA_VERSION == "direct_positive_maker_kappa_v4_16_2_a1_7_4_4"
     assert "apply_positive_maker_kappa_veto(" in SRC
     assert "A1744_POSITIVE_MAKER_RISK_VETO" in SRC
