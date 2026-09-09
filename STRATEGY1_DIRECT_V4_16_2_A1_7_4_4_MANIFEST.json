@@ -1,0 +1,65 @@
+{
+  "version": "strategy1_direct_v4_16_2_a1_7_4_4",
+  "label": "Strategy1-Direct V4.16.2 A1.7.4.4 Positive-Maker Kappa Risk Veto",
+  "base": "strategy1_direct_v4_16_2_a1_7_4_3_2",
+  "scope": "narrow Kappa-tail veto: negative non-catastrophic HARD/ABSOLUTE risk Taker cannot override executable Maker completion >= +10 bps; no entry, sizing, ownership, aggregate-cap, FastPath, tail-recovery, or qualification retune",
+  "runtime_evidence_basis": {
+    "trigger": "Agent67 A1.7.4.3.2: 609/609 Maker-ending RT positive; 33/33 Taker-ending RT negative. Observed risk-authority Takers had positive Maker economics, while catastrophic/hard mechanical flags were not active.",
+    "required_property": "Failed-exit escalation alone cannot force a negative HARD_ESCAPE_CLIP/ABSOLUTE_PROTECTION_REDUCE when Maker completion is strongly positive; catastrophic/MAX-exposure protection still bypasses the veto."
+  },
+  "positive_maker_kappa_veto": {
+    "version": "direct_positive_maker_kappa_v4_16_2_a1_7_4_4",
+    "strong_maker_floor_bps": 10.0,
+    "risk_taker_reasons": [
+      "HARD_ESCAPE_CLIP",
+      "ABSOLUTE_PROTECTION_REDUCE"
+    ],
+    "requires_negative_taker": true,
+    "requires_maker_executable": true,
+    "failed_exit_count_can_override": false,
+    "catastrophic_bypass": true,
+    "recovery_taker_logic_changed": false,
+    "diagnostics": [
+      "A1744_POSITIVE_MAKER_RISK_VETO",
+      "A1744_TAKER_ALLOWED_CATASTROPHIC",
+      "A1744_TAKER_ALLOWED_MAKER_NOT_STRONG",
+      "A1744_VETO_RELEASE"
+    ]
+  },
+  "frozen": {
+    "maker_size_base": 0.25,
+    "max_total_abs_base": 2.0,
+    "taker_entry": false,
+    "identity_safe_ownership": "direct_book_ownership_v4_16_2_a1_7_4_3_2",
+    "inflight_reservation": "direct_inflight_reservation_v4_16_2_a1_7_4_3",
+    "dust_kappa": "direct_dust_kappa_v4_16_2_a1_7_4_2",
+    "trade_dedup": "direct_trade_dedup_v4_16_2_a1_7_4_1",
+    "tail_recovery": "direct_tail_recovery_v4_16_2_a1_7_4"
+  },
+  "verification": {
+    "a1744_plus_identity_targeted": "18 passed",
+    "launcher_preflight": "170 passed",
+    "research_regression": "641 passed, 11 skipped",
+    "python_compile": "PASS",
+    "bash_syntax": "PASS",
+    "frozen_hashes": {
+      "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+      "agents/strategy/Strategy1_Research.py": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+      "agents/strategy/research_direct_exit.py": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+      "agents/strategy/research_direct_tail_recovery.py": "103c31af29710282207405cd0ebd363eb000a8a1a2ba7c036103bc800fdff7fb",
+      "agents/strategy/research_direct_book_ownership.py": "3ade945fa7651a5b33b8cf10035750ffa8e325d5998db160a876a891bfa7be14",
+      "agents/strategy/research_direct_inflight_reservation.py": "28b9d57390e11e55239fc612b8177c08fbf159072b75174538ddcdaad5467dc0",
+      "agents/strategy/research_direct_dust_kappa.py": "50c14d4d2cc7741cf98d58a5ecf801c15d58d5d5f7fb18a7539a1f1febb47fd2",
+      "agents/strategy/research_direct_trade_dedup.py": "2430e115d052152b4de209545a1b64a7bffbdb271154659225dc65dbf5cee43e",
+      "agents/strategy/research_direct_fastpath.py": "bdcf9231e7d39405cb76616f0bbdcb84135ab33d537dbc66a10e6cb372df29fe",
+      "agents/strategy/research_direct_exposure.py": "aa5f28be9ca9f2bedcedd3c720d512c54b08c91f963f08338caae22428ba16d3"
+    }
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research_Simple.py": "6bf51ae0d07cc34de1f61a0e7a0a51bd860758546128c99ea9000324762c66c9",
+    "agents/strategy/research_direct_positive_maker_kappa.py": "6ca23ef4213260cccaa09be9c5c4a5eb1d5f3963e0ef5d68ba644c90fcd343bb",
+    "run_strategy1_research_simple_multi.sh": "4650d2518020286d841dcc34f8aae2fd7b16795b807afc80b9626377cde44d36",
+    "tests/test_research_strategy1_direct_a1_7_4_4.py": "07e60d854e8709b18b4093f68b5fbc3aa6634235b740db44cb8865fa84f6755d",
+    "STRATEGY1_DIRECT_V4_16_2_A1_7_4_4.md": "e62f226945d655acc60b6bc0cc91bf48db53d4f64712fd3603caf128405fc22a"
+  }
+}

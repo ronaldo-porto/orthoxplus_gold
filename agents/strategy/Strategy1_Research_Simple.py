@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.4.3.2 Identity-Safe Ownership Release Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.4.4 Positive-Maker Kappa Risk Veto Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,14 +8,14 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-A1.7.4.3.2 keeps A1.7.4.3 strict aggregate in-flight exposure reservation,
+A1.7.4.4 keeps A1.7.4.3.2 identity-safe ownership and strict aggregate in-flight exposure reservation,
 A1.7.4.2 Kappa-safe dust compaction, A1.7.4.1 replay de-duplication, A1.7.4
 tail recovery, A1.7.2 TRUE-WAIT, and A1.7.3.1 partial-remainder/liveness
-frozen. It closes the remaining ownership-release gap: cancellation/fill lifecycle
-messages may release ownership only when they match the exact exchange order
-identity. Stale or clientless cancellation messages can no longer release a
-newer order on the same book/side. Trading economics, recovery thresholds,
-FastPath, size, and portfolio limits are intentionally unchanged.
+frozen. It adds one narrow Kappa-tail correction: a negative HARD/ABSOLUTE
+risk-authority Taker cannot override an executable strongly-positive Maker
+completion unless catastrophic/MAX-exposure protection is actually active.
+FastPath, entry economics, size, portfolio limits, ownership, and recovery
+thresholds are intentionally unchanged.
 The frozen Strategy1_Research.py base remains untouched.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
@@ -146,6 +146,12 @@ from research_direct_tail_recovery import (
     recovery_maker_floor_for_reason,
     risk_velocity_bps_per_tick as direct_tail_risk_velocity,
 )
+from research_direct_positive_maker_kappa import (
+    DIRECT_POSITIVE_MAKER_KAPPA_VERSION,
+    DIRECT_A1744_STRONG_MAKER_FLOOR_BPS,
+    apply_positive_maker_kappa_veto,
+    classify_a1744_outcome,
+)
 from research_direct_trade_dedup import (
     DIRECT_TRADE_DEDUP_VERSION,
     DIRECT_TRADE_DEDUP_MAX_EVENTS,
@@ -190,12 +196,12 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3_2"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_3_2"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_4"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_4"
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 A1.7.4.3.2 identity-safe ownership overlay on A1.7.4.3.1.
+    """V4.16.2 A1.7.4.4 positive-Maker Kappa veto on proven A1.7.4.3.2 mechanics.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -220,6 +226,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.7.4.3 local pending-order reservation so submitted-but-unacknowledged orders cannot race the hard portfolio cap;
       * A1.7.4.3.1 same-book/side ownership across both current-response and pending placement gaps;
       * A1.7.4.3.2 exact exchange-order identity release; stale cancellation cannot release a newer owner;
+      * A1.7.4.4 strongly-positive Maker veto over negative non-catastrophic HARD/ABSOLUTE Taker authority;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -271,6 +278,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # is used only to enforce the Direct chooser's action at the final Maker
         # placement boundary; it is not learned state.
         self._direct_exit_authority_last: dict[int, dict[str, Any]] = {}
+        self._direct_a1744_veto_active: dict[int, dict[str, Any]] = {}
+        self._direct_a1744_veto_count = 0
+        self._direct_a1744_catastrophic_bypass_count = 0
+        self._direct_a1744_maker_not_strong_bypass_count = 0
         self._direct_wait_holds = 0
         self._direct_wait_cancel_batches = 0
         self._direct_negative_aggressive_blocks = 0
@@ -373,6 +384,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 absolute_positive_maker_veto_enabled=1,
                 absolute_positive_maker_veto_floor_bps=float(getattr(self, "research_positive_maker_veto_floor_bps", 1.0)),
                 absolute_positive_maker_veto_max_failed_exits=1,
+                direct_positive_maker_kappa_version=DIRECT_POSITIVE_MAKER_KAPPA_VERSION,
+                a1744_strong_maker_floor_bps=float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS),
+                a1744_failed_exit_escalation_can_override_strong_maker=0,
+                a1744_catastrophic_bypass=1,
                 true_wait_execution=1,
                 wait_falls_through_to_legacy_maker=0,
                 negative_aggressive_maker_block=1,
@@ -967,6 +982,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 catastrophic_hard_risk=bool(exit_kwargs.get("catastrophic_hard_risk", False)),
                 reduction_executable=bool(exit_kwargs.get("reduction_executable", False)),
             )
+            pre_a1744_decision = decision
+            decision = apply_positive_maker_kappa_veto(
+                base_decision=pre_a1744_decision,
+                maker_net_bps=float(exit_kwargs.get("maker_net_bps", 0.0) or 0.0),
+                taker_net_bps=float(exit_kwargs.get("taker_net_bps", 0.0) or 0.0),
+                maker_executable=bool(exit_kwargs.get("maker_executable", True)),
+                catastrophic_hard_risk=bool(exit_kwargs.get("catastrophic_hard_risk", False)),
+                inventory_qty=float(exit_kwargs.get("inventory_qty", 0.0) or 0.0),
+            )
+            captured["pre_a1744_decision"] = pre_a1744_decision
             captured.update(exit_kwargs)
             captured["caller_unrealized_bps"] = caller_unrealized
             captured["position_risk_bps"] = position_risk_bps
@@ -980,6 +1005,72 @@ class Strategy1_Research_Simple(Strategy1_Research):
             result = super()._research_apply_unified_exit(legacy, **kwargs)
         finally:
             setattr(module, "choose_position_exit", original)
+
+        # A1.7.4.4: explicit Kappa-risk-veto telemetry. This state is diagnostic
+        # only and never changes execution after the chooser has returned.
+        try:
+            pre_a1744 = captured.get("pre_a1744_decision")
+            decision_now = captured.get("decision")
+            if pre_a1744 is not None and decision_now is not None and book_id_outer >= 0:
+                maker_now = float(captured.get("maker_net_bps", 0.0) or 0.0)
+                taker_now = float(captured.get("taker_net_bps", 0.0) or 0.0)
+                catastrophic_now = bool(captured.get("catastrophic_hard_risk", False))
+                label = classify_a1744_outcome(
+                    base_decision=pre_a1744, final_decision=decision_now,
+                    maker_net_bps=maker_now, taker_net_bps=taker_now,
+                    maker_executable=bool(captured.get("maker_executable", True)),
+                    catastrophic_hard_risk=catastrophic_now,
+                )
+                active = getattr(self, "_direct_a1744_veto_active", {})
+                was_active = int(book_id_outer) in active
+                if label == "A1744_POSITIVE_MAKER_RISK_VETO":
+                    self._direct_a1744_veto_count = int(getattr(self, "_direct_a1744_veto_count", 0) or 0) + 1
+                    active[int(book_id_outer)] = {
+                        "tick": int(getattr(self, "_tick", 0) or 0),
+                        "maker_net_bps": maker_now, "taker_net_bps": taker_now,
+                        "base_reason": str(getattr(pre_a1744, "reason", "") or ""),
+                    }
+                    self._emit(
+                        "A1744_POSITIVE_MAKER_RISK_VETO", force=True,
+                        tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id_outer),
+                        base_reason=str(getattr(pre_a1744, "reason", "") or ""),
+                        maker_net_bps=maker_now, taker_net_bps=taker_now,
+                        strong_maker_floor_bps=float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS),
+                        failed_exit_count=int(captured.get("failed_exit_count", 0) or 0),
+                        position_risk_bps=float(captured.get("position_risk_bps", 0.0) or 0.0),
+                        catastrophic=0, version=DIRECT_POSITIVE_MAKER_KAPPA_VERSION,
+                    )
+                else:
+                    if label == "A1744_TAKER_ALLOWED_CATASTROPHIC":
+                        self._direct_a1744_catastrophic_bypass_count = int(getattr(self, "_direct_a1744_catastrophic_bypass_count", 0) or 0) + 1
+                        self._emit(
+                            label, force=True, tick=int(getattr(self, "_tick", 0) or 0),
+                            book=int(book_id_outer), maker_net_bps=maker_now, taker_net_bps=taker_now,
+                            base_reason=str(getattr(pre_a1744, "reason", "") or ""),
+                            version=DIRECT_POSITIVE_MAKER_KAPPA_VERSION,
+                        )
+                    elif label == "A1744_TAKER_ALLOWED_MAKER_NOT_STRONG":
+                        self._direct_a1744_maker_not_strong_bypass_count = int(getattr(self, "_direct_a1744_maker_not_strong_bypass_count", 0) or 0) + 1
+                        self._emit(
+                            label, force=True, tick=int(getattr(self, "_tick", 0) or 0),
+                            book=int(book_id_outer), maker_net_bps=maker_now, taker_net_bps=taker_now,
+                            base_reason=str(getattr(pre_a1744, "reason", "") or ""),
+                            strong_maker_floor_bps=float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS),
+                            version=DIRECT_POSITIVE_MAKER_KAPPA_VERSION,
+                        )
+                    if was_active:
+                        prior = active.pop(int(book_id_outer), {})
+                        self._emit(
+                            "A1744_VETO_RELEASE", force=True,
+                            tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id_outer),
+                            release_label=str(label or "RISK_TAKER_NO_LONGER_IN_SCOPE"),
+                            prior_tick=int(prior.get("tick", -1) or -1),
+                            maker_net_bps=maker_now, taker_net_bps=taker_now,
+                            catastrophic=int(catastrophic_now),
+                            version=DIRECT_POSITIVE_MAKER_KAPPA_VERSION,
+                        )
+        except Exception:
+            pass
 
         # A1.7.2: persist only the current-tick Direct authority so the final
         # Maker-placement boundary can enforce WAIT as a real hold.
@@ -3835,6 +3926,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_identity_releases"] = int(getattr(self, "_direct_identity_releases", 0) or 0)
         stats["direct_stale_cancels_ignored"] = int(getattr(self, "_direct_stale_cancels_ignored", 0) or 0)
         stats["direct_release_mismatch_blocks"] = int(getattr(self, "_direct_release_mismatch_blocks", 0) or 0)
+        stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
+        stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
+        stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)
+        stats["direct_a1744_active_veto_books"] = len(getattr(self, "_direct_a1744_veto_active", {}) or {})
+        stats["direct_a1744_catastrophic_bypass_count"] = int(getattr(self, "_direct_a1744_catastrophic_bypass_count", 0) or 0)
+        stats["direct_a1744_maker_not_strong_bypass_count"] = int(getattr(self, "_direct_a1744_maker_not_strong_bypass_count", 0) or 0)
         stats["direct_trade_dedup_version"] = DIRECT_TRADE_DEDUP_VERSION
         stats["direct_duplicate_trade_events_skipped"] = int(
             getattr(self, "_direct_duplicate_trade_events_skipped", 0) or 0
