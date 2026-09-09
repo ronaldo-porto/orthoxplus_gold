@@ -48,8 +48,10 @@ def _apply(base, *, maker, taker, catastrophic=False, maker_executable=True):
 
 
 def test_version_and_integration_markers_present():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_5"' in SRC
-    assert DIRECT_POSITIVE_MAKER_KAPPA_VERSION == "direct_positive_maker_kappa_v4_16_2_a1_7_4_4"
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_5"' in SRC
+    # A1.7.5 extends this module with the relative arm; the A1.7.4.4 absolute
+    # arm asserted throughout this suite stays authoritative.
+    assert DIRECT_POSITIVE_MAKER_KAPPA_VERSION == "direct_positive_maker_kappa_v4_16_2_a1_7_5"
     assert "apply_positive_maker_kappa_veto(" in SRC
     assert "A1744_POSITIVE_MAKER_RISK_VETO" in SRC
     assert "A1744_TAKER_ALLOWED_CATASTROPHIC" in SRC
@@ -89,17 +91,36 @@ def test_catastrophic_authority_is_never_vetoed():
 
 
 def test_marginal_positive_maker_does_not_create_new_liveness_policy():
+    """Marginal on *both* arms still crosses.
+
+    A1.7.4.4 asked only whether Maker cleared +10 bps absolute. A1.7.5 adds the
+    relative arm, so a genuinely marginal case must now also fail the 15 bps
+    Maker-versus-Taker advantage test. Maker +9.99 against Taker -4.0 is
+    marginal on both: it still crosses.
+    """
+    maker = DIRECT_A1744_STRONG_MAKER_FLOOR_BPS - 0.01
+    taker = -4.0
+    base = _base(unrealized_bps=-25.0, maker_net_bps=maker, taker_net_bps=taker,
+                 failed_exit_count=100)
+    assert base.action == ACTION_TAKER_EXIT
+    final = _apply(base, maker=maker, taker=taker)
+    assert final.action == ACTION_TAKER_EXIT
+    assert classify_a1744_outcome(
+        base_decision=base, final_decision=final, maker_net_bps=maker,
+        taker_net_bps=taker, maker_executable=True,
+        catastrophic_hard_risk=False,
+    ) == "A1744_TAKER_ALLOWED_MAKER_NOT_STRONG"
+
+
+def test_a175_relative_arm_vetoes_what_the_absolute_arm_could_not():
+    """The A1.7.4.5 leak: Maker +9.99 is better than crossing at -30 bps."""
     maker = DIRECT_A1744_STRONG_MAKER_FLOOR_BPS - 0.01
     base = _base(unrealized_bps=-25.0, maker_net_bps=maker, taker_net_bps=-30.0,
                  failed_exit_count=100)
     assert base.action == ACTION_TAKER_EXIT
     final = _apply(base, maker=maker, taker=-30.0)
-    assert final.action == ACTION_TAKER_EXIT
-    assert classify_a1744_outcome(
-        base_decision=base, final_decision=final, maker_net_bps=maker,
-        taker_net_bps=-30.0, maker_executable=True,
-        catastrophic_hard_risk=False,
-    ) == "A1744_TAKER_ALLOWED_MAKER_NOT_STRONG"
+    assert final.action == ACTION_MAKER_EXIT
+    assert final.corridor_action == "DIRECT_POSITIVE_MAKER_KAPPA_A175_RELATIVE"
 
 
 def test_non_executable_maker_does_not_veto():

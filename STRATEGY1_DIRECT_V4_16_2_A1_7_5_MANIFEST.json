@@ -1,0 +1,146 @@
+{
+  "version": "strategy1_direct_v4_16_2_a1_7_5",
+  "label": "Strategy1-Direct V4.16.2 A1.7.5 Relative Tail Authority",
+  "base": "strategy1_direct_v4_16_2_a1_7_4_5",
+  "scope": "tail-exit economics and dust liveness only: adds a relative Maker-versus-Taker veto arm bounded by risk-band floors and a 60-tick per-book budget, lets a far-ahead recovery Maker survive quiet-book failed exits in DEFENSIVE/HARD_ESCAPE, and escalates the dust Kappa floor with residual age; entry authority, ownership, reservation, sizing, aggregate cap, FastPath, and emergency mechanics unchanged",
+  "runtime_evidence_basis": {
+    "log": "RealNet (agent 67) logs/m1_strategy1_research_simple/strategy1_research_agent_67_20260909_184012.jsonl",
+    "engine_version": "strategy1_direct_v4_16_2_a1_7_4_5",
+    "ticks": 2900,
+    "round_trips": 322,
+    "trigger": "A1.7.4.x mechanics validated (exposure 1.39 BASE under the 2.0 cap, contract rejects 1250 -> 4, ownership reserve/release 3544/3541, net realized PnL +75.08) but three guards blocked bad actions without providing good ones: 84 forced risk-Taker crossings with a strictly better executable Maker (97.6%, median advantage +15.8 bps, 0 catastrophic, 91.7% with failed_exit_count>=2); 1392 dust blocks all on Book 80, refused at -60.18 bps then trapped to -320 bps for 2460 ticks holding 0.3902 BASE; 475 QUIET entry blocks spanning 10.07-14.99 bps with no outcome measurement.",
+    "required_property": "Choose the tail exit relatively (is Maker better than crossing) rather than absolutely (is Maker good), under an explicit time bound, and never let a bounded refusal create an unbounded frozen position -- without relaxing any entry, exposure, or emergency authority."
+  },
+  "relative_tail_authority": {
+    "version": "direct_positive_maker_kappa_v4_16_2_a1_7_5",
+    "maker_advantage_bps": 15.0,
+    "band_floor_bps": {
+      "DEFENSIVE": -25.0,
+      "HARD_ESCAPE": -30.0,
+      "ABSOLUTE_PROTECTION": -35.0
+    },
+    "band_floors_reused_from": "research_direct_tail_recovery",
+    "absolute_arm_frozen": true,
+    "absolute_arm_floor_bps": 10.0,
+    "arms_are_distinguishable": true,
+    "corridor_actions": [
+      "DIRECT_POSITIVE_MAKER_KAPPA_A1744",
+      "DIRECT_POSITIVE_MAKER_KAPPA_A175_RELATIVE"
+    ],
+    "catastrophic_bypasses_both_arms": true,
+    "tail_budget_ticks": 60,
+    "tail_budget_rearms_only_when_flat": true,
+    "replay_against_84_observed_events": {
+      "recovered": 42,
+      "mean_recovered_bps": 38.0,
+      "total_recovered_bps": 1598,
+      "residual_leak_mean_bps": 4.2,
+      "residual_correctly_below_band_floor": 27
+    },
+    "diagnostics": [
+      "A175_RELATIVE_MAKER_RISK_VETO",
+      "A175_TAIL_BUDGET_EXHAUSTED"
+    ]
+  },
+  "quiet_book_recovery_override": {
+    "version": "direct_tail_recovery_v4_16_2_a1_7_5",
+    "applies_to_bands": ["DEFENSIVE", "HARD_ESCAPE"],
+    "absolute_band_unchanged": true,
+    "absolute_band_max_failed_exits": 1,
+    "override_requires_maker_advantage_bps": 15.0,
+    "recovery_thresholds_frozen": {
+      "trigger_bps": -8.0,
+      "force_bps": -12.0,
+      "maker_floor_bps": -25.0,
+      "hard_maker_floor_bps": -30.0,
+      "absolute_maker_floor_bps": -35.0
+    }
+  },
+  "age_escalated_dust_escape": {
+    "version": "direct_dust_kappa_v4_16_2_a1_7_5",
+    "base_floor_bps": -60.0,
+    "patience_ticks": 600,
+    "escalation_ticks": 2000,
+    "max_floor_bps": -250.0,
+    "interpolation": "flat at base through patience_ticks, linear to max_floor_bps at escalation_ticks, flat beyond",
+    "escalation_can_only_widen": true,
+    "unknown_cost_basis_still_fails_closed_at_any_age": true,
+    "non_cross_compaction_still_always_allowed": true,
+    "fresh_dust_budget_unchanged": true,
+    "book80_clears_at_first_block": true,
+    "diagnostics": [
+      "AGE_ESCALATED_KAPPA_BUDGET",
+      "dust_kappa_effective_floor_bps",
+      "dust_kappa_age_escalated",
+      "dust_kappa_best_realization_bps"
+    ]
+  },
+  "quiet_shadow_measurement": {
+    "execution_inert": true,
+    "entry_floor_bps_unchanged": 15.0,
+    "shadow_horizon_ticks": 200,
+    "shadow_ledger_max": 256,
+    "ledger_eviction": "FIFO",
+    "diagnostics": ["A175_QUIET_SHADOW_OUTCOME"],
+    "limitation": "forward mid-markout measures adverse selection, not fill probability; it bounds the upside of relaxing the floor rather than proving it"
+  },
+  "frozen": {
+    "maker_size_base": 0.25,
+    "max_total_abs_base": 2.0,
+    "taker_entry": false,
+    "base_maker_min_edge_bps": 2.5,
+    "quiet_entry_gate": "direct_quiet_entry_v4_16_2_a1_7_4_5",
+    "quiet_entry_floor_bps": 15.0,
+    "identity_safe_ownership": "direct_book_ownership_v4_16_2_a1_7_4_3_2",
+    "inflight_reservation": "direct_inflight_reservation_v4_16_2_a1_7_4_3",
+    "trade_dedup": "direct_trade_dedup_v4_16_2_a1_7_4_1",
+    "partial_liveness": "direct_partial_liveness_v4_16_2_a1_7_3_1",
+    "fastpath_candidate_count": 20,
+    "fastpath_deep_count": 16,
+    "catastrophic_bypasses_all_overlays": true
+  },
+  "verification": {
+    "a175_targeted": "29 passed",
+    "launcher_preflight": "209 passed, 3 failed (all three pre-existing on clean HEAD: taos validator SHA-256 digest pins, unrelated to Strategy1)",
+    "research_regression": "871 passed, 11 skipped, 50 failed, 16 collection errors -- failure set byte-identical to the pristine HEAD tree, so A1.7.5 introduces zero new failures; the collection errors and part of the failure set are environment-only (bittensor not installed in the verification interpreter)",
+    "python_compile": "PASS",
+    "bash_syntax": "PASS",
+    "notes": "The A1.7.4.5 manifest recorded agents/strategy/Strategy1_Research.py as 6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5. The file is clean against HEAD and identical in a pristine `git archive HEAD` tree, so that recorded digest was already stale before A1.7.5; the true current digest is recorded below. RESEARCH_POLICY_VERSION remains simplified_hybrid_authority_v4_16_2.",
+    "frozen_hashes": {
+      "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+      "agents/strategy/Strategy1_Research.py": "aea45154b0bcca03ae65073d6166dfe7642de1a796eee2fef23762f3a91acf6d",
+      "agents/strategy/research_direct_exit.py": "7c25135bc946cb962bd3b2c23f8bc57a8dff665cb254b5abaae6f69adbb8cca3",
+      "agents/strategy/research_direct_book_ownership.py": "3ade945fa7651a5b33b8cf10035750ffa8e325d5998db160a876a891bfa7be14",
+      "agents/strategy/research_direct_inflight_reservation.py": "28b9d57390e11e55239fc612b8177c08fbf159072b75174538ddcdaad5467dc0",
+      "agents/strategy/research_direct_trade_dedup.py": "2430e115d052152b4de209545a1b64a7bffbdb271154659225dc65dbf5cee43e",
+      "agents/strategy/research_direct_fastpath.py": "bdcf9231e7d39405cb76616f0bbdcb84135ab33d537dbc66a10e6cb372df29fe",
+      "agents/strategy/research_direct_exposure.py": "aa5f28be9ca9f2bedcedd3c720d512c54b08c91f963f08338caae22428ba16d3",
+      "agents/strategy/research_direct_quiet_entry.py": "1f6ea7edb27790b8920fbfcba2c711223944bbc730ee6e3eb5bad8ba55e068b5"
+    }
+  },
+  "files": {
+    "agents/strategy/Strategy1_Research_Simple.py": "af430f55d22113ffd803c896d2a411256d328386684b592f02400ff82b4d9b8d",
+    "agents/strategy/research_direct_positive_maker_kappa.py": "56b34c09f6a7036fa3e1aa0293ac50e79645755399ffb818a323dd45e157fb8d",
+    "agents/strategy/research_direct_tail_recovery.py": "32d2b9cb8954f93c1c7e7873623ff36c4ac31f019be9d3ecc32a2bde9a4d9a86",
+    "agents/strategy/research_direct_dust_kappa.py": "2dcd9350953f07620f8f18b876f9e05944b5cd23dd53fd741a99cbaa65b331a0",
+    "run_strategy1_research_simple_multi.sh": "3b5268d9eac7d37f474be8cff3623890f98488d7130ffe3018de1e20ed3fa1a4",
+    "tests/test_research_strategy1_direct_a1_7_5.py": "542153011649e308c65ab1819aaf4aac236fb156f352bf4061b0af7f335a6c04",
+    "STRATEGY1_DIRECT_V4_16_2_A1_7_5.md": "eea5cb3ceab6c28d23fa3ffea79ac8452e9298c500a488ec003f1188deeed16c"
+  },
+  "runtime_acceptance_gates": {
+    "risk_taker_rt_share": {"baseline": 0.446, "target": "<0.25"},
+    "forced_crossings_with_better_maker": {"baseline": 84, "target": "<20"},
+    "mean_thrown_away_maker_advantage_bps": {"baseline": 21.1, "target": "<5"},
+    "research_oldest_dust_ticks": {"baseline": 2414, "target": "<600"},
+    "research_parked_dust_abs_base": {"baseline": 0.3902, "target": "<0.25"},
+    "research_dust_maker_fill_ratio": {"baseline": 0.007, "target": ">0.10"},
+    "inventory_age_p90": {"baseline": 1329, "target": "<400"},
+    "net_realized_pnl_2900_ticks": {"baseline": 75.08, "target": "positive and >= baseline"},
+    "research_total_abs_base": {"baseline": 1.3902, "target": "<=2.0, must not regress"},
+    "rt_velocity_per_s": {"baseline": 0.111, "target": ">=0.10"},
+    "maker_ending_positive_rt": {"baseline": "123 exits, +63.65", "target": ">=90% positive"},
+    "p95_respond_ms": {"baseline": "mean 29.7 / max 224", "target": "p95 <120"},
+    "shadow_ledger_execution_inert": "A1745_ENTRY_BLOCK_LOW_EDGE counts and effective floor must match A1.7.4.5 behaviour exactly, with A175_QUIET_SHADOW_OUTCOME emitted"
+  },
+  "deployment_note": "RealNet_Adapt (agent 68) is still running A1.7.3.1 and has no A174* telemetry at all; the entire A1.7.4 -> A1.7.4.5 chain has never executed in this checkout. All runtime evidence above comes from the sibling RealNet checkout on agent 67. Decide explicitly whether agent 68 is restarted onto A1.7.5 or deliberately held on A1.7.3.1 as a control."
+}

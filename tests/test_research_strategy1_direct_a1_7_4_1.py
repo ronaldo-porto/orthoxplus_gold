@@ -34,10 +34,11 @@ def _event(**kw):
 
 
 def test_a1741_version_and_a174_recovery_thresholds_remain_frozen():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_5"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_5"' in SRC
     assert DIRECT_TRADE_DEDUP_VERSION == "direct_trade_dedup_v4_16_2_a1_7_4_1"
     assert DIRECT_TRADE_DEDUP_MAX_EVENTS == 32768
-    assert DIRECT_TAIL_RECOVERY_VERSION == "direct_tail_recovery_v4_16_2_a1_7_4"
+    # A1.7.5 extends the recovery module; the A1.7.4 thresholds stay frozen.
+    assert DIRECT_TAIL_RECOVERY_VERSION == "direct_tail_recovery_v4_16_2_a1_7_5"
 
 
 def test_exact_trade_event_identity_is_stable_and_specific():

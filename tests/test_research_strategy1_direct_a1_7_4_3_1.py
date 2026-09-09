@@ -34,12 +34,14 @@ def _row(*, side="sell", qty=0.25, cid=91022):
 
 
 def test_a17431_version_and_prior_overlays_frozen():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_5"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_5"' in SRC
     assert DIRECT_BOOK_OWNERSHIP_VERSION == "direct_book_ownership_v4_16_2_a1_7_4_3_2"
     assert DIRECT_INFLIGHT_RESERVATION_VERSION == "direct_inflight_reservation_v4_16_2_a1_7_4_3"
-    assert DIRECT_DUST_KAPPA_VERSION == "direct_dust_kappa_v4_16_2_a1_7_4_2"
+    # Both economic overlays carry the A1.7.5 module version; the ownership and
+    # partial-remainder contracts asserted in this suite are untouched.
+    assert DIRECT_DUST_KAPPA_VERSION == "direct_dust_kappa_v4_16_2_a1_7_5"
     assert DIRECT_TRADE_DEDUP_VERSION == "direct_trade_dedup_v4_16_2_a1_7_4_1"
-    assert DIRECT_TAIL_RECOVERY_VERSION == "direct_tail_recovery_v4_16_2_a1_7_4"
+    assert DIRECT_TAIL_RECOVERY_VERSION == "direct_tail_recovery_v4_16_2_a1_7_5"
 
 
 def test_canonical_ownership_key_distinguishes_sides_not_aliases():

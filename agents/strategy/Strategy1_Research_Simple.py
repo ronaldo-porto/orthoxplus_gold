@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.4.5 Quiet/Zero-Rebate Entry Quality Research candidate.
+"""Strategy1-Direct V4.16.2 A1.7.5 Relative Tail Authority Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -23,6 +23,7 @@ A/B tested against the V4.16.2 baseline.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import replace
 import json
 import math
@@ -149,6 +150,7 @@ from research_direct_tail_recovery import (
 from research_direct_positive_maker_kappa import (
     DIRECT_POSITIVE_MAKER_KAPPA_VERSION,
     DIRECT_A1744_STRONG_MAKER_FLOOR_BPS,
+    DIRECT_A175_MAKER_ADVANTAGE_BPS,
     apply_positive_maker_kappa_veto,
     classify_a1744_outcome,
 )
@@ -184,6 +186,10 @@ from research_direct_book_ownership import (
 from research_direct_dust_kappa import (
     DIRECT_DUST_KAPPA_VERSION,
     DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS,
+    DIRECT_A175_DUST_PATIENCE_TICKS,
+    DIRECT_A175_DUST_ESCALATION_TICKS,
+    DIRECT_A175_DUST_MAX_FLOOR_BPS,
+    REASON_AGE_ESCALATED,
     decide_kappa_safe_dust_compaction,
 )
 from research_direct_liveness import (
@@ -204,12 +210,21 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_5"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_4_5"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_5"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_5"
+
+# A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
+# base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
+# unbounded veto produced inventory_age_p90 = 1,329 ticks.
+DIRECT_A175_TAIL_BUDGET_TICKS = 60
+
+# A1.7.5 QUIET shadow measurement.  Diagnostic only.
+DIRECT_A175_SHADOW_HORIZON_TICKS = 200
+DIRECT_A175_SHADOW_LEDGER_MAX = 256
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 A1.7.4.5 quiet/no-rebate entry quality on proven A1.7.4.4.
+    """V4.16.2 A1.7.5 relative tail authority, dust escape and QUIET shadow.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -291,11 +306,27 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_a1744_veto_count = 0
         self._direct_a1744_catastrophic_bypass_count = 0
         self._direct_a1744_maker_not_strong_bypass_count = 0
+        # A1.7.5 relative-arm and bounded-hold telemetry.  The A1.7.4.4 veto had
+        # no time limit, which let 160 vetoes accumulate on 11 books and drove
+        # inventory_age_p90 to 1,329 ticks.  The budget counts consecutive
+        # vetoed ticks per book and releases the hold once it is spent.
+        self._direct_a175_relative_veto_count = 0
+        self._direct_a175_tail_budget_spent: dict[int, int] = {}
+        self._direct_a175_tail_budget_exhausted: set[int] = set()
+        self._direct_a175_tail_budget_releases = 0
         # A1.7.4.5 entry-quality telemetry only; no learned state or exit authority.
         self._direct_a1745_gate_active = 0
         self._direct_a1745_entry_blocks = 0
         self._direct_a1745_entry_allows = 0
         self._direct_a1745_regime_bypass = 0
+        # A1.7.5 QUIET shadow ledger.  Strictly diagnostic: it records entries the
+        # frozen 15 bps floor blocked so a later version can recalibrate from
+        # measured outcomes instead of a retrospective filter.  It must never
+        # influence effective_maker_min_edge_bps or any execution path.
+        self._direct_a175_shadow_ledger: "OrderedDict[tuple[int, int], dict[str, Any]]" = OrderedDict()
+        self._direct_a175_shadow_recorded = 0
+        self._direct_a175_shadow_resolved = 0
+        self._direct_a175_shadow_adverse = 0
         self._direct_wait_holds = 0
         self._direct_wait_cancel_batches = 0
         self._direct_negative_aggressive_blocks = 0
@@ -1003,6 +1034,27 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 reduction_executable=bool(exit_kwargs.get("reduction_executable", False)),
             )
             pre_a1744_decision = decision
+            # A1.7.5: a book that has been vetoed for DIRECT_A175_TAIL_BUDGET_TICKS
+            # consecutive ticks has proven the Maker is not completing. Restore the
+            # base decision and take the bounded loss rather than holding forever.
+            budget_exhausted = bool(
+                book_id_outer >= 0
+                and int(book_id_outer) in getattr(self, "_direct_a175_tail_budget_exhausted", set())
+            )
+            if budget_exhausted:
+                # The budget is spent per position, not per book: once the book
+                # is flat the next position starts with a full hold budget.
+                try:
+                    if float(self._research_abs_inventory(int(book_id_outer))) <= float(
+                        self._execution_flat_epsilon()
+                    ):
+                        self._direct_a175_tail_budget_exhausted.discard(int(book_id_outer))
+                        getattr(self, "_direct_a175_tail_budget_spent", {}).pop(
+                            int(book_id_outer), None
+                        )
+                        budget_exhausted = False
+                except Exception:
+                    pass
             decision = apply_positive_maker_kappa_veto(
                 base_decision=pre_a1744_decision,
                 maker_net_bps=float(exit_kwargs.get("maker_net_bps", 0.0) or 0.0),
@@ -1010,8 +1062,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 maker_executable=bool(exit_kwargs.get("maker_executable", True)),
                 catastrophic_hard_risk=bool(exit_kwargs.get("catastrophic_hard_risk", False)),
                 inventory_qty=float(exit_kwargs.get("inventory_qty", 0.0) or 0.0),
+                tail_budget_exhausted=budget_exhausted,
             )
             captured["pre_a1744_decision"] = pre_a1744_decision
+            captured["a175_tail_budget_exhausted"] = budget_exhausted
             captured.update(exit_kwargs)
             captured["caller_unrealized_bps"] = caller_unrealized
             captured["position_risk_bps"] = position_risk_bps
@@ -1035,27 +1089,61 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 maker_now = float(captured.get("maker_net_bps", 0.0) or 0.0)
                 taker_now = float(captured.get("taker_net_bps", 0.0) or 0.0)
                 catastrophic_now = bool(captured.get("catastrophic_hard_risk", False))
+                budget_now = bool(captured.get("a175_tail_budget_exhausted", False))
                 label = classify_a1744_outcome(
                     base_decision=pre_a1744, final_decision=decision_now,
                     maker_net_bps=maker_now, taker_net_bps=taker_now,
                     maker_executable=bool(captured.get("maker_executable", True)),
                     catastrophic_hard_risk=catastrophic_now,
+                    tail_budget_exhausted=budget_now,
                 )
                 active = getattr(self, "_direct_a1744_veto_active", {})
                 was_active = int(book_id_outer) in active
-                if label == "A1744_POSITIVE_MAKER_RISK_VETO":
+                if label in ("A1744_POSITIVE_MAKER_RISK_VETO", "A175_RELATIVE_MAKER_RISK_VETO"):
+                    relative = label == "A175_RELATIVE_MAKER_RISK_VETO"
                     self._direct_a1744_veto_count = int(getattr(self, "_direct_a1744_veto_count", 0) or 0) + 1
+                    if relative:
+                        self._direct_a175_relative_veto_count = int(
+                            getattr(self, "_direct_a175_relative_veto_count", 0) or 0
+                        ) + 1
+                    # A1.7.5: spend one tick of this book's bounded hold budget.
+                    spent = getattr(self, "_direct_a175_tail_budget_spent", None)
+                    if spent is None:
+                        spent = {}
+                        self._direct_a175_tail_budget_spent = spent
+                    used = int(spent.get(int(book_id_outer), 0) or 0) + 1
+                    spent[int(book_id_outer)] = used
+                    if used >= DIRECT_A175_TAIL_BUDGET_TICKS:
+                        self._direct_a175_tail_budget_exhausted.add(int(book_id_outer))
+                        self._direct_a175_tail_budget_releases = int(
+                            getattr(self, "_direct_a175_tail_budget_releases", 0) or 0
+                        ) + 1
+                        self._emit(
+                            "A175_TAIL_BUDGET_EXHAUSTED", force=True,
+                            tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id_outer),
+                            budget_ticks=int(DIRECT_A175_TAIL_BUDGET_TICKS),
+                            vetoed_ticks=int(used),
+                            maker_net_bps=maker_now, taker_net_bps=taker_now,
+                            base_reason=str(getattr(pre_a1744, "reason", "") or ""),
+                            version=DIRECT_POSITIVE_MAKER_KAPPA_VERSION,
+                        )
                     active[int(book_id_outer)] = {
                         "tick": int(getattr(self, "_tick", 0) or 0),
                         "maker_net_bps": maker_now, "taker_net_bps": taker_now,
                         "base_reason": str(getattr(pre_a1744, "reason", "") or ""),
                     }
                     self._emit(
-                        "A1744_POSITIVE_MAKER_RISK_VETO", force=True,
+                        label, force=True,
                         tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id_outer),
                         base_reason=str(getattr(pre_a1744, "reason", "") or ""),
                         maker_net_bps=maker_now, taker_net_bps=taker_now,
+                        maker_advantage_bps=float(maker_now - taker_now),
+                        veto_arm="RELATIVE" if relative else "ABSOLUTE",
                         strong_maker_floor_bps=float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS),
+                        advantage_floor_bps=float(DIRECT_A175_MAKER_ADVANTAGE_BPS),
+                        risk_band=str(getattr(pre_a1744, "risk_band", "") or ""),
+                        tail_budget_ticks=int(DIRECT_A175_TAIL_BUDGET_TICKS),
+                        tail_budget_used=int(used),
                         failed_exit_count=int(captured.get("failed_exit_count", 0) or 0),
                         position_risk_bps=float(captured.get("position_risk_bps", 0.0) or 0.0),
                         catastrophic=0, version=DIRECT_POSITIVE_MAKER_KAPPA_VERSION,
@@ -1080,11 +1168,30 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         )
                     if was_active:
                         prior = active.pop(int(book_id_outer), {})
+                        # A1.7.5: the veto run ended.  An exhausted budget is
+                        # deliberately *not* cleared here -- it must survive
+                        # until the book goes flat, otherwise the hold would
+                        # immediately re-arm and oscillate against a Taker that
+                        # is not completing.
+                        if label == "A175_TAIL_BUDGET_EXHAUSTED":
+                            prior_used = int(
+                                getattr(self, "_direct_a175_tail_budget_spent", {}).get(
+                                    int(book_id_outer), 0
+                                ) or 0
+                            )
+                        else:
+                            prior_used = int(
+                                getattr(self, "_direct_a175_tail_budget_spent", {}).pop(
+                                    int(book_id_outer), 0
+                                ) or 0
+                            )
+                            self._direct_a175_tail_budget_exhausted.discard(int(book_id_outer))
                         self._emit(
                             "A1744_VETO_RELEASE", force=True,
                             tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id_outer),
                             release_label=str(label or "RISK_TAKER_NO_LONGER_IN_SCOPE"),
                             prior_tick=int(prior.get("tick", -1) or -1),
+                            tail_budget_used=prior_used,
                             maker_net_bps=maker_now, taker_net_bps=taker_now,
                             catastrophic=int(catastrophic_now),
                             version=DIRECT_POSITIVE_MAKER_KAPPA_VERSION,
@@ -1788,6 +1895,105 @@ class Strategy1_Research_Simple(Strategy1_Research):
             ) + 1
         return placed
 
+    # ------------------------------------------------------------------
+    # A1.7.5 QUIET shadow measurement.  Diagnostic only: nothing in this
+    # section may influence an entry, an exit, or a published order.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _direct_a175_mid(book) -> float | None:
+        try:
+            if not getattr(book, "bids", None) or not getattr(book, "asks", None):
+                return None
+            mid = 0.5 * (float(book.bids[0].price) + float(book.asks[0].price))
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return None
+        return mid if math.isfinite(mid) and mid > 0.0 else None
+
+    def _direct_a175_shadow_record(
+        self, *, book_id: int, book, tick: int,
+        blocked_edge_bps: float, effective_floor_bps: float,
+    ) -> None:
+        """Remember one entry the frozen A1.7.4.5 floor blocked."""
+        try:
+            mid = self._direct_a175_mid(book)
+            if mid is None:
+                return
+            ledger = getattr(self, "_direct_a175_shadow_ledger", None)
+            if ledger is None:
+                ledger = OrderedDict()
+                self._direct_a175_shadow_ledger = ledger
+            key = (int(book_id), int(tick))
+            if key in ledger:
+                return
+            ledger[key] = {
+                "book": int(book_id),
+                "tick": int(tick),
+                "mid": float(mid),
+                "blocked_edge_bps": float(blocked_edge_bps),
+                "effective_floor_bps": float(effective_floor_bps),
+            }
+            self._direct_a175_shadow_recorded = int(
+                getattr(self, "_direct_a175_shadow_recorded", 0) or 0
+            ) + 1
+            while len(ledger) > DIRECT_A175_SHADOW_LEDGER_MAX:
+                ledger.popitem(last=False)
+        except Exception:
+            pass
+
+    def _direct_a175_shadow_resolve(self, book_id: int, book) -> None:
+        """Emit forward mid-markout for matured shadow entries on one book.
+
+        Forward mid-markout measures *adverse selection*, not fill probability:
+        it says whether the blocked entry would have been entered into a market
+        moving against it.  It therefore bounds the upside of relaxing the
+        floor rather than proving it.
+        """
+        try:
+            ledger = getattr(self, "_direct_a175_shadow_ledger", None)
+            if not ledger:
+                return
+            mid = self._direct_a175_mid(book)
+            if mid is None:
+                return
+            tick = int(getattr(self, "_tick", 0) or 0)
+            matured = [
+                k for k in ledger
+                if k[0] == int(book_id)
+                and tick - k[1] >= DIRECT_A175_SHADOW_HORIZON_TICKS
+            ]
+            for key in matured:
+                row = ledger.pop(key, None)
+                if not row:
+                    continue
+                entry_mid = float(row.get("mid", 0.0) or 0.0)
+                if entry_mid <= 0.0:
+                    continue
+                markout_bps = ((mid - entry_mid) / entry_mid) * 10_000.0
+                # A Maker entry is two-sided, so adverse selection is the
+                # magnitude of the move away from the entry mark.
+                adverse = abs(markout_bps) > float(row.get("blocked_edge_bps", 0.0) or 0.0)
+                self._direct_a175_shadow_resolved = int(
+                    getattr(self, "_direct_a175_shadow_resolved", 0) or 0
+                ) + 1
+                if adverse:
+                    self._direct_a175_shadow_adverse = int(
+                        getattr(self, "_direct_a175_shadow_adverse", 0) or 0
+                    ) + 1
+                self._emit(
+                    "A175_QUIET_SHADOW_OUTCOME", force=True,
+                    tick=tick, book=int(book_id),
+                    blocked_tick=int(row.get("tick", -1) or -1),
+                    horizon_ticks=int(tick - int(row.get("tick", tick) or tick)),
+                    blocked_edge_bps=float(row.get("blocked_edge_bps", 0.0) or 0.0),
+                    effective_floor_bps=float(row.get("effective_floor_bps", 0.0) or 0.0),
+                    entry_mid=entry_mid, forward_mid=float(mid),
+                    forward_mid_markout_bps=float(markout_bps),
+                    would_have_been_adverse=int(bool(adverse)),
+                    version=DIRECT_QUIET_ENTRY_VERSION,
+                )
+        except Exception:
+            pass
+
     def _place_skewed_quotes(
         self,
         response: FinanceAgentResponse,
@@ -1862,6 +2068,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             base_min_edge_bps=DIRECT_MAKER_MIN_EDGE_BPS,
         )
         effective_maker_min_edge_bps = float(a1745_gate.effective_min_edge_bps)
+        # A1.7.5: resolve any matured shadow entries for this book. Strictly
+        # diagnostic and deliberately placed after the floor is already fixed.
+        self._direct_a175_shadow_resolve(int(book_id), book)
 
         remaining_obs = int(getattr(ev, "observations_remaining", 3) or 3)
         required_obs = int(getattr(ev, "required_observation_count", 3) or 3)
@@ -1896,6 +2105,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if blocked_by_a1745:
                 self._direct_a1745_entry_blocks = int(getattr(self, "_direct_a1745_entry_blocks", 0) or 0) + 1
                 a1745_event = "A1745_ENTRY_BLOCK_LOW_EDGE"
+                # A1.7.5: record the blocked opportunity for later measurement.
+                # Diagnostic only -- the floor above already made the decision.
+                self._direct_a175_shadow_record(
+                    book_id=int(book_id), book=book, tick=tick,
+                    blocked_edge_bps=float(current_edge_bps),
+                    effective_floor_bps=float(effective_maker_min_edge_bps),
+                )
             elif decision.action == EXEC_ACTION_MAKER:
                 self._direct_a1745_entry_allows = int(getattr(self, "_direct_a1745_entry_allows", 0) or 0) + 1
                 a1745_event = "A1745_ENTRY_ALLOWED"
@@ -2900,14 +3116,24 @@ class Strategy1_Research_Simple(Strategy1_Research):
             maker_close_price = (
                 float(book.asks[0].price) if net_base > 0.0 else float(book.bids[0].price)
             )
+            best_seen = getattr(self, "_direct_a175_dust_best_realization", None)
+            if best_seen is None:
+                best_seen = {}
+                self._direct_a175_dust_best_realization = best_seen
             kappa_decision = decide_kappa_safe_dust_compaction(
                 net_base=net_base, min_order=min_size,
                 vwap_entry=getattr(inventory, "vwap_entry", None),
                 maker_close_price=maker_close_price,
                 age_ticks=int(getattr(inventory, "position_ticks", 0) or 0),
                 loss_floor_bps=DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS,
+                best_realization_bps=best_seen.get(int(book_id)),
                 eps=float(self._execution_flat_epsilon()),
             )
+            # A1.7.5: remember the best realization ever reachable for this
+            # residual.  Book 80 was refused at -60.18 bps and then decayed to
+            # -320 bps; without this the reachable value is not recorded.
+            if kappa_decision.best_realization_bps is not None:
+                best_seen[int(book_id)] = float(kappa_decision.best_realization_bps)
             if not kappa_decision.allow:
                 self._direct_dust_kappa_blocks = int(
                     getattr(self, "_direct_dust_kappa_blocks", 0) or 0
@@ -2924,6 +3150,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._direct_dust_kappa_allows = int(
                 getattr(self, "_direct_dust_kappa_allows", 0) or 0
             ) + 1
+            if kappa_decision.reason == REASON_AGE_ESCALATED:
+                self._direct_a175_dust_escalated_allows = int(
+                    getattr(self, "_direct_a175_dust_escalated_allows", 0) or 0
+                ) + 1
             try:
                 self._emit(
                     "A1742_DUST_KAPPA_ALLOW", force=True,
@@ -3979,6 +4209,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_dust_kappa_maker_floor_bps"] = float(DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS)
         stats["direct_dust_kappa_allows"] = int(getattr(self, "_direct_dust_kappa_allows", 0) or 0)
         stats["direct_dust_kappa_blocks"] = int(getattr(self, "_direct_dust_kappa_blocks", 0) or 0)
+        stats["direct_a175_dust_patience_ticks"] = int(DIRECT_A175_DUST_PATIENCE_TICKS)
+        stats["direct_a175_dust_escalation_ticks"] = int(DIRECT_A175_DUST_ESCALATION_TICKS)
+        stats["direct_a175_dust_max_floor_bps"] = float(DIRECT_A175_DUST_MAX_FLOOR_BPS)
+        stats["direct_a175_dust_age_escalated_allows"] = int(getattr(self, "_direct_a175_dust_escalated_allows", 0) or 0)
         stats["direct_inflight_reservation_version"] = DIRECT_INFLIGHT_RESERVATION_VERSION
         stats["direct_pending_exposure_orders"] = len(self._direct_pending_ledger())
         stats["direct_pending_exposure_recorded"] = int(getattr(self, "_direct_pending_exposure_recorded", 0) or 0)
@@ -4000,6 +4234,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a1744_active_veto_books"] = len(getattr(self, "_direct_a1744_veto_active", {}) or {})
         stats["direct_a1744_catastrophic_bypass_count"] = int(getattr(self, "_direct_a1744_catastrophic_bypass_count", 0) or 0)
         stats["direct_a1744_maker_not_strong_bypass_count"] = int(getattr(self, "_direct_a1744_maker_not_strong_bypass_count", 0) or 0)
+        stats["direct_a175_maker_advantage_bps"] = float(DIRECT_A175_MAKER_ADVANTAGE_BPS)
+        stats["direct_a175_relative_veto_count"] = int(getattr(self, "_direct_a175_relative_veto_count", 0) or 0)
+        stats["direct_a175_tail_budget_ticks"] = int(DIRECT_A175_TAIL_BUDGET_TICKS)
+        stats["direct_a175_tail_budget_releases"] = int(getattr(self, "_direct_a175_tail_budget_releases", 0) or 0)
+        stats["direct_a175_tail_budget_books"] = len(getattr(self, "_direct_a175_tail_budget_exhausted", set()) or set())
+        stats["direct_a175_shadow_horizon_ticks"] = int(DIRECT_A175_SHADOW_HORIZON_TICKS)
+        stats["direct_a175_shadow_recorded"] = int(getattr(self, "_direct_a175_shadow_recorded", 0) or 0)
+        stats["direct_a175_shadow_resolved"] = int(getattr(self, "_direct_a175_shadow_resolved", 0) or 0)
+        stats["direct_a175_shadow_adverse"] = int(getattr(self, "_direct_a175_shadow_adverse", 0) or 0)
+        stats["direct_a175_shadow_pending"] = len(getattr(self, "_direct_a175_shadow_ledger", {}) or {})
         stats["direct_trade_dedup_version"] = DIRECT_TRADE_DEDUP_VERSION
         stats["direct_duplicate_trade_events_skipped"] = int(
             getattr(self, "_direct_duplicate_trade_events_skipped", 0) or 0

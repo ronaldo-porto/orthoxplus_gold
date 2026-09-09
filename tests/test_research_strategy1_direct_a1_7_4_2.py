@@ -33,8 +33,10 @@ from research_direct_liveness import DIRECT_LIVENESS_VERSION
 
 
 def test_a1742_version_and_frozen_core_contracts():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_4_5"' in SRC
-    assert DIRECT_DUST_KAPPA_VERSION == "direct_dust_kappa_v4_16_2_a1_7_4_2"
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_5"' in SRC
+    # A1.7.5 adds age escalation on top of this module; the base floor asserted
+    # on the next line -- the budget every fresh residual still gets -- is frozen.
+    assert DIRECT_DUST_KAPPA_VERSION == "direct_dust_kappa_v4_16_2_a1_7_5"
     assert DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS == -60.0
     assert DIRECT_TRADE_DEDUP_VERSION == "direct_trade_dedup_v4_16_2_a1_7_4_1"
     assert DIRECT_LIVENESS_VERSION == "direct_partial_liveness_v4_16_2_a1_7_3_1"

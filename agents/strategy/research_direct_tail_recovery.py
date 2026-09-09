@@ -30,7 +30,7 @@ from research_position_exit import (
     PositionExitDecision,
 )
 
-DIRECT_TAIL_RECOVERY_VERSION = "direct_tail_recovery_v4_16_2_a1_7_4"
+DIRECT_TAIL_RECOVERY_VERSION = "direct_tail_recovery_v4_16_2_a1_7_5"
 RECOVERY_STAGE = "RECOVERY"
 
 # Observation-driven initial corridor.  These are A/B-test parameters, not a
@@ -50,6 +50,27 @@ DIRECT_RECOVERY_TAKER_MIN_FAILED_EXITS = 2
 DIRECT_RECOVERY_TAKER_TRIGGER_BPS = -10.0
 DIRECT_EXPECTED_HARD_TAKER_LOSS_BPS = -48.0
 DIRECT_TAIL_HISTORY_MAX = 64
+
+# A1.7.5: `failed_exit_count` conflates "Maker is unachievable" with "the book
+# is quiet". In the A1.7.4.5 QUIET runtime (trade_rate ~= 0) it grew with time
+# rather than with information, and 154 of 168 forced-crossing rows had already
+# exceeded DIRECT_RECOVERY_MAKER_MAX_FAILED_EXITS. The reason to stop retrying
+# Maker is that Maker is unachievable, not that nobody has traded yet, so a
+# Maker still materially better than crossing keeps its recovery attempt.
+DIRECT_A175_MAKER_ADVANTAGE_BPS = 15.0
+
+
+def a175_failed_exit_override(
+    *,
+    maker_net_bps: float,
+    taker_net_bps: float,
+    advantage_bps: float = DIRECT_A175_MAKER_ADVANTAGE_BPS,
+) -> bool:
+    """True when Maker is far enough ahead of crossing to keep retrying."""
+    maker = _finite(maker_net_bps)
+    taker = _finite(taker_net_bps)
+    advantage = max(0.0, _finite(advantage_bps, DIRECT_A175_MAKER_ADVANTAGE_BPS))
+    return (maker - taker) + 1e-12 >= advantage
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -160,9 +181,14 @@ def choose_tail_recovery_override(
         and (worsening or risk <= DIRECT_RECOVERY_FORCE_BPS + 1e-12 or failed > 0)
     )
 
+    # A1.7.5: a quiet book must not spend the Maker recovery budget.
+    maker_still_far_ahead = a175_failed_exit_override(
+        maker_net_bps=maker, taker_net_bps=taker,
+    )
+
     if band == BAND_DEFENSIVE and recovery_active:
         if (
-            failed < DIRECT_RECOVERY_MAKER_MAX_FAILED_EXITS
+            (failed < DIRECT_RECOVERY_MAKER_MAX_FAILED_EXITS or maker_still_far_ahead)
             and recovery_maker_allowed(
                 maker_net_bps=maker,
                 taker_net_bps=taker,
@@ -202,7 +228,7 @@ def choose_tail_recovery_override(
     if band == BAND_HARD_ESCAPE:
         if (
             age + 1e-12 >= DIRECT_RECOVERY_MIN_AGE_TICKS
-            and failed < DIRECT_RECOVERY_MAKER_MAX_FAILED_EXITS
+            and (failed < DIRECT_RECOVERY_MAKER_MAX_FAILED_EXITS or maker_still_far_ahead)
             and recovery_maker_allowed(
                 maker_net_bps=maker,
                 taker_net_bps=taker,

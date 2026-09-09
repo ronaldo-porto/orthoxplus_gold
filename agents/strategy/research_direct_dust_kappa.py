@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
-DIRECT_DUST_KAPPA_VERSION = "direct_dust_kappa_v4_16_2_a1_7_4_2"
+DIRECT_DUST_KAPPA_VERSION = "direct_dust_kappa_v4_16_2_a1_7_5"
 
 # Observation-driven safety budget.  Recovery Maker authority is already
 # bounded around -25/-35 bps.  Dust compaction is allowed a wider concession
@@ -27,8 +27,57 @@ DIRECT_DUST_KAPPA_VERSION = "direct_dust_kappa_v4_16_2_a1_7_4_2"
 # removing the cubic-downside tail.
 DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS = -60.0
 
+# A1.7.5 age escalation.  The A1.7.4.5 runtime showed the static floor is
+# fail-closed *forever*: Book 80 was refused at -60.18 bps on tick 1411 (missing
+# the floor by 0.18 bps), then decayed to -320 bps and stayed trapped for 2,460
+# ticks while holding 0.3902 BASE -- 20% of the 2.0 BASE cap.  Refusing a bounded
+# -60 bps exit to create an unbounded frozen position is strictly worse, so the
+# floor widens with age once the guard has already refused a residual for
+# hundreds of ticks.  Fresh dust keeps the unchanged -60 bps budget.
+DIRECT_A175_DUST_PATIENCE_TICKS = 600
+DIRECT_A175_DUST_ESCALATION_TICKS = 2000
+DIRECT_A175_DUST_MAX_FLOOR_BPS = -250.0
+
+
+def a175_age_escalated_floor_bps(
+    age_ticks: int,
+    *,
+    base_floor_bps: float = DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS,
+    patience_ticks: int = DIRECT_A175_DUST_PATIENCE_TICKS,
+    escalation_ticks: int = DIRECT_A175_DUST_ESCALATION_TICKS,
+    max_floor_bps: float = DIRECT_A175_DUST_MAX_FLOOR_BPS,
+) -> float:
+    """Return the effective dust floor for a residual of the given age.
+
+    Flat at ``base_floor_bps`` through ``patience_ticks``, then interpolated
+    linearly to ``max_floor_bps`` at ``escalation_ticks`` and flat beyond.
+    """
+    base = _finite(base_floor_bps)
+    if base is None:
+        base = DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS
+    widest = _finite(max_floor_bps)
+    if widest is None:
+        widest = DIRECT_A175_DUST_MAX_FLOOR_BPS
+    try:
+        age = max(0, int(age_ticks or 0))
+    except (TypeError, ValueError):
+        age = 0
+    start = max(0, int(patience_ticks or 0))
+    end = max(start + 1, int(escalation_ticks or 0))
+
+    # Escalation only ever widens the budget.
+    if widest >= base:
+        return float(base)
+    if age <= start:
+        return float(base)
+    if age >= end:
+        return float(widest)
+    span = float(end - start)
+    return float(base + (widest - base) * ((age - start) / span))
+
 REASON_NON_CROSS = "NON_CROSS_COMPACTION"
 REASON_WITHIN_BUDGET = "WITHIN_KAPPA_LOSS_BUDGET"
+REASON_AGE_ESCALATED = "AGE_ESCALATED_KAPPA_BUDGET"
 REASON_LOSS_BUDGET = "KAPPA_LOSS_BUDGET_EXCEEDED"
 REASON_UNKNOWN_COST = "UNKNOWN_COST_BASIS"
 REASON_INVALID = "INVALID_COMPACTION_INPUT"
@@ -58,6 +107,9 @@ class DustKappaDecision:
     projected_realized_quote_pnl: float | None
     loss_floor_bps: float
     age_ticks: int
+    effective_floor_bps: float = DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS
+    age_escalated: bool = False
+    best_realization_bps: float | None = None
 
     def as_log(self) -> dict[str, Any]:
         return {
@@ -73,6 +125,9 @@ class DustKappaDecision:
             "maker_realization_bps": self.maker_realization_bps,
             "projected_realized_quote_pnl": self.projected_realized_quote_pnl,
             "dust_kappa_loss_floor_bps": self.loss_floor_bps,
+            "dust_kappa_effective_floor_bps": self.effective_floor_bps,
+            "dust_kappa_age_escalated": int(bool(self.age_escalated)),
+            "dust_kappa_best_realization_bps": self.best_realization_bps,
             "dust_age_ticks": self.age_ticks,
         }
 
@@ -85,6 +140,7 @@ def decide_kappa_safe_dust_compaction(
     maker_close_price: float | None,
     age_ticks: int = 0,
     loss_floor_bps: float = DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS,
+    best_realization_bps: float | None = None,
     eps: float = 1e-12,
 ) -> DustKappaDecision:
     """Gate one minimum-size moderate-dust Maker sign-cross.
@@ -111,10 +167,17 @@ def decide_kappa_safe_dust_compaction(
     except (TypeError, ValueError):
         age = 0
 
+    # A1.7.5: widen the budget once the guard has already refused this residual
+    # for hundreds of ticks, so a bounded loss cannot become a frozen position.
+    effective = a175_age_escalated_floor_bps(age, base_floor_bps=budget)
+    escalated = bool(effective < budget - 1e-12)
+    best_seen = _finite(best_realization_bps)
+
     if net is None or floor is None or floor <= 0.0 or abs(net) <= max(eps, 1e-12):
         return DustKappaDecision(
             False, REASON_INVALID, False, float(net or 0.0), float(floor or 0.0),
             float(net or 0.0), vwap, px, None, None, float(budget), age,
+            float(effective), escalated, best_seen,
         )
 
     signed_reduce = floor if net > 0.0 else -floor
@@ -125,12 +188,15 @@ def decide_kappa_safe_dust_compaction(
         return DustKappaDecision(
             True, REASON_NON_CROSS, False, net, floor, projected,
             vwap, px, None, None, float(budget), age,
+            float(effective), escalated, best_seen,
         )
 
     if vwap is None or vwap <= 0.0 or px is None or px <= 0.0:
+        # Unknown cost basis still fails closed, at any age.
         return DustKappaDecision(
             False, REASON_UNKNOWN_COST, True, net, floor, projected,
             vwap, px, None, None, float(budget), age,
+            float(effective), escalated, best_seen,
         )
 
     if net > 0.0:
@@ -140,10 +206,18 @@ def decide_kappa_safe_dust_compaction(
         realization_bps = ((vwap - px) / vwap) * 10_000.0
         quote_pnl = abs(net) * (vwap - px)
 
-    allow = realization_bps + 1e-12 >= float(budget)
+    allow = realization_bps + 1e-12 >= float(effective)
+    if allow and escalated and realization_bps + 1e-12 < float(budget):
+        reason = REASON_AGE_ESCALATED
+    elif allow:
+        reason = REASON_WITHIN_BUDGET
+    else:
+        reason = REASON_LOSS_BUDGET
+    if best_seen is None or realization_bps > best_seen:
+        best_seen = realization_bps
     return DustKappaDecision(
         allow,
-        REASON_WITHIN_BUDGET if allow else REASON_LOSS_BUDGET,
+        reason,
         True,
         net,
         floor,
@@ -154,4 +228,7 @@ def decide_kappa_safe_dust_compaction(
         quote_pnl,
         float(budget),
         age,
+        float(effective),
+        escalated,
+        best_seen,
     )
