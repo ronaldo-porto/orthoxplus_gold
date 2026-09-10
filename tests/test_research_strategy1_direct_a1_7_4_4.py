@@ -48,7 +48,7 @@ def _apply(base, *, maker, taker, catastrophic=False, maker_executable=True):
 
 
 def test_version_and_integration_markers_present():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_8"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0"' in SRC
     # A1.7.5 extends this module with the relative arm; the A1.7.4.4 absolute
     # arm asserted throughout this suite stays authoritative.
     assert DIRECT_POSITIVE_MAKER_KAPPA_VERSION == "direct_positive_maker_kappa_v4_16_2_a1_7_5"

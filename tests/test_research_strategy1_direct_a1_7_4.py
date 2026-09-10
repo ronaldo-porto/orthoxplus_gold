@@ -50,7 +50,7 @@ def _tail(*, maker, taker, risk, velocity, age=10, failed=0, catastrophic=False)
 
 
 def test_a174_version_and_frozen_entry_liveness_contract():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_8"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0"' in SRC
     # A1.7.5 extends this module with the quiet-book failed-exit override; every
     # A1.7.4 threshold asserted below stays frozen.
     assert DIRECT_TAIL_RECOVERY_VERSION == "direct_tail_recovery_v4_16_2_a1_7_5"

@@ -18,7 +18,7 @@ from research_direct_book_ownership import (
 
 
 def test_a17432_version():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_8"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0"' in SRC
     assert DIRECT_BOOK_OWNERSHIP_VERSION == "direct_book_ownership_v4_16_2_a1_7_4_3_2"
 
 

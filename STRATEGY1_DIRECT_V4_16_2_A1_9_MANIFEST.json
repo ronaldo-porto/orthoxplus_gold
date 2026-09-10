@@ -1,0 +1,81 @@
+{
+  "baseline": {
+    "note": "A1.8 is rejected and fully reverted; A1.9 branches from the A1.7.5 behaviour.",
+    "release": "A1.7.5",
+    "source_zip": "sn-79_claude.zip",
+    "source_zip_sha256": "3dc27f50592faab23451ac36b1eadf251343bda2e562bd705135f0e660956574"
+  },
+  "changed_runtime_files": [
+    "agents/strategy/Strategy1_Research_Simple.py",
+    "agents/strategy/research_direct_exit_refresh.py",
+    "run_strategy1_research_simple_multi.sh"
+  ],
+  "classification": "STRUCTURAL",
+  "frozen": {
+    "a1745_quiet_entry_gate": true,
+    "a175_tail_authority": true,
+    "maker_exit_price_ladder_changed": false,
+    "mm_base_size": 0.25,
+    "ownership_changed": false,
+    "research_max_active_open_books": 6,
+    "research_max_open_books": 6,
+    "research_max_total_abs_base": 2.0,
+    "research_max_total_open_books": 8,
+    "research_profitable_exit_ttl_ms": 3000.0,
+    "taker_authority_changed": false
+  },
+  "frozen_file_sha256": {
+    "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+    "agents/strategy/Strategy1_Research.py": "aea45154b0bcca03ae65073d6166dfe7642de1a796eee2fef23762f3a91acf6d",
+    "agents/strategy/research_direct_positive_maker_kappa.py": "56b34c09f6a7036fa3e1aa0293ac50e79645755399ffb818a323dd45e157fb8d",
+    "agents/strategy/research_direct_quiet_entry.py": "1f6ea7edb27790b8920fbfcba2c711223944bbc730ee6e3eb5bad8ba55e068b5",
+    "agents/strategy/research_direct_tail_recovery.py": "32d2b9cb8954f93c1c7e7873623ff36c4ac31f019be9d3ecc32a2bde9a4d9a86",
+    "agents/strategy/research_quote_hysteresis.py": "7b2b89461b99ab6c0a90f78bab2d0f7006d8b46ec04ed924bb5d2f3589d73427"
+  },
+  "frozen_file_sha256_verified": true,
+  "goal": "Measure the Maker exit lifecycle -- hold eligibility, tenure, disposition, forgone edge and cancel-ack latency -- so Phase B's queue-preserving repricing is built on measurement rather than assumption.",
+  "new_docs": [
+    "STRATEGY1_DIRECT_V4_16_2_A1_9.md"
+  ],
+  "new_telemetry": [
+    "A19_EXIT_REFRESH_CONFIG",
+    "A19_EXIT_EVAL",
+    "A19_EXIT_LIFECYCLE",
+    "A19_CANCEL_ACK",
+    "A19_CANCEL_NOT_ACKED"
+  ],
+  "new_tests": [
+    "tests/test_research_strategy1_direct_a1_9_0.py"
+  ],
+  "phase": "A_SHADOW_MEASUREMENT",
+  "policy_version": "strategy1_direct_v4_16_2_a1_9_0",
+  "release": "Strategy1-Direct V4.16.2 A1.9 Phase A",
+  "removed_tests": [
+    "tests/test_research_strategy1_direct_a1_8.py"
+  ],
+  "reverts": {
+    "measured_cost_of_a18": {
+      "a172_wait_hold_per_tick": "9x",
+      "maker_fills_per_tick": "-33%",
+      "pnl_rate_per_tick": "-79%",
+      "positive_rt_per_tick": "-44%",
+      "rt_velocity_per_tick": "-23.7%"
+    },
+    "release": "A1.8",
+    "restored_ttl_ms": 3000.0,
+    "reverted_effective_ttl_ms": 975.0,
+    "reverted_symbol": "cycle_bounded_profitable_exit_ttl_ms"
+  },
+  "single_behavior_change": {
+    "behaviour_change": false,
+    "new_market_thresholds_added": false,
+    "note": "Phase A is measurement only: the classifier runs in shadow mode and its HOLD/REPRICE decision is discarded. Only _a19_* telemetry state is written."
+  },
+  "title": "Queue-Preserving Maker Exit -- Phase A Shadow Measurement",
+  "verification": {
+    "a19_phase_a_suite": "22 passed",
+    "all_direct_regression": "263 passed, 11 skipped, 0 failed",
+    "frozen_base_untouched": "Strategy1_Research.py unchanged (sha verified against A1.7.5)",
+    "python_compile": "PASS"
+  }
+}

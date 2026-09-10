@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.8 Maker Exit Realization Research candidate.
+"""Strategy1-Direct V4.16.2 A1.9 Phase A queue-preserving exit measurement.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,7 +8,7 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-A1.8 keeps A1.7.5 relative tail authority and A1.7.4.4 positive-Maker Kappa veto, A1.7.4.3.2 identity-safe ownership and strict aggregate in-flight exposure reservation,
+A1.9 keeps A1.7.5 relative tail authority and A1.7.4.4 positive-Maker Kappa veto, A1.7.4.3.2 identity-safe ownership and strict aggregate in-flight exposure reservation,
 A1.7.4.2 Kappa-safe dust compaction, A1.7.4.1 replay de-duplication, A1.7.4
 tail recovery, A1.7.2 TRUE-WAIT, and A1.7.3.1 partial-remainder/liveness
 frozen. A1.7.4.4 keeps its narrow Kappa-tail correction. A1.7.4.5 adds one
@@ -16,10 +16,19 @@ regime-specific acquisition correction: only in QUIET + no meaningful Maker
 rebate + very-low trade activity + wide spread, the current observable Maker
 edge floor rises from 2.5 bps to 15 bps. Normal/rebate regimes, size, portfolio
 limits, ownership, exit pricing/authority, recovery thresholds, and FastPath remain unchanged.
-A1.8 changes only profitable Maker exit persistence in the Direct overlay: the
-legacy multi-cycle 3000 ms lifetime is capped by the existing exit-cycle TTL
-(975 ms with the shipped config) so a resting exit can refresh from the next
-market state. Strategy1_Research.py remains unchanged.
+
+A1.8's cycle-bounded 975 ms exit TTL is fully reverted: it cost ~24% of RT
+velocity, ~44% of positive-RT production and ~79% of the PnL rate.  Shortening
+the TTL below one publish cycle guaranteed the order was dead before the next
+evaluation, which structurally disabled the queue-preservation path it was
+meant to improve.
+
+A1.9 Phase A is measurement only.  It exercises the queue-preserving exit
+classifier in shadow mode -- computing and logging a HOLD/REPRICE decision that
+is deliberately discarded -- and records exit tenure, why a resting quote
+vanished, forgone edge, and cancel-acknowledgement latency.  Runtime behaviour
+is identical to the A1.7.5 baseline.  Phase B is what acts on the classifier.
+Strategy1_Research.py remains unchanged.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
 A/B tested against the V4.16.2 baseline.
@@ -166,9 +175,20 @@ from research_direct_quiet_entry import (
     quiet_zero_rebate_entry_gate,
 )
 from research_direct_exit_refresh import (
+    ABSENT_EXPIRED,
+    ABSENT_FILLED,
+    ABSENT_NEG_AGGRESSIVE_CANCEL,
+    ABSENT_NEVER_PLACED,
+    ABSENT_WAIT_CANCEL,
+    DIRECT_A19_BASELINE_PROFITABLE_EXIT_TTL_MS,
+    DIRECT_A19_TARGET_PROFITABLE_EXIT_TTL_MS,
     DIRECT_EXIT_REFRESH_VERSION,
-    DIRECT_A18_LEGACY_PROFITABLE_EXIT_TTL_MS,
-    cycle_bounded_profitable_exit_ttl_ms,
+    EVAL_PERSIST_ELIGIBLE,
+    EXIT_HOLD,
+    behind_ticks,
+    classify_resting_maker_exit,
+    exit_eval_class,
+    forgone_edge_bps,
 )
 from research_direct_trade_dedup import (
     DIRECT_TRADE_DEDUP_VERSION,
@@ -218,8 +238,8 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_8"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_8"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -232,7 +252,7 @@ DIRECT_A175_SHADOW_LEDGER_MAX = 256
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 A1.8 cycle-bounded Maker exit realization on A1.7.5.
+    """V4.16.2 A1.9 Phase A queue-preserving exit measurement on A1.7.5.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -259,7 +279,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.7.4.3.2 exact exchange-order identity release; stale cancellation cannot release a newer owner;
       * A1.7.4.4 strongly-positive Maker veto over negative non-catastrophic HARD/ABSOLUTE Taker authority;
       * A1.7.4.5 15 bps entry floor only in QUIET/no-rebate/low-trade/wide-spread books;
-      * A1.8 cycle-bounded profitable Maker exit TTL; no price/Taker/entry authority change;
+      * A1.9 Phase A shadow measurement of resting-exit queue preservation; no behaviour change;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -273,22 +293,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         super().initialize()
         # Marker only.  Do not mutate strategy thresholds or risk limits here.
         self._simple_direct_mode = True
-        # A1.8 STRUCTURAL Maker-exit realization.  A1.7.5 can keep a
-        # profitable Maker exit live for 3s while market state publishes about
-        # once per exit cycle.  Because Direct final validation correctly blocks
-        # a second live order on the same book, that long TTL also prevents the
-        # exit quote from following the newer touch/ladder rung.  Reuse the
-        # existing QUIET/ONE_AWAY cycle TTLs as the persistence ceiling.  This
-        # changes no price, Taker authority, entry gate, size, or risk limit.
-        self._direct_a18_legacy_profitable_exit_ttl_ms = float(
-            getattr(self, "research_profitable_exit_ttl_ms", DIRECT_A18_LEGACY_PROFITABLE_EXIT_TTL_MS)
-            or DIRECT_A18_LEGACY_PROFITABLE_EXIT_TTL_MS
-        )
-        self.research_profitable_exit_ttl_ms = cycle_bounded_profitable_exit_ttl_ms(
-            legacy_persistent_ttl_ms=self._direct_a18_legacy_profitable_exit_ttl_ms,
-            quiet_exit_ttl_ms=float(getattr(self, "research_quiet_exit_ttl_ms", 950.0) or 950.0),
-            one_away_exit_ttl_ms=float(getattr(self, "research_one_away_exit_ttl_ms", 975.0) or 975.0),
-        )
+        # A1.9 Phase A instrumentation state.  Measurement only: the exit
+        # TTL keeps its A1.7.5 value and no threshold, limit or authority is
+        # mutated here.  A1.8 mutated research_profitable_exit_ttl_ms at this
+        # point and that is exactly what must not happen again.
+        self._a19_reset_exit_observation()
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -465,13 +474,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 a1745_wide_spread_min_bps=float(DIRECT_A1745_WIDE_SPREAD_MIN_BPS),
                 a1745_global_maker_edge_retune=0,
                 direct_exit_refresh_version=DIRECT_EXIT_REFRESH_VERSION,
-                a18_exit_refresh_mode="CYCLE_BOUNDED_PROFITABLE_MAKER_TTL",
-                a18_legacy_profitable_exit_ttl_ms=float(self._direct_a18_legacy_profitable_exit_ttl_ms),
-                a18_profitable_exit_ttl_ms=float(self.research_profitable_exit_ttl_ms),
-                a18_size_change=0,
-                a18_active_book_change=0,
-                a18_taker_logic_change=0,
-                a18_entry_gate_change=0,
+                a19_phase="A_SHADOW_MEASUREMENT",
+                a19_profitable_exit_ttl_ms=float(
+                    getattr(self, "research_profitable_exit_ttl_ms", DIRECT_A19_BASELINE_PROFITABLE_EXIT_TTL_MS)
+                    or DIRECT_A19_BASELINE_PROFITABLE_EXIT_TTL_MS
+                ),
+                a19_target_profitable_exit_ttl_ms=float(DIRECT_A19_TARGET_PROFITABLE_EXIT_TTL_MS),
+                a19_behaviour_change=0,
+                a19_size_change=0,
+                a19_active_book_change=0,
+                a19_taker_logic_change=0,
+                a19_entry_gate_change=0,
                 true_wait_execution=1,
                 wait_falls_through_to_legacy_maker=0,
                 negative_aggressive_maker_block=1,
@@ -529,16 +542,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             pass
         try:
+            effective_ttl = float(
+                getattr(self, "research_profitable_exit_ttl_ms", DIRECT_A19_BASELINE_PROFITABLE_EXIT_TTL_MS)
+                or DIRECT_A19_BASELINE_PROFITABLE_EXIT_TTL_MS
+            )
+            publish_ms = float(getattr(self, "_a19_publish_interval_ms", 0.0) or 0.0)
             self._emit(
-                "A18_EXIT_REFRESH_CONFIG", force=True,
+                "A19_EXIT_REFRESH_CONFIG", force=True,
                 tick=int(getattr(self, "_tick", 0) or 0),
                 exit_refresh_version=DIRECT_EXIT_REFRESH_VERSION,
-                legacy_profitable_exit_ttl_ms=float(self._direct_a18_legacy_profitable_exit_ttl_ms),
-                effective_profitable_exit_ttl_ms=float(self.research_profitable_exit_ttl_ms),
-                quiet_exit_ttl_ms=float(getattr(self, "research_quiet_exit_ttl_ms", 950.0) or 950.0),
-                one_away_exit_ttl_ms=float(getattr(self, "research_one_away_exit_ttl_ms", 975.0) or 975.0),
-                maker_only=1, taker_logic_change=0, entry_gate_change=0,
-                size_change=0, active_book_change=0,
+                phase="A_SHADOW_MEASUREMENT",
+                effective_profitable_exit_ttl_ms=effective_ttl,
+                baseline_profitable_exit_ttl_ms=float(DIRECT_A19_BASELINE_PROFITABLE_EXIT_TTL_MS),
+                target_profitable_exit_ttl_ms=float(DIRECT_A19_TARGET_PROFITABLE_EXIT_TTL_MS),
+                reprice_ticks=float(getattr(self, "research_profitable_exit_reprice_ticks", 3.0) or 3.0),
+                observed_publish_interval_ms=publish_ms,
+                behaviour_change=0, maker_only=1, taker_logic_change=0,
+                entry_gate_change=0, size_change=0, active_book_change=0,
             )
         except Exception:
             pass
@@ -1413,6 +1433,255 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return None
         return row
 
+    # ------------------------------------------------------------------
+    # A1.9 Phase A: queue-preserving Maker-exit measurement (shadow mode).
+    #
+    # A1.8 cut the profitable exit TTL to one publish cycle and lost ~24% of RT
+    # velocity.  The real defect is that TTL, not the hysteresis rule, is the
+    # repricing clock: final validation drops any placement on a book that
+    # still holds a live order, and nothing cancels the stale exit first, so a
+    # declined hold cannot actually reprice.  Phase A measures the exit
+    # lifecycle -- hold eligibility, tenure, why a resting quote vanished,
+    # forgone edge, and cancel-acknowledgement latency -- while changing no
+    # decision at all.  Phase B is what acts on the classifier.
+    # ------------------------------------------------------------------
+
+    A19_CANCEL_WATCH_MAX_TICKS = 10
+    A19_CANCEL_ACK_BUDGET_TICKS = 2
+
+    def _a19_reset_exit_observation(self) -> None:
+        """Initialise Phase A measurement state.  Touches no strategy threshold."""
+        self._a19_exit_seen: dict[int, dict[str, Any]] = {}
+        self._a19_pending_action: dict[int, str] = {}
+        self._a19_cancel_watch: dict[tuple[int, int], tuple[int, str]] = {}
+        self._a19_last_disposition: dict[int, str] = {}
+        self._a19_publish_interval_ms = 0.0
+        self._a19_exit_evals = 0
+        self._a19_eligible_evals = 0
+        self._a19_eligible_with_resting = 0
+        self._a19_shadow_holds = 0
+        self._a19_shadow_reprices = 0
+        self._a19_cancel_acks = 0
+        self._a19_cancel_ack_ticks_total = 0
+        self._a19_cancel_not_acked = 0
+
+    @staticmethod
+    def _a19_order_id(order) -> int | None:
+        try:
+            return int(getattr(order, "id", None))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _a19_order_price(order) -> float | None:
+        price = getattr(order, "price", None)
+        if price is None:
+            price = getattr(order, "limit_price", None)
+        try:
+            return float(price)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _a19_tick_size(state) -> float:
+        try:
+            price_dec = int(getattr(getattr(state, "config", None), "priceDecimals", 2) or 2)
+        except (TypeError, ValueError):
+            price_dec = 2
+        return 10.0 ** (-max(0, price_dec))
+
+    def _a19_close_side_orders(self, book_id: int, long_pos: bool) -> list:
+        """Resting close-side orders for this book in the current snapshot."""
+        close_side = 1 if long_pos else 0
+        rows = []
+        for order in self._direct_account_orders(int(book_id)):
+            try:
+                if int(getattr(order, "side", -1)) == close_side:
+                    rows.append(order)
+            except (TypeError, ValueError):
+                continue
+        return rows
+
+    def _a19_resting_net_bps(self, book_id: int, inventory, price) -> float:
+        """Lifecycle net of a resting exit at its OWN price, at current fees."""
+        entry = float(getattr(inventory, "vwap_entry", 0.0) or 0.0)
+        if entry <= 0.0 or price is None:
+            return float("nan")
+        fee = float(self._research_live_fee_bps(int(book_id), is_maker=True) or 0.0)
+        try:
+            return float(unified_completion_net_bps(
+                entry_price=entry, exit_price=float(price),
+                long_position=float(getattr(inventory, "net_base", 0.0) or 0.0) > 0.0,
+                entry_fee_bps=fee, exit_fee_bps=fee,
+            ))
+        except (TypeError, ValueError):
+            return float("nan")
+
+    def _a19_note_exit_cancel(self, book_id: int, order_ids, disposition: str) -> None:
+        """Start the acknowledgement clock for a cancel Phase B will depend on."""
+        watch = getattr(self, "_a19_cancel_watch", None)
+        if watch is None:
+            return
+        tick = int(getattr(self, "_tick", 0) or 0)
+        for oid in (order_ids or ()):
+            try:
+                watch[(int(book_id), int(oid))] = (tick, str(disposition))
+            except (TypeError, ValueError):
+                continue
+        stale = [
+            key for key, (sent, _) in watch.items()
+            if tick - int(sent) > self.A19_CANCEL_WATCH_MAX_TICKS
+        ]
+        for key in stale:
+            watch.pop(key, None)
+
+    def _a19_settle_cancel_watch(self, book_id: int, live_ids: set) -> str | None:
+        """Resolve pending cancels for this book and measure the ack latency.
+
+        Phase B's cancel-then-replace assumes a cancel sent at T is gone by
+        T+1.  This turns that assumption into a measurement.
+        """
+        watch = getattr(self, "_a19_cancel_watch", None) or {}
+        tick = int(getattr(self, "_tick", 0) or 0)
+        disposition = None
+        for key in [k for k in list(watch) if int(k[0]) == int(book_id)]:
+            sent, reason = watch[key]
+            age = max(0, tick - int(sent))
+            if int(key[1]) not in live_ids:
+                watch.pop(key, None)
+                self._a19_cancel_acks += 1
+                self._a19_cancel_ack_ticks_total += age
+                disposition = str(reason)
+                self._emit(
+                    "A19_CANCEL_ACK", force=True, tick=tick, book=int(book_id),
+                    order_id=int(key[1]), ack_ticks=age, cancel_reason=str(reason),
+                )
+            elif age == self.A19_CANCEL_ACK_BUDGET_TICKS:
+                self._a19_cancel_not_acked += 1
+                self._emit(
+                    "A19_CANCEL_NOT_ACKED", force=True, tick=tick, book=int(book_id),
+                    order_id=int(key[1]), ticks_pending=age, cancel_reason=str(reason),
+                )
+        return disposition
+
+    def _a19_observe_exit_evaluation(
+        self, state, book_id: int, inventory, qty: float, action: str,
+        *, close_price, maker_net_bps,
+    ) -> None:
+        """Measure one exit evaluation.  Never changes a decision."""
+        bid = int(book_id)
+        tick = int(getattr(self, "_tick", 0) or 0)
+        try:
+            publish_ns = float(getattr(getattr(state, "config", None), "publish_interval", 0) or 0)
+            if publish_ns > 0.0:
+                self._a19_publish_interval_ms = publish_ns / 1e6
+        except (TypeError, ValueError):
+            pass
+
+        net_base = float(getattr(inventory, "net_base", 0.0) or 0.0)
+        long_pos = net_base > 0.0
+        resting = self._a19_close_side_orders(bid, long_pos)
+        live_ids = {
+            oid for oid in (self._a19_order_id(order) for order in resting)
+            if oid is not None
+        }
+        cancel_disposition = self._a19_settle_cancel_watch(bid, live_ids)
+
+        seen = self._a19_exit_seen.get(bid)
+        if seen is not None and int(seen.get("order_id", -1)) not in live_ids:
+            # The tracked exit is gone.  A cancel we sent explains it; otherwise
+            # a shrunken position means it filled, and anything else expired.
+            prior_abs = abs(float(seen.get("net_base", net_base)))
+            disposition = cancel_disposition or (
+                ABSENT_FILLED if abs(net_base) + 1e-12 < prior_abs else ABSENT_EXPIRED
+            )
+            self._a19_last_disposition[bid] = disposition
+            self._emit(
+                "A19_EXIT_LIFECYCLE", force=True, tick=tick, book=bid,
+                disposition=disposition,
+                tenure_ticks=max(0, tick - int(seen.get("first_tick", tick))),
+                order_price=seen.get("price"),
+                order_action=str(seen.get("action", "") or ""),
+            )
+            self._a19_exit_seen.pop(bid, None)
+            seen = None
+
+        if seen is None and resting:
+            order = resting[0]
+            oid = self._a19_order_id(order)
+            if oid is not None:
+                seen = {
+                    "order_id": oid,
+                    "price": self._a19_order_price(order),
+                    "qty": float(getattr(order, "quantity", 0.0) or 0.0),
+                    "action": self._a19_pending_action.get(bid, ""),
+                    "first_tick": tick,
+                    "net_base": net_base,
+                }
+                self._a19_exit_seen[bid] = seen
+
+        eval_class = exit_eval_class(
+            maker_net_bps=maker_net_bps,
+            min_net_bps=float(getattr(self, "research_profitable_exit_min_net_bps", 0.0) or 0.0),
+            market_regime=getattr(self, "_research_market_regime", "NORMAL"),
+        )
+        self._a19_exit_evals += 1
+        if eval_class == EVAL_PERSIST_ELIGIBLE:
+            self._a19_eligible_evals += 1
+            if seen is not None:
+                self._a19_eligible_with_resting += 1
+
+        decision = ""
+        reason = ""
+        drift = 0.0
+        forgone = 0.0
+        if seen is not None and close_price is not None:
+            tick_size = self._a19_tick_size(state)
+            desired = float(close_price)
+            decision, reason = classify_resting_maker_exit(
+                existing_price=seen.get("price"), desired_price=desired,
+                tick_size=tick_size, long_position=long_pos,
+                existing_qty=seen.get("qty"), desired_qty=float(qty),
+                existing_net_bps=self._a19_resting_net_bps(bid, inventory, seen.get("price")),
+                floor_net_bps=float(DIRECT_MAKER_EXIT_TARGET_BPS),
+                existing_action=seen.get("action"), desired_action=action,
+                reprice_ticks=float(getattr(self, "research_profitable_exit_reprice_ticks", 3.0) or 3.0),
+            )
+            drift = behind_ticks(
+                existing_price=seen.get("price"), desired_price=desired,
+                tick_size=tick_size, long_position=long_pos,
+            )
+            forgone = forgone_edge_bps(
+                existing_price=seen.get("price"), desired_price=desired,
+                long_position=long_pos,
+            )
+            if decision == EXIT_HOLD:
+                self._a19_shadow_holds += 1
+            else:
+                self._a19_shadow_reprices += 1
+
+        self._emit(
+            "A19_EXIT_EVAL", force=True, tick=tick, book=bid,
+            eval_class=str(eval_class),
+            resting_present=int(seen is not None),
+            absent_reason=(
+                "" if seen is not None
+                else str(self._a19_last_disposition.get(bid, ABSENT_NEVER_PLACED))
+            ),
+            shadow_decision=str(decision), shadow_reason=str(reason),
+            drift_ticks=float(drift), forgone_edge_bps=float(forgone),
+            tenure_ticks=(
+                0 if seen is None else max(0, tick - int(seen.get("first_tick", tick)))
+            ),
+            action=str(action or ""),
+            maker_net_bps=(None if maker_net_bps is None else float(maker_net_bps)),
+            shadow_mode=1,
+        )
+
+        # Record the rung this evaluation would place at, after adoption above,
+        # so an order first seen next tick inherits the action that placed it.
+        self._a19_pending_action[bid] = str(action or "")
+
     def _direct_cancel_unsafe_wait_exits(self, response, book_id: int, inventory, *, reason: str) -> tuple[int, int]:
         """Cancel only close-side resting orders whose current lifecycle net is unsafe.
 
@@ -1464,6 +1733,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             return 0, kept
         self._direct_wait_cancel_batches = int(getattr(self, "_direct_wait_cancel_batches", 0) or 0) + 1
+        # A1.9 Phase A: start the acknowledgement clock on a real cancel.  Phase
+        # B's cancel-then-replace assumes the cancel is visible one state later;
+        # this measures that assumption on cancels that already happen today.
+        try:
+            self._a19_note_exit_cancel(
+                int(book_id), cancel_ids,
+                ABSENT_NEG_AGGRESSIVE_CANCEL
+                if str(reason or "") == "NEGATIVE_AGGRESSIVE_BLOCK"
+                else ABSENT_WAIT_CANCEL,
+            )
+        except Exception:
+            pass
         try:
             self._emit(
                 "A172_WAIT_CANCEL", force=True,
@@ -1483,6 +1764,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if self._direct_partial_hold_active(int(book_id), state):
             self._direct_emit_partial_replacement_block(int(book_id), path="MAKER_EXIT")
             return 0
+
+        # A1.9 Phase A shadow measurement.  The classifier's decision is
+        # computed, logged, and deliberately discarded: nothing below reads it.
+        try:
+            self._a19_observe_exit_evaluation(
+                state, int(book_id), inventory, float(qty), str(action or ""),
+                close_price=close_price, maker_net_bps=maker_net_bps,
+            )
+        except Exception:
+            pass
 
         authority = self._direct_current_exit_authority(int(book_id))
         if authority is not None and str(authority.get("action") or "") == ACTION_WAIT:
@@ -4292,8 +4583,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a175_shadow_adverse"] = int(getattr(self, "_direct_a175_shadow_adverse", 0) or 0)
         stats["direct_a175_shadow_pending"] = len(getattr(self, "_direct_a175_shadow_ledger", {}) or {})
         stats["direct_exit_refresh_version"] = DIRECT_EXIT_REFRESH_VERSION
-        stats["direct_a18_legacy_profitable_exit_ttl_ms"] = float(getattr(self, "_direct_a18_legacy_profitable_exit_ttl_ms", DIRECT_A18_LEGACY_PROFITABLE_EXIT_TTL_MS) or DIRECT_A18_LEGACY_PROFITABLE_EXIT_TTL_MS)
-        stats["direct_a18_profitable_exit_ttl_ms"] = float(getattr(self, "research_profitable_exit_ttl_ms", 0.0) or 0.0)
+        stats["direct_a19_phase"] = "A_SHADOW_MEASUREMENT"
+        stats["direct_a19_profitable_exit_ttl_ms"] = float(getattr(self, "research_profitable_exit_ttl_ms", 0.0) or 0.0)
+        stats["direct_a19_exit_evals"] = int(getattr(self, "_a19_exit_evals", 0) or 0)
+        stats["direct_a19_eligible_evals"] = int(getattr(self, "_a19_eligible_evals", 0) or 0)
+        stats["direct_a19_eligible_with_resting"] = int(getattr(self, "_a19_eligible_with_resting", 0) or 0)
+        stats["direct_a19_shadow_holds"] = int(getattr(self, "_a19_shadow_holds", 0) or 0)
+        stats["direct_a19_shadow_reprices"] = int(getattr(self, "_a19_shadow_reprices", 0) or 0)
+        stats["direct_a19_cancel_acks"] = int(getattr(self, "_a19_cancel_acks", 0) or 0)
+        stats["direct_a19_cancel_ack_ticks_total"] = int(getattr(self, "_a19_cancel_ack_ticks_total", 0) or 0)
+        stats["direct_a19_cancel_not_acked"] = int(getattr(self, "_a19_cancel_not_acked", 0) or 0)
         stats["direct_trade_dedup_version"] = DIRECT_TRADE_DEDUP_VERSION
         stats["direct_duplicate_trade_events_skipped"] = int(
             getattr(self, "_direct_duplicate_trade_events_skipped", 0) or 0
