@@ -35,6 +35,9 @@ LEDGER_SRC = LEDGER.read_text()
 
 from research_direct_exit_ledger import (  # noqa: E402
     DIRECT_EXIT_LEDGER_VERSION,
+    LEDGER_REMOVED_CANCELLED,
+    LEDGER_REMOVED_FILLED,
+    LEDGER_REMOVED_TTL_SWEEP,
     DirectExitLedger,
     RestingInventoryView,
     close_side_for,
@@ -42,6 +45,8 @@ from research_direct_exit_ledger import (  # noqa: E402
 from research_direct_exit_refresh import (  # noqa: E402
     ABSENT_EXPIRED,
     ABSENT_FILLED,
+    ABSENT_LEDGER_SWEEP,
+    AGENT_CANCEL_DISPOSITIONS,
     EVAL_PERSIST_ELIGIBLE,
     EXIT_HOLD,
     REASON_QUEUE_PRESERVED,
@@ -64,9 +69,9 @@ BOOK = 7
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_0_2():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_2"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_2"' in SRC
-    assert DIRECT_EXIT_LEDGER_VERSION == "direct_exit_ledger_v4_16_2_a1_9_0_2"
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"' in SRC
+    assert DIRECT_EXIT_LEDGER_VERSION == "direct_exit_ledger_v4_16_2_a1_9_0_3"
 
 
 def test_frozen_base_untouched():
@@ -156,6 +161,9 @@ def _load_observer():
         "_a19_observe_tick_resting_exits", "_a19_emit_tick_lifecycle",
         "_a19_resting_net_bps", "_a19_close_side_orders", "_a19_tick_size",
         "_a19_ledger_ref", "_direct_account_orders",
+        # A1.9.0.3 dependencies of the observer body.
+        "_a19_resolve_disposition", "_a19_is_entry_quote_row",
+        "_direct_entry_quote_client_ids",
     }
     methods = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
     assert {m.name for m in methods} == wanted
@@ -165,6 +173,11 @@ def _load_observer():
         "RestingInventoryView": RestingInventoryView,
         "close_side_for": close_side_for,
         "ABSENT_EXPIRED": ABSENT_EXPIRED, "ABSENT_FILLED": ABSENT_FILLED,
+        "ABSENT_LEDGER_SWEEP": ABSENT_LEDGER_SWEEP,
+        "AGENT_CANCEL_DISPOSITIONS": AGENT_CANCEL_DISPOSITIONS,
+        "LEDGER_REMOVED_CANCELLED": LEDGER_REMOVED_CANCELLED,
+        "LEDGER_REMOVED_FILLED": LEDGER_REMOVED_FILLED,
+        "LEDGER_REMOVED_TTL_SWEEP": LEDGER_REMOVED_TTL_SWEEP,
         "EVAL_PERSIST_ELIGIBLE": EVAL_PERSIST_ELIGIBLE, "EXIT_HOLD": EXIT_HOLD,
         "behind_ticks": behind_ticks,
         "classify_resting_maker_exit": classify_resting_maker_exit,
@@ -210,6 +223,8 @@ class _Agent:
         self._a19_tick_seen = {}
         self._a19_pending_action = {}
         self._a19_cancel_watch = {}
+        self._a19_cancel_reason = {}
+        self._a19_tick_disposition_counts = {}
         self.accounts = {}
         self.positions = {}
         self.events = []
@@ -220,6 +235,7 @@ class _Agent:
             "_a19_tick_shadow_reprices", "_a19_tick_first_sightings",
             "_a19_tick_lifecycles", "_a19_tick_max_observed_ticks",
             "_a19_tick_observed_ticks_total", "_a19_tick_untimed_rows",
+            "_a19_tick_entry_quote_rows",
         ):
             setattr(self, name, 0)
 
@@ -244,8 +260,9 @@ class _Agent:
         return [p for e, p in self.events if e == event_type]
 
 
+_STATIC = {"_a19_tick_size", "_direct_entry_quote_client_ids"}
 for _name, _fn in _load_observer().items():
-    setattr(_Agent, _name, staticmethod(_fn) if _name == "_a19_tick_size" else _fn)
+    setattr(_Agent, _name, staticmethod(_fn) if _name in _STATIC else _fn)
 
 
 def _agent_with_resting_exit():
@@ -435,7 +452,7 @@ def test_gate_metrics_are_reported():
         "direct_a1902_tick_lifecycles", "direct_a1902_tick_untimed_rows",
     ):
         assert f'stats["{key}"]' in SRC, key
-    assert 'stats["direct_a19_phase"] = "A3_LIVE_TICK_OBSERVER"' in SRC
+    assert 'stats["direct_a19_phase"] = "A4_LIFECYCLE_ATTRIBUTION"' in SRC
 
 
 def test_a1901_control_counters_are_retained():

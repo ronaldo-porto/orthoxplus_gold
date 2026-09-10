@@ -130,7 +130,7 @@ the next evaluation wants it, so the queue-preservation ceiling is ~10%. Raising
 the TTL to 4,000 ms is what converts the 47.5% "just expired" population into
 genuine holds.
 
-## A1.9.0.2 — live resting-exit observer (this revision)
+## A1.9.0.2 — live resting-exit observer (PASSED)
 
 A1.9.0.1 shipped and **still measured `resting_present = 0`**:
 
@@ -225,6 +225,81 @@ No instruction, no cancel, no threshold write; the observer is wrapped so a
 fault cannot cost a trading tick. `research_profitable_exit_ttl_ms` keeps its
 3,000 ms default. **A1.9.1 remains blocked** until a run shows
 `direct_a1902_tick_resting_hits > 0` with a real HOLD/REPRICE distribution.
+
+## A1.9.0.3 — lifecycle attribution repair (this revision)
+
+A1.9.0.2 **passed the observability gate**:
+
+| Metric | A1.9.0.2 run |
+|---|---|
+| `resting_present = 1` | 665 |
+| shadow HOLD / REPRICE | 329 / 162 |
+| HOLD rate on persist-eligible live exits | ~68.8% (gate was 20%) |
+| forgone edge on HOLD | median 0 bps, p90 ~1.22 bps |
+| cancel acks | 60/60 at T+1 |
+| Maker share / positive RT / RT velocity | 95.1% / 87.2% / ~0.221/s |
+| ownership violations / max exposure / p95 | 0 / ~1.64 BASE / ~100 ms |
+
+The one defect was instrumentation: **some explicitly cancelled exits were
+labelled EXPIRED**. Investigation found this was not one bug but four.
+
+### The four defects
+
+1. **Two cancel paths never registered.** Only `_direct_cancel_unsafe_wait_exits`
+   called `_a19_note_exit_cancel`. `_direct_cancel_entry_quotes` and the
+   partial-remainder cancel (`A173_PARTIAL_REMAINDER_CANCEL`) did not, so any
+   tracked order they killed fell through to EXPIRED.
+2. **The cancel lookup was not keyed to the tracked order.** It scanned for *any*
+   watched order on the book, so it could attribute a different order's reason to
+   this one.
+3. **The reason could already be consumed.** `_a19_settle_cancel_watch` **pops**
+   watch entries from the placement path, so the reason could be gone before the
+   tick observer noticed the disappearance one or two states later.
+4. **Entry quotes were adopted as Maker exits.** On a long book the entry ASK
+   rests on the close side, and the ledger keys rows by book+side only. An entry
+   quote could therefore be adopted as "the resting exit" — inflating
+   `resting_present` and the hold rate, and reporting EXPIRED when the quote
+   manager cancelled it.
+
+Defect 4 is the consequential one: **the A1.9.0.2 counts above may be inflated**,
+so the A1.9.0.3 run re-establishes them on true exits only before Phase B is
+gated on them.
+
+### The repair
+
+Disposition is now resolved from **ranked evidence** rather than inference:
+
+1. the ledger's own removal cause — a fill is a fill;
+2. a cancel **we** registered for that **exact order id**;
+3. only with no notice at all, the position-shrank fallback.
+
+A cancellation notice we never asked for is a real expiry — the exchange retires
+an order at TTL through the same notice — so EXPIRED now means the exchange
+retired it, not "we could not tell". Supporting changes:
+
+- the ledger keeps a bounded `removal_causes` memo so the cause **outlives the
+  row**, cleared on `reset()` because a restart reuses order ids;
+- a `_a19_cancel_reason` memo keyed by order id outlives the cancel *watch*, so
+  the placement path consuming a watch entry can no longer erase the reason;
+- all three `cancel_orders` sites register a reason, guarded by a test that
+  fails if any future `cancel_orders` call lands unregistered;
+- entry quotes are excluded by the same client-id convention the cancel path
+  uses (`_direct_entry_quote_client_ids`, now the single source of truth);
+- `LEDGER_SWEEP` is its own disposition — bounded memory is not a measured
+  expiry and must never inflate the expiry rate.
+
+Per-disposition tallies ship as `direct_a1903_disposition_*`, with
+`direct_a1903_agent_cancelled_lifecycles` separating cancels we asked for from
+exchange-side expiry.
+
+### Verification
+
+The repair is mutation-tested — reverting each of the three fixes in turn is
+caught by 4, 1 and 2 tests respectively. Notably, reverting the disposition logic
+does **not** break the simple WAIT-cancel case, which is exactly why the defect
+showed up as *some* cancels mislabelled rather than all of them.
+
+Still measurement only; **run 150–200 ticks**, then A1.9.1 Phase B.
 
 ## The A1.9 mechanism
 
@@ -507,9 +582,10 @@ bundled into an economics experiment.
 
 ## Verification
 
-- All direct regression suites: **320 passed, 11 skipped, 0 failed**
-  (A1.9.0.1 baseline was 295 passed, 11 skipped, 0 failed — the delta is exactly
-  the 25 new A1.9.0.2 tests; no pre-existing test changed status)
+- All direct regression suites: **347 passed, 11 skipped, 0 failed**
+  (A1.9.0.2 was 320 passed — the delta is exactly the 27 new A1.9.0.3 tests;
+  no pre-existing test changed status)
+- A1.9.0.3 suite: **27 passed**, mutation-tested against all three fixes
 - A1.9.0.2 suite: **25 passed**, including behavioural coverage that binds the
   extracted observer to a stub exchange and replays a full exit lifecycle
 - A1.9.0.1 suite: **32 passed**

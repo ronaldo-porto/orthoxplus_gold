@@ -175,11 +175,15 @@ from research_direct_quiet_entry import (
     quiet_zero_rebate_entry_gate,
 )
 from research_direct_exit_refresh import (
+    ABSENT_ENTRY_QUOTE_CANCEL,
     ABSENT_EXPIRED,
     ABSENT_FILLED,
+    ABSENT_LEDGER_SWEEP,
     ABSENT_NEG_AGGRESSIVE_CANCEL,
     ABSENT_NEVER_PLACED,
+    ABSENT_PARTIAL_REMAINDER_CANCEL,
     ABSENT_WAIT_CANCEL,
+    AGENT_CANCEL_DISPOSITIONS,
     DIRECT_A19_BASELINE_PROFITABLE_EXIT_TTL_MS,
     DIRECT_A19_TARGET_PROFITABLE_EXIT_TTL_MS,
     DIRECT_EXIT_REFRESH_VERSION,
@@ -194,6 +198,7 @@ from research_direct_exit_ledger import (
     DIRECT_EXIT_LEDGER_VERSION,
     LEDGER_REMOVED_CANCELLED,
     LEDGER_REMOVED_FILLED,
+    LEDGER_REMOVED_TTL_SWEEP,
     DirectExitLedger,
     RestingInventoryView,
     close_side_for,
@@ -246,8 +251,8 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_2"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_2"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -1472,6 +1477,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     A19_CANCEL_WATCH_MAX_TICKS = 10
     A19_CANCEL_ACK_BUDGET_TICKS = 2
+    # Cancel reasons outlive their watch entries; bounded so a long run cannot
+    # grow the memo without limit.
+    A19_CANCEL_MEMO_MAX = 2048
 
     def _a19_reset_exit_observation(self) -> None:
         """Initialise Phase A measurement state.  Touches no strategy threshold."""
@@ -1516,6 +1524,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a19_tick_max_observed_ticks = 0
         self._a19_tick_observed_ticks_total = 0
         self._a19_tick_untimed_rows = 0
+        # A1.9.0.3: why WE cancelled an order, keyed by order id and outliving
+        # the cancel watch.  `_a19_settle_cancel_watch` pops watch entries from
+        # the placement path, so a memo the tick observer owns is the only way
+        # its lifecycle row can still name the reason one or two states later.
+        self._a19_cancel_reason: dict[int, tuple[int, str]] = {}
+        self._a19_tick_disposition_counts: dict[str, int] = {}
+        self._a19_tick_entry_quote_rows = 0
 
     def _a19_ledger_ref(self) -> DirectExitLedger | None:
         """Ledger handle that tolerates hot-reload and bare test objects."""
@@ -1620,11 +1635,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if watch is None:
             return
         tick = int(getattr(self, "_tick", 0) or 0)
+        memo = getattr(self, "_a19_cancel_reason", None)
+        if memo is None:
+            memo = {}
+            self._a19_cancel_reason = memo
         for oid in (order_ids or ()):
             try:
                 watch[(int(book_id), int(oid))] = (tick, str(disposition))
+                memo[int(oid)] = (tick, str(disposition))
             except (TypeError, ValueError):
                 continue
+        if len(memo) > self.A19_CANCEL_MEMO_MAX:
+            for stale in sorted(memo, key=lambda k: memo[k][0])[: self.A19_CANCEL_MEMO_MAX // 4]:
+                memo.pop(stale, None)
         stale = [
             key for key, (sent, _) in watch.items()
             if tick - int(sent) > self.A19_CANCEL_WATCH_MAX_TICKS
@@ -1660,6 +1683,48 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     order_id=int(key[1]), ticks_pending=age, cancel_reason=str(reason),
                 )
         return disposition
+
+    def _a19_is_entry_quote_row(self, book_id: int, row) -> bool:
+        """True when this ledger row is one of the book's two entry quotes."""
+        cid = getattr(row, "client_id", None)
+        if cid is None:
+            return False
+        try:
+            return int(cid) in self._direct_entry_quote_client_ids(int(book_id))
+        except (TypeError, ValueError):
+            return False
+
+    def _a19_resolve_disposition(self, order_id, *, ledger, shrank: bool) -> str:
+        """Name why a tracked exit left the book, from evidence not inference.
+
+        A1.9.0.2 asked "is any cancel pending on this book?", which mislabelled
+        real agent cancels as EXPIRED whenever the watch entry had already been
+        consumed by the placement path, and could borrow another order's reason.
+        The evidence is ranked instead:
+
+        1. the ledger's own removal cause -- a fill is a fill
+        2. a cancel WE registered for this exact order id
+        3. only with no notice at all, fall back to the position-shrank guess
+        """
+        try:
+            oid = int(order_id)
+        except (TypeError, ValueError):
+            return ABSENT_EXPIRED
+        cause = ledger.removal_cause(oid)
+        if cause == LEDGER_REMOVED_FILLED:
+            return ABSENT_FILLED
+        if cause == LEDGER_REMOVED_TTL_SWEEP:
+            # Bounded memory, not a measured expiry.  Keep it distinct so a
+            # sweep can never inflate the exchange-side expiry rate.
+            return ABSENT_LEDGER_SWEEP
+        memo = (getattr(self, "_a19_cancel_reason", None) or {}).get(oid)
+        if cause == LEDGER_REMOVED_CANCELLED:
+            # A cancellation notice we did not ask for is a real expiry: the
+            # exchange retires an order at TTL through the same notice.
+            return str(memo[1]) if memo is not None else ABSENT_EXPIRED
+        if memo is not None:
+            return str(memo[1])
+        return ABSENT_FILLED if shrank else ABSENT_EXPIRED
 
     def _a19_observe_tick_resting_exits(self, state) -> None:
         """Observe every open-inventory book's resting Maker exit, each tick.
@@ -1740,8 +1805,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 # Position closed while an exit row may still be tracked; retire
                 # the lifecycle so the next position on this book starts clean.
                 if bid in self._a19_tick_seen:
+                    stale_seen = self._a19_tick_seen.pop(bid)
+                    # The position is gone, but say WHY the order went: a WAIT
+                    # cancel on a book that then flattened is not a fill.
                     self._a19_emit_tick_lifecycle(
-                        bid, tick, ABSENT_FILLED, self._a19_tick_seen.pop(bid),
+                        bid, tick,
+                        self._a19_resolve_disposition(
+                            stale_seen.get("order_id"), ledger=ledger, shrank=True,
+                        ),
+                        stale_seen,
                     )
                 continue
 
@@ -1752,6 +1824,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 bid, side=close_side, max_age_ms=exit_ttl_ms, now_ns=now_ns,
             )
             lagged = ledger.live_orders(bid, side=close_side)
+            # A1.9.0.3: on a long book the entry ASK rests on the close side and
+            # is indistinguishable from a Maker exit by book+side alone.  Adopting
+            # one inflates resting_present and the hold rate, and reports EXPIRED
+            # when the quote manager cancels it.  Exclude by the client-id
+            # convention the cancel path itself uses.
+            entry_quote_rows = sum(1 for r in lagged if self._a19_is_entry_quote_row(bid, r))
+            if entry_quote_rows:
+                self._a19_tick_entry_quote_rows += entry_quote_rows
+                resting = [r for r in resting if not self._a19_is_entry_quote_row(bid, r)]
+                lagged = [r for r in lagged if not self._a19_is_entry_quote_row(bid, r)]
             live_ids = {int(row.order_id) for row in lagged}
             # A row whose acknowledgement carried no usable timestamp has an
             # unknowable age, so the TTL-filtered read drops it silently while
@@ -1767,20 +1849,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
             elif lagged:
                 self._a19_tick_expiry_lag_hits += 1
 
-            # Peek at the cancel watch without consuming it.  Settlement stays
-            # in the placement path, where `_tick` has already been incremented
-            # and the measured ack latency is therefore on the right clock.
-            pending_cancel = ""
-            for key, (_sent, reason) in watch.items():
-                if int(key[0]) == bid and int(key[1]) not in live_ids:
-                    pending_cancel = str(reason)
-                    break
+            # Whether a cancel we sent is still awaiting acknowledgement, for
+            # reporting only.  Settlement stays in the placement path, where
+            # `_tick` has been incremented and ack latency is on the right clock.
+            pending_cancel = int(any(
+                int(key[0]) == bid and int(key[1]) in live_ids for key in watch
+            ))
 
             seen = self._a19_tick_seen.get(bid)
             if seen is not None and int(seen.get("order_id", -1)) not in live_ids:
                 prior_abs = abs(float(seen.get("net_base", net_base)))
-                disposition = pending_cancel or (
-                    ABSENT_FILLED if abs(net_base) + 1e-12 < prior_abs else ABSENT_EXPIRED
+                disposition = self._a19_resolve_disposition(
+                    seen.get("order_id"), ledger=ledger,
+                    shrank=abs(net_base) + 1e-12 < prior_abs,
                 )
                 self._a19_emit_tick_lifecycle(bid, tick, disposition, seen)
                 self._a19_tick_seen.pop(bid, None)
@@ -1897,7 +1978,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 tenure_ticks=(
                     0 if seen is None else max(0, tick - int(seen.get("first_tick", tick)))
                 ),
-                pending_cancel=str(pending_cancel),
+                pending_cancel=int(pending_cancel),
                 shadow_mode=1,
             )
 
@@ -1908,9 +1989,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         observed = int(seen.get("observed_ticks", 0) or 0)
         self._a19_tick_lifecycles += 1
         self._a19_tick_observed_ticks_total += observed
+        counts = getattr(self, "_a19_tick_disposition_counts", None)
+        if counts is None:
+            counts = {}
+            self._a19_tick_disposition_counts = counts
+        counts[str(disposition)] = int(counts.get(str(disposition), 0)) + 1
         self._emit(
             "A19_TICK_LIFECYCLE", force=True, tick=int(tick), book=int(book_id),
             disposition=str(disposition),
+            agent_cancelled=int(str(disposition) in AGENT_CANCEL_DISPOSITIONS),
             tenure_ticks=max(0, int(tick) - int(seen.get("first_tick", tick))),
             observed_ticks=observed,
             peak_age_ms=round(float(seen.get("peak_age_ms", 0.0) or 0.0), 1),
@@ -2324,9 +2411,22 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _direct_entry_quote_client_ids(book_id: int) -> set[int]:
+        """The two client ids the skewed entry quotes are placed under.
+
+        A1.9.0.3 factored this out so the exit observer and the entry-quote
+        cancel path cannot drift apart: on a long book the entry ASK rests on
+        the close side, and an observer that cannot tell it from a Maker exit
+        adopts it, counts it in the hold rate, and reports EXPIRED when the
+        quote manager cancels it.
+        """
+        base = 70000 + int(book_id) * 10
+        return {base + 1, base + 2}
+
     def _direct_is_entry_quote_order(self, book_id: int, order) -> bool:
         cid = self._direct_order_client_id(order)
-        return cid in {70000 + int(book_id) * 10 + 1, 70000 + int(book_id) * 10 + 2}
+        return cid in self._direct_entry_quote_client_ids(book_id)
 
     def _direct_entry_quote_orders(self, book_id: int) -> list:
         return [
@@ -2365,6 +2465,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             return 0
         self._direct_quote_cancels = int(getattr(self, "_direct_quote_cancels", 0) or 0) + 1
+        # A1.9.0.3: register the cancel.  An entry quote on a book that is long
+        # rests on the close side, so before A1.9.0.3 killing one retired a row
+        # the observer was tracking and the lifecycle read EXPIRED.
+        try:
+            self._a19_note_exit_cancel(
+                int(book_id), order_ids, ABSENT_ENTRY_QUOTE_CANCEL,
+            )
+        except Exception:
+            pass
         if "REPRICE" in str(reason or "").upper():
             self._direct_quote_reprices = int(getattr(self, "_direct_quote_reprices", 0) or 0) + 1
         try:
@@ -3598,6 +3707,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     self._direct_partial_wrong_side_cancels = int(
                         getattr(self, "_direct_partial_wrong_side_cancels", 0) or 0
                     ) + 1
+                    # A1.9.0.3: third cancel path, previously unregistered.
+                    try:
+                        self._a19_note_exit_cancel(
+                            int(book_id), conflicting_ids,
+                            ABSENT_PARTIAL_REMAINDER_CANCEL,
+                        )
+                    except Exception:
+                        pass
                     self._emit(
                         "A173_PARTIAL_REMAINDER_CANCEL", force=True,
                         tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
@@ -4985,7 +5102,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a175_shadow_adverse"] = int(getattr(self, "_direct_a175_shadow_adverse", 0) or 0)
         stats["direct_a175_shadow_pending"] = len(getattr(self, "_direct_a175_shadow_ledger", {}) or {})
         stats["direct_exit_refresh_version"] = DIRECT_EXIT_REFRESH_VERSION
-        stats["direct_a19_phase"] = "A3_LIVE_TICK_OBSERVER"
+        stats["direct_a19_phase"] = "A4_LIFECYCLE_ATTRIBUTION"
         stats["direct_a19_profitable_exit_ttl_ms"] = float(getattr(self, "research_profitable_exit_ttl_ms", 0.0) or 0.0)
         stats["direct_a19_exit_evals"] = int(getattr(self, "_a19_exit_evals", 0) or 0)
         stats["direct_a19_eligible_evals"] = int(getattr(self, "_a19_eligible_evals", 0) or 0)
@@ -5018,6 +5135,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a1902_tick_observed_ticks_total"] = int(getattr(self, "_a19_tick_observed_ticks_total", 0) or 0)
         stats["direct_a1902_tick_tracked_books"] = len(getattr(self, "_a19_tick_seen", {}) or {})
         stats["direct_a1902_tick_untimed_rows"] = int(getattr(self, "_a19_tick_untimed_rows", 0) or 0)
+        # A1.9.0.3 lifecycle-attribution repair.  Every disposition is now named
+        # from evidence, so EXPIRED means the exchange retired the order rather
+        # than "we could not tell".
+        counts = dict(getattr(self, "_a19_tick_disposition_counts", {}) or {})
+        for name, value in sorted(counts.items()):
+            stats[f"direct_a1903_disposition_{str(name).lower()}"] = int(value)
+        stats["direct_a1903_agent_cancelled_lifecycles"] = int(sum(
+            int(v) for k, v in counts.items() if k in AGENT_CANCEL_DISPOSITIONS
+        ))
+        stats["direct_a1903_entry_quote_rows_excluded"] = int(
+            getattr(self, "_a19_tick_entry_quote_rows", 0) or 0
+        )
+        stats["direct_a1903_cancel_reasons_tracked"] = len(
+            getattr(self, "_a19_cancel_reason", {}) or {}
+        )
         try:
             stats.update({
                 f"direct_a1901_{k}": v for k, v in self._a19_ledger_ref().stats().items()

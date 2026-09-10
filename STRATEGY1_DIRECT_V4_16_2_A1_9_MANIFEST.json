@@ -42,12 +42,66 @@
     "scope": "every book with open inventory, every tick",
     "why_sound": "The SDK calls update(state) -- which drives onOrderAccepted/onOrderCancelled -- before respond(state), so the ledger is already this tick's truth at the top of respond."
   },
+  "a1_9_0_2_run": {
+    "cancel_acks": "60/60 at T+1",
+    "caveat": "Defect 4 below means resting_present/hold-rate may be inflated by adopted entry quotes; A1.9.0.3 re-establishes these counts on true exits before Phase B is gated on them.",
+    "dominant_reprice_reason": "STALE_BEHIND_TOUCH",
+    "forgone_edge_median_bps": 0.0,
+    "forgone_edge_p90_bps": 1.22,
+    "hold_rate_gate_pct": 20,
+    "hold_rate_on_persist_eligible_pct": 68.8,
+    "latency_p95_ms": 100,
+    "maker_share_pct": 95.1,
+    "max_global_exposure_base": 1.64,
+    "ownership_violations": 0,
+    "positive_rt_pct": 87.2,
+    "residual_defect": "some explicitly cancelled exits labelled EXPIRED",
+    "resting_present_hits": 665,
+    "rt_close_pnl": 10.15,
+    "rt_velocity": 0.221,
+    "shadow_holds": 329,
+    "shadow_reprices": 162,
+    "verdict": "PASS_OBSERVABILITY"
+  },
+  "a1_9_0_3_defects_repaired": {
+    "d1_unregistered_cancel_paths": "_direct_cancel_entry_quotes and the partial-remainder cancel never called _a19_note_exit_cancel, so orders they killed read as EXPIRED",
+    "d2_reason_not_keyed_to_order": "the lookup matched any watched order on the book and could borrow another order's cancel reason",
+    "d3_reason_consumed_by_placement_path": "_a19_settle_cancel_watch pops watch entries, so the reason could be gone before the tick observer saw the disappearance",
+    "d4_entry_quotes_adopted_as_exits": "on a long book the entry ASK rests on the close side; the ledger keys rows by book+side only, so an entry quote could be adopted as the resting exit, inflating resting_present and the hold rate"
+  },
+  "a1_9_0_3_mechanism": {
+    "cancel_reason_memo": "keyed by order id, outlives the cancel watch",
+    "disposition_evidence_order": [
+      "ledger removal cause (fill is a fill)",
+      "cancel WE registered for that exact order id",
+      "position-shrank fallback only when no notice exists"
+    ],
+    "entry_quote_exclusion": "_direct_entry_quote_client_ids, single source of truth with the cancel path",
+    "expired_semantics": "a cancellation notice we never asked for is a real expiry: the exchange retires an order at TTL through the same notice",
+    "ledger_removal_memo": "bounded, outlives the row, cleared on reset (restarts reuse order ids)",
+    "ledger_sweep_is_distinct": "bounded memory is not a measured expiry",
+    "new_stats": [
+      "direct_a1903_disposition_*",
+      "direct_a1903_agent_cancelled_lifecycles",
+      "direct_a1903_entry_quote_rows_excluded"
+    ]
+  },
   "a3_accept_gate": {
     "behaviour_neutrality": "RT velocity, exposure, ownership violations unchanged vs A1.7.5",
     "blocks": "A1.9.1 stays blocked until this gate passes",
     "direct_a1902_tick_resting_hits": "> 0",
     "direct_a1902_tick_untimed_rows": "expected 0",
     "shadow_decisions": "> 0 with a real HOLD/REPRICE split"
+  },
+  "a4_accept_gate": {
+    "behaviour_neutrality": "unchanged vs A1.9.0.2 (measurement only)",
+    "direct_a1903_entry_quote_rows_excluded": "reported; hold rate recomputed on true exits",
+    "dispositions_correct": "no agent cancel reported as EXPIRED",
+    "next": "A1.9.1 Behavioral Phase B, 500-tick abort gate, then ~4,000 ticks if healthy",
+    "test_length_ticks": [
+      150,
+      200
+    ]
   },
   "baseline": {
     "release": "A1.7.5",
@@ -57,6 +111,7 @@
   "changed_runtime_files": [
     "agents/strategy/Strategy1_Research_Simple.py",
     "agents/strategy/research_direct_exit_ledger.py",
+    "agents/strategy/research_direct_exit_refresh.py",
     "run_strategy1_research_simple_multi.sh"
   ],
   "classification": "STRUCTURAL",
@@ -113,7 +168,7 @@
     "agents/strategy/research_direct_tail_recovery.py": "32d2b9cb8954f93c1c7e7873623ff36c4ac31f019be9d3ecc32a2bde9a4d9a86"
   },
   "frozen_file_sha256_verified": true,
-  "goal": "Observe the resting Maker exit while it is still alive. A2 rebuilt the live-order view from exchange notices but still read it from the new-placement path, which only runs after the exit is dead; A3 moves the observation to the top of respond(), across every open-inventory book.",
+  "goal": "Name every resting-exit disposition from evidence: real expiry -> EXPIRED, explicit WAIT cancel -> WAIT_CANCEL, reprice cancel -> REPRICE_CANCEL, fill -> FILLED. A1.9.0.2 passed observability but mislabelled some agent cancels as EXPIRED.",
   "measurements": {
     "account_orders_resting_seen_pct": 0.0,
     "acknowledged_limit_orders": 33455,
@@ -144,9 +199,10 @@
   ],
   "new_tests": [
     "tests/test_research_strategy1_direct_a1_9_0_1.py",
-    "tests/test_research_strategy1_direct_a1_9_0_2.py"
+    "tests/test_research_strategy1_direct_a1_9_0_2.py",
+    "tests/test_research_strategy1_direct_a1_9_0_3.py"
   ],
-  "phase": "A3_LIVE_TICK_OBSERVER",
+  "phase": "A4_LIFECYCLE_ATTRIBUTION",
   "phase_a_run": {
     "a19_exit_eval_below_min_net": 2551,
     "a19_exit_eval_events": 3746,
@@ -200,21 +256,21 @@
       22.2
     ]
   },
-  "policy_version": "strategy1_direct_v4_16_2_a1_9_0_2",
-  "release": "Strategy1-Direct V4.16.2 A1.9.0.2",
+  "policy_version": "strategy1_direct_v4_16_2_a1_9_0_3",
+  "release": "Strategy1-Direct V4.16.2 A1.9.0.3",
   "single_behavior_change": {
     "behaviour_change": false,
     "effective_profitable_exit_ttl_ms": 3000.0,
-    "note": "Measurement only. The observer writes only _a19_* state, emits only A19_* events, and is exception-isolated so a fault cannot cost a trading tick. Asserted by test: no response/place_order/cancel_orders reference and no self._net_inventory( call in the observer body."
+    "note": "Measurement only. New code registers cancel reasons and resolves dispositions; it places, cancels and repriced nothing. The three cancel_orders sites are unchanged in behaviour -- only instrumented."
   },
-  "title": "Live Resting-Exit Observer (Phase A3)",
+  "title": "Lifecycle Attribution Repair (Phase A4)",
   "verification": {
-    "a1_9_0_2_suite": "25 passed",
-    "all_direct_regression": "320 passed, 11 skipped, 0 failed",
-    "baseline_comparison": "A1.9.0.1 baseline was 295 passed, 11 skipped, 0 failed; the +25 delta is exactly the new A1.9.0.2 suite and no pre-existing test changed status",
+    "a1_9_0_3_suite": "27 passed",
+    "all_direct_regression": "347 passed, 11 skipped, 0 failed",
+    "baseline_comparison": "A1.9.0.2 was 320 passed, 11 skipped, 0 failed; the +27 delta is exactly the new A1.9.0.3 suite and no pre-existing test changed status",
     "bash_syntax": "PASS",
     "frozen_base_untouched": true,
-    "frozen_file_sha256_recomputed_from_files": true,
+    "mutation_tested": "reverting the disposition logic, the entry-quote exclusion and one cancel registration is caught by 4, 1 and 2 tests respectively",
     "python_compile": "PASS"
   }
 }

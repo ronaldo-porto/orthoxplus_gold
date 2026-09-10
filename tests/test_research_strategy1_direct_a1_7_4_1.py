@@ -34,7 +34,7 @@ def _event(**kw):
 
 
 def test_a1741_version_and_a174_recovery_thresholds_remain_frozen():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_2"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"' in SRC
     assert DIRECT_TRADE_DEDUP_VERSION == "direct_trade_dedup_v4_16_2_a1_7_4_1"
     assert DIRECT_TRADE_DEDUP_MAX_EVENTS == 32768
     # A1.7.5 extends the recovery module; the A1.7.4 thresholds stay frozen.

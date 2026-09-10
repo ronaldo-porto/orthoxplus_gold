@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-DIRECT_EXIT_LEDGER_VERSION = "direct_exit_ledger_v4_16_2_a1_9_0_2"
+DIRECT_EXIT_LEDGER_VERSION = "direct_exit_ledger_v4_16_2_a1_9_0_3"
 
 # Removal causes.  These mirror the A1.9 absent-reason vocabulary so a
 # lifecycle row and an exit evaluation can be joined without translation.
@@ -52,6 +52,11 @@ LEDGER_REMOVED_TTL_SWEEP = "LEDGER_TTL_SWEEP"
 LEDGER_SWEEP_GRACE_MS = 15000.0
 
 _MAX_TRACKED_ORDERS = 4096
+
+# A1.9.0.3: why a row left the book, kept after the row itself is gone.  The
+# observer notices the disappearance one or two states later, so the cause has
+# to outlive the row or every removal reads as an expiry.
+_MAX_REMOVAL_MEMO = 2048
 
 
 @dataclass
@@ -84,6 +89,7 @@ class DirectExitLedger:
     """Live-order view rebuilt from acknowledged exchange notices."""
 
     orders: dict[int, LedgerOrder] = field(default_factory=dict)
+    removal_causes: dict[int, str] = field(default_factory=dict)
     accepted: int = 0
     removed: int = 0
     swept: int = 0
@@ -150,13 +156,31 @@ class DirectExitLedger:
             if row.remaining > 1e-12:
                 return None
         self.orders.pop(oid, None)
+        self._remember_removal(oid, cause)
         self.removed += 1
         return row
+
+    def _remember_removal(self, order_id: int, cause: str) -> None:
+        """Record why an order left the book, bounded in size."""
+        self.removal_causes[int(order_id)] = str(cause or "")
+        if len(self.removal_causes) > _MAX_REMOVAL_MEMO:
+            for stale in list(self.removal_causes)[: _MAX_REMOVAL_MEMO // 4]:
+                self.removal_causes.pop(stale, None)
+
+    def removal_cause(self, order_id) -> str:
+        """Why this order left the book, or "" when it is not remembered."""
+        try:
+            return self.removal_causes.get(int(order_id), "")
+        except (TypeError, ValueError):
+            return ""
 
     def reset(self) -> int:
         """Forget every tracked order.  Used when the simulation clock restarts."""
         dropped = len(self.orders)
         self.orders.clear()
+        # A restart reuses order ids, so a retained cause would be attributed to
+        # a different order in the next session.
+        self.removal_causes.clear()
         self.swept += dropped
         return dropped
 
@@ -181,6 +205,7 @@ class DirectExitLedger:
         ]
         for oid in stale:
             self.orders.pop(oid, None)
+            self._remember_removal(oid, LEDGER_REMOVED_TTL_SWEEP)
             self.swept += 1
         return len(stale)
 
@@ -242,6 +267,7 @@ class DirectExitLedger:
             "ledger_removed": int(self.removed),
             "ledger_swept": int(self.swept),
             "ledger_unmatched_removals": int(self.unmatched_removals),
+            "ledger_removal_causes_tracked": len(self.removal_causes),
         }
 
 

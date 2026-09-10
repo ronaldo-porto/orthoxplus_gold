@@ -90,8 +90,8 @@ def _veto(band, reason, maker, taker, *, catastrophic=False, budget=False):
 
 
 def test_version_and_integration_markers_present():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_2"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_2"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"' in SRC
     assert DIRECT_POSITIVE_MAKER_KAPPA_VERSION == "direct_positive_maker_kappa_v4_16_2_a1_7_5"
     assert DIRECT_TAIL_RECOVERY_VERSION == "direct_tail_recovery_v4_16_2_a1_7_5"
     assert DIRECT_DUST_KAPPA_VERSION == "direct_dust_kappa_v4_16_2_a1_7_5"

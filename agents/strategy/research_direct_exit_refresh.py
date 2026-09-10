@@ -27,7 +27,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-DIRECT_EXIT_REFRESH_VERSION = "direct_exit_refresh_v4_16_2_a1_9_0"
+DIRECT_EXIT_REFRESH_VERSION = "direct_exit_refresh_v4_16_2_a1_9_0_3"
 
 # A1.7.5 baseline persistence window, restored by reverting A1.8.  Phase B
 # raises this to DIRECT_A19_TARGET_PROFITABLE_EXIT_TTL_MS via PARAMS so the
@@ -65,6 +65,23 @@ ABSENT_FILLED = "FILLED"
 ABSENT_WAIT_CANCEL = "WAIT_CANCEL"
 ABSENT_NEG_AGGRESSIVE_CANCEL = "NEG_AGGRESSIVE_CANCEL"
 ABSENT_REPRICE_CANCEL = "REPRICE_CANCEL"
+# A1.9.0.3: the two cancel paths that were never registered, so the orders they
+# killed fell through to EXPIRED and overstated exchange-side expiry.
+ABSENT_ENTRY_QUOTE_CANCEL = "ENTRY_QUOTE_CANCEL"
+ABSENT_PARTIAL_REMAINDER_CANCEL = "PARTIAL_REMAINDER_CANCEL"
+# Bounded memory, not a real disposition: the row aged out of the ledger without
+# any notice explaining it.  Must stay distinct from a measured expiry.
+ABSENT_LEDGER_SWEEP = "LEDGER_SWEEP"
+
+# Every disposition that means "we asked for this cancel", as opposed to the
+# exchange retiring the order on its own.
+AGENT_CANCEL_DISPOSITIONS = frozenset({
+    ABSENT_WAIT_CANCEL,
+    ABSENT_NEG_AGGRESSIVE_CANCEL,
+    ABSENT_REPRICE_CANCEL,
+    ABSENT_ENTRY_QUOTE_CANCEL,
+    ABSENT_PARTIAL_REMAINDER_CANCEL,
+})
 
 _LADDER_RUNG = {
     "PASSIVE_MAKER_EXIT": 0,
