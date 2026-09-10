@@ -54,17 +54,18 @@ def _ledger_with(**kw):
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_0_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
     assert DIRECT_EXIT_LEDGER_VERSION == "direct_exit_ledger_v4_16_2_a1_9_0_3"
 
 
 def test_launcher_pins_the_same_version_and_preflights_this_suite():
     text = LAUNCHER.read_text()
-    assert 'strategy1_direct_v4_16_2_a1_9_0_3"' in text
+    assert 'strategy1_direct_v4_16_2_a1_9_1"' in text
     assert "test_research_strategy1_direct_a1_9_0_1.py" in text
-    # Phase B's TTL must not be smuggled in through the launcher.
-    assert "research_profitable_exit_ttl_ms=" not in text
+    # A1.9.1 Phase B raises the TTL through PARAMS, where the frozen base
+    # clamps it to [1000, 5000] and the run manifest records the value.
+    assert "research_profitable_exit_ttl_ms=4000" in text
 
 
 def test_frozen_base_still_untouched():

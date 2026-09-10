@@ -86,6 +86,79 @@
       "direct_a1903_entry_quote_rows_excluded"
     ]
   },
+  "a1_9_0_3_run": {
+    "all_taker_endings_were": "ABSOLUTE_PROTECTION_REDUCE",
+    "below_min_net": 48,
+    "cancel_acks": "74/74 at exactly T+1, zero T+2, zero unmatched",
+    "corrected_hold_rate_pct": 49.9,
+    "disposition_expired": 207,
+    "disposition_filled": 27,
+    "drift_ticks_hold": {
+      "median": 1,
+      "p90": 4
+    },
+    "drift_ticks_reprice": {
+      "median": 12,
+      "p90": 82
+    },
+    "fill_share_of_lifecycles_pct": 11.5,
+    "forgone_edge_bps": {
+      "max": 10.8,
+      "mean": 0.57,
+      "median": 0.0,
+      "p90": 1.55,
+      "p95": 3.98
+    },
+    "hold_rate_gate_pct": 20,
+    "hold_reason": "QUEUE_PRESERVED (455/455)",
+    "known_gap": "direct_a1903_entry_quote_rows_excluded not located in JSONL; stat is emitted contiguously with direct_a1902_tick_untimed_rows, so check whether that key is present before treating it as a defect",
+    "latency_p95_ms": 100.52,
+    "latency_p99_ms": 115.02,
+    "lifecycles": 234,
+    "maker_ending_pnl": 9.296,
+    "maker_ending_positive": "39/39",
+    "maker_fills_pct": 89.5,
+    "max_global_exposure_base": 1.5,
+    "max_single_book_base": 0.25,
+    "median_exit_wait_s": 16.19,
+    "p90_exit_wait_s": 53.83,
+    "persist_eligible": 912,
+    "positive_rt_pct": 79.6,
+    "quiet_share_pct": 95.4,
+    "reprice_reason": "STALE_BEHIND_TOUCH (457/457)",
+    "resting_present": 960,
+    "rt_close_pnl": 1.281,
+    "rt_velocity": 0.189,
+    "shadow_holds": 455,
+    "shadow_reprices": 457,
+    "taker_consumes_pct_of_maker_profit": 86,
+    "taker_ending_pnl": -8.014,
+    "taker_ending_positive": "0/10",
+    "tick_observations": 1210,
+    "ticks": 260,
+    "verdict": "PASS"
+  },
+  "a1_9_1_mechanism": {
+    "behavioural_delta": [
+      "research_profitable_exit_ttl_ms 3000 -> 4000 via PARAMS (4x the 1,000 ms publish cadence)",
+      "explicit cancel for a resting exit classified stale"
+    ],
+    "cancel_injection_point": "post-pass after super().respond(), before returning the response",
+    "hold_is_not_an_action": "the frozen hold hook reads account.orders and has never fired, so today's baseline already rides the exit to expiry; HOLD leaves it untouched",
+    "master_switch": "research_a191_queue_preservation_enabled",
+    "never_cancel_and_replace_same_response": true,
+    "new_events": [
+      "A191_EXIT_HOLD",
+      "A191_EXIT_REPRICE_CANCEL",
+      "A191_REPRICE_DEFERRED"
+    ],
+    "predicted_side_effect": "AGGRESSIVE ladder share should FALL: _research_note_exit_attempt early-returns on placed=False, so a held order stops counting as a failed exit",
+    "reprice_gates": {
+      "instruction_budget": "falls back to HOLD when the 5-per-book budget is spent",
+      "remaining_ttl_ms": 1000.0
+    },
+    "why_not_placement_path": "measured 0 of 492 placement-path calls saw a live resting exit vs 960 tick-observer sightings in 260 ticks"
+  },
   "a3_accept_gate": {
     "behaviour_neutrality": "RT velocity, exposure, ownership violations unchanged vs A1.7.5",
     "blocks": "A1.9.1 stays blocked until this gate passes",
@@ -103,6 +176,25 @@
       200
     ]
   },
+  "abort_gate_500_ticks": {
+    "added_by_review": {
+      "is_it_working": "fill share of lifecycles (11.5% baseline) and median exit wait (16.19 s baseline) must move, or the mechanism is inert",
+      "taker_ending_rt_share": "must not rise vs A1.9.0.3 (20.4%) -- this is the target metric",
+      "validator_reject_rate": "INFLIGHT_BOOK_ORDER / PREEXISTING_BOOK_ORDER must not rise"
+    },
+    "aggressive_ladder_share_pct": "> 60",
+    "cancel_not_acked_share_of_reprices_pct": "> 5",
+    "exposure_base": "> 2.0",
+    "latency_p95_ms": "> 120",
+    "maker_fill_share_pct": "< 87",
+    "ownership_violations": "> 0",
+    "positive_rt_share_pct": "< 75",
+    "restated": {
+      "hold_rate_floor_20pct": "measured on observations in Phase A but on acted-on decisions in Phase B; a stale order is now cancelled on its first REPRICE vote instead of voting every tick, so the rate rises mechanically. Use direct_a191_hold_share_pct and treat it as monitored, not gating"
+    },
+    "rt_velocity": "< 0.110",
+    "then": "~4,000 ticks, acceptance is beating A1.7.5 rather than surviving"
+  },
   "baseline": {
     "release": "A1.7.5",
     "source_zip": "sn-79_claude.zip",
@@ -110,8 +202,6 @@
   },
   "changed_runtime_files": [
     "agents/strategy/Strategy1_Research_Simple.py",
-    "agents/strategy/research_direct_exit_ledger.py",
-    "agents/strategy/research_direct_exit_refresh.py",
     "run_strategy1_research_simple_multi.sh"
   ],
   "classification": "STRUCTURAL",
@@ -168,7 +258,7 @@
     "agents/strategy/research_direct_tail_recovery.py": "32d2b9cb8954f93c1c7e7873623ff36c4ac31f019be9d3ecc32a2bde9a4d9a86"
   },
   "frozen_file_sha256_verified": true,
-  "goal": "Name every resting-exit disposition from evidence: real expiry -> EXPIRED, explicit WAIT cancel -> WAIT_CANCEL, reprice cancel -> REPRICE_CANCEL, fill -> FILLED. A1.9.0.2 passed observability but mislabelled some agent cancels as EXPIRED.",
+  "goal": "Hold a profitable resting Maker exit by queue position and reprice only on structural staleness, via an explicit cancel whose replacement lands on a later state. First behavioural revision of A1.9.",
   "measurements": {
     "account_orders_resting_seen_pct": 0.0,
     "acknowledged_limit_orders": 33455,
@@ -200,9 +290,10 @@
   "new_tests": [
     "tests/test_research_strategy1_direct_a1_9_0_1.py",
     "tests/test_research_strategy1_direct_a1_9_0_2.py",
-    "tests/test_research_strategy1_direct_a1_9_0_3.py"
+    "tests/test_research_strategy1_direct_a1_9_0_3.py",
+    "tests/test_research_strategy1_direct_a1_9_1.py"
   ],
-  "phase": "A4_LIFECYCLE_ATTRIBUTION",
+  "phase": "B_QUEUE_PRESERVING_EXIT",
   "phase_a_run": {
     "a19_exit_eval_below_min_net": 2551,
     "a19_exit_eval_events": 3746,
@@ -256,21 +347,22 @@
       22.2
     ]
   },
-  "policy_version": "strategy1_direct_v4_16_2_a1_9_0_3",
-  "release": "Strategy1-Direct V4.16.2 A1.9.0.3",
+  "policy_version": "strategy1_direct_v4_16_2_a1_9_1",
+  "release": "Strategy1-Direct V4.16.2 A1.9.1",
   "single_behavior_change": {
-    "behaviour_change": false,
-    "effective_profitable_exit_ttl_ms": 3000.0,
-    "note": "Measurement only. New code registers cancel reasons and resolves dispositions; it places, cancels and repriced nothing. The three cancel_orders sites are unchanged in behaviour -- only instrumented."
+    "behaviour_change": true,
+    "effective_profitable_exit_ttl_ms": 4000.0,
+    "note": "First behavioural revision of A1.9. TTL raise and cancel-then-replace are one mechanism and ship together. All A1.7.5 limits, the QUIET gate, Taker authority and tail authority are unchanged."
   },
-  "title": "Lifecycle Attribution Repair (Phase A4)",
+  "title": "Queue-Preserving Maker Exit (Behavioural Phase B)",
   "verification": {
-    "a1_9_0_3_suite": "27 passed",
-    "all_direct_regression": "347 passed, 11 skipped, 0 failed",
-    "baseline_comparison": "A1.9.0.2 was 320 passed, 11 skipped, 0 failed; the +27 delta is exactly the new A1.9.0.3 suite and no pre-existing test changed status",
+    "a1_9_1_suite": "34 passed",
+    "all_direct_regression": "381 passed, 11 skipped, 0 failed",
+    "baseline_comparison": "A1.9.0.3 was 347 passed; the +34 delta is exactly the new suite",
     "bash_syntax": "PASS",
     "frozen_base_untouched": true,
-    "mutation_tested": "reverting the disposition logic, the entry-quote exclusion and one cancel registration is caught by 4, 1 and 2 tests respectively",
+    "frozen_landmine_intact": "return super()._research_place_maker_exit present once, unwrapped",
+    "mutation_tested": "removing the remaining-TTL gate, the instruction-budget guard, or the once-only cancel flag is caught by 1 test each",
     "python_compile": "PASS"
   }
 }

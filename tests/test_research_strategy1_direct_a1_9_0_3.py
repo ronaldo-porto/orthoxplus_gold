@@ -75,8 +75,8 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_0_3():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
     assert DIRECT_EXIT_LEDGER_VERSION == "direct_exit_ledger_v4_16_2_a1_9_0_3"
     assert DIRECT_EXIT_REFRESH_VERSION == "direct_exit_refresh_v4_16_2_a1_9_0_3"
 
@@ -97,10 +97,12 @@ def test_still_measurement_only():
 
 def test_all_three_cancel_paths_register_a_reason():
     """The defect was silence, so assert each cancel site names itself."""
-    assert SRC.count("_a19_note_exit_cancel(") == 4      # 1 definition + 3 sites
+    # 1 definition + 4 sites: WAIT, entry-quote, partial-remainder, and the
+    # A1.9.1 Phase B reprice cancel.
+    assert SRC.count("_a19_note_exit_cancel(") == 5
     for reason in (
         "ABSENT_WAIT_CANCEL", "ABSENT_ENTRY_QUOTE_CANCEL",
-        "ABSENT_PARTIAL_REMAINDER_CANCEL",
+        "ABSENT_PARTIAL_REMAINDER_CANCEL", "ABSENT_REPRICE_CANCEL",
     ):
         assert reason in SRC, reason
 
@@ -468,4 +470,4 @@ def test_stats_surface_the_new_attribution():
         "direct_a1903_cancel_reasons_tracked",
     ):
         assert f'stats["{key}"]' in SRC, key
-    assert 'stats["direct_a19_phase"] = "A4_LIFECYCLE_ATTRIBUTION"' in SRC
+    assert 'stats["direct_a19_phase"] = "B_QUEUE_PRESERVING_EXIT"' in SRC

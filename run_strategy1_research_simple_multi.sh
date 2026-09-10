@@ -63,7 +63,7 @@ done
 
 [[ -f "$SCRIPT_DIR/run_miner_multi.sh" ]] || { echo "ERROR: run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research_Simple.py" ]] || { echo "ERROR: Strategy1_Research_Simple.py missing" >&2; exit 1; }
-grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
   echo "ERROR: wrong Strategy1 direct candidate" >&2
   exit 1
 }
@@ -85,15 +85,23 @@ export STRATEGY1_RESEARCH_QUEUE="$RESEARCH_QUEUE"
 export STRATEGY1_RESEARCH_DIR="$RESEARCH_DIR"
 mkdir -p "$RESEARCH_DIR"
 
-# A1.9.0.3 Phase A4: measurement only. Every A1.7.5 parameter stays frozen, the
-# profitable-exit TTL keeps its 3000 ms default, and no knob is added here.
-# A2 rebuilt the live-order view from exchange notices but still read it from the
-# new-placement path, which only runs after the exit is already dead. A3 moves the
-# observation to the top of respond(), across every open-inventory book, so the
-# resting exit is seen while it is still alive. A4 repairs lifecycle attribution:
-# every cancel path registers a reason, dispositions are resolved from evidence
-# rather than inference, and entry quotes are no longer adopted as Maker exits.
-# A1.9.1 is what acts on the decision.
+# A1.9.1 Phase B: the first BEHAVIOURAL revision of A1.9. Phase A proved the
+# observer sees live resting exits (960 sightings / 260 ticks) and that the
+# classifier separates them cleanly. B acts on that decision.
+#
+# The behavioural delta is exactly two things, and they are one mechanism -- they
+# must not be split, because raising the TTL without the cancel path is the
+# known-harmful configuration:
+#   1. research_profitable_exit_ttl_ms 3000 -> 4000, which is 4x the verified
+#      1,000 ms publish cadence, closing the ~1 s dead window between TTL expiry
+#      and the next re-quote (the exit-TTL duty-cycle defect).
+#   2. an explicit cancel for a resting exit the classifier calls stale, emitted
+#      AFTER the frozen chain so the shared 5-instruction book budget is known.
+#      No replacement is placed in the same response: the cancellation must be
+#      visible in a later state (the A1.7.4.3.1 ownership rule).
+# HOLD is the ABSENCE of an action -- it leaves the resting order untouched -- so
+# every new risk lives in the reprice cancels. Everything else stays frozen:
+# size 0.25, 6 active books, 2.0 BASE cap, QUIET gate, Taker and tail authority.
 # Legacy Research knobs keep their source defaults but do not own the direct hot path.
 PARAMS="enable_mm_strategy=1 lazy_load=1 fast_update=1 sync_event_csv=0 history_len=0 \
 mm_base_size=0.25 max_inventory_base=1.20 max_mm_books_per_tick=6 max_managed_books_per_tick=10 \
@@ -107,7 +115,8 @@ research_max_open_books=6 research_max_active_open_books=6 research_max_total_op
 research_post_only_safety_ticks=2 research_local_kappa_refresh_ticks=10 research_score_target_books=80 research_total_score_ignition_books=41 research_total_score_full_breadth_books=80 \
 research_lifecycle_taker_exit_prob=0.30 research_lifecycle_slippage_bps=0.75 research_lifecycle_holding_bps=0.50 \
 research_positive_maker_veto_enabled=1 research_positive_maker_veto_floor_bps=1.0 research_positive_maker_veto_max_failed_exits=4 research_bounded_loss_escape_min_age_ticks=2.0 \
-research_session_save_every_n=100 research_p95_target_ms=120"
+research_session_save_every_n=100 research_p95_target_ms=120 \
+research_profitable_exit_ttl_ms=4000 research_a191_queue_preservation_enabled=1"
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
@@ -136,14 +145,15 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_strategy1_direct_a1_9_0_1.py \
       tests/test_research_strategy1_direct_a1_9_0_2.py \
       tests/test_research_strategy1_direct_a1_9_0_3.py \
+      tests/test_research_strategy1_direct_a1_9_1.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
-  echo "Strategy1 direct V4.16.2 A1.9.0.3 Phase A4 preflight PASS"
+  echo "Strategy1 direct V4.16.2 A1.9.1 Phase B preflight PASS"
   exit 0
 fi
 
-echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_0_3"
+echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_1"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 

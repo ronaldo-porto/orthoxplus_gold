@@ -176,6 +176,7 @@ from research_direct_quiet_entry import (
 )
 from research_direct_exit_refresh import (
     ABSENT_ENTRY_QUOTE_CANCEL,
+    ABSENT_REPRICE_CANCEL,
     ABSENT_EXPIRED,
     ABSENT_FILLED,
     ABSENT_LEDGER_SWEEP,
@@ -189,6 +190,8 @@ from research_direct_exit_refresh import (
     DIRECT_EXIT_REFRESH_VERSION,
     EVAL_PERSIST_ELIGIBLE,
     EXIT_HOLD,
+    EXIT_REPRICE,
+    REASON_QUEUE_PRESERVED,
     behind_ticks,
     classify_resting_maker_exit,
     exit_eval_class,
@@ -251,8 +254,8 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_3"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -306,11 +309,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         super().initialize()
         # Marker only.  Do not mutate strategy thresholds or risk limits here.
         self._simple_direct_mode = True
-        # A1.9 Phase A instrumentation state.  Measurement only: the exit
-        # TTL keeps its A1.7.5 value and no threshold, limit or authority is
-        # mutated here.  A1.8 mutated research_profitable_exit_ttl_ms at this
-        # point and that is exactly what must not happen again.
+        # A1.9 observation state.  The exit TTL is NOT mutated here: A1.8 set
+        # research_profitable_exit_ttl_ms in initialize() and that is exactly
+        # what must not happen again.  A1.9.1 raises it to 4000 ms through
+        # PARAMS, where the frozen base clamps it to [1000, 5000] and the value
+        # is visible in the run manifest.
         self._a19_reset_exit_observation()
+        # A1.9.1 Phase B master switch, so the behavioural half can be turned
+        # off without reverting to an older build during an abort.
+        self.research_a191_queue_preservation_enabled = self._as_bool(
+            getattr(self.config, "research_a191_queue_preservation_enabled", True)
+        )
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1481,6 +1490,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
     # grow the memo without limit.
     A19_CANCEL_MEMO_MAX = 2048
 
+    # ---- A1.9.1 Phase B: queue-preserving Maker exit -------------------
+    # Cancelling an order that is about to expire anyway spends an instruction
+    # and a tick to achieve exactly what expiry achieves for free.  One publish
+    # cycle is the horizon below which the two outcomes are identical.
+    A191_MIN_REMAINING_TTL_MS = 1000.0
+
     def _a19_reset_exit_observation(self) -> None:
         """Initialise Phase A measurement state.  Touches no strategy threshold."""
         self._a19_exit_seen: dict[int, dict[str, Any]] = {}
@@ -1531,6 +1546,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a19_cancel_reason: dict[int, tuple[int, str]] = {}
         self._a19_tick_disposition_counts: dict[str, int] = {}
         self._a19_tick_entry_quote_rows = 0
+        # A1.9.1 Phase B authority.  One verdict per book per tick, computed by
+        # whichever path reaches the book first and reused by the other, so the
+        # placement suppression and the reprice cancel can never disagree.
+        self._a191_verdicts: dict[int, dict[str, Any]] = {}
+        self._a191_verdict_tick = -1
+        self._a191_holds = 0
+        self._a191_reprice_cancels = 0
+        self._a191_reprice_deferred_ttl = 0
+        self._a191_reprice_deferred_budget = 0
+        self._a191_placements_suppressed = 0
+        self._a191_cancel_emit_failures = 0
+        self._a191_postpass_cancels = 0
 
     def _a19_ledger_ref(self) -> DirectExitLedger | None:
         """Ledger handle that tolerates hot-reload and bare test objects."""
@@ -1725,6 +1752,188 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if memo is not None:
             return str(memo[1])
         return ABSENT_FILLED if shrank else ABSENT_EXPIRED
+
+    def _a191_enabled(self) -> bool:
+        return bool(getattr(self, "research_a191_queue_preservation_enabled", True))
+
+    def _a191_verdict_store(self) -> dict:
+        """Per-tick verdict cache, cleared when the tick advances."""
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if int(getattr(self, "_a191_verdict_tick", -1)) != tick:
+            self._a191_verdict_tick = tick
+            self._a191_verdicts = {}
+        return self._a191_verdicts
+
+    def _a191_live_exit_row(self, book_id: int, net_base: float, now_ns: int):
+        """The live, in-TTL, non-entry-quote close-side order for this book."""
+        ledger = self._a19_ledger_ref()
+        ttl_ms = float(getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
+        rows = ledger.live_orders(
+            int(book_id), side=close_side_for(net_base),
+            max_age_ms=ttl_ms, now_ns=now_ns,
+        )
+        for row in rows:
+            if not self._a19_is_entry_quote_row(int(book_id), row):
+                return row
+        return None
+
+    def _a191_decide(
+        self, state, book_id: int, inventory, qty: float,
+        desired_price, desired_action,
+    ) -> dict[str, Any] | None:
+        """Decide HOLD / REPRICE for the live resting exit on this book.
+
+        Returns None when there is nothing resting to preserve, in which case
+        the caller must fall through to the frozen placement path unchanged.
+
+        The verdict is cached per book per tick: the placement path computes it
+        against the real desired rung, and the post-pass reuses that rather than
+        recomputing against the passive touch and possibly disagreeing.
+        """
+        bid = int(book_id)
+        store = self._a191_verdict_store()
+        cached = store.get(bid)
+        if cached is not None:
+            return cached
+        if not self._a191_enabled():
+            return None
+        try:
+            now_ns = int(getattr(state, "timestamp", 0) or 0)
+        except (TypeError, ValueError):
+            now_ns = 0
+        net_base = float(getattr(inventory, "net_base", 0.0) or 0.0)
+        if net_base == 0.0:
+            return None
+        row = self._a191_live_exit_row(bid, net_base, now_ns)
+        if row is None:
+            return None
+        if desired_price is None:
+            book = (getattr(state, "books", None) or {}).get(bid)
+            try:
+                levels = getattr(book, "asks" if net_base > 0.0 else "bids", None)
+                desired_price = float(levels[0].price) if levels else None
+            except (AttributeError, IndexError, TypeError, ValueError):
+                desired_price = None
+        if desired_price is None:
+            return None
+
+        long_pos = net_base > 0.0
+        ttl_ms = float(getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
+        age_ms = row.age_ms(now_ns)
+        remaining_ms = max(0.0, ttl_ms - age_ms)
+        decision, reason = classify_resting_maker_exit(
+            existing_price=row.price, desired_price=float(desired_price),
+            tick_size=self._a19_tick_size(state), long_position=long_pos,
+            existing_qty=float(row.remaining or row.quantity),
+            desired_qty=abs(float(qty)) if qty else abs(net_base),
+            existing_net_bps=self._a19_resting_net_bps(bid, inventory, row.price),
+            floor_net_bps=float(DIRECT_MAKER_EXIT_TARGET_BPS),
+            existing_action=row.action, desired_action=desired_action,
+            reprice_ticks=float(getattr(self, "research_profitable_exit_reprice_ticks", 3.0) or 3.0),
+        )
+        deferred = ""
+        if decision == EXIT_REPRICE and remaining_ms < self.A191_MIN_REMAINING_TTL_MS:
+            # Structural, not fitted: inside one publish cycle of expiry the
+            # cancel buys nothing the exchange is not about to do for free, and
+            # it still costs an instruction from a budget of five.
+            decision, deferred = EXIT_HOLD, "REMAINING_TTL"
+            reason = REASON_QUEUE_PRESERVED
+            self._a191_reprice_deferred_ttl += 1
+
+        verdict = {
+            "decision": decision, "reason": reason, "deferred": deferred,
+            "order_id": int(row.order_id), "order_price": float(row.price),
+            "order_action": str(row.action or ""),
+            "age_ms": round(age_ms, 1), "remaining_ms": round(remaining_ms, 1),
+            "desired_price": float(desired_price),
+            "drift_ticks": behind_ticks(
+                existing_price=row.price, desired_price=float(desired_price),
+                tick_size=self._a19_tick_size(state), long_position=long_pos,
+            ),
+            "forgone_edge_bps": forgone_edge_bps(
+                existing_price=row.price, desired_price=float(desired_price),
+                long_position=long_pos,
+            ),
+            "cancelled": False,
+        }
+        store[bid] = verdict
+        return verdict
+
+    def _a191_service_reprice_cancels(self, response, state) -> int:
+        """Emit the cancel for every REPRICE verdict, after the frozen chain.
+
+        The placement path is not a reliable place to do this: measured on the
+        A1.9.0.1 build it saw a live resting exit on 0 of 492 calls, while the
+        tick observer saw 960 in 260 ticks.  A book whose exit is resting may
+        simply never reach a placement decision, so a cancel emitted only from
+        there would never fire.  This pass runs unconditionally.
+
+        No replacement is placed here: the cancellation must be visible in a
+        later state before anything re-enters that book (the A1.7.4.3.1
+        ownership rule).  The next tick's normal placement path does that.
+        """
+        if not self._a191_enabled():
+            return 0
+        books = getattr(state, "books", None) or {}
+        if not books:
+            return 0
+        try:
+            now_ns = int(getattr(state, "timestamp", 0) or 0)
+        except (TypeError, ValueError):
+            now_ns = 0
+        tick = int(getattr(self, "_tick", 0) or 0)
+        emitted = 0
+        for bid, verdict in list(self._a191_verdict_store().items()):
+            if verdict.get("decision") != EXIT_REPRICE or verdict.get("cancelled"):
+                continue
+            order_id = int(verdict.get("order_id", -1))
+            try:
+                net_base = float(
+                    RestingInventoryView.from_tracker(
+                        self._position_tracker_snapshot(int(bid))
+                    ).net_base
+                )
+            except Exception:
+                continue
+            row = self._a191_live_exit_row(int(bid), net_base, now_ns)
+            if row is None or int(row.order_id) != order_id:
+                # It filled or expired on its own between the decision and here.
+                continue
+            if self._count_book_instructions(response, int(bid)) >= self.max_instructions_per_book:
+                # R3: the budget is shared with placements and cancels count.
+                # Falling back to HOLD keeps the queue position rather than
+                # spending the last slot on a teardown we cannot replace.
+                self._a191_reprice_deferred_budget += 1
+                self._emit(
+                    "A191_REPRICE_DEFERRED", force=True, tick=tick, book=int(bid),
+                    order_id=order_id, deferred="INSTRUCTION_BUDGET",
+                    drift_ticks=float(verdict.get("drift_ticks", 0.0)),
+                )
+                continue
+            try:
+                response.cancel_orders(book_id=int(bid), order_ids=[order_id], delay=0)
+            except Exception:
+                self._a191_cancel_emit_failures += 1
+                continue
+            verdict["cancelled"] = True
+            emitted += 1
+            self._a191_reprice_cancels += 1
+            try:
+                self._a19_note_exit_cancel(int(bid), [order_id], ABSENT_REPRICE_CANCEL)
+            except Exception:
+                pass
+            self._emit(
+                "A191_EXIT_REPRICE_CANCEL", force=True, tick=tick, book=int(bid),
+                order_id=order_id, reason=str(verdict.get("reason", "")),
+                order_price=float(verdict.get("order_price", 0.0)),
+                desired_price=float(verdict.get("desired_price", 0.0)),
+                drift_ticks=float(verdict.get("drift_ticks", 0.0)),
+                age_ms=float(verdict.get("age_ms", 0.0)),
+                remaining_ms=float(verdict.get("remaining_ms", 0.0)),
+                order_action=str(verdict.get("order_action", "")),
+            )
+        self._a191_postpass_cancels += emitted
+        return emitted
 
     def _a19_observe_tick_resting_exits(self, state) -> None:
         """Observe every open-inventory book's resting Maker exit, each tick.
@@ -1956,6 +2165,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "A19_TICK_OBSERVE", force=True, tick=tick, book=bid,
                 eval_class=str(eval_class),
                 resting_present=int(seen is not None),
+                # A1.9.1: without this an observation cannot be joined to the
+                # order it describes, so a per-order (rather than per-
+                # observation) hold rate cannot be computed after the fact.
+                order_id=(-1 if seen is None else int(seen.get("order_id", -1))),
                 resting_present_account=int(bool(self._a19_close_side_orders(bid, long_pos))),
                 resting_age_ms=round(age_ms, 1),
                 resting_observed_ticks=(
@@ -2255,6 +2468,41 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             pass
 
+        # A1.9.1 Phase B.  A live, in-TTL, profitable resting exit keeps its
+        # queue position: place nothing this response.  On REPRICE we also place
+        # nothing -- the cancel goes out in the post-pass and the replacement
+        # lands on a later state, never in the same response as the cancel.
+        verdict = None
+        try:
+            verdict = self._a191_decide(
+                state, int(book_id), inventory, float(qty),
+                close_price, str(action or ""),
+            )
+        except Exception:
+            verdict = None
+        if verdict is not None:
+            self._a191_placements_suppressed += 1
+            if verdict.get("decision") == EXIT_HOLD:
+                self._a191_holds += 1
+                self._emit(
+                    "A191_EXIT_HOLD", force=True,
+                    tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                    order_id=int(verdict.get("order_id", -1)),
+                    reason=str(verdict.get("reason", "")),
+                    deferred=str(verdict.get("deferred", "")),
+                    order_price=float(verdict.get("order_price", 0.0)),
+                    desired_price=float(verdict.get("desired_price", 0.0)),
+                    drift_ticks=float(verdict.get("drift_ticks", 0.0)),
+                    forgone_edge_bps=float(verdict.get("forgone_edge_bps", 0.0)),
+                    age_ms=float(verdict.get("age_ms", 0.0)),
+                    remaining_ms=float(verdict.get("remaining_ms", 0.0)),
+                    action=str(action or ""),
+                )
+            # Returning 0 is load-bearing: `_research_note_exit_attempt`
+            # early-returns on placed=False, so a preserved order stops counting
+            # as a failed exit and stops driving the AGGRESSIVE ladder.
+            return 0
+
         authority = self._direct_current_exit_authority(int(book_id))
         if authority is not None and str(authority.get("action") or "") == ACTION_WAIT:
             cancelled, kept = self._direct_cancel_unsafe_wait_exits(
@@ -2367,6 +2615,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             pass
         response = super().respond(state)
+        # A1.9.1 Phase B: emit reprice cancels after the frozen chain has built
+        # its instructions, so the shared per-book budget is known and a cancel
+        # can never displace a placement the strategy already decided on.
+        try:
+            self._a191_service_reprice_cancels(response, state)
+        except Exception:
+            pass
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -5102,7 +5357,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a175_shadow_adverse"] = int(getattr(self, "_direct_a175_shadow_adverse", 0) or 0)
         stats["direct_a175_shadow_pending"] = len(getattr(self, "_direct_a175_shadow_ledger", {}) or {})
         stats["direct_exit_refresh_version"] = DIRECT_EXIT_REFRESH_VERSION
-        stats["direct_a19_phase"] = "A4_LIFECYCLE_ATTRIBUTION"
+        stats["direct_a19_phase"] = "B_QUEUE_PRESERVING_EXIT"
         stats["direct_a19_profitable_exit_ttl_ms"] = float(getattr(self, "research_profitable_exit_ttl_ms", 0.0) or 0.0)
         stats["direct_a19_exit_evals"] = int(getattr(self, "_a19_exit_evals", 0) or 0)
         stats["direct_a19_eligible_evals"] = int(getattr(self, "_a19_eligible_evals", 0) or 0)
@@ -5147,6 +5402,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a1903_entry_quote_rows_excluded"] = int(
             getattr(self, "_a19_tick_entry_quote_rows", 0) or 0
         )
+        # A1.9.1 Phase B gate metrics.  HOLD is the absence of an action, so the
+        # behavioural delta lives entirely in the reprice cancels below.
+        stats["direct_a191_queue_preservation_enabled"] = int(self._a191_enabled())
+        stats["direct_a191_holds"] = int(getattr(self, "_a191_holds", 0) or 0)
+        stats["direct_a191_reprice_cancels"] = int(getattr(self, "_a191_reprice_cancels", 0) or 0)
+        stats["direct_a191_placements_suppressed"] = int(getattr(self, "_a191_placements_suppressed", 0) or 0)
+        stats["direct_a191_reprice_deferred_ttl"] = int(getattr(self, "_a191_reprice_deferred_ttl", 0) or 0)
+        stats["direct_a191_reprice_deferred_budget"] = int(getattr(self, "_a191_reprice_deferred_budget", 0) or 0)
+        stats["direct_a191_cancel_emit_failures"] = int(getattr(self, "_a191_cancel_emit_failures", 0) or 0)
+        stats["direct_a191_min_remaining_ttl_ms"] = float(self.A191_MIN_REMAINING_TTL_MS)
+        _a191_acted = (
+            int(getattr(self, "_a191_holds", 0) or 0)
+            + int(getattr(self, "_a191_reprice_cancels", 0) or 0)
+        )
+        stats["direct_a191_hold_share_pct"] = round(
+            100.0 * int(getattr(self, "_a191_holds", 0) or 0) / _a191_acted, 2
+        ) if _a191_acted else 0.0
         stats["direct_a1903_cancel_reasons_tracked"] = len(
             getattr(self, "_a19_cancel_reason", {}) or {}
         )

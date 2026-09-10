@@ -226,7 +226,7 @@ fault cannot cost a trading tick. `research_profitable_exit_ttl_ms` keeps its
 3,000 ms default. **A1.9.1 remains blocked** until a run shows
 `direct_a1902_tick_resting_hits > 0` with a real HOLD/REPRICE distribution.
 
-## A1.9.0.3 — lifecycle attribution repair (this revision)
+## A1.9.0.3 — lifecycle attribution repair (PASSED)
 
 A1.9.0.2 **passed the observability gate**:
 
@@ -300,6 +300,97 @@ does **not** break the simple WAIT-cancel case, which is exactly why the defect
 showed up as *some* cancels mislabelled rather than all of them.
 
 Still measurement only; **run 150–200 ticks**, then A1.9.1 Phase B.
+
+## A1.9.1 — Queue-Preserving Maker Exit, behavioural Phase B (this revision)
+
+Phase A is complete and passed. Over 260 ticks (95.4% QUIET): 960 live
+resting-exit sightings, HOLD/REPRICE 455/457 on the true persist-eligible
+population, a clean reason split (QUEUE_PRESERVED vs STALE_BEHIND_TOUCH with no
+mixed reasons), HOLD forgone edge median **0.00 bps** / p90 **1.55 bps**, drift
+separation of median 1 tick (HOLD) vs 12 ticks (REPRICE), and cancel acks
+**74/74 at exactly T+1**.
+
+### What actually changes
+
+**HOLD is the absence of an action.** Today's baseline already rides the exit to
+expiry — the frozen hold hook at `Strategy1_Research.py:8296` reads
+`account.orders`, the blind view, which is why `PROFITABLE_EXIT_HOLD` has fired
+0 times in every run. So the behavioural delta is exactly two things, and they
+are one mechanism that must not be split (raising TTL without the cancel path is
+the known-harmful configuration):
+
+1. `research_profitable_exit_ttl_ms` **3000 → 4000** — 4x the verified 1,000 ms
+   publish cadence — closing the ~1 s dead window between expiry and the next
+   re-quote. Set through PARAMS, where the frozen base clamps it to
+   [1000, 5000]. **Never** mutated in `initialize()`; that is how A1.8 did it.
+2. An **explicit cancel** for a resting exit the classifier calls stale.
+
+Everything else stays frozen: size 0.25, 6 active books, 2.0 BASE cap, QUIET
+gate, Taker authority, A1.7.5 tail authority.
+
+### Where the cancel is emitted, and why it is not the placement path
+
+Measured on the A1.9.0.1 build, the placement path saw a live resting exit on
+**0 of 492 calls** while the tick observer saw **960 in 260 ticks**. A book whose
+exit is resting may simply never reach a placement decision, so a cancel emitted
+only from `_research_place_maker_exit` would never fire.
+
+The cancel therefore goes out in a **post-pass after the frozen chain has built
+the response**, which also means the shared per-book instruction budget is known
+at that point and a cancel can never displace a placement the strategy already
+decided on. HOLD is still enforced *in* the placement path, by returning 0 —
+correct whether or not that path runs.
+
+```
+T    classifier says REPRICE  ->  cancel the exact order id (post-pass)
+T+1  cancellation visible     ->  normal placement path may re-enter the book
+```
+
+No replacement is placed in the same response. That is the A1.7.4.3.1 ownership
+rule, and the 1-tick gap is the accepted cost — cheaper than today's ~1 s dead
+window.
+
+### Two gates on REPRICE
+
+**Remaining TTL.** Cancelling an order inside one publish cycle of its expiry
+spends an instruction and a tick to achieve exactly what expiry achieves for
+free, so below 1,000 ms remaining the verdict falls back to HOLD
+(`deferred=REMAINING_TTL`). Structural, not fitted.
+
+**Instruction budget (R3).** Cancels share the 5-instruction per-book budget
+with placements. When it is exhausted the verdict falls back to HOLD rather than
+spending the last slot on a teardown that cannot be replaced
+(`A191_REPRICE_DEFERRED`, `deferred=INSTRUCTION_BUDGET`).
+
+### Why HOLD should also reduce ladder escalation
+
+`_research_note_exit_attempt` early-returns on `placed=False`
+(`Strategy1_Research.py:7639`), so returning 0 for a preserved order means it
+**stops counting as a failed exit** and stops driving the AGGRESSIVE ladder.
+AGGRESSIVE share falling is therefore a predicted *success* signal, not only a
+tripwire.
+
+### A measurement caveat carried into the gate
+
+The 49.9% Phase-A hold rate is an **observation-level** rate: each resting order
+is re-observed every tick (960 observations across 234 lifecycles ≈ 4.1 each),
+and in shadow mode a stale order votes REPRICE again every tick until it
+expires, while being unable to fill. Under Phase B it is cancelled on its
+*first* REPRICE vote and leaves the population. So the per-order reprice rate is
+lower than 49.9%, and real cancel volume will be below 457/260 ≈ 1.76/tick.
+
+`A19_TICK_OBSERVE` now carries `order_id`, so a per-order hold rate can be
+computed directly rather than inferred. `direct_a191_hold_share_pct` reports the
+acted-on split (holds vs reprice cancels), which is the Phase-B analogue.
+
+### Verification
+
+- All direct regression suites: **381 passed, 11 skipped, 0 failed**
+  (A1.9.0.3 was 347 — the delta is exactly the 34 new A1.9.1 tests)
+- Mutation-tested: removing the remaining-TTL gate, the instruction-budget
+  guard, or the once-only cancel flag is caught by 1 test each
+- The A1.7.2 frozen landmine holds — `return super()._research_place_maker_exit`
+  is present exactly once and unwrapped
 
 ## The A1.9 mechanism
 
