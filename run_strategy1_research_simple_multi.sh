@@ -63,7 +63,7 @@ done
 
 [[ -f "$SCRIPT_DIR/run_miner_multi.sh" ]] || { echo "ERROR: run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research_Simple.py" ]] || { echo "ERROR: Strategy1_Research_Simple.py missing" >&2; exit 1; }
-grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_1"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
   echo "ERROR: wrong Strategy1 direct candidate" >&2
   exit 1
 }
@@ -85,9 +85,10 @@ export STRATEGY1_RESEARCH_QUEUE="$RESEARCH_QUEUE"
 export STRATEGY1_RESEARCH_DIR="$RESEARCH_DIR"
 mkdir -p "$RESEARCH_DIR"
 
-# A1.9 Phase A: measurement only. Every A1.7.5 parameter stays frozen, the
+# A1.9.0.1 Phase A2: measurement only. Every A1.7.5 parameter stays frozen, the
 # profitable-exit TTL keeps its 3000 ms default, and no knob is added here.
-# Phase B is what raises research_profitable_exit_ttl_ms to 4000.
+# A2 repairs resting-order observability (account.orders never carries the live
+# exit at decision time); Phase B is what raises research_profitable_exit_ttl_ms.
 # Legacy Research knobs keep their source defaults but do not own the direct hot path.
 PARAMS="enable_mm_strategy=1 lazy_load=1 fast_update=1 sync_event_csv=0 history_len=0 \
 mm_base_size=0.25 max_inventory_base=1.20 max_mm_books_per_tick=6 max_managed_books_per_tick=10 \
@@ -107,6 +108,13 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     python -m pytest -q \
+      tests/test_research_strategy1_direct_a1_5.py \
+      tests/test_research_strategy1_direct_a1_5_1.py \
+      tests/test_research_strategy1_direct_a1_6_0.py \
+      tests/test_research_strategy1_direct_a1_6_1.py \
+      tests/test_research_strategy1_direct_a1_6_2.py \
+      tests/test_research_strategy1_direct_a1_6_3.py \
+      tests/test_research_strategy1_direct_a1_7_0.py \
       tests/test_research_strategy1_direct_a1_7_1.py \
       tests/test_research_strategy1_direct_a1_7_2.py \
       tests/test_research_strategy1_direct_a1_7_3.py \
@@ -114,19 +122,21 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_strategy1_direct_a1_7_4_1.py \
       tests/test_research_strategy1_direct_a1_7_4_2.py \
       tests/test_research_strategy1_direct_a1_7_4_3.py \
+      tests/test_research_strategy1_direct_a1_7_4_3_1.py \
       tests/test_research_strategy1_direct_a1_7_4_3_2.py \
       tests/test_research_strategy1_direct_a1_7_4_4.py \
       tests/test_research_strategy1_direct_a1_7_4_5.py \
       tests/test_research_strategy1_direct_a1_7_5.py \
       tests/test_research_strategy1_direct_a1_9_0.py \
+      tests/test_research_strategy1_direct_a1_9_0_1.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
-  echo "Strategy1 direct V4.16.2 A1.9 Phase A preflight PASS"
+  echo "Strategy1 direct V4.16.2 A1.9.0.1 Phase A2 preflight PASS"
   exit 0
 fi
 
-echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_0"
+echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_0_1"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 

@@ -1,13 +1,12 @@
 {
   "baseline": {
-    "note": "A1.8 is rejected and fully reverted; A1.9 branches from the A1.7.5 behaviour.",
     "release": "A1.7.5",
     "source_zip": "sn-79_claude.zip",
     "source_zip_sha256": "3dc27f50592faab23451ac36b1eadf251343bda2e562bd705135f0e660956574"
   },
   "changed_runtime_files": [
     "agents/strategy/Strategy1_Research_Simple.py",
-    "agents/strategy/research_direct_exit_refresh.py",
+    "agents/strategy/research_direct_exit_ledger.py",
     "run_strategy1_research_simple_multi.sh"
   ],
   "classification": "STRUCTURAL",
@@ -29,53 +28,88 @@
     "agents/strategy/Strategy1_Research.py": "aea45154b0bcca03ae65073d6166dfe7642de1a796eee2fef23762f3a91acf6d",
     "agents/strategy/research_direct_positive_maker_kappa.py": "56b34c09f6a7036fa3e1aa0293ac50e79645755399ffb818a323dd45e157fb8d",
     "agents/strategy/research_direct_quiet_entry.py": "1f6ea7edb27790b8920fbfcba2c711223944bbc730ee6e3eb5bad8ba55e068b5",
-    "agents/strategy/research_direct_tail_recovery.py": "32d2b9cb8954f93c1c7e7873623ff36c4ac31f019be9d3ecc32a2bde9a4d9a86",
-    "agents/strategy/research_quote_hysteresis.py": "7b2b89461b99ab6c0a90f78bab2d0f7006d8b46ec04ed924bb5d2f3589d73427"
+    "agents/strategy/research_direct_tail_recovery.py": "32d2b9cb8954f93c1c7e7873623ff36c4ac31f019be9d3ecc32a2bde9a4d9a86"
   },
   "frozen_file_sha256_verified": true,
-  "goal": "Measure the Maker exit lifecycle -- hold eligibility, tenure, disposition, forgone edge and cancel-ack latency -- so Phase B's queue-preserving repricing is built on measurement rather than assumption.",
+  "goal": "Make the resting Maker exit observable at decision time. Phase A measured resting_present=0 because every queue-preservation mechanism reads state.accounts[uid][book].orders, which never carries the live exit.",
+  "measurements": {
+    "account_orders_resting_seen_pct": 0.0,
+    "acknowledged_limit_orders": 33455,
+    "consecutive_exit_evaluations_1_tick_apart_pct": 76.4,
+    "consecutive_exit_placements_within_live_ttl_pct": 27.0,
+    "expiry_notice_lag_population_pct": 47.5,
+    "ledger_resting_seen_all_rows_pct": 57.3,
+    "ledger_resting_seen_inside_ttl_pct": 9.8,
+    "profitable_exit_ended_by_expiry_pct": 86.0,
+    "profitable_exit_ended_by_fill_pct": 14.0,
+    "profitable_exit_median_resting_ms": 3000,
+    "profitable_exit_persist_placements": 16787,
+    "same_side_exchange_overlap_pct": 9.8,
+    "source_log": "logs/m1_strategy1_research_simple/strategy1_research_agent_68_20260907_224919.jsonl",
+    "ticks": 29183,
+    "zero_fire_mechanisms": [
+      "PROFITABLE_EXIT_HOLD",
+      "A172_WAIT_CANCEL",
+      "A17431_BOOK_OWNERSHIP_BLOCK",
+      "FINAL_CONTRACT_REJECT"
+    ]
+  },
   "new_docs": [
     "STRATEGY1_DIRECT_V4_16_2_A1_9.md"
   ],
-  "new_telemetry": [
-    "A19_EXIT_REFRESH_CONFIG",
-    "A19_EXIT_EVAL",
-    "A19_EXIT_LIFECYCLE",
-    "A19_CANCEL_ACK",
-    "A19_CANCEL_NOT_ACKED"
+  "new_modules": [
+    "agents/strategy/research_direct_exit_ledger.py"
   ],
   "new_tests": [
-    "tests/test_research_strategy1_direct_a1_9_0.py"
+    "tests/test_research_strategy1_direct_a1_9_0_1.py"
   ],
-  "phase": "A_SHADOW_MEASUREMENT",
-  "policy_version": "strategy1_direct_v4_16_2_a1_9_0",
-  "release": "Strategy1-Direct V4.16.2 A1.9 Phase A",
-  "removed_tests": [
-    "tests/test_research_strategy1_direct_a1_8.py"
-  ],
-  "reverts": {
-    "measured_cost_of_a18": {
-      "a172_wait_hold_per_tick": "9x",
-      "maker_fills_per_tick": "-33%",
-      "pnl_rate_per_tick": "-79%",
-      "positive_rt_per_tick": "-44%",
-      "rt_velocity_per_tick": "-23.7%"
+  "phase": "A2_LEDGER_SHADOW_MEASUREMENT",
+  "phase_a_run": {
+    "a19_exit_eval_below_min_net": 2551,
+    "a19_exit_eval_events": 3746,
+    "a19_exit_eval_persist_eligible": 734,
+    "a19_exit_eval_short_ttl_regime": 461,
+    "a19_resting_present_hits": 0,
+    "duration_hours": 1.98,
+    "exit_wait_median_s": 18.34,
+    "exit_wait_p90_s": 87.74,
+    "fills_maker": 278,
+    "fills_maker_pct": 79.0,
+    "fills_taker": 74,
+    "fills_taker_pct": 21.0,
+    "fills_total": 352,
+    "gates": {
+      "R1_hold_rate_measurable": "FAIL_BLIND",
+      "R2_forgone_edge": "NOT_MEASURED",
+      "R3_cancel_ack": "PASS_BY_RECONSTRUCTION_470_of_470_at_T_plus_1; runtime watchdog silent because A172_WAIT_CANCEL never fires, so no agent-initiated cancel is ever registered; A1.9.0.1 repairs the resolution half only; expected to remain silent through A2",
+      "R4_ownership_integrity": "PASS",
+      "latency_p95": "PASS"
     },
-    "release": "A1.8",
-    "restored_ttl_ms": 3000.0,
-    "reverted_effective_ttl_ms": 975.0,
-    "reverted_symbol": "cycle_bounded_profitable_exit_ttl_ms"
+    "latency_p95_ms": 103.3,
+    "max_book_exposure_base": 0.3508,
+    "max_global_exposure_base": 1.5001,
+    "round_trips_completed": 157,
+    "round_trips_positive": 86,
+    "round_trips_positive_pct": 54.8,
+    "rt_close_pnl": -13.8,
+    "rt_velocity": 0.1112,
+    "sample_caveat": "157 round trips is too small to accept or reject economics; Phase A gated on behaviour neutrality only.",
+    "ticks": 1412,
+    "verdict": "STRATEGY_BEHAVIOR_PASS_INSTRUMENTATION_FAIL"
   },
+  "policy_version": "strategy1_direct_v4_16_2_a1_9_0_1",
+  "release": "Strategy1-Direct V4.16.2 A1.9.0.1",
   "single_behavior_change": {
     "behaviour_change": false,
-    "new_market_thresholds_added": false,
-    "note": "Phase A is measurement only: the classifier runs in shadow mode and its HOLD/REPRICE decision is discarded. Only _a19_* telemetry state is written."
+    "effective_profitable_exit_ttl_ms": 3000.0,
+    "note": "Measurement only. The ledger is written and read solely by _a19_* code."
   },
-  "title": "Queue-Preserving Maker Exit -- Phase A Shadow Measurement",
+  "title": "Resting-Exit Observability Repair (Phase A2)",
   "verification": {
-    "a19_phase_a_suite": "22 passed",
-    "all_direct_regression": "263 passed, 11 skipped, 0 failed",
-    "frozen_base_untouched": "Strategy1_Research.py unchanged (sha verified against A1.7.5)",
+    "a1_9_0_1_suite": "32 passed",
+    "all_direct_regression": "295 passed, 11 skipped, 0 failed",
+    "bash_syntax": "PASS",
+    "preflight_gate": "closed: a1_5, a1_5_1, a1_6_0, a1_6_1, a1_6_2, a1_6_3, a1_7_0 and a1_7_4_3_1 were absent from RESEARCH_PREFLIGHT_ONLY; all pass and are now listed, guarded by a test",
     "python_compile": "PASS"
   }
 }

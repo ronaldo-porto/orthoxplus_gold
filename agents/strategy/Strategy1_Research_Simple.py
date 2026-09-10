@@ -190,6 +190,13 @@ from research_direct_exit_refresh import (
     exit_eval_class,
     forgone_edge_bps,
 )
+from research_direct_exit_ledger import (
+    DIRECT_EXIT_LEDGER_VERSION,
+    LEDGER_REMOVED_CANCELLED,
+    LEDGER_REMOVED_FILLED,
+    DirectExitLedger,
+    close_side_for,
+)
 from research_direct_trade_dedup import (
     DIRECT_TRADE_DEDUP_VERSION,
     DIRECT_TRADE_DEDUP_MAX_EVENTS,
@@ -238,8 +245,8 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_1"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -551,7 +558,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "A19_EXIT_REFRESH_CONFIG", force=True,
                 tick=int(getattr(self, "_tick", 0) or 0),
                 exit_refresh_version=DIRECT_EXIT_REFRESH_VERSION,
-                phase="A_SHADOW_MEASUREMENT",
+                exit_ledger_version=DIRECT_EXIT_LEDGER_VERSION,
+                phase="A2_LEDGER_SHADOW_MEASUREMENT",
                 effective_profitable_exit_ttl_ms=effective_ttl,
                 baseline_profitable_exit_ttl_ms=float(DIRECT_A19_BASELINE_PROFITABLE_EXIT_TTL_MS),
                 target_profitable_exit_ttl_ms=float(DIRECT_A19_TARGET_PROFITABLE_EXIT_TTL_MS),
@@ -633,6 +641,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # the reservation by the exact observed quantity.
             try:
                 self._direct_pending_note_fill(event)
+            except Exception:
+                pass
+            # A1.9.0.1: retire the ledger row this fill consumed.  A partial
+            # fill only decrements, so the remainder stays visible as resting.
+            try:
+                ledger = self._a19_ledger_ref()
+                qty = getattr(event, "quantity", None)
+                for attr, agent_attr in (
+                    ("makerOrderId", "makerAgentId"), ("takerOrderId", "takerAgentId"),
+                ):
+                    if getattr(event, agent_attr, None) == getattr(self, "uid", None):
+                        ledger.note_removed(
+                            getattr(event, attr, None),
+                            cause=LEDGER_REMOVED_FILLED, filled_qty=qty,
+                        )
             except Exception:
                 pass
 
@@ -1464,6 +1487,60 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a19_cancel_acks = 0
         self._a19_cancel_ack_ticks_total = 0
         self._a19_cancel_not_acked = 0
+        # A1.9.0.1 lifecycle ledger.  The account snapshot never carries the
+        # resting exit at decision time, so the live-order view is rebuilt from
+        # acknowledged exchange notices instead.  Measurement only.
+        self._a19_ledger = DirectExitLedger()
+        self._a19_ledger_resting_hits = 0
+        self._a19_account_resting_hits = 0
+        self._a19_ledger_only_hits = 0
+        self._a19_ledger_expiry_lag_hits = 0
+        self._a19_last_state_ns = 0
+
+    def _a19_ledger_ref(self) -> DirectExitLedger | None:
+        """Ledger handle that tolerates hot-reload and bare test objects."""
+        ledger = getattr(self, "_a19_ledger", None)
+        if not isinstance(ledger, DirectExitLedger):
+            ledger = DirectExitLedger()
+            self._a19_ledger = ledger
+        return ledger
+
+    def onOrderAccepted(self, event) -> None:
+        """Record the exchange's acknowledgement of one of our limit orders."""
+        super().onOrderAccepted(event)
+        try:
+            etype = str(getattr(event, "type", "") or "").upper()
+            if etype and not ("RDPOL" in etype or "LIMIT" in etype):
+                return
+            price = getattr(event, "price", None)
+            if price is None:
+                return
+            if not bool(getattr(event, "success", True)):
+                return
+            book_id = getattr(event, "bookId", None)
+            self._a19_ledger_ref().note_accepted(
+                order_id=getattr(event, "orderId", None),
+                book_id=book_id,
+                side=getattr(event, "side", None),
+                price=price,
+                quantity=getattr(event, "quantity", None),
+                timestamp_ns=getattr(event, "timestamp", 0),
+                tick=int(getattr(self, "_tick", 0) or 0),
+                client_id=getattr(event, "clientOrderId", None),
+                action=self._a19_pending_action.get(int(book_id), "") if book_id is not None else "",
+            )
+        except Exception:
+            pass
+
+    def onOrderCancelled(self, event) -> None:
+        """Retire a ledger row the exchange has cancelled or expired."""
+        super().onOrderCancelled(event)
+        try:
+            self._a19_ledger_ref().note_removed(
+                getattr(event, "orderId", None), cause=LEDGER_REMOVED_CANCELLED,
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _a19_order_id(order) -> int | None:
@@ -1580,11 +1657,40 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
         net_base = float(getattr(inventory, "net_base", 0.0) or 0.0)
         long_pos = net_base > 0.0
-        resting = self._a19_close_side_orders(bid, long_pos)
-        live_ids = {
-            oid for oid in (self._a19_order_id(order) for order in resting)
-            if oid is not None
-        }
+
+        # A1.9.0.1: the account snapshot is kept only as a control measurement.
+        # Phase A proved it never carries the resting exit here, so the ledger
+        # rebuilt from acknowledged notices is the operative view.
+        account_resting = self._a19_close_side_orders(bid, long_pos)
+        ledger = self._a19_ledger_ref()
+        try:
+            now_ns = int(getattr(state, "timestamp", 0) or 0)
+        except (TypeError, ValueError):
+            now_ns = 0
+        if now_ns and now_ns != int(getattr(self, "_a19_last_state_ns", 0) or 0):
+            # Any clock movement sweeps.  A backwards move means the simulation
+            # restarted and reused order ids, which the ledger answers by
+            # discarding the previous session outright.
+            self._a19_last_state_ns = now_ns
+            ledger.sweep(now_ns)
+        close_side = close_side_for(net_base)
+        exit_ttl_ms = float(getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
+        # Rows still inside the TTL they were placed under.  Anything at or past
+        # it is treated as gone even if its cancellation notice has not arrived,
+        # because Phase B must never hold on an order the exchange has retired.
+        resting = ledger.live_orders(
+            bid, side=close_side, max_age_ms=exit_ttl_ms, now_ns=now_ns,
+        )
+        lagged = ledger.live_orders(bid, side=close_side)
+        live_ids = {int(row.order_id) for row in lagged}
+        if resting:
+            self._a19_ledger_resting_hits += 1
+            if account_resting:
+                self._a19_account_resting_hits += 1
+            else:
+                self._a19_ledger_only_hits += 1
+        elif lagged:
+            self._a19_ledger_expiry_lag_hits += 1
         cancel_disposition = self._a19_settle_cancel_watch(bid, live_ids)
 
         seen = self._a19_exit_seen.get(bid)
@@ -1607,18 +1713,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
             seen = None
 
         if seen is None and resting:
-            order = resting[0]
-            oid = self._a19_order_id(order)
-            if oid is not None:
-                seen = {
-                    "order_id": oid,
-                    "price": self._a19_order_price(order),
-                    "qty": float(getattr(order, "quantity", 0.0) or 0.0),
-                    "action": self._a19_pending_action.get(bid, ""),
-                    "first_tick": tick,
-                    "net_base": net_base,
-                }
-                self._a19_exit_seen[bid] = seen
+            row = resting[0]
+            seen = {
+                "order_id": int(row.order_id),
+                "price": float(row.price),
+                "qty": float(row.remaining or row.quantity),
+                "action": str(row.action or "") or self._a19_pending_action.get(bid, ""),
+                # Tenure runs from the tick the exchange acknowledged the order,
+                # not from the tick this observer first noticed it.
+                "first_tick": int(row.placed_tick or tick),
+                "placed_ns": int(row.placed_ns or 0),
+                "net_base": net_base,
+            }
+            self._a19_exit_seen[bid] = seen
 
         eval_class = exit_eval_class(
             maker_net_bps=maker_net_bps,
@@ -1664,6 +1771,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "A19_EXIT_EVAL", force=True, tick=tick, book=bid,
             eval_class=str(eval_class),
             resting_present=int(seen is not None),
+            resting_present_account=int(bool(account_resting)),
+            resting_age_ms=(
+                0.0 if seen is None
+                else round(max(0.0, (now_ns - float(seen.get("placed_ns", 0) or 0)) / 1e6), 1)
+                if seen.get("placed_ns") else 0.0
+            ),
+            ledger_live=int(ledger.live_count(bid)),
+            ledger_expiry_lagged=int(len(lagged) - len(resting)),
+            exit_ttl_ms=float(exit_ttl_ms),
             absent_reason=(
                 "" if seen is not None
                 else str(self._a19_last_disposition.get(bid, ABSENT_NEVER_PLACED))
@@ -4583,7 +4699,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a175_shadow_adverse"] = int(getattr(self, "_direct_a175_shadow_adverse", 0) or 0)
         stats["direct_a175_shadow_pending"] = len(getattr(self, "_direct_a175_shadow_ledger", {}) or {})
         stats["direct_exit_refresh_version"] = DIRECT_EXIT_REFRESH_VERSION
-        stats["direct_a19_phase"] = "A_SHADOW_MEASUREMENT"
+        stats["direct_a19_phase"] = "A2_LEDGER_SHADOW_MEASUREMENT"
         stats["direct_a19_profitable_exit_ttl_ms"] = float(getattr(self, "research_profitable_exit_ttl_ms", 0.0) or 0.0)
         stats["direct_a19_exit_evals"] = int(getattr(self, "_a19_exit_evals", 0) or 0)
         stats["direct_a19_eligible_evals"] = int(getattr(self, "_a19_eligible_evals", 0) or 0)
@@ -4593,6 +4709,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a19_cancel_acks"] = int(getattr(self, "_a19_cancel_acks", 0) or 0)
         stats["direct_a19_cancel_ack_ticks_total"] = int(getattr(self, "_a19_cancel_ack_ticks_total", 0) or 0)
         stats["direct_a19_cancel_not_acked"] = int(getattr(self, "_a19_cancel_not_acked", 0) or 0)
+        # A1.9.0.1 observability repair: ledger view vs the account snapshot the
+        # frozen hold path reads.  ledger_only_hits is the size of the blind spot.
+        stats["direct_a1901_ledger_resting_hits"] = int(getattr(self, "_a19_ledger_resting_hits", 0) or 0)
+        stats["direct_a1901_account_resting_hits"] = int(getattr(self, "_a19_account_resting_hits", 0) or 0)
+        stats["direct_a1901_ledger_only_hits"] = int(getattr(self, "_a19_ledger_only_hits", 0) or 0)
+        stats["direct_a1901_ledger_expiry_lag_hits"] = int(getattr(self, "_a19_ledger_expiry_lag_hits", 0) or 0)
+        try:
+            stats.update({
+                f"direct_a1901_{k}": v for k, v in self._a19_ledger_ref().stats().items()
+            })
+        except Exception:
+            pass
         stats["direct_trade_dedup_version"] = DIRECT_TRADE_DEDUP_VERSION
         stats["direct_duplicate_trade_events_skipped"] = int(
             getattr(self, "_direct_duplicate_trade_events_skipped", 0) or 0
