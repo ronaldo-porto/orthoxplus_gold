@@ -1,0 +1,56 @@
+{
+  "baseline": {
+    "release": "A1.7.5",
+    "source_zip": "sn-79_claude.zip",
+    "source_zip_sha256": "3dc27f50592faab23451ac36b1eadf251343bda2e562bd705135f0e660956574"
+  },
+  "changed_runtime_files": [
+    "agents/strategy/Strategy1_Research_Simple.py",
+    "agents/strategy/research_direct_exit_refresh.py",
+    "run_strategy1_research_simple_multi.sh"
+  ],
+  "classification": "STRUCTURAL",
+  "frozen": {
+    "a1745_quiet_entry_gate": true,
+    "a175_tail_authority": true,
+    "maker_exit_price_ladder_changed": false,
+    "mm_base_size": 0.25,
+    "ownership_changed": false,
+    "research_max_active_open_books": 6,
+    "research_max_open_books": 6,
+    "research_max_total_abs_base": 2.0,
+    "research_max_total_open_books": 8,
+    "taker_authority_changed": false
+  },
+  "frozen_file_sha256": {
+    "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
+    "agents/strategy/Strategy1_Research.py": "6c82dc5c68981f671101477596cf021323817a1ff9bc50f6e87e4291b2cc3ce5",
+    "agents/strategy/research_direct_positive_maker_kappa.py": "217a4b95d0f93701e8b4322cde9a20db4e5ae1c9d64e95403f494c063cd186ff",
+    "agents/strategy/research_direct_quiet_entry.py": "1f6ea7edb27790b8920fbfcba2c711223944bbc730ee6e3eb5bad8ba55e068b5",
+    "agents/strategy/research_direct_tail_recovery.py": "97e8b95c9c21fb0109452e8fedf2eef14cf667ad26fe83696101188c20d28b2d"
+  },
+  "goal": "Increase useful RT volume by shortening stale Maker exit realization, without increasing Taker realization.",
+  "new_docs": [
+    "STRATEGY1_DIRECT_V4_16_2_A1_8.md"
+  ],
+  "new_tests": [
+    "tests/test_research_strategy1_direct_a1_8.py"
+  ],
+  "policy_version": "strategy1_direct_v4_16_2_a1_8",
+  "release": "Strategy1-Direct V4.16.2 A1.8",
+  "single_behavior_change": {
+    "derivation": "min(legacy profitable-exit TTL, max(existing QUIET exit TTL, existing ONE_AWAY exit TTL))",
+    "effective_direct_profitable_exit_ttl_ms": 975.0,
+    "legacy_profitable_exit_ttl_ms": 3000.0,
+    "new_market_thresholds_added": false
+  },
+  "title": "Cycle-Bounded Maker Exit Realization",
+  "verification": {
+    "a18_plus_recent_targeted": "70 passed",
+    "all_direct_regression": "251 passed, 11 skipped",
+    "bash_syntax": "PASS",
+    "launcher_preflight": "222 passed",
+    "python_compile": "PASS",
+    "research_regression": "693 passed, 11 skipped"
+  }
+}

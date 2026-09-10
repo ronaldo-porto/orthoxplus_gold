@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Strategy1-Direct V4.16.2 A1.7.5 Relative Tail Authority Research candidate.
+"""Strategy1-Direct V4.16.2 A1.8 Maker Exit Realization Research candidate.
 
 This module intentionally does *not* add another strategy layer.  It reuses the
 existing V4.16.2 Research state/learning/persistence infrastructure but replaces
@@ -8,15 +8,18 @@ its hot orchestration path with the shortest useful authority chain:
     128-book observable scan -> current spread/fee/Kappa rank -> deep top-K
                   -> hard safety -> current Maker edge -> Maker/Skip -> final validation
 
-A1.7.4.5 keeps A1.7.4.4 positive-Maker Kappa veto, A1.7.4.3.2 identity-safe ownership and strict aggregate in-flight exposure reservation,
+A1.8 keeps A1.7.5 relative tail authority and A1.7.4.4 positive-Maker Kappa veto, A1.7.4.3.2 identity-safe ownership and strict aggregate in-flight exposure reservation,
 A1.7.4.2 Kappa-safe dust compaction, A1.7.4.1 replay de-duplication, A1.7.4
 tail recovery, A1.7.2 TRUE-WAIT, and A1.7.3.1 partial-remainder/liveness
 frozen. A1.7.4.4 keeps its narrow Kappa-tail correction. A1.7.4.5 adds one
 regime-specific acquisition correction: only in QUIET + no meaningful Maker
 rebate + very-low trade activity + wide spread, the current observable Maker
 edge floor rises from 2.5 bps to 15 bps. Normal/rebate regimes, size, portfolio
-limits, ownership, exits, recovery thresholds, and FastPath remain unchanged.
-The frozen Strategy1_Research.py base remains untouched.
+limits, ownership, exit pricing/authority, recovery thresholds, and FastPath remain unchanged.
+A1.8 changes only profitable Maker exit persistence in the Direct overlay: the
+legacy multi-cycle 3000 ms lifetime is capped by the existing exit-cycle TTL
+(975 ms with the shipped config) so a resting exit can refresh from the next
+market state. Strategy1_Research.py remains unchanged.
 
 The original Strategy1_Research.py is left untouched so this candidate can be
 A/B tested against the V4.16.2 baseline.
@@ -162,6 +165,11 @@ from research_direct_quiet_entry import (
     DIRECT_A1745_WIDE_SPREAD_MIN_BPS,
     quiet_zero_rebate_entry_gate,
 )
+from research_direct_exit_refresh import (
+    DIRECT_EXIT_REFRESH_VERSION,
+    DIRECT_A18_LEGACY_PROFITABLE_EXIT_TTL_MS,
+    cycle_bounded_profitable_exit_ttl_ms,
+)
 from research_direct_trade_dedup import (
     DIRECT_TRADE_DEDUP_VERSION,
     DIRECT_TRADE_DEDUP_MAX_EVENTS,
@@ -210,8 +218,8 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_5"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_7_5"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_8"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_8"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -224,7 +232,7 @@ DIRECT_A175_SHADOW_LEDGER_MAX = 256
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 A1.7.5 relative tail authority, dust escape and QUIET shadow.
+    """V4.16.2 A1.8 cycle-bounded Maker exit realization on A1.7.5.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -251,6 +259,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.7.4.3.2 exact exchange-order identity release; stale cancellation cannot release a newer owner;
       * A1.7.4.4 strongly-positive Maker veto over negative non-catastrophic HARD/ABSOLUTE Taker authority;
       * A1.7.4.5 15 bps entry floor only in QUIET/no-rebate/low-trade/wide-spread books;
+      * A1.8 cycle-bounded profitable Maker exit TTL; no price/Taker/entry authority change;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -264,6 +273,22 @@ class Strategy1_Research_Simple(Strategy1_Research):
         super().initialize()
         # Marker only.  Do not mutate strategy thresholds or risk limits here.
         self._simple_direct_mode = True
+        # A1.8 STRUCTURAL Maker-exit realization.  A1.7.5 can keep a
+        # profitable Maker exit live for 3s while market state publishes about
+        # once per exit cycle.  Because Direct final validation correctly blocks
+        # a second live order on the same book, that long TTL also prevents the
+        # exit quote from following the newer touch/ladder rung.  Reuse the
+        # existing QUIET/ONE_AWAY cycle TTLs as the persistence ceiling.  This
+        # changes no price, Taker authority, entry gate, size, or risk limit.
+        self._direct_a18_legacy_profitable_exit_ttl_ms = float(
+            getattr(self, "research_profitable_exit_ttl_ms", DIRECT_A18_LEGACY_PROFITABLE_EXIT_TTL_MS)
+            or DIRECT_A18_LEGACY_PROFITABLE_EXIT_TTL_MS
+        )
+        self.research_profitable_exit_ttl_ms = cycle_bounded_profitable_exit_ttl_ms(
+            legacy_persistent_ttl_ms=self._direct_a18_legacy_profitable_exit_ttl_ms,
+            quiet_exit_ttl_ms=float(getattr(self, "research_quiet_exit_ttl_ms", 950.0) or 950.0),
+            one_away_exit_ttl_ms=float(getattr(self, "research_one_away_exit_ttl_ms", 975.0) or 975.0),
+        )
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -439,6 +464,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 a1745_low_trade_rate_max=float(DIRECT_A1745_LOW_TRADE_RATE_MAX),
                 a1745_wide_spread_min_bps=float(DIRECT_A1745_WIDE_SPREAD_MIN_BPS),
                 a1745_global_maker_edge_retune=0,
+                direct_exit_refresh_version=DIRECT_EXIT_REFRESH_VERSION,
+                a18_exit_refresh_mode="CYCLE_BOUNDED_PROFITABLE_MAKER_TTL",
+                a18_legacy_profitable_exit_ttl_ms=float(self._direct_a18_legacy_profitable_exit_ttl_ms),
+                a18_profitable_exit_ttl_ms=float(self.research_profitable_exit_ttl_ms),
+                a18_size_change=0,
+                a18_active_book_change=0,
+                a18_taker_logic_change=0,
+                a18_entry_gate_change=0,
                 true_wait_execution=1,
                 wait_falls_through_to_legacy_maker=0,
                 negative_aggressive_maker_block=1,
@@ -492,6 +525,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 dust_fastpath_forced=0,
                 direct_dust_compaction=1,
                 placement_only_final_validation=1,
+            )
+        except Exception:
+            pass
+        try:
+            self._emit(
+                "A18_EXIT_REFRESH_CONFIG", force=True,
+                tick=int(getattr(self, "_tick", 0) or 0),
+                exit_refresh_version=DIRECT_EXIT_REFRESH_VERSION,
+                legacy_profitable_exit_ttl_ms=float(self._direct_a18_legacy_profitable_exit_ttl_ms),
+                effective_profitable_exit_ttl_ms=float(self.research_profitable_exit_ttl_ms),
+                quiet_exit_ttl_ms=float(getattr(self, "research_quiet_exit_ttl_ms", 950.0) or 950.0),
+                one_away_exit_ttl_ms=float(getattr(self, "research_one_away_exit_ttl_ms", 975.0) or 975.0),
+                maker_only=1, taker_logic_change=0, entry_gate_change=0,
+                size_change=0, active_book_change=0,
             )
         except Exception:
             pass
@@ -4244,6 +4291,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a175_shadow_resolved"] = int(getattr(self, "_direct_a175_shadow_resolved", 0) or 0)
         stats["direct_a175_shadow_adverse"] = int(getattr(self, "_direct_a175_shadow_adverse", 0) or 0)
         stats["direct_a175_shadow_pending"] = len(getattr(self, "_direct_a175_shadow_ledger", {}) or {})
+        stats["direct_exit_refresh_version"] = DIRECT_EXIT_REFRESH_VERSION
+        stats["direct_a18_legacy_profitable_exit_ttl_ms"] = float(getattr(self, "_direct_a18_legacy_profitable_exit_ttl_ms", DIRECT_A18_LEGACY_PROFITABLE_EXIT_TTL_MS) or DIRECT_A18_LEGACY_PROFITABLE_EXIT_TTL_MS)
+        stats["direct_a18_profitable_exit_ttl_ms"] = float(getattr(self, "research_profitable_exit_ttl_ms", 0.0) or 0.0)
         stats["direct_trade_dedup_version"] = DIRECT_TRADE_DEDUP_VERSION
         stats["direct_duplicate_trade_events_skipped"] = int(
             getattr(self, "_direct_duplicate_trade_events_skipped", 0) or 0
