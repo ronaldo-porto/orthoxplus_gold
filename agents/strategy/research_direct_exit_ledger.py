@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-DIRECT_EXIT_LEDGER_VERSION = "direct_exit_ledger_v4_16_2_a1_9_0_1"
+DIRECT_EXIT_LEDGER_VERSION = "direct_exit_ledger_v4_16_2_a1_9_0_2"
 
 # Removal causes.  These mirror the A1.9 absent-reason vocabulary so a
 # lifecycle row and an exit evaluation can be joined without translation.
@@ -251,3 +251,39 @@ def close_side_for(net_base: float) -> int:
         return 1 if float(net_base) > 0.0 else 0
     except (TypeError, ValueError):
         return 0
+
+
+@dataclass(frozen=True)
+class RestingInventoryView:
+    """The inventory facts the observer needs, read without side effects.
+
+    A1.9.0.2 observes every open-inventory book at the top of ``respond``,
+    before the frozen base has incremented ``_tick``.  The obvious way to get
+    the position -- ``_net_inventory(book_id, mid)`` -- cannot be used there:
+    it advances ``_position_ticks`` once per ``_tick``, guarded by
+    ``_research_position_tick_seen[book_id] != current_tick``.  For a book that
+    was not evaluated on the previous tick that guard does not hold, so a
+    pre-tick call would age the position once and the tick's real call would
+    age it again.  Position age drives the exit escalation ladder, so that is a
+    live trading-behaviour change -- exactly what a measurement-only revision
+    must not do.
+
+    ``_position_tracker_snapshot`` is pure, and net_base plus vwap_entry are
+    all the shadow classifier reads, so the observer builds this instead.
+    """
+
+    net_base: float
+    vwap_entry: float | None
+
+    @classmethod
+    def from_tracker(cls, tracker) -> "RestingInventoryView":
+        try:
+            net = float(getattr(tracker, "net_qty", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            net = 0.0
+        vwap = getattr(tracker, "vwap_entry", None)
+        try:
+            vwap = float(vwap) if vwap is not None else None
+        except (TypeError, ValueError):
+            vwap = None
+        return cls(net_base=net, vwap_entry=vwap)

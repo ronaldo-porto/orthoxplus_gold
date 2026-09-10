@@ -1,4 +1,54 @@
 {
+  "a1_9_0_1_run": {
+    "a19_exit_eval_events": 492,
+    "a19_exit_eval_persist_eligible": 255,
+    "a19_resting_present_hits": 0,
+    "cancel_ack_latency": "T+1 confirmed; cancel latency is not the blocker",
+    "latency_p95_ms": 100,
+    "maker_ending_positive": "28/30",
+    "max_global_exposure_base": 1.6,
+    "mismatched_releases": 0,
+    "ownership_violations": 0,
+    "root_cause": "Observer call site, not the ledger. _research_place_maker_exit runs only after the frozen final validator has dropped placements onto books holding a live order, and after the 3000 ms TTL has expired ahead of the ~4000 ms re-quote cycle.",
+    "round_trips_completed": 41,
+    "round_trips_positive": 28,
+    "round_trips_positive_pct": 68.3,
+    "rt_close_pnl": 1.04,
+    "rt_velocity": 0.138,
+    "shadow_decisions": 0,
+    "taker_ending_positive": "0/11",
+    "ticks": 298,
+    "verdict": "STRATEGY_BEHAVIOR_PASS_INSTRUMENTATION_FAIL"
+  },
+  "a1_9_0_2_change": {
+    "cancel_ack_settlement": "left in the placement path, where _tick is on the right clock",
+    "comparand": "passive touch; desired_action=None so ladder escalation cannot misfire",
+    "new_events": [
+      "A19_TICK_OBSERVE",
+      "A19_TICK_LIFECYCLE"
+    ],
+    "observer_call_site": "top of respond(), before super().respond(state)",
+    "position_read": "_position_tracker_snapshot via RestingInventoryView (pure)",
+    "position_read_hazard_avoided": "_net_inventory advances _position_ticks once per _tick; called before the base increments _tick it would double-age a book idle last tick, and position age drives the exit escalation ladder.",
+    "retained_controls": [
+      "A19_EXIT_EVAL",
+      "direct_a1901_*"
+    ],
+    "runs_before": [
+      "live-order gates",
+      "ownership gates",
+      "final validator"
+    ],
+    "scope": "every book with open inventory, every tick",
+    "why_sound": "The SDK calls update(state) -- which drives onOrderAccepted/onOrderCancelled -- before respond(state), so the ledger is already this tick's truth at the top of respond."
+  },
+  "a3_accept_gate": {
+    "behaviour_neutrality": "RT velocity, exposure, ownership violations unchanged vs A1.7.5",
+    "blocks": "A1.9.1 stays blocked until this gate passes",
+    "direct_a1902_tick_resting_hits": "> 0",
+    "direct_a1902_tick_untimed_rows": "expected 0",
+    "shadow_decisions": "> 0 with a real HOLD/REPRICE split"
+  },
   "baseline": {
     "release": "A1.7.5",
     "source_zip": "sn-79_claude.zip",
@@ -10,6 +60,38 @@
     "run_strategy1_research_simple_multi.sh"
   ],
   "classification": "STRUCTURAL",
+  "destination_targets": {
+    "exit_wait_median_s": 30,
+    "exit_wait_p90_s": [
+      70,
+      80
+    ],
+    "exposure_violations": 0,
+    "latency_p95_ms": [
+      100,
+      110
+    ],
+    "maker_ending_positive_rt_pct": 98,
+    "maker_share_on_fills_pct": [
+      93,
+      95
+    ],
+    "ownership_violations": 0,
+    "positive_rt_share_pct": [
+      88,
+      90
+    ],
+    "rationale": "Kappa-3 divides by cbrt(LPM3); one -0.60 RT costs 0.216 of cubic downside vs 0.024 for three -0.20 RTs. Volume added before the tail is controlled raises numerator and denominator together.",
+    "reached_no_earlier_than": "A2_0_THROUGHPUT",
+    "rt_velocity": [
+      0.12,
+      0.13
+    ],
+    "taker_ending_rt_share_pct": [
+      8,
+      10
+    ]
+  },
   "frozen": {
     "a1745_quiet_entry_gate": true,
     "a175_tail_authority": true,
@@ -31,7 +113,7 @@
     "agents/strategy/research_direct_tail_recovery.py": "32d2b9cb8954f93c1c7e7873623ff36c4ac31f019be9d3ecc32a2bde9a4d9a86"
   },
   "frozen_file_sha256_verified": true,
-  "goal": "Make the resting Maker exit observable at decision time. Phase A measured resting_present=0 because every queue-preservation mechanism reads state.accounts[uid][book].orders, which never carries the live exit.",
+  "goal": "Observe the resting Maker exit while it is still alive. A2 rebuilt the live-order view from exchange notices but still read it from the new-placement path, which only runs after the exit is dead; A3 moves the observation to the top of respond(), across every open-inventory book.",
   "measurements": {
     "account_orders_resting_seen_pct": 0.0,
     "acknowledged_limit_orders": 33455,
@@ -61,9 +143,10 @@
     "agents/strategy/research_direct_exit_ledger.py"
   ],
   "new_tests": [
-    "tests/test_research_strategy1_direct_a1_9_0_1.py"
+    "tests/test_research_strategy1_direct_a1_9_0_1.py",
+    "tests/test_research_strategy1_direct_a1_9_0_2.py"
   ],
-  "phase": "A2_LEDGER_SHADOW_MEASUREMENT",
+  "phase": "A3_LIVE_TICK_OBSERVER",
   "phase_a_run": {
     "a19_exit_eval_below_min_net": 2551,
     "a19_exit_eval_events": 3746,
@@ -97,19 +180,41 @@
     "ticks": 1412,
     "verdict": "STRATEGY_BEHAVIOR_PASS_INSTRUMENTATION_FAIL"
   },
-  "policy_version": "strategy1_direct_v4_16_2_a1_9_0_1",
-  "release": "Strategy1-Direct V4.16.2 A1.9.0.1",
+  "phase_b_prediction": {
+    "basis": "exit_p_fill_horizon 0.043-0.049 per publish cycle, flat across ladder rungs",
+    "expected_relative_gain_pct": 30,
+    "model": "fill = 1 - (1 - p)^cycles",
+    "refuted_if": "fill share stays near 14% (resting time is not the binding constraint)",
+    "thesis_invalidated_if": "fill share rises but maker share on fills falls below 90.7% (adverse selection)",
+    "ttl_3000_measured_fill_pct": 14.0,
+    "ttl_3000_predicted_fill_pct": [
+      12.4,
+      14.0
+    ],
+    "ttl_4000_predicted_fill_pct": [
+      16.1,
+      18.2
+    ],
+    "ttl_5000_predicted_fill_pct": [
+      19.7,
+      22.2
+    ]
+  },
+  "policy_version": "strategy1_direct_v4_16_2_a1_9_0_2",
+  "release": "Strategy1-Direct V4.16.2 A1.9.0.2",
   "single_behavior_change": {
     "behaviour_change": false,
     "effective_profitable_exit_ttl_ms": 3000.0,
-    "note": "Measurement only. The ledger is written and read solely by _a19_* code."
+    "note": "Measurement only. The observer writes only _a19_* state, emits only A19_* events, and is exception-isolated so a fault cannot cost a trading tick. Asserted by test: no response/place_order/cancel_orders reference and no self._net_inventory( call in the observer body."
   },
-  "title": "Resting-Exit Observability Repair (Phase A2)",
+  "title": "Live Resting-Exit Observer (Phase A3)",
   "verification": {
-    "a1_9_0_1_suite": "32 passed",
-    "all_direct_regression": "295 passed, 11 skipped, 0 failed",
+    "a1_9_0_2_suite": "25 passed",
+    "all_direct_regression": "320 passed, 11 skipped, 0 failed",
+    "baseline_comparison": "A1.9.0.1 baseline was 295 passed, 11 skipped, 0 failed; the +25 delta is exactly the new A1.9.0.2 suite and no pre-existing test changed status",
     "bash_syntax": "PASS",
-    "preflight_gate": "closed: a1_5, a1_5_1, a1_6_0, a1_6_1, a1_6_2, a1_6_3, a1_7_0 and a1_7_4_3_1 were absent from RESEARCH_PREFLIGHT_ONLY; all pass and are now listed, guarded by a test",
+    "frozen_base_untouched": true,
+    "frozen_file_sha256_recomputed_from_files": true,
     "python_compile": "PASS"
   }
 }

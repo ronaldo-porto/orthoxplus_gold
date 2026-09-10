@@ -195,6 +195,7 @@ from research_direct_exit_ledger import (
     LEDGER_REMOVED_CANCELLED,
     LEDGER_REMOVED_FILLED,
     DirectExitLedger,
+    RestingInventoryView,
     close_side_for,
 )
 from research_direct_trade_dedup import (
@@ -245,8 +246,8 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_0_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_0_2"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -1496,6 +1497,25 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a19_ledger_only_hits = 0
         self._a19_ledger_expiry_lag_hits = 0
         self._a19_last_state_ns = 0
+        # A1.9.0.2 live observer.  Separate lifecycle state from the placement
+        # path's `_a19_exit_seen`: the two observers watch the same book at
+        # different moments, and one dict written by both would interleave into
+        # nonsense.  Keeping A1.9.0.1's measurement intact also preserves the
+        # A/B that proves the placement path was the blind one.
+        self._a19_tick_seen: dict[int, dict[str, Any]] = {}
+        self._a19_tick_passes = 0
+        self._a19_tick_observations = 0
+        self._a19_tick_resting_hits = 0
+        self._a19_tick_expiry_lag_hits = 0
+        self._a19_tick_eligible = 0
+        self._a19_tick_eligible_with_resting = 0
+        self._a19_tick_shadow_holds = 0
+        self._a19_tick_shadow_reprices = 0
+        self._a19_tick_first_sightings = 0
+        self._a19_tick_lifecycles = 0
+        self._a19_tick_max_observed_ticks = 0
+        self._a19_tick_observed_ticks_total = 0
+        self._a19_tick_untimed_rows = 0
 
     def _a19_ledger_ref(self) -> DirectExitLedger | None:
         """Ledger handle that tolerates hot-reload and bare test objects."""
@@ -1640,6 +1660,263 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     order_id=int(key[1]), ticks_pending=age, cancel_reason=str(reason),
                 )
         return disposition
+
+    def _a19_observe_tick_resting_exits(self, state) -> None:
+        """Observe every open-inventory book's resting Maker exit, each tick.
+
+        A1.9.0 and A1.9.0.1 hung the observer on ``_research_place_maker_exit``,
+        which only runs once the strategy has already decided to place a NEW
+        exit.  That moment is structurally too late.  The frozen final validator
+        drops a placement onto a book that still holds a live order, and the
+        3,000 ms exit TTL expires a full second before the 4,000 ms re-quote
+        cycle comes back round, so by the time the placement path ran, the order
+        it wanted to measure was always already dead.  That is why
+        ``resting_present`` was 0 on all 492 evaluations and why no shadow
+        HOLD/REPRICE decision was ever produced -- twice.
+
+        This pass runs at the top of ``respond``, before the frozen base has
+        touched a single live-order or ownership gate, and it looks at a book
+        because the book carries a position, not because a placement is pending.
+        The exchange's notices for this state are already applied -- the SDK
+        calls ``update`` (which drives ``onOrderAccepted``/``onOrderCancelled``)
+        before ``respond`` -- so the ledger read here is this tick's truth, and
+        it is the window in which a HOLD/REPRICE decision is still actionable.
+
+        Measurement only.  This method returns nothing, writes no threshold, and
+        appends no instruction; A1.9.1 is what acts on the decision.
+        """
+        ledger = self._a19_ledger_ref()
+        try:
+            now_ns = int(getattr(state, "timestamp", 0) or 0)
+        except (TypeError, ValueError):
+            now_ns = 0
+        if now_ns and now_ns != int(getattr(self, "_a19_last_state_ns", 0) or 0):
+            self._a19_last_state_ns = now_ns
+            ledger.sweep(now_ns)
+
+        # ``Strategy1.respond`` increments ``_tick`` as its first action and this
+        # pass runs before that call, so the tick being observed is one ahead of
+        # the counter.  Labelling it correctly is what lets an A19_TICK_OBSERVE
+        # row join the A19_EXIT_EVAL row emitted later in the same tick.
+        tick = int(getattr(self, "_tick", 0) or 0) + 1
+        self._a19_tick_passes += 1
+
+        books = getattr(state, "books", None) or {}
+        if not books:
+            return
+        try:
+            flat_eps = float(self._execution_flat_epsilon())
+        except Exception:
+            flat_eps = 1e-9
+        tick_size = self._a19_tick_size(state)
+        exit_ttl_ms = float(getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
+        floor_bps = float(DIRECT_MAKER_EXIT_TARGET_BPS)
+        min_net_bps = float(getattr(self, "research_profitable_exit_min_net_bps", 0.0) or 0.0)
+        reprice_ticks = float(getattr(self, "research_profitable_exit_reprice_ticks", 3.0) or 3.0)
+        # Previous tick's regime: this pass runs before the base reclassifies.
+        # For a resting order that is the correct regime anyway -- it is the one
+        # in force when the order was placed and priced.
+        regime = getattr(self, "_research_market_regime", "NORMAL")
+        watch = getattr(self, "_a19_cancel_watch", None) or {}
+
+        for raw_bid, book in books.items():
+            try:
+                bid = int(raw_bid)
+            except (TypeError, ValueError):
+                continue
+            # Pure position read.  `_net_inventory` must NOT be used here: it
+            # ages `_position_ticks` once per `_tick`, and running it before the
+            # increment would double-age any book that was idle last tick.
+            # Position age drives the exit escalation ladder, so that would be a
+            # live behaviour change in a measurement-only revision.
+            try:
+                inventory = RestingInventoryView.from_tracker(
+                    self._position_tracker_snapshot(bid)
+                )
+            except Exception:
+                continue
+            net_base = float(inventory.net_base)
+            if abs(net_base) < flat_eps:
+                # Position closed while an exit row may still be tracked; retire
+                # the lifecycle so the next position on this book starts clean.
+                if bid in self._a19_tick_seen:
+                    self._a19_emit_tick_lifecycle(
+                        bid, tick, ABSENT_FILLED, self._a19_tick_seen.pop(bid),
+                    )
+                continue
+
+            self._a19_tick_observations += 1
+            long_pos = net_base > 0.0
+            close_side = close_side_for(net_base)
+            resting = ledger.live_orders(
+                bid, side=close_side, max_age_ms=exit_ttl_ms, now_ns=now_ns,
+            )
+            lagged = ledger.live_orders(bid, side=close_side)
+            live_ids = {int(row.order_id) for row in lagged}
+            # A row whose acknowledgement carried no usable timestamp has an
+            # unknowable age, so the TTL-filtered read drops it silently while
+            # the unfiltered read still shows it.  That is indistinguishable
+            # from expiry lag unless it is counted, and it would read as a
+            # permanently blind observer -- the exact failure A1.9.0.2 exists
+            # to rule out.  Measure it rather than trusting it to be zero.
+            untimed = sum(1 for row in lagged if not row.placed_ns > 0)
+            if untimed:
+                self._a19_tick_untimed_rows += untimed
+            if resting:
+                self._a19_tick_resting_hits += 1
+            elif lagged:
+                self._a19_tick_expiry_lag_hits += 1
+
+            # Peek at the cancel watch without consuming it.  Settlement stays
+            # in the placement path, where `_tick` has already been incremented
+            # and the measured ack latency is therefore on the right clock.
+            pending_cancel = ""
+            for key, (_sent, reason) in watch.items():
+                if int(key[0]) == bid and int(key[1]) not in live_ids:
+                    pending_cancel = str(reason)
+                    break
+
+            seen = self._a19_tick_seen.get(bid)
+            if seen is not None and int(seen.get("order_id", -1)) not in live_ids:
+                prior_abs = abs(float(seen.get("net_base", net_base)))
+                disposition = pending_cancel or (
+                    ABSENT_FILLED if abs(net_base) + 1e-12 < prior_abs else ABSENT_EXPIRED
+                )
+                self._a19_emit_tick_lifecycle(bid, tick, disposition, seen)
+                self._a19_tick_seen.pop(bid, None)
+                seen = None
+
+            if seen is None and resting:
+                row = resting[0]
+                seen = {
+                    "order_id": int(row.order_id),
+                    "price": float(row.price),
+                    "qty": float(row.remaining or row.quantity),
+                    "action": str(row.action or "") or self._a19_pending_action.get(bid, ""),
+                    "first_tick": int(row.placed_tick or tick),
+                    "placed_ns": int(row.placed_ns or 0),
+                    "net_base": net_base,
+                    "observed_ticks": 0,
+                    "peak_age_ms": 0.0,
+                }
+                self._a19_tick_seen[bid] = seen
+                self._a19_tick_first_sightings += 1
+
+            age_ms = 0.0
+            if seen is not None:
+                placed_ns = float(seen.get("placed_ns", 0) or 0)
+                if placed_ns > 0.0 and now_ns:
+                    age_ms = max(0.0, (float(now_ns) - placed_ns) / 1e6)
+                seen["observed_ticks"] = int(seen.get("observed_ticks", 0)) + 1
+                seen["peak_age_ms"] = max(float(seen.get("peak_age_ms", 0.0)), age_ms)
+                self._a19_tick_max_observed_ticks = max(
+                    int(self._a19_tick_max_observed_ticks), int(seen["observed_ticks"]),
+                )
+
+            # The price this book would quote if it repriced right now, at the
+            # passive touch.  That is precisely the alternative a HOLD gives up,
+            # so it is the honest comparand for the shadow decision.
+            desired = None
+            try:
+                side_levels = getattr(book, "asks" if long_pos else "bids", None)
+                if side_levels:
+                    desired = float(side_levels[0].price)
+            except (AttributeError, IndexError, TypeError, ValueError):
+                desired = None
+
+            touch_net_bps = (
+                float("nan") if desired is None
+                else self._a19_resting_net_bps(bid, inventory, desired)
+            )
+            eval_class = exit_eval_class(
+                maker_net_bps=touch_net_bps,
+                min_net_bps=min_net_bps,
+                market_regime=regime,
+            )
+            if eval_class == EVAL_PERSIST_ELIGIBLE:
+                self._a19_tick_eligible += 1
+                if seen is not None:
+                    self._a19_tick_eligible_with_resting += 1
+
+            decision = ""
+            reason = ""
+            drift = 0.0
+            forgone = 0.0
+            resting_net_bps = float("nan")
+            if seen is not None and desired is not None:
+                resting_net_bps = self._a19_resting_net_bps(bid, inventory, seen.get("price"))
+                decision, reason = classify_resting_maker_exit(
+                    existing_price=seen.get("price"), desired_price=desired,
+                    tick_size=tick_size, long_position=long_pos,
+                    existing_qty=seen.get("qty"), desired_qty=abs(net_base),
+                    existing_net_bps=resting_net_bps,
+                    floor_net_bps=floor_bps,
+                    existing_action=seen.get("action"),
+                    # No desired rung exists outside the placement path, and
+                    # `ladder_rung(None)` is -1, so escalation cannot fire on a
+                    # missing comparand rather than on a real escalation.
+                    desired_action=None,
+                    reprice_ticks=reprice_ticks,
+                )
+                drift = behind_ticks(
+                    existing_price=seen.get("price"), desired_price=desired,
+                    tick_size=tick_size, long_position=long_pos,
+                )
+                forgone = forgone_edge_bps(
+                    existing_price=seen.get("price"), desired_price=desired,
+                    long_position=long_pos,
+                )
+                if decision == EXIT_HOLD:
+                    self._a19_tick_shadow_holds += 1
+                else:
+                    self._a19_tick_shadow_reprices += 1
+
+            self._emit(
+                "A19_TICK_OBSERVE", force=True, tick=tick, book=bid,
+                eval_class=str(eval_class),
+                resting_present=int(seen is not None),
+                resting_present_account=int(bool(self._a19_close_side_orders(bid, long_pos))),
+                resting_age_ms=round(age_ms, 1),
+                resting_observed_ticks=(
+                    0 if seen is None else int(seen.get("observed_ticks", 0))
+                ),
+                ledger_live=int(ledger.live_count(bid)),
+                ledger_expiry_lagged=int(len(lagged) - len(resting)),
+                ledger_untimed=int(untimed),
+                exit_ttl_ms=float(exit_ttl_ms),
+                net_base=float(net_base),
+                touch_price=(None if desired is None else float(desired)),
+                touch_net_bps=(
+                    None if not math.isfinite(touch_net_bps) else round(touch_net_bps, 3)
+                ),
+                resting_net_bps=(
+                    None if not math.isfinite(resting_net_bps) else round(resting_net_bps, 3)
+                ),
+                shadow_decision=str(decision), shadow_reason=str(reason),
+                drift_ticks=float(drift), forgone_edge_bps=float(forgone),
+                tenure_ticks=(
+                    0 if seen is None else max(0, tick - int(seen.get("first_tick", tick)))
+                ),
+                pending_cancel=str(pending_cancel),
+                shadow_mode=1,
+            )
+
+    def _a19_emit_tick_lifecycle(
+        self, book_id: int, tick: int, disposition: str, seen: dict,
+    ) -> None:
+        """Close out one observed resting exit and record how long it lived."""
+        observed = int(seen.get("observed_ticks", 0) or 0)
+        self._a19_tick_lifecycles += 1
+        self._a19_tick_observed_ticks_total += observed
+        self._emit(
+            "A19_TICK_LIFECYCLE", force=True, tick=int(tick), book=int(book_id),
+            disposition=str(disposition),
+            tenure_ticks=max(0, int(tick) - int(seen.get("first_tick", tick))),
+            observed_ticks=observed,
+            peak_age_ms=round(float(seen.get("peak_age_ms", 0.0) or 0.0), 1),
+            order_price=seen.get("price"),
+            order_action=str(seen.get("action", "") or ""),
+        )
 
     def _a19_observe_exit_evaluation(
         self, state, book_id: int, inventory, qty: float, action: str,
@@ -1993,6 +2270,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # diagnostic only and does not gate trading.
         self._direct_current_state_timestamp_ns = int(getattr(state, "timestamp", 0) or 0)
         self._direct_request_wall_started = time.perf_counter()
+        # A1.9.0.2 live resting-exit observer.  Runs before super().respond so
+        # it sees every open-inventory book while its Maker exit is still alive,
+        # ahead of every live-order and ownership gate that would skip the book.
+        # Measurement only, and fully contained: an observer fault must never
+        # cost a trading tick.
+        try:
+            self._a19_observe_tick_resting_exits(state)
+        except Exception:
+            pass
         response = super().respond(state)
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
@@ -4699,7 +4985,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a175_shadow_adverse"] = int(getattr(self, "_direct_a175_shadow_adverse", 0) or 0)
         stats["direct_a175_shadow_pending"] = len(getattr(self, "_direct_a175_shadow_ledger", {}) or {})
         stats["direct_exit_refresh_version"] = DIRECT_EXIT_REFRESH_VERSION
-        stats["direct_a19_phase"] = "A2_LEDGER_SHADOW_MEASUREMENT"
+        stats["direct_a19_phase"] = "A3_LIVE_TICK_OBSERVER"
         stats["direct_a19_profitable_exit_ttl_ms"] = float(getattr(self, "research_profitable_exit_ttl_ms", 0.0) or 0.0)
         stats["direct_a19_exit_evals"] = int(getattr(self, "_a19_exit_evals", 0) or 0)
         stats["direct_a19_eligible_evals"] = int(getattr(self, "_a19_eligible_evals", 0) or 0)
@@ -4715,6 +5001,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a1901_account_resting_hits"] = int(getattr(self, "_a19_account_resting_hits", 0) or 0)
         stats["direct_a1901_ledger_only_hits"] = int(getattr(self, "_a19_ledger_only_hits", 0) or 0)
         stats["direct_a1901_ledger_expiry_lag_hits"] = int(getattr(self, "_a19_ledger_expiry_lag_hits", 0) or 0)
+        # A1.9.0.2 live observer.  These are the gate metrics: the A1.9.0.1
+        # counters above stay as the control that shows the placement path was
+        # blind, and direct_a1902_* is what must now be non-zero.
+        stats["direct_a1902_tick_passes"] = int(getattr(self, "_a19_tick_passes", 0) or 0)
+        stats["direct_a1902_tick_observations"] = int(getattr(self, "_a19_tick_observations", 0) or 0)
+        stats["direct_a1902_tick_resting_hits"] = int(getattr(self, "_a19_tick_resting_hits", 0) or 0)
+        stats["direct_a1902_tick_expiry_lag_hits"] = int(getattr(self, "_a19_tick_expiry_lag_hits", 0) or 0)
+        stats["direct_a1902_tick_eligible"] = int(getattr(self, "_a19_tick_eligible", 0) or 0)
+        stats["direct_a1902_tick_eligible_with_resting"] = int(getattr(self, "_a19_tick_eligible_with_resting", 0) or 0)
+        stats["direct_a1902_tick_shadow_holds"] = int(getattr(self, "_a19_tick_shadow_holds", 0) or 0)
+        stats["direct_a1902_tick_shadow_reprices"] = int(getattr(self, "_a19_tick_shadow_reprices", 0) or 0)
+        stats["direct_a1902_tick_first_sightings"] = int(getattr(self, "_a19_tick_first_sightings", 0) or 0)
+        stats["direct_a1902_tick_lifecycles"] = int(getattr(self, "_a19_tick_lifecycles", 0) or 0)
+        stats["direct_a1902_tick_max_observed_ticks"] = int(getattr(self, "_a19_tick_max_observed_ticks", 0) or 0)
+        stats["direct_a1902_tick_observed_ticks_total"] = int(getattr(self, "_a19_tick_observed_ticks_total", 0) or 0)
+        stats["direct_a1902_tick_tracked_books"] = len(getattr(self, "_a19_tick_seen", {}) or {})
+        stats["direct_a1902_tick_untimed_rows"] = int(getattr(self, "_a19_tick_untimed_rows", 0) or 0)
         try:
             stats.update({
                 f"direct_a1901_{k}": v for k, v in self._a19_ledger_ref().stats().items()

@@ -78,7 +78,7 @@ The sub-cycle TTL was a workaround for a hold path that could not function.
 A1.8 generalised that workaround to every profitable exit, shortening the only
 clock that was actually running.
 
-## A1.9.0.1 — resting-exit observability repair (this revision)
+## A1.9.0.1 — resting-exit observability repair (ledger; superseded by A1.9.0.2)
 
 Phase A reported `resting_present = 0` on all 3,746 exit evaluations. That
 answer was **blind, not economic**: the observer read the same empty
@@ -129,6 +129,102 @@ This also quantifies the A1.9 thesis: at TTL 3,000 ms the exit dies exactly when
 the next evaluation wants it, so the queue-preservation ceiling is ~10%. Raising
 the TTL to 4,000 ms is what converts the 47.5% "just expired" population into
 genuine holds.
+
+## A1.9.0.2 — live resting-exit observer (this revision)
+
+A1.9.0.1 shipped and **still measured `resting_present = 0`**:
+
+| Counter | A1.9.0.1 run (298 ticks) |
+|---|---|
+| `A19_EXIT_EVAL` | 492 |
+| `PERSIST_ELIGIBLE` | 255 |
+| `resting_present = 1` | **0** |
+| shadow HOLD/REPRICE decisions | **0** |
+
+The ledger was not at fault — it did detect the old exit orders. The **call
+site** was. Both A1.9.0 and A1.9.0.1 hung the observer inside
+`_research_place_maker_exit`, which only runs once the strategy has decided to
+place a *new* exit. That moment is structurally after the old exit is dead, for
+two independent reasons:
+
+1. the frozen final validator **drops a placement onto a book that still holds a
+   live order**, so a book whose exit is resting never reaches the placement
+   path at all; and
+2. the 3,000 ms exit TTL **expires a full second before** the ~4,000 ms re-quote
+   cycle comes back round (the exit-TTL duty-cycle defect).
+
+So the placement path can only ever observe the one instant when the order is
+already gone. The 9.8% "inside TTL" figure in the table above is not the
+mechanism's ceiling — **it is an artifact of sampling at placement time.**
+
+### The change
+
+Observe every open-inventory book **each tick, at the top of `respond`**, before
+the frozen decision chain and therefore before every live-order and ownership
+gate that would skip the book. The book is examined because it *carries a
+position*, not because a placement is pending.
+
+This is sound because the SDK calls `update(state)` — which drives
+`onOrderAccepted` / `onOrderCancelled` — **before** `respond(state)`, so the
+ledger read at the top of `respond` is already this tick's truth.
+
+Measured on the same lifecycle in test, the observer now sees the exit for its
+whole resting life rather than at one dead instant:
+
+| Tick | `resting_present` | age | account view | shadow decision |
+|---|---|---|---|---|
+| 1 | 1 | 0 ms | 0 | HOLD / QUEUE_PRESERVED |
+| 2 | 1 | 1,000 ms | 0 | HOLD / QUEUE_PRESERVED |
+| 3 | 1 | 2,000 ms | 0 | HOLD / QUEUE_PRESERVED |
+
+`resting_present_account` stays 0 throughout — the A1.9.0.1 control is retained
+precisely so this contrast keeps being measured.
+
+### The load-bearing constraint: no position ageing
+
+The obvious way to read the position in the new pass is `_net_inventory(book,
+mid)`. **It must not be used.** That method advances `_position_ticks` once per
+`_tick`, guarded by `_research_position_tick_seen[book] != current_tick`, and
+this pass runs *before* the base increments `_tick`. For a book that was not
+evaluated on the previous tick the guard does not hold, so the pre-pass would
+age the position once and the tick's real call would age it again. Position age
+drives the exit escalation ladder, so double-ageing is a live trading-behaviour
+change — exactly what a measurement-only revision must not do.
+
+The observer therefore reads `_position_tracker_snapshot` (pure) through
+`RestingInventoryView`, a frozen two-field view carrying only `net_base` and
+`vwap_entry` — all the shadow classifier needs. A test asserts
+`self._net_inventory(` never appears in the observer body.
+
+### Comparand and scope
+
+Outside the placement path there is no "desired" ladder rung, so the observer
+compares the resting quote against **the passive touch** — the price the book
+would quote if it repriced right now, which is precisely what a HOLD gives up.
+`desired_action` is passed as `None`; `ladder_rung(None)` is `-1`, so escalation
+cannot fire on a missing comparand rather than on a real escalation.
+
+Cancel-ack settlement deliberately **stays** in the placement path, where
+`_tick` has already been incremented and the measured latency is on the right
+clock. The new pass only peeks at the cancel watch without consuming it. The
+A1.9.0.1 run already confirmed acks are effectively T+1, so cancel latency is
+not the blocker.
+
+### A newly measured blind spot
+
+`live_orders(max_age_ms=…)` silently drops rows whose acknowledgement carried no
+usable timestamp, because their age is unknowable. That is indistinguishable
+from expiry lag unless counted — and would read as a permanently blind observer,
+the exact failure this revision exists to rule out. `ledger_untimed` /
+`direct_a1902_tick_untimed_rows` now count it. It is expected to be 0:
+`SimulationEvent.timestamp` is a real property on the placement notice.
+
+### Still measurement only
+
+No instruction, no cancel, no threshold write; the observer is wrapped so a
+fault cannot cost a trading tick. `research_profitable_exit_ttl_ms` keeps its
+3,000 ms default. **A1.9.1 remains blocked** until a run shows
+`direct_a1902_tick_resting_hits > 0` with a real HOLD/REPRICE distribution.
 
 ## The A1.9 mechanism
 
@@ -331,6 +427,76 @@ replay clean.
 Reject on Maker share below 90.7% — that is adverse selection on longer-resting
 quotes materialising, which is the genuine open risk of this design.
 
+### The falsifiable prediction
+
+Phase B is not a hope that longer resting helps. The measurements make it
+arithmetic, and therefore refutable.
+
+Measured `exit_p_fill_horizon` is 0.043–0.049 per publish cycle and essentially
+flat across PASSIVE/COMPETITIVE/AGGRESSIVE. If cycles were independent, a TTL of
+*n* cycles fills with probability `1 − (1 − p)^n`:
+
+| TTL | Cycles | Predicted fill | Measured |
+|---|---|---|---|
+| 3,000 ms | 3 | 12.4 – 14.0% | **14%** |
+| 4,000 ms | 4 | 16.1 – 18.2% | — |
+| 5,000 ms | 5 | 19.7 – 22.2% | — |
+
+The measured 14% lands at the top of the predicted 3-cycle band. That is a third
+independent confirmation of the same picture, arrived at from per-cycle fill
+probability rather than from the lifecycle stream or the ledger replay.
+
+**So Phase B predicts Maker exit realization rises from ~14% to ~17%, a ~+30%
+relative gain, and the expiry share falls from 86% to ~83%.**
+
+This is the cleanest gate in the whole programme:
+
+- Fill share lands in **16–18%** → the flat-`p_fill` model holds, the mechanism
+  works, and Phase D's TTL 5,000 A/B is justified by the same arithmetic.
+- Fill share stays near **14%** → resting time is not what limits the fill.
+  Something else gates it, and Phase B should be reverted rather than tuned.
+- Fill share rises **but Maker share on fills drops below 90.7%** → the fills
+  bought by the extra cycle are adverse selection. This is the outcome that
+  invalidates the A1.9 thesis rather than refining it, and it is why Maker share
+  is a *reject* criterion and not merely a metric.
+
+The third case is the real risk of this design and it deserves naming plainly:
+the whole programme assumes the 86% that expire are unlucky rather than
+unwanted. If they expire because the market has already moved away from them,
+then holding them longer does not convert them — it only lets the informed
+traders reach them. The fill-share and Maker-share pair separates those two
+worlds in a single run.
+
+## Destination: what "seriously competitive" means numerically
+
+Phase B's accept criteria are *non-regression* gates against A1.7.5. They are
+not the destination. The destination for a top-tier agent, reached no earlier
+than A2.0:
+
+| Metric | A1.7.5 today | Destination |
+|---|---|---|
+| Positive RT share | ~81.2% | ≥ 88–90% |
+| Maker-ending positive RT | ~99.7% | ≥ 98% (hold) |
+| Maker share on fills | 90.7% | ≥ 93–95% |
+| Taker-ending RT share | ~19% | ≤ 8–10% |
+| RT velocity | ~0.105 | ≥ 0.120–0.130 |
+| Median exit wait | 36.03 s | < 30 s |
+| p90 exit wait | 93.41 s | < 70–80 s |
+| p95 latency | ~106 ms | < 100–110 ms |
+| Ownership / exposure violations | 0 | 0 (hold) |
+
+Note the shape of that table: only two rows are throughput. The rest are
+downside and realization quality. That ordering is not a preference, it follows
+from the score. Kappa-3 divides by the cube root of the third lower partial
+moment, so a single −0.60 round trip contributes 0.216 of cubic downside while
+three −0.20 round trips contribute 0.024 — 9× less, for identical total loss.
+Adding volume before the tail is controlled raises the numerator and the
+denominator together.
+
+This is why slot expansion (A1.8) and size increases stay closed, and why
+throughput is A2.0 rather than A1.9: **the Taker tail must collapse first, and
+the tail collapses by making Maker exits realize, not by trading more.**
+
 ### Deferred: enforcing the invariant against the ledger
 
 The ledger is an accurate live-order view and could back
@@ -341,7 +507,11 @@ bundled into an economics experiment.
 
 ## Verification
 
-- All direct regression suites: **295 passed, 11 skipped, 0 failed**
+- All direct regression suites: **320 passed, 11 skipped, 0 failed**
+  (A1.9.0.1 baseline was 295 passed, 11 skipped, 0 failed — the delta is exactly
+  the 25 new A1.9.0.2 tests; no pre-existing test changed status)
+- A1.9.0.2 suite: **25 passed**, including behavioural coverage that binds the
+  extracted observer to a stub exchange and replays a full exit lifecycle
 - A1.9.0.1 suite: **32 passed**
 - Preflight gate closed: seven pre-existing suites (`a1_5` … `a1_7_0`) and
   `a1_7_4_3_1` were outside the launcher's `RESEARCH_PREFLIGHT_ONLY` list, so
