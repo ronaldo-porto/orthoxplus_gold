@@ -63,7 +63,7 @@ done
 
 [[ -f "$SCRIPT_DIR/run_miner_multi.sh" ]] || { echo "ERROR: run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research_Simple.py" ]] || { echo "ERROR: Strategy1_Research_Simple.py missing" >&2; exit 1; }
-grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
   echo "ERROR: wrong Strategy1 direct candidate" >&2
   exit 1
 }
@@ -93,7 +93,7 @@ fi
 # A1.9.2 activation guard.  Same failure mode, different phase: a build that
 # reports a1_9_2 while the admission gate can never fire would burn another
 # 4,000 ticks before anyone noticed.  Both halves must be provable up front.
-if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
   grep -q 'def _a192_behaviour_change' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: A1.9.2 build cannot report behaviour_change from runtime state" >&2
     exit 1
@@ -158,7 +158,8 @@ research_positive_maker_veto_enabled=1 research_positive_maker_veto_floor_bps=1.
 research_session_save_every_n=100 research_p95_target_ms=120 \
 research_profitable_exit_ttl_ms=4000 research_a191_queue_preservation_enabled=1 \
 research_a192_book_risk_admission_enabled=1 \
-research_a1921_severity_priority_enabled=1"
+research_a1921_severity_priority_enabled=1 \
+research_a193_breadth_admission_enabled=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -189,7 +190,7 @@ fi
 # got budget and the books denied by the cap had identical severity (median
 # 40.73 both).  A build that reports a1_9_2_1 while the severity path can never
 # fire would repeat A1.9.2 under a new name and cost another run.
-if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
   for _fn in _a1921_severity_threshold _a1921_shrink_risk _a1921_seed_severity_history; do
     grep -q "def $_fn" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
       echo "ERROR: A1.9.2.1 build is missing $_fn" >&2
@@ -221,6 +222,61 @@ if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' "$AGENT
     exit 1
   }
   echo "[preflight] A1.9.2.1 severity-prioritised budget activation guard PASS"
+fi
+
+# A1.9.3 activation guard.  Kappa observations expire on a rolling window, so
+# qualification breadth is a FLOW: measured over 1,713 ticks, qualified books
+# track rt_velocity * window / required (0.0885 * 2286 / 3 = 67.4 predicted vs
+# 64 observed).  NEGATIVE_CURRENT_EDGE made a book ineligible BEFORE the
+# completion ladder and the frozen base's expiry/deadline rank bonuses could
+# apply, so every mechanism built to hold breadth was unreachable in exactly
+# the positive-fee regime where breadth is hardest to hold.
+if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+  for _fn in _a193_breadth_override _a193_breadth_lane _a193_breadth_budget; do
+    grep -q "def $_fn" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: A1.9.3 build is missing $_fn" >&2
+      exit 1
+    }
+  done
+  grep -q 'self\._a193_breadth_override(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.3 _a193_breadth_override is defined but never called --" >&2
+    echo "       breadth-critical books stay unreachable and the run is inert." >&2
+    exit 1
+  }
+  # It must override NEGATIVE_CURRENT_EDGE and nothing else.  TOXIC,
+  # INVENTORY_BLOCKED, UNSAFE and VOLUME_CAP stay hard rejects.
+  grep -q 'if reject == "NEGATIVE_CURRENT_EDGE":' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.3 does not scope its override to NEGATIVE_CURRENT_EDGE." >&2
+    exit 1
+  }
+  # THE safety property: books two or more observations away must get nothing.
+  # One round trip does not change their qualification state, so admitting them
+  # at negative edge buys volume, not breadth -- which is the activity
+  # controller this revision deliberately is not.
+  grep -q 'if int(remaining) == 1:' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.3 lane selection is not restricted to remaining == 1;" >&2
+    echo "       it would admit books a single round trip cannot qualify." >&2
+    exit 1
+  }
+  # The cost ceiling must be absolute, not spread-scaled.  Replaying 4,442 RANK
+  # records, a spread-only bound admitted a -26.30 bps entry at +54.60 bps fee.
+  grep -q 'float(self.A192_TAIL_SHORTFALL_FLOOR_BPS),' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.3 cost bound is not anchored to the material-harm floor;" >&2
+    echo "       a wide spread could licence an arbitrarily expensive entry." >&2
+    exit 1
+  }
+  grep -q 'A192_MAX_SUPPRESSION_PCT = 35.0' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.3 changed the A1.9.2 suppression cap. It stays 35.0:" >&2
+    echo "       admission and budget size cannot both move in one run." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_a193_breadth_admission_enabled=1"* ]] || {
+    echo "ERROR: A1.9.3 build without research_a193_breadth_admission_enabled=1" >&2
+    echo "       in PARAMS. The engine would report a1_9_3 while leaving every" >&2
+    echo "       breadth-critical book unreachable -- A1.9.2.1 under a new name." >&2
+    exit 1
+  }
+  echo "[preflight] A1.9.3 breadth-critical admission activation guard PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -258,11 +314,11 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
-  echo "Strategy1 direct V4.16.2 A1.9.2.1 severity-prioritised budget preflight PASS"
+  echo "Strategy1 direct V4.16.2 A1.9.3 breadth-critical admission preflight PASS"
   exit 0
 fi
 
-echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_2_1"
+echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_3"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 

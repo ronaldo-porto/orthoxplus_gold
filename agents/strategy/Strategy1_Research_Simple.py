@@ -310,8 +310,15 @@ A192_SUPPRESS_DWELL = "SUPPRESS_DWELL_ACTIVE"
 # the budget was already exhausted for the window.
 A192_ALLOW_SEVERITY_RANK = "ALLOW_SEVERITY_RANK"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"
+# The events a valid A1.9.3 run must produce.
+DIRECT_A193_EVENTS = ("A193_BREADTH_ADMIT", "A193_BREADTH_DENY")
+# A1.9.3 breadth-critical admission verdicts.  COMPLETION means one round trip
+# qualifies the book; REFRESH means one round trip stops it de-qualifying.
+A193_ALLOW_COMPLETION = "ALLOW_BREADTH_COMPLETION"
+A193_ALLOW_REFRESH = "ALLOW_BREADTH_REFRESH"
+
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_3"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_3"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -1045,6 +1052,22 @@ class Strategy1_Research_Simple(Strategy1_Research):
             reject = "VOLUME_CAP"
         elif current_edge_bps < 0.0:
             reject = "NEGATIVE_CURRENT_EDGE"
+        # A1.9.3: override NEGATIVE_CURRENT_EDGE -- and only that reject -- when
+        # one round trip would change this book's qualification state.  Clearing
+        # it here is what makes the completion ladder below and the frozen base's
+        # expiry / deadline rank bonuses reachable at all; both are gated on
+        # `eligible` downstream.
+        a193 = None
+        if reject == "NEGATIVE_CURRENT_EDGE":
+            try:
+                a193 = self._a193_breadth_override(
+                    bid, remaining=remaining, capture_bps=capture_bps,
+                    maker_fee_bps=maker_fee, current_edge_bps=current_edge_bps,
+                )
+            except Exception:
+                a193 = None
+            if a193 is not None and a193.get("allow"):
+                reject = None
         eligible = reject is None
         final_score = edge_signal + completion if eligible else float("-inf")
         lane = "NORMAL" if remaining <= 0 else ("COVERAGE" if obs <= 0 else "COMPLETION")
@@ -1614,6 +1637,43 @@ class Strategy1_Research_Simple(Strategy1_Research):
     # full 4,000 ticks to discover afterwards.
     A192_ACTIVATION_ALARM_CANDIDATES = 20
 
+    # ---- A1.9.3 breadth-critical admission -----------------------------
+    # Kappa observations expire on a rolling window (research_kappa_lookback_ns,
+    # 3h by default), so qualification breadth is a FLOW, not a stock: a book
+    # holds its place only while it keeps producing round trips.  Measured over
+    # 1,713 ticks, qualified books track rt_velocity * window / required almost
+    # exactly (0.0885 * 2286 / 3 = 67.4 predicted, 64 observed).
+    #
+    # The defect this fixes: NEGATIVE_CURRENT_EDGE makes the book ineligible,
+    # and BOTH breadth mechanisms sit downstream of that flag -- the completion
+    # ladder (final_score = edge + completion if eligible) and the expiry /
+    # deadline rank bonuses in the frozen base, which return -1e9 before the
+    # bonus is applied.  So the machinery built to rescue breadth-critical
+    # books is unreachable exactly when the maker fee is positive, which is
+    # when breadth is hardest to hold.
+    #
+    # This overrides that ONE reject, and only for books where a single round
+    # trip changes qualification state.  TOXIC / INVENTORY_BLOCKED / UNSAFE /
+    # VOLUME_CAP stay hard, and the A1.9.2 tail-risk gate still runs downstream
+    # untouched, so extreme-tail books remain blocked even under deficit.
+    #
+    # Cost bound, two anchors, tighter wins.  Both already exist in this file;
+    # neither is fitted to a log.
+    #
+    #   (a) A192_TAIL_SHORTFALL_FLOOR_BPS -- the project's established scale for
+    #       "materially harmful bps".  An observation is worth the SAME whatever
+    #       the book's spread is, so the cost ceiling must not scale with spread.
+    #       Replaying 4,442 RANK records, a spread-scaled bound alone admitted
+    #       book 16 at fee +54.60 for a -26.30 bps entry, which is exactly the
+    #       wide-spread Taker-exit trade the A1.9.2 gate exists to stop.
+    #   (b) the book's own half-spread -- a thin book cannot fund an observation
+    #       out of a spread it does not have.
+    A193_MAX_COST_SPREADS = 1.0
+    # Ceiling on distinct books holding override status per A192 window.
+    # Anchored to research_max_open_books: we cannot hold more than that many
+    # positions at once anyway, so a larger budget could not be spent.
+    A193_MAX_BREADTH_BOOKS_FALLBACK = 6
+
     # ---- A1.9.2.1 severity-prioritised suppression budget --------------
     # A1.9.2 spent its 35% budget in arrival order.  Measured over 500 ticks,
     # the books that GOT budget and the books DENIED by the cap had identical
@@ -1743,6 +1803,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a192_window_start_tick = 0
         self._a192_window_opportunities = 0
         self._a192_window_suppressed = 0
+        # A1.9.3: books granted breadth override this window, deduped so the
+        # per-tick re-evaluation of the same book cannot drain the budget.
+        self._a193_window_books: set[int] = set()
+        self._a193_window_denied: set[tuple[int, str]] = set()
+        self._a193_admits = 0
+        self._a193_completion_admits = 0
+        self._a193_refresh_admits = 0
+        self._a193_cost_denies = 0
+        self._a193_budget_denies = 0
+        self._a193_deficit_denies = 0
         self._a192_suppressions = 0
         self._a192_dwell_suppressions = 0
         self._a192_admissions = 0
@@ -1809,9 +1879,132 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a192_window_opportunities = 0
             self._a192_window_suppressed = 0
             self._a192_window_candidates = 0
+            self._a193_window_books = set()
+            self._a193_window_denied = set()
 
     def _a1921_enabled(self) -> bool:
         return bool(getattr(self, "research_a1921_severity_priority_enabled", True))
+
+    # ---- A1.9.3 breadth-critical admission -----------------------------
+    def _a193_enabled(self) -> bool:
+        return bool(getattr(self, "research_a193_breadth_admission_enabled", True))
+
+    def _a193_score_deficit(self) -> int:
+        """Qualified-book shortfall against the score target, from the screen."""
+        diag = getattr(self, "_research_inventory_lane_diag", None) or {}
+        try:
+            return max(0, int(diag.get("direct_score_deficit", 0) or 0))
+        except Exception:
+            return 0
+
+    def _a193_breadth_budget(self, deficit: int) -> int:
+        """Never grant more books than the deficit, nor more than we can hold."""
+        try:
+            cap = int(getattr(self, "research_max_open_books", 0) or 0)
+        except Exception:
+            cap = 0
+        if cap <= 0:
+            cap = int(self.A193_MAX_BREADTH_BOOKS_FALLBACK)
+        return max(0, min(int(deficit), cap))
+
+    def _a193_breadth_lane(self, bid: int, remaining: int):
+        """The two states where one round trip changes qualification.
+
+        Books two or more observations away are deliberately excluded: a single
+        round trip does not change their state, so paying negative edge for one
+        buys volume rather than breadth.  That exclusion is what keeps this a
+        breadth controller instead of an activity controller.
+        """
+        if int(remaining) == 1:
+            return A193_ALLOW_COMPLETION, 0.0
+        if int(remaining) <= 0:
+            try:
+                expiry = self._research_kappa_expiry(int(bid))
+            except Exception:
+                return None, 0.0
+            if not bool(getattr(expiry, "qualified", False)):
+                return None, 0.0
+            urgency = float(getattr(expiry, "expiry_urgency", 0.0) or 0.0)
+            # Reuse the base's own definition of a critical deadline rather than
+            # introducing a second, differently-tuned notion of urgency.
+            floor = float(getattr(self, "research_deadline_critical_urgency", 0.50))
+            if urgency >= floor:
+                return A193_ALLOW_REFRESH, urgency
+        return None, 0.0
+
+    def _a193_deny(self, bid, lane, bound, **kw) -> dict:
+        key = (int(bid), str(bound))
+        if key not in getattr(self, "_a193_window_denied", set()):
+            self._a193_window_denied.add(key)
+            try:
+                self._emit(
+                    "A193_BREADTH_DENY", force=True,
+                    tick=getattr(self, "_tick", None), book=int(bid),
+                    lane=str(lane), bound=str(bound), **kw,
+                )
+            except Exception:
+                pass
+        return {"allow": False, "lane": lane, "bound": bound}
+
+    def _a193_breadth_override(
+        self, bid: int, remaining: int, capture_bps: float,
+        maker_fee_bps: float, current_edge_bps: float,
+    ):
+        """Bounded override of NEGATIVE_CURRENT_EDGE for breadth-critical books."""
+        if not self._a193_enabled():
+            return None
+        bid = int(bid)
+        lane, urgency = self._a193_breadth_lane(bid, remaining)
+        if lane is None:
+            return None
+        info = dict(
+            capture_bps=round(float(capture_bps), 4),
+            maker_fee_bps=round(float(maker_fee_bps), 4),
+            current_edge_bps=round(float(current_edge_bps), 4),
+            urgency=round(float(urgency), 4),
+            observations_remaining=int(remaining),
+        )
+        # Structural cost bound: the tighter of the material-harm floor and the
+        # book's own half-spread.  Capped in absolute bps so a wide spread cannot
+        # licence an arbitrarily expensive observation.
+        limit = -min(
+            float(self.A192_TAIL_SHORTFALL_FLOOR_BPS),
+            float(self.A193_MAX_COST_SPREADS) * float(capture_bps),
+        )
+        if float(current_edge_bps) < limit:
+            self._a193_cost_denies += 1
+            return self._a193_deny(bid, lane, "COST", cost_limit_bps=round(limit, 4), **info)
+        deficit = self._a193_score_deficit()
+        if deficit <= 0:
+            self._a193_deficit_denies += 1
+            return self._a193_deny(bid, lane, "NO_DEFICIT", score_deficit=0, **info)
+        granted = getattr(self, "_a193_window_books", None)
+        if granted is None:
+            granted = self._a193_window_books = set()
+        if bid not in granted:
+            budget = self._a193_breadth_budget(deficit)
+            if len(granted) >= budget:
+                self._a193_budget_denies += 1
+                return self._a193_deny(
+                    bid, lane, "BUDGET", score_deficit=int(deficit),
+                    budget=int(budget), granted=len(granted), **info,
+                )
+            granted.add(bid)
+            self._a193_admits += 1
+            if lane == A193_ALLOW_COMPLETION:
+                self._a193_completion_admits += 1
+            else:
+                self._a193_refresh_admits += 1
+            try:
+                self._emit(
+                    "A193_BREADTH_ADMIT", force=True,
+                    tick=getattr(self, "_tick", None), book=bid, lane=str(lane),
+                    score_deficit=int(deficit), budget=int(self._a193_breadth_budget(deficit)),
+                    granted=len(granted), **info,
+                )
+            except Exception:
+                pass
+        return {"allow": True, "lane": lane, "urgency": urgency}
 
     @staticmethod
     def _a1921_severity(risk: dict[str, Any]) -> float:
@@ -2139,6 +2332,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     a1921_coldstart_prior_samples=float(self.A1921_COLDSTART_PRIOR_SAMPLES),
                     a1921_min_pool_books=int(self.A1921_MIN_POOL_BOOKS),
                     a192_events=",".join(DIRECT_A192_EVENTS),
+                    a193_events=",".join(DIRECT_A193_EVENTS),
+                    a193_breadth_admission_enabled=int(bool(self._a193_enabled())),
+                    a193_max_cost_spreads=float(self.A193_MAX_COST_SPREADS),
                 )
             except Exception:
                 pass
@@ -6384,6 +6580,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a1921_budget_utilization_pct"] = round(
             100.0 * int(getattr(self, "_a192_window_suppressed", 0) or 0) / _alw, 2
         ) if _alw > 0.0 else 0.0
+        # ---- A1.9.3 breadth-critical admission ----
+        stats["direct_a193_breadth_admission_enabled"] = int(bool(self._a193_enabled()))
+        stats["direct_a193_admits"] = int(getattr(self, "_a193_admits", 0) or 0)
+        stats["direct_a193_completion_admits"] = int(getattr(self, "_a193_completion_admits", 0) or 0)
+        stats["direct_a193_refresh_admits"] = int(getattr(self, "_a193_refresh_admits", 0) or 0)
+        stats["direct_a193_cost_denies"] = int(getattr(self, "_a193_cost_denies", 0) or 0)
+        stats["direct_a193_budget_denies"] = int(getattr(self, "_a193_budget_denies", 0) or 0)
+        stats["direct_a193_deficit_denies"] = int(getattr(self, "_a193_deficit_denies", 0) or 0)
+        stats["direct_a193_window_books"] = len(getattr(self, "_a193_window_books", set()) or set())
+        stats["direct_a193_score_deficit"] = int(self._a193_score_deficit())
+        stats["direct_a193_max_cost_spreads"] = float(self.A193_MAX_COST_SPREADS)
+        stats["direct_a193_breadth_budget"] = int(self._a193_breadth_budget(self._a193_score_deficit()))
         stats["direct_a192_max_suppression_pct"] = float(self.A192_MAX_SUPPRESSION_PCT)
         stats["direct_a192_net_bps_floor"] = float(self.A192_NET_BPS_FLOOR)
         stats["direct_a192_tail_shortfall_floor_bps"] = float(self.A192_TAIL_SHORTFALL_FLOOR_BPS)

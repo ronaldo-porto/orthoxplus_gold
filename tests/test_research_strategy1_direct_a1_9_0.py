@@ -68,8 +68,8 @@ def _classify(existing_price, desired_price, *, long_position=True, net=5.0,
 # --------------------------------------------------------------------------
 
 def test_a19_version_contract():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' in SRC
     assert DIRECT_EXIT_REFRESH_VERSION == "direct_exit_refresh_v4_16_2_a1_9_2"
 
 
@@ -97,7 +97,7 @@ def test_frozen_base_is_untouched_by_phase_a():
 
 
 def test_launcher_pins_phase_a_version_and_keeps_baseline_ttl():
-    assert "strategy1_direct_v4_16_2_a1_9_2_1" in LAUNCHER
+    assert "strategy1_direct_v4_16_2_a1_9_3" in LAUNCHER
     # A1.9.1 Phase B is what raises the TTL, and it must be raised through
     # PARAMS -- never mutated in initialize(), which is how A1.8 did it.
     assert "research_profitable_exit_ttl_ms=4000" in LAUNCHER

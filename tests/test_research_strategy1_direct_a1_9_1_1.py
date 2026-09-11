@@ -58,8 +58,8 @@ BOOK = 7
 # --------------------------------------------------------------- versioning
 
 def test_version_advances_to_a1_9_1_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' in SRC
 
 
 # ------------------------------------------- defect 2: telemetry told the truth
@@ -146,7 +146,7 @@ def _load():
         "classify_resting_maker_exit": classify_resting_maker_exit,
         "unified_completion_net_bps": unified_completion_net_bps,
         "DIRECT_MAKER_EXIT_TARGET_BPS": 2.0,
-        "SIMPLE_ENGINE_VERSION": "strategy1_direct_v4_16_2_a1_9_2_1",
+        "SIMPLE_ENGINE_VERSION": "strategy1_direct_v4_16_2_a1_9_3",
         "DIRECT_EXIT_REFRESH_VERSION": "direct_exit_refresh_v4_16_2_a1_9_2",
         "DIRECT_EXIT_LEDGER_VERSION": "direct_exit_ledger_v4_16_2_a1_9_0_3",
         "DIRECT_A19_PHASE_B_EVENTS": ("A19_QUEUE_HOLD", "A19_EXIT_REPRICE_CANCEL", "A19_REPRICE_BUDGET_BLOCK"),

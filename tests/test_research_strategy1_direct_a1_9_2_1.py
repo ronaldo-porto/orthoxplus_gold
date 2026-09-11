@@ -53,8 +53,8 @@ SRC = SIMPLE.read_text()
 # ------------------------------------------------------------- source pins
 
 def test_version_advances_to_a1_9_2_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' in SRC
 
 
 def test_suppression_cap_is_unchanged():
@@ -107,7 +107,7 @@ def test_dwell_suppressions_still_consume_budget():
 
 def test_launcher_guards_the_new_phase():
     sh = LAUNCHER.read_text()
-    assert 'strategy1_direct_v4_16_2_a1_9_2_1' in sh
+    assert 'strategy1_direct_v4_16_2_a1_9_3' in sh
     assert "research_a1921_severity_priority_enabled=1" in sh
     assert "A192_MAX_SUPPRESSION_PCT = 35.0" in sh
 
