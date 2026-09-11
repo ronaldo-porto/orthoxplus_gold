@@ -138,6 +138,71 @@
     "ticks": 260,
     "verdict": "PASS"
   },
+  "a1_9_1_1_activation_self_reporting": {
+    "alarm_event": "A19_ACTIVATION_ALARM",
+    "alarm_silent_in_shadow_mode": true,
+    "alarm_threshold_reprice_candidates": 20,
+    "alarm_verdict": "PHASE_B_INERT_STOP_THE_RUN",
+    "banner_emitted_before_early_returns": true,
+    "banner_event": "A19_ACTIVATION_BANNER",
+    "banner_fields": [
+      "a19_phase",
+      "a19_behaviour_change",
+      "shadow_mode",
+      "profitable_exit_ttl_ms",
+      "exit_refresh_version",
+      "phase_b_events"
+    ],
+    "exit_refresh_version": "direct_exit_refresh_v4_16_2_a1_9_1_1",
+    "phase_b_events": [
+      "A19_QUEUE_HOLD",
+      "A19_EXIT_REPRICE_CANCEL",
+      "A19_REPRICE_BUDGET_BLOCK"
+    ],
+    "rename_reason": "the A191_ prefix produced two false 'not wired' diagnoses",
+    "renamed_from": [
+      "A191_EXIT_HOLD",
+      "A191_EXIT_REPRICE_CANCEL",
+      "A191_REPRICE_DEFERRED"
+    ]
+  },
+  "a1_9_1_1_defects_repaired": {
+    "d1_post_pass_inert": "_a191_service_reprice_cancels iterated only cached verdicts, whose sole writer was _a191_decide called from _research_place_maker_exit -- the path measured at 0 of 492 live-exit sightings. It now seeds a verdict for every open-inventory book itself, as the observer does.",
+    "d2_telemetry_lied": "three sites hardcoded Phase A (a19_phase, phase, behaviour_change) and shadow_mode=1 was unconditional. All now derive from the runtime enable flag through _a19_runtime_phase / _a19_behaviour_change.",
+    "event_name_mismatch": "the run was grepped for A19_EXIT_REPRICE_CANCEL / A19_QUEUE_HOLD / A19_REPRICE_BUDGET_BLOCK, which do not exist; the events are A191_EXIT_HOLD, A191_EXIT_REPRICE_CANCEL, A191_REPRICE_DEFERRED. The config row now carries phase_b_events listing them.",
+    "not_a_defect": "direct_exit_refresh_version=a1_9_0_3 is correct -- that module last changed in A1.9.0.3 and A1.9.1 did not touch it"
+  },
+  "a1_9_1_extended_run_2961": {
+    "causal_chain": "zero rebate -> exits go stale -> classifier says REPRICE 61.7% -> no cancel path -> 4000 ms quote rides to expiry -> Maker economics deteriorate -> WAIT -> inventory ages -> ABSOLUTE protection -> Taker",
+    "conclusion": "strengthens the case for Phase B; does not test it",
+    "engine_version_reported": "strategy1_direct_v4_16_2_a1_9_1",
+    "post_reset": {
+      "maker_fee_median_bps": 0,
+      "maker_fill_share_pct": 75.3,
+      "positive_rt_pct": 45.5,
+      "rt_pnl": -15.86,
+      "shadow_hold_share_pct": 38.3,
+      "taker_ending_share_pct": 51.5,
+      "wait_hold_per_tick": 1.09
+    },
+    "pre_reset": {
+      "maker_fee_median_bps": -15.1,
+      "maker_fill_share_pct": 92.5,
+      "positive_rt_pct": 84.1,
+      "rt_pnl": 8.36,
+      "taker_ending_share_pct": 17.1
+    },
+    "repair_version": "strategy1_direct_v4_16_2_a1_9_1_1",
+    "reprice_cancels": 0,
+    "run_id": "20260910_224242",
+    "shadow_holds": 2230,
+    "shadow_reprices": 2863,
+    "sim_reset_at_tick": 890,
+    "ticks": 2961,
+    "verdict": "INVALID_SAME_RUN_ID_AS_THE_FIRST_PREDATES_THE_FIX",
+    "wait_hold_per_tick_pre_reset": 0.38,
+    "why_it_cannot_test_the_fix": "same run id as the first 500-tick run, extended; it reports a1_9_1, while the seeding and telemetry repair is a1_9_1_1"
+  },
   "a1_9_1_mechanism": {
     "behavioural_delta": [
       "research_profitable_exit_ttl_ms 3000 -> 4000 via PARAMS (4x the 1,000 ms publish cadence)",
@@ -158,6 +223,34 @@
       "remaining_ttl_ms": 1000.0
     },
     "why_not_placement_path": "measured 0 of 492 placement-path calls saw a live resting exit vs 960 tick-observer sightings in 260 ticks"
+  },
+  "a1_9_1_run": {
+    "behaviour_change_reported": 0,
+    "engine_version_reported": "strategy1_direct_v4_16_2_a1_9_1",
+    "exit_share_of_rt_lifecycle_pct": 86.1,
+    "gates": {
+      "a19_behavioural_activation": "FAIL",
+      "aggressive_share_pct": "41.3 PASS",
+      "latency_p95_ms": "105.1 PASS",
+      "maker_fill_share_pct": "92.4 PASS",
+      "max_exposure_base": "1.5001 PASS",
+      "ownership": "0/0 PASS",
+      "positive_rt_pct": "82.2 PASS",
+      "rt_velocity": "0.0902 FAIL (meaningless: mechanism never ran)",
+      "taker_ending_pct": "17.8 PASS"
+    },
+    "invalid_because": "4000 ms TTL active with the stale-cancel path inert -- the exact split the A1.9 design says must never run",
+    "maker_ending": "37/37 positive, +10.537",
+    "median_exit_wait_s": 25.74,
+    "profitable_exit_ttl_ms_active": 4000,
+    "quiet_share": "498/500",
+    "reprice_cancels_emitted": 0,
+    "runtime_phase_reported": "A_SHADOW_MEASUREMENT",
+    "shadow_holds": 539,
+    "shadow_reprices_requested": 756,
+    "taker_ending": "0/8 positive, -6.779, all ABSOLUTE_PROTECTION_REDUCE",
+    "ticks": 500,
+    "verdict": "INVALID_DO_NOT_JUDGE_PERFORMANCE"
   },
   "a3_accept_gate": {
     "behaviour_neutrality": "RT velocity, exposure, ownership violations unchanged vs A1.7.5",
@@ -258,7 +351,50 @@
     "agents/strategy/research_direct_tail_recovery.py": "32d2b9cb8954f93c1c7e7873623ff36c4ac31f019be9d3ecc32a2bde9a4d9a86"
   },
   "frozen_file_sha256_verified": true,
-  "goal": "Hold a profitable resting Maker exit by queue position and reprice only on structural staleness, via an explicit cancel whose replacement lands on a later state. First behavioural revision of A1.9.",
+  "goal": "Make Phase B actually run and report itself honestly. The A1.9.1 run had a live 4000 ms TTL but emitted 0 reprice cancels, and reported Phase A shadow mode while claiming an A1.9.1 engine.",
+  "kappa_downside_attribution": {
+    "a1_9_2_target": "ABSOLUTE_PROTECTION_REDUCE is the dominant Kappa killer",
+    "by_taker_reason": {
+      "ABSOLUTE_PROTECTION_REDUCE": {
+        "cubic_downside_pct": 92.2,
+        "pnl": -19.5,
+        "rt": 48
+      },
+      "HARD_ESCAPE_CLIP": {
+        "cubic_downside_pct": 5.1,
+        "pnl": -7.75,
+        "rt": 38
+      },
+      "NORMAL_TAKER_NONNEGATIVE": {
+        "cubic_downside_pct": 0,
+        "pnl": 1.35,
+        "rt": 2
+      },
+      "RECOVERY_TAKER_REDUCE": {
+        "cubic_downside_pct": 2.7,
+        "pnl": -9.05,
+        "rt": 64
+      }
+    },
+    "not_the_target": [
+      "entries",
+      "latency",
+      "active book count",
+      "normal Takers"
+    ],
+    "source": "2961-tick run",
+    "taker_ending_share_of_cubic_downside_pct": 99.95
+  },
+  "launcher_activation_guard": {
+    "params_checked_by_value": "tests $PARAMS content, not script text -- grepping the file matches the guard's own source line and always passes",
+    "refuses": [
+      "A1.9.1 build without research_a191_queue_preservation_enabled=1 in PARAMS",
+      "A1.9.1 build without research_profitable_exit_ttl_ms=4000 in PARAMS",
+      "A1.9.1 build that cannot report behaviour_change from runtime state",
+      "A1.9.1 build that hardcodes Phase A telemetry anywhere"
+    ],
+    "verified": "executed against four mutated builds: clean passes, three failures fire"
+  },
   "measurements": {
     "account_orders_resting_seen_pct": 0.0,
     "acknowledged_limit_orders": 33455,
@@ -291,8 +427,25 @@
     "tests/test_research_strategy1_direct_a1_9_0_1.py",
     "tests/test_research_strategy1_direct_a1_9_0_2.py",
     "tests/test_research_strategy1_direct_a1_9_0_3.py",
-    "tests/test_research_strategy1_direct_a1_9_1.py"
+    "tests/test_research_strategy1_direct_a1_9_1.py",
+    "tests/test_research_strategy1_direct_a1_9_1_1.py"
   ],
+  "next_run": {
+    "must_show": [
+      "a19_phase = B_QUEUE_PRESERVING_EXIT",
+      "behaviour_change = 1",
+      "shadow_mode = 0 on A19_TICK_OBSERVE",
+      "A191_EXIT_REPRICE_CANCEL > 0 when stale candidates occur",
+      "cancels use exact exchange order ids, no same-response replacement",
+      "A19_CANCEL_ACK at T+1",
+      "ownership overlaps and mismatched releases both 0"
+    ],
+    "sanity_run_ticks": [
+      50,
+      100
+    ],
+    "then": "the real 500-tick abort gate, then ~4,000 ticks if healthy"
+  },
   "phase": "B_QUEUE_PRESERVING_EXIT",
   "phase_a_run": {
     "a19_exit_eval_below_min_net": 2551,
@@ -347,22 +500,20 @@
       22.2
     ]
   },
-  "policy_version": "strategy1_direct_v4_16_2_a1_9_1",
-  "release": "Strategy1-Direct V4.16.2 A1.9.1",
+  "policy_version": "strategy1_direct_v4_16_2_a1_9_1_1",
+  "release": "Strategy1-Direct V4.16.2 A1.9.1.1",
   "single_behavior_change": {
     "behaviour_change": true,
     "effective_profitable_exit_ttl_ms": 4000.0,
     "note": "First behavioural revision of A1.9. TTL raise and cancel-then-replace are one mechanism and ship together. All A1.7.5 limits, the QUIET gate, Taker authority and tail authority are unchanged."
   },
-  "title": "Queue-Preserving Maker Exit (Behavioural Phase B)",
+  "title": "Phase B Activation Repair",
   "verification": {
-    "a1_9_1_suite": "34 passed",
-    "all_direct_regression": "381 passed, 11 skipped, 0 failed",
-    "baseline_comparison": "A1.9.0.3 was 347 passed; the +34 delta is exactly the new suite",
+    "all_direct_regression": "409 passed, 11 skipped, 0 failed",
     "bash_syntax": "PASS",
     "frozen_base_untouched": true,
-    "frozen_landmine_intact": "return super()._research_place_maker_exit present once, unwrapped",
-    "mutation_tested": "removing the remaining-TTL gate, the instruction-budget guard, or the once-only cancel flag is caught by 1 test each",
+    "launcher_guard_tested": "executed against four mutated builds",
+    "mutation_tested": "disabling the activation alarm is caught by 1 test; reverting the seeding fix reproduces the invalid run and is caught by 8",
     "python_compile": "PASS"
   }
 }

@@ -68,9 +68,9 @@ def _classify(existing_price, desired_price, *, long_position=True, net=5.0,
 # --------------------------------------------------------------------------
 
 def test_a19_version_contract():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
-    assert DIRECT_EXIT_REFRESH_VERSION == "direct_exit_refresh_v4_16_2_a1_9_0_3"
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
+    assert DIRECT_EXIT_REFRESH_VERSION == "direct_exit_refresh_v4_16_2_a1_9_1_1"
 
 
 def test_a18_cycle_bounded_ttl_override_is_fully_reverted():
@@ -85,8 +85,10 @@ def test_phase_a_is_measurement_only():
     """The classifier runs in shadow mode; Phase A must not act on its decision."""
     assert "_a19_observe_exit_evaluation" in SRC
     assert "A19_EXIT_EVAL" in SRC
-    # No cancel-then-replace emitter yet: that is Phase B.
-    assert "A19_EXIT_REPRICE_CANCEL" not in SRC
+    # A1.9.1 Phase B is now shipped, so the reprice emitter exists by design.
+    # What must remain true is that the OLD shadow observer stays measurement
+    # only: its decision is still discarded.
+    assert "shadow_mode=1," in SRC
 
 
 def test_frozen_base_is_untouched_by_phase_a():
@@ -95,7 +97,7 @@ def test_frozen_base_is_untouched_by_phase_a():
 
 
 def test_launcher_pins_phase_a_version_and_keeps_baseline_ttl():
-    assert "strategy1_direct_v4_16_2_a1_9_1" in LAUNCHER
+    assert "strategy1_direct_v4_16_2_a1_9_1_1" in LAUNCHER
     # A1.9.1 Phase B is what raises the TTL, and it must be raised through
     # PARAMS -- never mutated in initialize(), which is how A1.8 did it.
     assert "research_profitable_exit_ttl_ms=4000" in LAUNCHER

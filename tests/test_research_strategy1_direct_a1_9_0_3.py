@@ -75,10 +75,10 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_0_3():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
     assert DIRECT_EXIT_LEDGER_VERSION == "direct_exit_ledger_v4_16_2_a1_9_0_3"
-    assert DIRECT_EXIT_REFRESH_VERSION == "direct_exit_refresh_v4_16_2_a1_9_0_3"
+    assert DIRECT_EXIT_REFRESH_VERSION == "direct_exit_refresh_v4_16_2_a1_9_1_1"
 
 
 def test_frozen_base_untouched():
@@ -212,7 +212,7 @@ WANTED = {
     "_a19_resolve_disposition", "_a19_is_entry_quote_row",
     "_direct_entry_quote_client_ids",
     "_a19_resting_net_bps", "_a19_close_side_orders", "_a19_tick_size",
-    "_a19_ledger_ref", "_direct_account_orders", "_a19_note_exit_cancel",
+    "_a19_ledger_ref", "_direct_account_orders", "_a191_enabled", "_a19_note_exit_cancel",
 }
 
 
@@ -235,6 +235,7 @@ class _Agent:
     research_profitable_exit_ttl_ms = 3000.0
     research_profitable_exit_min_net_bps = 0.0
     research_profitable_exit_reprice_ticks = 3.0
+    research_a191_queue_preservation_enabled = False
     _research_market_regime = "NORMAL"
     _research_volume_decimals = 4
     research_score_ev_fees_bps = 1.0
@@ -470,4 +471,6 @@ def test_stats_surface_the_new_attribution():
         "direct_a1903_cancel_reasons_tracked",
     ):
         assert f'stats["{key}"]' in SRC, key
-    assert 'stats["direct_a19_phase"] = "B_QUEUE_PRESERVING_EXIT"' in SRC
+    # A1.9.1.1: derived from runtime state, not a literal.
+    assert 'stats["direct_a19_phase"] = self._a19_runtime_phase()' in SRC
+    assert 'stats["direct_a19_behaviour_change"] = self._a19_behaviour_change()' in SRC

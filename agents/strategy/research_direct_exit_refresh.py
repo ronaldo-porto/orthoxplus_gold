@@ -27,7 +27,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-DIRECT_EXIT_REFRESH_VERSION = "direct_exit_refresh_v4_16_2_a1_9_0_3"
+DIRECT_EXIT_REFRESH_VERSION = "direct_exit_refresh_v4_16_2_a1_9_1_1"
 
 # A1.7.5 baseline persistence window, restored by reverting A1.8.  Phase B
 # raises this to DIRECT_A19_TARGET_PROFITABLE_EXIT_TTL_MS via PARAMS so the

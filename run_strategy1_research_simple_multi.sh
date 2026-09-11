@@ -63,7 +63,7 @@ done
 
 [[ -f "$SCRIPT_DIR/run_miner_multi.sh" ]] || { echo "ERROR: run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research_Simple.py" ]] || { echo "ERROR: Strategy1_Research_Simple.py missing" >&2; exit 1; }
-grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
   echo "ERROR: wrong Strategy1 direct candidate" >&2
   exit 1
 }
@@ -71,6 +71,24 @@ grep -q 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_2"' "$AGEN
   echo "ERROR: baseline Strategy1_Research.py must remain V4.16.2" >&2
   exit 1
 }
+
+# A1.9.1.1 activation guard.  The A1.9.1 run shipped engine_version=a1_9_1 while
+# the runtime still reported Phase A shadow mode and emitted zero reprice
+# cancels: a 4,000 ms TTL with no stale-cancel path, which is precisely the
+# split the A1.9 design says must never run. A behavioural build must prove it
+# can report behaviour_change=1, and must not hardcode Phase A anywhere.
+if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+  grep -q 'def _a19_behaviour_change' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.1 build cannot report behaviour_change from runtime state" >&2
+    exit 1
+  }
+  if grep -qE 'a19_phase="A_SHADOW_MEASUREMENT"|phase="A2_LEDGER_SHADOW_MEASUREMENT"|behaviour_change=0,' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+    echo "ERROR: A1.9.1 build still hardcodes Phase A telemetry; refusing the" >&2
+    echo "       silent hybrid that invalidated the first 500-tick run" >&2
+    exit 1
+  fi
+  A191_BUILD=1
+fi
 
 export STRATEGY1_DEBUG=1
 export STRATEGY1_DEBUG_JSONL=0
@@ -118,6 +136,21 @@ research_positive_maker_veto_enabled=1 research_positive_maker_veto_floor_bps=1.
 research_session_save_every_n=100 research_p95_target_ms=120 \
 research_profitable_exit_ttl_ms=4000 research_a191_queue_preservation_enabled=1"
 
+# Checked against the PARAMS VALUE, not the script text: grepping the file would
+# match this guard's own source line and always pass.
+if [[ "${A191_BUILD:-0}" == "1" ]]; then
+  [[ "$PARAMS" == *"research_a191_queue_preservation_enabled=1"* ]] || {
+    echo "ERROR: A1.9.1 build without research_a191_queue_preservation_enabled=1 in PARAMS" >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_profitable_exit_ttl_ms=4000"* ]] || {
+    echo "ERROR: A1.9.1 build without the 4000 ms exit TTL. The TTL raise and the" >&2
+    echo "       stale-cancel path are one mechanism and must not be split." >&2
+    exit 1
+  }
+  echo "[preflight] A1.9.1 behavioural activation guard PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -146,14 +179,15 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_strategy1_direct_a1_9_0_2.py \
       tests/test_research_strategy1_direct_a1_9_0_3.py \
       tests/test_research_strategy1_direct_a1_9_1.py \
+      tests/test_research_strategy1_direct_a1_9_1_1.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
-  echo "Strategy1 direct V4.16.2 A1.9.1 Phase B preflight PASS"
+  echo "Strategy1 direct V4.16.2 A1.9.1.1 Phase B preflight PASS"
   exit 0
 fi
 
-echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_1"
+echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_1_1"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 

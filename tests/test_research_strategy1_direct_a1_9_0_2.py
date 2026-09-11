@@ -69,8 +69,8 @@ BOOK = 7
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_0_2():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
     assert DIRECT_EXIT_LEDGER_VERSION == "direct_exit_ledger_v4_16_2_a1_9_0_3"
 
 
@@ -160,7 +160,7 @@ def _load_observer():
     wanted = {
         "_a19_observe_tick_resting_exits", "_a19_emit_tick_lifecycle",
         "_a19_resting_net_bps", "_a19_close_side_orders", "_a19_tick_size",
-        "_a19_ledger_ref", "_direct_account_orders",
+        "_a19_ledger_ref", "_direct_account_orders", "_a191_enabled",
         # A1.9.0.3 dependencies of the observer body.
         "_a19_resolve_disposition", "_a19_is_entry_quote_row",
         "_direct_entry_quote_client_ids",
@@ -212,6 +212,7 @@ class _Agent:
     research_profitable_exit_ttl_ms = 3000.0
     research_profitable_exit_min_net_bps = 0.0
     research_profitable_exit_reprice_ticks = 3.0
+    research_a191_queue_preservation_enabled = False
     _research_market_regime = "NORMAL"
     _research_volume_decimals = 4
     research_score_ev_fees_bps = 1.0
@@ -452,7 +453,9 @@ def test_gate_metrics_are_reported():
         "direct_a1902_tick_lifecycles", "direct_a1902_tick_untimed_rows",
     ):
         assert f'stats["{key}"]' in SRC, key
-    assert 'stats["direct_a19_phase"] = "B_QUEUE_PRESERVING_EXIT"' in SRC
+    # A1.9.1.1: derived from runtime state, not a literal.
+    assert 'stats["direct_a19_phase"] = self._a19_runtime_phase()' in SRC
+    assert 'stats["direct_a19_behaviour_change"] = self._a19_behaviour_change()' in SRC
 
 
 def test_a1901_control_counters_are_retained():

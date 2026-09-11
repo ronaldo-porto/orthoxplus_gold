@@ -54,14 +54,14 @@ def _ledger_with(**kw):
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_0_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
     assert DIRECT_EXIT_LEDGER_VERSION == "direct_exit_ledger_v4_16_2_a1_9_0_3"
 
 
 def test_launcher_pins_the_same_version_and_preflights_this_suite():
     text = LAUNCHER.read_text()
-    assert 'strategy1_direct_v4_16_2_a1_9_1"' in text
+    assert 'strategy1_direct_v4_16_2_a1_9_1_1"' in text
     assert "test_research_strategy1_direct_a1_9_0_1.py" in text
     # A1.9.1 Phase B raises the TTL through PARAMS, where the frozen base
     # clamps it to [1000, 5000] and the run manifest records the value.
@@ -79,7 +79,10 @@ def test_frozen_base_still_untouched():
 
 def test_phase_a2_remains_behaviour_neutral():
     # The shadow decision is computed and discarded; no cancel/reprice path.
-    assert "A19_EXIT_REPRICE_CANCEL" not in SRC
+    # A1.9.1 Phase B is now shipped, so the reprice emitter exists by design.
+    # What must remain true is that the OLD shadow observer stays measurement
+    # only: its decision is still discarded.
+    assert "shadow_mode=1," in SRC
     assert "deliberately discarded" in SRC
     # The TTL is read, never assigned, by the overlay.
     assert "self.research_profitable_exit_ttl_ms =" not in SRC

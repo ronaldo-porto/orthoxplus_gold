@@ -254,8 +254,20 @@ from research_direct_liveness import (
 )
 
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1"
+# A1.9.1.1: phase and behaviour-change are derived from the runtime enable flag
+# and reported from ONE place.  The A1.9.1 run shipped engine_version=a1_9_1
+# while three separate hardcoded sites still reported Phase A shadow mode, which
+# is exactly the silent hybrid the preflight now refuses to launch.
+DIRECT_A19_PHASE_BEHAVIOURAL = "B_QUEUE_PRESERVING_EXIT"
+DIRECT_A19_PHASE_SHADOW = "A_SHADOW_MEASUREMENT"
+# The events a valid Phase B run must produce.  Named here so an analysis can
+# grep the config row rather than guess: A191_*, not A19_*.
+DIRECT_A19_PHASE_B_EVENTS = (
+    "A19_QUEUE_HOLD", "A19_EXIT_REPRICE_CANCEL", "A19_REPRICE_BUDGET_BLOCK",
+)
+
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -496,13 +508,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 a1745_wide_spread_min_bps=float(DIRECT_A1745_WIDE_SPREAD_MIN_BPS),
                 a1745_global_maker_edge_retune=0,
                 direct_exit_refresh_version=DIRECT_EXIT_REFRESH_VERSION,
-                a19_phase="A_SHADOW_MEASUREMENT",
+                a19_phase=self._a19_runtime_phase(),
                 a19_profitable_exit_ttl_ms=float(
                     getattr(self, "research_profitable_exit_ttl_ms", DIRECT_A19_BASELINE_PROFITABLE_EXIT_TTL_MS)
                     or DIRECT_A19_BASELINE_PROFITABLE_EXIT_TTL_MS
                 ),
                 a19_target_profitable_exit_ttl_ms=float(DIRECT_A19_TARGET_PROFITABLE_EXIT_TTL_MS),
-                a19_behaviour_change=0,
+                a19_behaviour_change=self._a19_behaviour_change(),
                 a19_size_change=0,
                 a19_active_book_change=0,
                 a19_taker_logic_change=0,
@@ -574,13 +586,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 tick=int(getattr(self, "_tick", 0) or 0),
                 exit_refresh_version=DIRECT_EXIT_REFRESH_VERSION,
                 exit_ledger_version=DIRECT_EXIT_LEDGER_VERSION,
-                phase="A2_LEDGER_SHADOW_MEASUREMENT",
+                phase=self._a19_runtime_phase(),
                 effective_profitable_exit_ttl_ms=effective_ttl,
                 baseline_profitable_exit_ttl_ms=float(DIRECT_A19_BASELINE_PROFITABLE_EXIT_TTL_MS),
                 target_profitable_exit_ttl_ms=float(DIRECT_A19_TARGET_PROFITABLE_EXIT_TTL_MS),
                 reprice_ticks=float(getattr(self, "research_profitable_exit_reprice_ticks", 3.0) or 3.0),
                 observed_publish_interval_ms=publish_ms,
-                behaviour_change=0, maker_only=1, taker_logic_change=0,
+                behaviour_change=self._a19_behaviour_change(),
+                phase_b_events=",".join(DIRECT_A19_PHASE_B_EVENTS),
+                maker_only=1, taker_logic_change=0,
                 entry_gate_change=0, size_change=0, active_book_change=0,
             )
         except Exception:
@@ -1495,6 +1509,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
     # and a tick to achieve exactly what expiry achieves for free.  One publish
     # cycle is the horizon below which the two outcomes are identical.
     A191_MIN_REMAINING_TTL_MS = 1000.0
+    # Activation watchdog.  Two consecutive runs were invalidated by a build
+    # that reported A1.9.1 while the behavioural path was inert, and both were
+    # only caught by after-the-fact log analysis.  If this many REPRICE verdicts
+    # accumulate with zero cancels emitted, the run says so itself.
+    A191_ACTIVATION_ALARM_CANDIDATES = 20
 
     def _a19_reset_exit_observation(self) -> None:
         """Initialise Phase A measurement state.  Touches no strategy threshold."""
@@ -1558,6 +1577,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a191_placements_suppressed = 0
         self._a191_cancel_emit_failures = 0
         self._a191_postpass_cancels = 0
+        self._a191_reprice_candidates = 0
+        self._a191_activation_banner_emitted = False
+        self._a191_activation_alarm_emitted = False
 
     def _a19_ledger_ref(self) -> DirectExitLedger | None:
         """Ledger handle that tolerates hot-reload and bare test objects."""
@@ -1756,6 +1778,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _a191_enabled(self) -> bool:
         return bool(getattr(self, "research_a191_queue_preservation_enabled", True))
 
+    def _a19_runtime_phase(self) -> str:
+        """The phase this process is ACTUALLY running, not the one it shipped as."""
+        return (
+            DIRECT_A19_PHASE_BEHAVIOURAL if self._a191_enabled()
+            else DIRECT_A19_PHASE_SHADOW
+        )
+
+    def _a19_behaviour_change(self) -> int:
+        """1 when a decision can change an instruction; 0 in pure measurement."""
+        return int(self._a191_enabled())
+
     def _a191_verdict_store(self) -> dict:
         """Per-tick verdict cache, cleared when the tick advances."""
         tick = int(getattr(self, "_tick", 0) or 0)
@@ -1856,6 +1889,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             ),
             "cancelled": False,
         }
+        if decision == EXIT_REPRICE:
+            self._a191_reprice_candidates += 1
         store[bid] = verdict
         return verdict
 
@@ -1872,6 +1907,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         later state before anything re-enters that book (the A1.7.4.3.1
         ownership rule).  The next tick's normal placement path does that.
         """
+        # The banner must be emitted BEFORE any early return.  It matters most
+        # when the switch is off: that is the state that silently invalidated
+        # two runs, and a log with no banner tells you nothing.
+        self._a191_check_activation(int(getattr(self, "_tick", 0) or 0))
         if not self._a191_enabled():
             return 0
         books = getattr(state, "books", None) or {}
@@ -1883,6 +1922,40 @@ class Strategy1_Research_Simple(Strategy1_Research):
             now_ns = 0
         tick = int(getattr(self, "_tick", 0) or 0)
         emitted = 0
+
+        # A1.9.1.1: seed a verdict for every open-inventory book BEFORE reading
+        # the cache.  A1.9.1 iterated only cached verdicts, and the sole writer
+        # of that cache is `_a191_decide` called from `_research_place_maker_exit`
+        # -- the path measured at 0 of 492 sightings of a live resting exit.  So
+        # the cache was empty on exactly the books that needed a cancel, and the
+        # 500-tick run produced 0 reprice cancels while the shadow classifier was
+        # asking for 756.  This pass now enumerates books the way the observer
+        # does, which is the only view proven to see resting exits.
+        for raw_bid in list(books):
+            try:
+                bid_seed = int(raw_bid)
+            except (TypeError, ValueError):
+                continue
+            if bid_seed in self._a191_verdict_store():
+                continue
+            try:
+                seed_inventory = RestingInventoryView.from_tracker(
+                    self._position_tracker_snapshot(bid_seed)
+                )
+            except Exception:
+                continue
+            if seed_inventory.net_base == 0.0:
+                continue
+            try:
+                # No desired price/action outside the placement path: the passive
+                # touch is the comparand, exactly as the observer uses.
+                self._a191_decide(
+                    state, bid_seed, seed_inventory,
+                    abs(float(seed_inventory.net_base)), None, None,
+                )
+            except Exception:
+                continue
+
         for bid, verdict in list(self._a191_verdict_store().items()):
             if verdict.get("decision") != EXIT_REPRICE or verdict.get("cancelled"):
                 continue
@@ -1905,7 +1978,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 # spending the last slot on a teardown we cannot replace.
                 self._a191_reprice_deferred_budget += 1
                 self._emit(
-                    "A191_REPRICE_DEFERRED", force=True, tick=tick, book=int(bid),
+                    "A19_REPRICE_BUDGET_BLOCK", force=True, tick=tick, book=int(bid),
                     order_id=order_id, deferred="INSTRUCTION_BUDGET",
                     drift_ticks=float(verdict.get("drift_ticks", 0.0)),
                 )
@@ -1923,7 +1996,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 pass
             self._emit(
-                "A191_EXIT_REPRICE_CANCEL", force=True, tick=tick, book=int(bid),
+                "A19_EXIT_REPRICE_CANCEL", force=True, tick=tick, book=int(bid),
                 order_id=order_id, reason=str(verdict.get("reason", "")),
                 order_price=float(verdict.get("order_price", 0.0)),
                 desired_price=float(verdict.get("desired_price", 0.0)),
@@ -1933,7 +2006,55 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 order_action=str(verdict.get("order_action", "")),
             )
         self._a191_postpass_cancels += emitted
+        self._a191_check_activation(tick)
         return emitted
+
+    def _a191_check_activation(self, tick: int) -> None:
+        """Make a silent hybrid announce itself instead of wasting a run.
+
+        The A1.9.1 build reported an a1_9_1 engine with a live 4,000 ms TTL and
+        emitted 0 reprice cancels for 2,961 ticks while the classifier asked for
+        2,863.  Nothing in the run said so; it took log analysis afterwards.
+        A 4,000 ms TTL without the stale-cancel path is the one combination this
+        design forbids, so the run itself now reports both halves at startup and
+        raises an alarm if the behavioural half never fires.
+        """
+        if not self._a191_activation_banner_emitted:
+            self._a191_activation_banner_emitted = True
+            self._emit(
+                "A19_ACTIVATION_BANNER", force=True, tick=int(tick),
+                engine_version=SIMPLE_ENGINE_VERSION,
+                exit_refresh_version=DIRECT_EXIT_REFRESH_VERSION,
+                exit_ledger_version=DIRECT_EXIT_LEDGER_VERSION,
+                a19_phase=self._a19_runtime_phase(),
+                a19_behaviour_change=self._a19_behaviour_change(),
+                profitable_exit_ttl_ms=float(
+                    getattr(self, "research_profitable_exit_ttl_ms", 0.0) or 0.0
+                ),
+                min_remaining_ttl_ms=float(self.A191_MIN_REMAINING_TTL_MS),
+                phase_b_events=",".join(DIRECT_A19_PHASE_B_EVENTS),
+                shadow_mode=int(not self._a191_enabled()),
+            )
+        if self._a191_activation_alarm_emitted or not self._a191_enabled():
+            return
+        if (
+            int(self._a191_reprice_candidates) >= self.A191_ACTIVATION_ALARM_CANDIDATES
+            and int(self._a191_reprice_cancels) == 0
+        ):
+            self._a191_activation_alarm_emitted = True
+            self._emit(
+                "A19_ACTIVATION_ALARM", force=True, tick=int(tick),
+                reprice_candidates=int(self._a191_reprice_candidates),
+                reprice_cancels=0,
+                deferred_ttl=int(self._a191_reprice_deferred_ttl),
+                deferred_budget=int(self._a191_reprice_deferred_budget),
+                cancel_emit_failures=int(self._a191_cancel_emit_failures),
+                verdict="PHASE_B_INERT_STOP_THE_RUN",
+                detail=(
+                    "TTL raise is active but no stale exit has been cancelled; "
+                    "this is the forbidden 4000ms-TTL-without-cancels hybrid"
+                ),
+            )
 
     def _a19_observe_tick_resting_exits(self, state) -> None:
         """Observe every open-inventory book's resting Maker exit, each tick.
@@ -2192,7 +2313,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     0 if seen is None else max(0, tick - int(seen.get("first_tick", tick)))
                 ),
                 pending_cancel=int(pending_cancel),
-                shadow_mode=1,
+                # 1 only while the decision is discarded.  Phase B acts on it.
+                shadow_mode=int(not self._a191_enabled()),
             )
 
     def _a19_emit_tick_lifecycle(
@@ -2485,7 +2607,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if verdict.get("decision") == EXIT_HOLD:
                 self._a191_holds += 1
                 self._emit(
-                    "A191_EXIT_HOLD", force=True,
+                    "A19_QUEUE_HOLD", force=True,
                     tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
                     order_id=int(verdict.get("order_id", -1)),
                     reason=str(verdict.get("reason", "")),
@@ -5357,7 +5479,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a175_shadow_adverse"] = int(getattr(self, "_direct_a175_shadow_adverse", 0) or 0)
         stats["direct_a175_shadow_pending"] = len(getattr(self, "_direct_a175_shadow_ledger", {}) or {})
         stats["direct_exit_refresh_version"] = DIRECT_EXIT_REFRESH_VERSION
-        stats["direct_a19_phase"] = "B_QUEUE_PRESERVING_EXIT"
+        stats["direct_a19_phase"] = self._a19_runtime_phase()
+        stats["direct_a19_behaviour_change"] = self._a19_behaviour_change()
         stats["direct_a19_profitable_exit_ttl_ms"] = float(getattr(self, "research_profitable_exit_ttl_ms", 0.0) or 0.0)
         stats["direct_a19_exit_evals"] = int(getattr(self, "_a19_exit_evals", 0) or 0)
         stats["direct_a19_eligible_evals"] = int(getattr(self, "_a19_eligible_evals", 0) or 0)
@@ -5410,6 +5533,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a191_placements_suppressed"] = int(getattr(self, "_a191_placements_suppressed", 0) or 0)
         stats["direct_a191_reprice_deferred_ttl"] = int(getattr(self, "_a191_reprice_deferred_ttl", 0) or 0)
         stats["direct_a191_reprice_deferred_budget"] = int(getattr(self, "_a191_reprice_deferred_budget", 0) or 0)
+        stats["direct_a191_reprice_candidates"] = int(getattr(self, "_a191_reprice_candidates", 0) or 0)
+        stats["direct_a191_activation_alarm"] = int(bool(getattr(self, "_a191_activation_alarm_emitted", False)))
         stats["direct_a191_cancel_emit_failures"] = int(getattr(self, "_a191_cancel_emit_failures", 0) or 0)
         stats["direct_a191_min_remaining_ttl_ms"] = float(self.A191_MIN_REMAINING_TTL_MS)
         _a191_acted = (

@@ -62,9 +62,11 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1"' in SRC
-    assert 'stats["direct_a19_phase"] = "B_QUEUE_PRESERVING_EXIT"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
+    # A1.9.1.1: derived from runtime state, not a literal.
+    assert 'stats["direct_a19_phase"] = self._a19_runtime_phase()' in SRC
+    assert 'stats["direct_a19_behaviour_change"] = self._a19_behaviour_change()' in SRC
 
 
 def test_frozen_base_untouched():
@@ -113,6 +115,7 @@ WANTED = {
     "_a19_is_entry_quote_row", "_direct_entry_quote_client_ids",
     "_a19_resting_net_bps", "_a19_tick_size", "_a19_ledger_ref",
     "_a19_note_exit_cancel", "_direct_account_orders",
+    "_a191_check_activation", "_a19_runtime_phase", "_a19_behaviour_change",
 }
 
 
@@ -133,6 +136,13 @@ def _load():
         "classify_resting_maker_exit": classify_resting_maker_exit,
         "unified_completion_net_bps": unified_completion_net_bps,
         "DIRECT_MAKER_EXIT_TARGET_BPS": 2.0,
+        "DIRECT_A19_PHASE_BEHAVIOURAL": "B_QUEUE_PRESERVING_EXIT",
+        "DIRECT_A19_PHASE_SHADOW": "A_SHADOW_MEASUREMENT",
+        "SIMPLE_ENGINE_VERSION": "strategy1_direct_v4_16_2_a1_9_1_1",
+        "DIRECT_EXIT_REFRESH_VERSION": "direct_exit_refresh_v4_16_2_a1_9_1_1",
+        "DIRECT_EXIT_LEDGER_VERSION": "direct_exit_ledger_v4_16_2_a1_9_0_3",
+        "DIRECT_A19_PHASE_B_EVENTS": ("A19_QUEUE_HOLD", "A19_EXIT_REPRICE_CANCEL", "A19_REPRICE_BUDGET_BLOCK"),
+
     }
     exec(compile(ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[])),
                  "<a191>", "exec"), ns)
@@ -177,6 +187,7 @@ class _Agent:
     A19_CANCEL_ACK_BUDGET_TICKS = 2
     A19_CANCEL_MEMO_MAX = 2048
     A191_MIN_REMAINING_TTL_MS = 1000.0
+    A191_ACTIVATION_ALARM_CANDIDATES = 20
 
     def __init__(self):
         self._tick = 1
@@ -189,9 +200,12 @@ class _Agent:
         self.positions = {}
         self.events = []
         self._book_instructions = 0
+        self._a191_activation_banner_emitted = False
+        self._a191_activation_alarm_emitted = False
         for n in ("_a191_holds", "_a191_reprice_cancels", "_a191_reprice_deferred_ttl",
                   "_a191_reprice_deferred_budget", "_a191_placements_suppressed",
-                  "_a191_cancel_emit_failures", "_a191_postpass_cancels"):
+                  "_a191_cancel_emit_failures", "_a191_postpass_cancels",
+                  "_a191_reprice_candidates"):
             setattr(self, n, 0)
 
     def _position_tracker_snapshot(self, book_id):
@@ -323,7 +337,7 @@ def test_reprice_emits_telemetry():
     a = _agent(price=100.60)
     a._a191_decide(_state(), BOOK, _inv(a), 0.5, 100.20, "PASSIVE_MAKER_EXIT")
     a._a191_service_reprice_cancels(_Response(), _state())
-    row = a.rows("A191_EXIT_REPRICE_CANCEL")[0]
+    row = a.rows("A19_EXIT_REPRICE_CANCEL")[0]
     assert row["order_id"] == 555
     assert row["reason"] == REASON_STALE_BEHIND_TOUCH
     assert row["drift_ticks"] >= 3.0
@@ -359,7 +373,7 @@ def test_reprice_falls_back_to_hold_when_the_instruction_budget_is_spent():
     assert a._a191_service_reprice_cancels(r, _state()) == 0
     assert r.cancels == []
     assert a._a191_reprice_deferred_budget == 1
-    assert a.rows("A191_REPRICE_DEFERRED")[0]["deferred"] == "INSTRUCTION_BUDGET"
+    assert a.rows("A19_REPRICE_BUDGET_BLOCK")[0]["deferred"] == "INSTRUCTION_BUDGET"
 
 
 # ------------------------------------------------------------ race conditions
@@ -428,15 +442,16 @@ def test_verdict_cache_clears_on_the_next_tick():
 
 
 def test_post_pass_can_decide_without_the_placement_path():
-    """The placement path saw 0 of 492 live exits; the cancel cannot depend on it."""
+    """A1.9.1.1: the post-pass seeds its own verdicts.
+
+    A1.9.1 iterated only cached verdicts, whose sole writer was the placement
+    path -- measured at 0 of 492 sightings of a live resting exit -- so it
+    emitted 0 cancels in a 500-tick run while the classifier asked for 756.
+    """
     a = _agent(price=100.60)
     r = _Response()
-    # No _a191_decide call first: the post-pass must still find nothing to do
-    # because deciding is the placement path's job -- but the observer pass has
-    # already run in production, so an explicit decide is what seeds it.
-    assert a._a191_service_reprice_cancels(r, _state()) == 0
-    a._a191_decide(_state(), BOOK, _inv(a), 0.5, None, None)
     assert a._a191_service_reprice_cancels(r, _state()) == 1
+    assert r.cancels == [(BOOK, [555])]
 
 
 def test_post_pass_falls_back_to_the_passive_touch_comparand():

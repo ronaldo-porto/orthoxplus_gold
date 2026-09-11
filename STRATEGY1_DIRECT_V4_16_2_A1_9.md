@@ -301,7 +301,7 @@ showed up as *some* cancels mislabelled rather than all of them.
 
 Still measurement only; **run 150–200 ticks**, then A1.9.1 Phase B.
 
-## A1.9.1 — Queue-Preserving Maker Exit, behavioural Phase B (this revision)
+## A1.9.1 — Queue-Preserving Maker Exit, behavioural Phase B (INVALID RUN — see A1.9.1.1)
 
 Phase A is complete and passed. Over 260 ticks (95.4% QUIET): 960 live
 resting-exit sightings, HOLD/REPRICE 455/457 on the true persist-eligible
@@ -391,6 +391,162 @@ acted-on split (holds vs reprice cancels), which is the Phase-B analogue.
   guard, or the once-only cancel flag is caught by 1 test each
 - The A1.7.2 frozen landmine holds — `return super()._research_place_maker_exit`
   is present exactly once and unwrapped
+
+## A1.9.1.1 — Phase B activation repair (this revision)
+
+**The first A1.9.1 run was invalid and must not be judged on its performance.**
+It shipped as `strategy1_direct_v4_16_2_a1_9_1` with `research_profitable_exit_ttl_ms=4000`
+genuinely active — `PROFITABLE_EXIT_PERSIST` confirms 4,000 ms TTLs on real
+exits — but produced **0 reprice cancels across 500 ticks** while the shadow
+classifier asked for **756** (58.4% REPRICE / 41.6% HOLD). That is a 4,000 ms
+TTL with no stale-cancel path: exactly the split this design says must never
+run. RT velocity 0.0902/s failed its gate, and that number means nothing here.
+
+Two independent defects, both ours.
+
+### Defect 1 — the post-pass was inert
+
+`_a191_service_reprice_cancels` iterated only `_a191_verdict_store()`. The sole
+writer of that cache was `_a191_decide`, called from **one place**:
+`_research_place_maker_exit` — the path measured at **0 of 492** sightings of a
+live resting exit. So on exactly the books that needed a cancel, the cache was
+empty and the post-pass had nothing to iterate.
+
+This is the failure the post-pass existed to avoid. The design note was right;
+the implementation then depended on the very path it said it could not depend
+on. The post-pass now **seeds a verdict for every open-inventory book itself**,
+enumerating books the way the observer does — the only view proven to see
+resting exits — and falls back to the passive-touch comparand when no placement
+decision supplied one. A placement-path verdict still wins where it exists,
+because it knows the real ladder rung.
+
+### Defect 2 — the telemetry lied about the phase
+
+Three sites hardcoded Phase A, and `shadow_mode=1` was emitted unconditionally:
+
+| Reported | Actual |
+|---|---|
+| `a19_phase = A_SHADOW_MEASUREMENT` | Phase B build |
+| `phase = A2_LEDGER_SHADOW_MEASUREMENT` | Phase B build |
+| `behaviour_change = 0` | TTL raise was live |
+| `shadow_mode = 1` on all 2,282 rows | observer feeds the verdict |
+
+Phase and behaviour-change are now derived from the runtime enable flag in
+**one place** (`_a19_runtime_phase`, `_a19_behaviour_change`) and every emission
+site reads it, so they cannot drift from the build again.
+
+`direct_exit_refresh_version = a1_9_0_3` was **not** evidence of stale code —
+that module genuinely last changed in A1.9.0.3 and A1.9.1 did not touch it.
+
+### A note on event names
+
+The invalid run was searched for `A19_EXIT_REPRICE_CANCEL`, `A19_QUEUE_HOLD` and
+`A19_REPRICE_BUDGET_BLOCK`. None of those exist in this build; the Phase B
+events are `A191_EXIT_HOLD`, `A191_EXIT_REPRICE_CANCEL` and
+`A191_REPRICE_DEFERRED` (`A191_`, not `A19_`). Those searches would have
+returned zero regardless of the defects above. The `A19_EXIT_REFRESH_CONFIG` row
+now carries a `phase_b_events` field listing them, so an analysis can read the
+names out of the log instead of guessing.
+
+### The launcher now refuses the silent hybrid
+
+An A1.9.1 build fails preflight unless it can report `behaviour_change=1`, ships
+both halves of the atomic mechanism in PARAMS, and hardcodes Phase A telemetry
+nowhere. The PARAMS checks test the **value** of `$PARAMS`, not the script text —
+grepping the file matches the guard's own source line and always passes, which
+is a real trap this guard was initially written into and now has a test against.
+
+Verified by executing the launcher against four mutated builds: clean passes;
+missing TTL, missing enable flag, and reintroduced Phase A telemetry each fail.
+
+### Verification
+
+- All direct regression suites: **401 passed, 11 skipped, 0 failed**
+  (A1.9.1 was 381; the delta is exactly the 20 new A1.9.1.1 tests)
+- Removing the seeding loop reproduces the invalid run and is caught by
+  **7 tests**
+
+### Before the next 500-tick gate: a 50–100 tick sanity run
+
+Confirm in the log:
+
+1. `a19_phase = B_QUEUE_PRESERVING_EXIT` and `behaviour_change = 1`
+2. `shadow_mode = 0` on `A19_TICK_OBSERVE`
+3. `A191_EXIT_REPRICE_CANCEL > 0` when stale candidates occur
+4. cancels carry exact exchange order ids, and no replacement in the same response
+5. `A19_CANCEL_ACK` at T+1 for those cancels
+6. ownership overlaps / mismatched releases both 0
+
+Only then continue to the real 500-tick abort gate.
+
+## A1.9.1.1 addendum — the 2,961-tick log, and self-reporting activation
+
+The extended 2,961-tick log is **the same run id `20260910_224242`**, and it
+reports `engine_version = strategy1_direct_v4_16_2_a1_9_1`. The repair is
+`a1_9_1_1`. So that log predates the fix and cannot test it — it is the first
+invalid run, continued. Both its "not wired" verdicts were already true and
+already repaired.
+
+It is still valuable, because the simulation reset at tick 890 ran the forbidden
+hybrid through a **zero-rebate QUIET regime**, which is the hardest case:
+
+| | ticks 1–889 | ticks 890–2961 |
+|---|---|---|
+| Maker fee median | −15.1 bps | **0 bps** |
+| Maker fill share | 92.5% | 75.3% |
+| Positive RT | 84.1% | 45.5% |
+| RT PnL | +8.36 | **−15.86** |
+| Taker-ending share | 17.1% | **51.5%** |
+| Shadow HOLD share | — | **38.3%** (61.7% REPRICE) |
+| `A172_WAIT_HOLD` | 0.38/tick | **1.09/tick** |
+
+The causal chain that produced it is the argument *for* Phase B, not against:
+zero rebate → resting exits go stale → classifier says REPRICE on 61.7% →
+**no cancel path** → the 4,000 ms quote rides to expiry → Maker economics
+deteriorate → WAIT → inventory ages → ABSOLUTE protection → Taker crossing.
+
+**Kappa target, now unambiguous.** 99.95% of cubic downside came from
+Taker-ending RTs, and within those:
+
+| Taker reason | RT | PnL | Share of cubic downside |
+|---|---|---|---|
+| `ABSOLUTE_PROTECTION_REDUCE` | 48 | −19.50 | **92.2%** |
+| `HARD_ESCAPE_CLIP` | 38 | −7.75 | 5.1% |
+| `RECOVERY_TAKER_REDUCE` | 64 | −9.05 | 2.7% |
+| `NORMAL_TAKER_NONNEGATIVE` | 2 | +1.35 | 0% |
+
+Not entries, not latency, not book count, not normal Takers. That is the
+A1.9.2 target, and it is why a handful of avoided forced exits is worth more
+than a lot of marginal volume.
+
+### The run now reports its own activation
+
+Two runs were invalidated by a build that looked right and behaved inertly, and
+both were caught only by log analysis afterwards. That is now the run's job.
+
+`A19_ACTIVATION_BANNER` is emitted once, **before any early return** — it
+matters most when the switch is off — and carries every field the activation
+gate checks: `a19_phase`, `a19_behaviour_change`, `shadow_mode`,
+`profitable_exit_ttl_ms`, `exit_refresh_version`, and the Phase B event names.
+
+`A19_ACTIVATION_ALARM` fires once when ≥20 REPRICE verdicts have accumulated
+with zero cancels emitted, carrying `verdict=PHASE_B_INERT_STOP_THE_RUN` and the
+deferral counts that say why. It is silent in shadow mode, which is a legitimate
+configuration rather than a broken one.
+
+### Event names now match the analysis
+
+The Phase B events are `A19_QUEUE_HOLD`, `A19_EXIT_REPRICE_CANCEL` and
+`A19_REPRICE_BUDGET_BLOCK` — the names the log analysis actually greps. The
+former `A191_` prefix produced two false "not wired" readings, so the prefix
+lost. `DIRECT_EXIT_REFRESH_VERSION` also advances to
+`direct_exit_refresh_v4_16_2_a1_9_1_1`, making it a positive activation signal
+rather than a stale-looking `a1_9_0_3`.
+
+### Verification
+
+- All direct regression suites: **409 passed, 11 skipped, 0 failed**
+- Disabling the watchdog, or reverting the seeding fix, is caught (1 and 8 tests)
 
 ## The A1.9 mechanism
 
