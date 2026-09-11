@@ -317,8 +317,16 @@ DIRECT_A193_EVENTS = ("A193_BREADTH_ADMIT", "A193_BREADTH_DENY")
 A193_ALLOW_COMPLETION = "ALLOW_BREADTH_COMPLETION"
 A193_ALLOW_REFRESH = "ALLOW_BREADTH_REFRESH"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_3"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_3"
+# The events a valid A1.9.4 run must produce.  A1.9.3 shipped inert and cost a
+# whole run because nothing announced it; every phase since names its events
+# here so an analysis greps the banner instead of guessing.
+DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
+# A1.9.4 admission verdicts.  COVERED means the rebate exceeds the realized
+# harm the book has actually done, so being paid genuinely offsets it.
+A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
+
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_4"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_4"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -396,6 +404,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # detector off, which is what makes the two attributable apart.
         self.research_a1921_severity_priority_enabled = self._as_bool(
             getattr(self.config, "research_a1921_severity_priority_enabled", True)
+        )
+        # A1.9.4 rebate conjunction.  Separate switch so the waiver change can
+        # be reverted mid-run without disabling the A1.9.2 detector underneath
+        # it, which is what keeps the two attributable apart.
+        self.research_a194_rebate_conjunction_enabled = self._as_bool(
+            getattr(self.config, "research_a194_rebate_conjunction_enabled", True)
         )
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
@@ -1674,6 +1688,37 @@ class Strategy1_Research_Simple(Strategy1_Research):
     # positions at once anyway, so a larger budget could not be spent.
     A193_MAX_BREADTH_BOOKS_FALLBACK = 6
 
+    # ---- A1.9.4 rebate conjunction -------------------------------------
+    # A1.9.2 short-circuited admission on `fee <= 0` before reading any
+    # history, on the finding that a poor-history book entered at a rebate
+    # produced 0 bad round trips in 21 observations.  The A1.9.3 run falsified
+    # that at scale: books 97/39/61 (mean entry fee -48.9/-10.7/-7.8 bps) were
+    # admitted on all 116 of their entries through that branch and produced
+    # 1,874.8 of the run's 2,189.0 bps of A174_TAIL_COUNTERFACTUAL avoidable
+    # loss -- 85.6% -- ranked in exactly the order of their rebate depth.
+    #
+    # The structural reason the waiver cannot hold: a rebate is the venue's
+    # compensation for expected adverse selection, so its size measures how
+    # dangerous the venue thinks quoting there is.  And `book_net_bps_ewma` is
+    # realized net per round trip, which ALREADY INCLUDES the rebate.  A rebate
+    # book with negative net has been paid and still lost -- the waiver's
+    # premise has been tested on that book and failed.  That is an accounting
+    # identity, not a threshold fitted to the A1.9.3 log.
+    #
+    # So the rebate becomes ONE bounded thing: an exemption that holds only
+    # while it exceeds the harm the book has actually done
+    # (`rebate_bps >= severity_bps`, both already in bps, nothing to calibrate).
+    #
+    # It deliberately does NOT become a severity credit.  A1.9.2.1 measured
+    # Spearman(fee, pnl) = +0.024 within the already-flagged set -- fee decides
+    # WHETHER an entry is dangerous, never how dangerous -- and the A1.9.3 run
+    # points the other way again: damage ranked by rebate DEPTH (97 > 39 > 61
+    # at -48.9 > -10.7 > -7.8 bps), so crediting the rebate would rank the
+    # worst books safest.  Severity therefore stays fee-blind, exactly as
+    # A1.9.2.1 left it, and the 35% volume cap and severity quantile are
+    # untouched.
+    A194_REBATE_CONJUNCTION = True
+
     # ---- A1.9.2.1 severity-prioritised suppression budget --------------
     # A1.9.2 spent its 35% budget in arrival order.  Measured over 500 ticks,
     # the books that GOT budget and the books DENIED by the cap had identical
@@ -1835,6 +1880,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a1921_pool: dict[str, float] | None = None
         self._a1921_seeded = False
         self._a1921_seed_count = 0
+        # A1.9.4 rebate conjunction state.
+        self._a194_rebate_covered_admits = 0
+        self._a194_waiver_withdrawn = 0
+        self._a194_uncovered_bps_total = 0.0
+        self._a194_withdrawn_books: set[int] = set()
+        self._a194_covered_books: set[int] = set()
 
     def _a192_enabled(self) -> bool:
         return bool(getattr(self, "research_a192_book_risk_admission_enabled", True))
@@ -1884,6 +1935,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _a1921_enabled(self) -> bool:
         return bool(getattr(self, "research_a1921_severity_priority_enabled", True))
+
+    # ---- A1.9.4 rebate conjunction -------------------------------------
+    def _a194_enabled(self) -> bool:
+        return bool(
+            getattr(self, "research_a194_rebate_conjunction_enabled", True)
+        ) and bool(self.A194_REBATE_CONJUNCTION)
+
+    @staticmethod
+    def _a194_rebate_bps(maker_fee_bps: float) -> float:
+        """The rebate this book pays, as a positive bps figure (0 if a cost)."""
+        try:
+            return max(0.0, -float(maker_fee_bps or 0.0))
+        except (TypeError, ValueError):
+            return 0.0
 
     # ---- A1.9.3 breadth-critical admission -----------------------------
     def _a193_enabled(self) -> bool:
@@ -2114,12 +2179,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _a192_admission_verdict(self, book_id: int, maker_fee_bps: float, tick: int) -> dict[str, Any]:
         """Decide whether fresh Maker entry on this book is admitted.
 
-        The order of these checks is the finding, not a style choice.  Fee sign
-        is evaluated BEFORE any book history, because a poor-history book
-        entered at a rebate produced 0 bad round trips in 21 observations while
-        the same books at a positive fee produced a 30.4% bad rate and 87% of
-        all cubic downside.  History alone is not the discriminator and
-        `prior_n` is not consulted at all -- it measured AUC 0.502.
+        The order of these checks is the finding, not a style choice.  A1.9.2
+        put fee sign FIRST, short-circuiting on `fee <= 0` before reading any
+        history, because poor-history books entered at a rebate produced 0 bad
+        round trips in 21 observations while the same books at a positive fee
+        produced a 30.4% bad rate and 87% of all cubic downside.
+
+        A1.9.4 keeps the discriminator and drops the immunity.  The A1.9.3 run
+        put 85.6% of all avoidable loss through that short-circuit, from three
+        books whose damage ranked exactly by rebate depth -- a rebate is the
+        venue's price for expected adverse selection, so its size cannot be
+        evidence of safety.  Decisively: `book_net_bps_ewma` already includes
+        the rebate, so a rebate book with negative net has been paid and still
+        lost.  Fee sign is therefore read AFTER history, as an exemption
+        bounded by the harm the book has done (`A194_ALLOW_REBATE_COVERED`)
+        and otherwise as a face-value severity credit.
+
+        `prior_n` is still not consulted at all -- it measured AUC 0.502.
         """
         bid = int(book_id)
         if not self._a192_enabled():
@@ -2128,7 +2204,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a192_window_opportunities = int(getattr(self, "_a192_window_opportunities", 0) or 0) + 1
 
         fee = float(maker_fee_bps or 0.0)
-        if fee <= 0.0:
+        rebate = self._a194_rebate_bps(fee)
+        # A1.9.4 moves this test after the history read.  Behind the switch the
+        # A1.9.2 short-circuit is preserved byte-for-byte so an abort can
+        # restore it mid-run without reverting the build.
+        if fee <= 0.0 and not self._a194_enabled():
             self._a192_rebate_admits = int(getattr(self, "_a192_rebate_admits", 0) or 0) + 1
             self._a192_admissions = int(getattr(self, "_a192_admissions", 0) or 0) + 1
             return {"suppress": False, "reason": A192_ALLOW_REBATE, "maker_fee_bps": fee}
@@ -2162,6 +2242,55 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 return {"suppress": False, "reason": A192_ALLOW_BOOK_OK,
                         "maker_fee_bps": fee, **risk}
 
+        # A1.9.4.  The book is flagged (or serving dwell) and pays a rebate.
+        # Being paid is an exemption only while it exceeds the harm the book
+        # has actually done -- both sides are bps, so this is a direct
+        # comparison with nothing to calibrate.  Deliberately outside the
+        # `not dwell_active` branch above: under A1.9.2 a rebate re-admitted a
+        # quarantined book unconditionally, which is the same immunity by
+        # another route.
+        if self._a194_enabled() and rebate > 0.0:
+            severity_probe = self._a1921_severity(risk)
+            if rebate + 1e-12 >= severity_probe:
+                self._a194_rebate_covered_admits = int(
+                    getattr(self, "_a194_rebate_covered_admits", 0) or 0
+                ) + 1
+                self._a192_rebate_admits = int(getattr(self, "_a192_rebate_admits", 0) or 0) + 1
+                self._a192_admissions = int(getattr(self, "_a192_admissions", 0) or 0) + 1
+                if bid not in getattr(self, "_a194_covered_books", set()):
+                    try:
+                        self._a194_covered_books.add(bid)
+                        self._emit(
+                            "A194_REBATE_COVERED", force=True, tick=int(tick), book=bid,
+                            maker_fee_bps=fee, rebate_bps=round(rebate, 4),
+                            severity=float(severity_probe),
+                            dwell_active=int(bool(dwell_active)), **risk,
+                        )
+                    except Exception:
+                        pass
+                return {"suppress": False, "reason": A194_ALLOW_REBATE_COVERED,
+                        "maker_fee_bps": fee, "rebate_bps": round(rebate, 4),
+                        "severity": float(severity_probe), **risk}
+            # Paid, and still losing more than the rebate covers.  A1.9.2 would
+            # have admitted this book without reading a single one of these
+            # numbers; from here it is ranked like any other candidate.
+            self._a194_waiver_withdrawn = int(getattr(self, "_a194_waiver_withdrawn", 0) or 0) + 1
+            self._a194_uncovered_bps_total = float(
+                getattr(self, "_a194_uncovered_bps_total", 0.0) or 0.0
+            ) + max(0.0, float(severity_probe) - rebate)
+            if bid not in getattr(self, "_a194_withdrawn_books", set()):
+                try:
+                    self._a194_withdrawn_books.add(bid)
+                    self._emit(
+                        "A194_REBATE_WAIVER_WITHDRAWN", force=True, tick=int(tick), book=bid,
+                        maker_fee_bps=fee, rebate_bps=round(rebate, 4),
+                        severity=float(severity_probe),
+                        severity_shortfall_bps=round(float(severity_probe) - rebate, 4),
+                        dwell_active=int(bool(dwell_active)), **risk,
+                    )
+                except Exception:
+                    pass
+
         self._a192_candidates = int(getattr(self, "_a192_candidates", 0) or 0) + 1
         self._a192_window_candidates = int(getattr(self, "_a192_window_candidates", 0) or 0) + 1
         try:
@@ -2173,6 +2302,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # outcome, because the quantile has to describe the candidate
         # population -- recording only the suppressed ones would censor the
         # distribution at exactly the point being measured.
+        # A1.9.4 changes admission only.  Severity stays fee-blind: A1.9.2.1
+        # measured no ordering information in fee within this set, and the
+        # A1.9.3 damage ranked by rebate depth, so a credit would invert it.
         severity = self._a1921_severity(risk)
         if self._a1921_enabled():
             try:
@@ -2335,6 +2467,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     a193_events=",".join(DIRECT_A193_EVENTS),
                     a193_breadth_admission_enabled=int(bool(self._a193_enabled())),
                     a193_max_cost_spreads=float(self.A193_MAX_COST_SPREADS),
+                    a194_events=",".join(DIRECT_A194_EVENTS),
+                    a194_rebate_conjunction_enabled=int(bool(self._a194_enabled())),
                 )
             except Exception:
                 pass
@@ -6592,6 +6726,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a193_score_deficit"] = int(self._a193_score_deficit())
         stats["direct_a193_max_cost_spreads"] = float(self.A193_MAX_COST_SPREADS)
         stats["direct_a193_breadth_budget"] = int(self._a193_breadth_budget(self._a193_score_deficit()))
+        # ---- A1.9.4 rebate conjunction ----
+        stats["direct_a194_rebate_conjunction_enabled"] = int(bool(self._a194_enabled()))
+        stats["direct_a194_rebate_covered_admits"] = int(
+            getattr(self, "_a194_rebate_covered_admits", 0) or 0
+        )
+        stats["direct_a194_waiver_withdrawn"] = int(getattr(self, "_a194_waiver_withdrawn", 0) or 0)
+        stats["direct_a194_withdrawn_books"] = len(getattr(self, "_a194_withdrawn_books", set()) or set())
+        stats["direct_a194_covered_books"] = len(getattr(self, "_a194_covered_books", set()) or set())
+        stats["direct_a194_uncovered_bps_total"] = round(
+            float(getattr(self, "_a194_uncovered_bps_total", 0.0) or 0.0), 4
+        )
         stats["direct_a192_max_suppression_pct"] = float(self.A192_MAX_SUPPRESSION_PCT)
         stats["direct_a192_net_bps_floor"] = float(self.A192_NET_BPS_FLOOR)
         stats["direct_a192_tail_shortfall_floor_bps"] = float(self.A192_TAIL_SHORTFALL_FLOOR_BPS)

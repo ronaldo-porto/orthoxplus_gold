@@ -30,6 +30,7 @@ a volume gate, and the activation reporting that two A1.9.1 runs lacked.
 
 import ast
 import math
+from collections import deque
 import sys
 from pathlib import Path
 
@@ -47,8 +48,8 @@ BOOK = 115
 # ------------------------------------------------------------- source pins
 
 def test_version_advances_to_a1_9_2_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_3"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_4"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_4"' in SRC
 
 
 def test_exit_refresh_version_no_longer_reports_a_stale_phase():
@@ -102,6 +103,13 @@ WANTED = {
     # survives `if False:` -- the string stays in the dead block -- which is the
     # same gap that let the A1.9.1.2 notice hook ship untested.
     "_a19_settle_cancel_watch",
+    # A1.9.2.1 allocation and A1.9.4 rebate conjunction are reached from
+    # _a192_admission_verdict, so the stub cannot run without them.
+    "_a1921_enabled", "_a1921_severity", "_a1921_severity_threshold",
+    "_a1921_pooled_risk", "_a1921_shrink_risk", "_a1921_seed_severity_history",
+    "_a194_enabled", "_a194_rebate_bps",
+    # The activation banner reports A1.9.3 state, so the predicate has to exist.
+    "_a193_enabled", "_a193_score_deficit", "_a193_breadth_budget",
 }
 
 
@@ -109,13 +117,16 @@ def _load():
     tree = ast.parse(SRC)
     consts = [n for n in tree.body if isinstance(n, ast.Assign)
               and any(isinstance(t, ast.Name) and
-                      (t.id.startswith("A192_") or t.id.startswith("DIRECT_A192_"))
+                      (t.id.startswith("A192_") or t.id.startswith("DIRECT_A192_")
+                       or t.id.startswith("A193_") or t.id.startswith("DIRECT_A193_")
+                       or t.id.startswith("A194_") or t.id.startswith("DIRECT_A194_"))
                       for t in n.targets)]
     cls = next(n for n in tree.body
                if isinstance(n, ast.ClassDef) and n.name == "Strategy1_Research_Simple")
     methods = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in WANTED]
     assert {m.name for m in methods} == WANTED, WANTED ^ {m.name for m in methods}
-    ns = {"math": math, "Any": object, "SIMPLE_ENGINE_VERSION": "test"}
+    ns = {"math": math, "Any": object, "SIMPLE_ENGINE_VERSION": "test",
+          "deque": deque}
     exec(compile(ast.fix_missing_locations(
         ast.Module(body=consts + methods, type_ignores=[])), "<a192>", "exec"), ns)
     return ns
@@ -143,6 +154,14 @@ class _Agent:
     A192_RECOVERY_CLEAN_RTS = 2
     A192_ACTIVATION_ALARM_CANDIDATES = 20
     A19_CANCEL_ACK_BUDGET_TICKS = 2
+    A1921_SEVERITY_HISTORY = 256
+    A1921_MIN_SEVERITY_SAMPLES = 24
+    A1921_COLDSTART_PRIOR_SAMPLES = 5.0
+    A1921_MIN_POOL_BOOKS = 3
+    A1921_SEED_FROM_BOOK_HISTORY = True
+    A193_MAX_COST_SPREADS = 1.0
+    A193_MAX_BREADTH_BOOKS_FALLBACK = 6
+    A194_REBATE_CONJUNCTION = True
 
     def __init__(self, enabled=True):
         self._tick = 100
@@ -196,22 +215,29 @@ def test_positive_fee_and_toxic_book_is_suppressed():
     assert v["reason"] == NS["A192_SUPPRESS_FLAGGED"]
 
 
-def test_rebate_admits_the_same_toxic_book():
-    """THE finding: poor history at a rebate produced 0 bad RTs in 21 samples.
-    History-only quarantine would have suppressed those for nothing."""
-    v = _agent()._a192_admission_verdict(BOOK, maker_fee_bps=-1.0, tick=100)
+def test_rebate_admits_the_same_toxic_book_when_a194_is_off():
+    """The A1.9.2 finding, preserved behind the A1.9.4 switch: poor history at
+    a rebate produced 0 bad RTs in 21 samples, so history-only quarantine
+    would have suppressed those for nothing.  A1.9.4 supersedes the
+    UNCONDITIONAL form of this -- see test_research_strategy1_direct_a1_9_4."""
+    a = _agent()
+    a.research_a194_rebate_conjunction_enabled = False
+    v = a._a192_admission_verdict(BOOK, maker_fee_bps=-1.0, tick=100)
     assert v["suppress"] is False
     assert v["reason"] == NS["A192_ALLOW_REBATE"]
 
 
-def test_zero_fee_is_treated_as_a_rebate_entry():
-    v = _agent()._a192_admission_verdict(BOOK, maker_fee_bps=0.0, tick=100)
+def test_zero_fee_is_treated_as_a_rebate_entry_when_a194_is_off():
+    a = _agent()
+    a.research_a194_rebate_conjunction_enabled = False
+    v = a._a192_admission_verdict(BOOK, maker_fee_bps=0.0, tick=100)
     assert v["suppress"] is False
 
 
-def test_fee_is_evaluated_before_book_history():
-    """Ordering is the finding, not style: a rebate must short-circuit."""
+def test_fee_short_circuits_before_book_history_when_a194_is_off():
+    """The A1.9.2 ordering is still reachable for an abort, unchanged."""
     a = _agent()
+    a.research_a194_rebate_conjunction_enabled = False
     a._a192_admission_verdict(BOOK, maker_fee_bps=-1.0, tick=100)
     assert a._a192_candidates == 0          # never even scored the book
     assert a._a192_rebate_admits == 1
@@ -371,11 +397,23 @@ def test_dwell_suppresses_even_if_the_book_score_recovers_mid_quarantine():
     assert v["reason"] == NS["A192_SUPPRESS_DWELL"]
 
 
-def test_rebate_re_admits_even_during_dwell():
+def test_rebate_re_admits_even_during_dwell_when_a194_is_off():
     a = _agent(cap=100.0)
+    a.research_a194_rebate_conjunction_enabled = False
     a._a192_admission_verdict(BOOK, maker_fee_bps=2.0, tick=100)
     v = a._a192_admission_verdict(BOOK, maker_fee_bps=-1.0, tick=101)
     assert v["suppress"] is False
+
+
+def test_a194_does_not_let_a_rebate_break_quarantine():
+    """A1.9.4: re-admitting a quarantined book because it pays 1 bp, while it
+    has done 11 bps of measured harm, is the A1.9.2 immunity by another route.
+    The dwell holds unless the rebate actually covers the severity."""
+    a = _agent(cap=100.0)
+    a._a192_admission_verdict(BOOK, maker_fee_bps=2.0, tick=100)
+    v = a._a192_admission_verdict(BOOK, maker_fee_bps=-1.0, tick=101)
+    assert v["suppress"] is True
+    assert v["reason"] == NS["A192_SUPPRESS_DWELL"]
 
 
 # ------------------------------------------------------------- activation
