@@ -217,6 +217,29 @@
     },
     "watch": "direct_a191_ownership_release_blocked material => ambiguity, investigate rather than widen the rule"
   },
+  "a1_9_1_2_run_6607": {
+    "a1911_baseline_median_ticks": 4,
+    "a1912_identity_releases": 1230,
+    "absolute_protection_cubic_share_pct": 93.3,
+    "cancel_to_replacement_median_ticks": 1,
+    "cubic_downside_maker_share_pct": 0.1,
+    "cubic_downside_taker_share_pct": 99.9,
+    "latency_p95_ms": 102.9,
+    "maker_pnl": 57.2,
+    "matches_gt_one": 0,
+    "matches_zero": 518,
+    "max_global_exposure_base": 1.7471,
+    "max_single_book_base": 0.3744,
+    "ownership_violations": 0,
+    "queue_mechanism": "PASS -- freeze A1.9.1.2 as-is",
+    "reprice_cancels": 1750,
+    "t1_confirmed_same_book": 1748,
+    "taker_pnl": -67.07,
+    "ticks": 6607,
+    "total_pnl": -9.87,
+    "verdict": "STRUCTURAL_PASS_ECONOMIC_FAIL",
+    "why_more_exit_work_cannot_help": "36 of 47 ABSOLUTE lifecycles never had a strong Maker exit to preserve; median reprices 1-2 and median exit wait ~3 s."
+  },
   "a1_9_1_extended_run_2961": {
     "causal_chain": "zero rebate -> exits go stale -> classifier says REPRICE 61.7% -> no cancel path -> 4000 ms quote rides to expiry -> Maker economics deteriorate -> WAIT -> inventory ages -> ABSOLUTE protection -> Taker",
     "conclusion": "strengthens the case for Phase B; does not test it",
@@ -297,6 +320,74 @@
     "ticks": 500,
     "verdict": "INVALID_DO_NOT_JUDGE_PERFORMANCE"
   },
+  "a1_9_2_evidence": {
+    "auc_entry_maker_fee": 0.669,
+    "auc_prior_cum_pnl": 0.629,
+    "auc_prior_rt_count": 0.502,
+    "counterfactual_caveat": "In-sample, single run, and it assumes suppressing an entry leaves everything else unchanged -- it does not. 75 ABSOLUTE events drive a cubic metric dominated by a few tails. Directionally real, numerically optimistic.",
+    "counterfactual_in_sample": {
+      "baseline_cubic": 26.95,
+      "baseline_pnl": -15.52,
+      "cubic": 3.39,
+      "kept": 486,
+      "pnl": 15.09,
+      "rule": "fee>0 AND poor history",
+      "suppressed": 250
+    },
+    "finding": "Book history alone is NOT the discriminator. A poor-history book entered at a rebate produced zero bad round trips. The harm is the conjunction: one cell, 34% of round trips, carries 87% of all cubic downside.",
+    "method": "736 round trips reconstructed from POSITION/FILL; control group = books whose trips came out fine",
+    "strata": {
+      "fee<=0 & good history": {
+        "bad_pct": 7.7,
+        "cubic": 1.23,
+        "n": 142,
+        "pnl": 25.08
+      },
+      "fee<=0 & poor history": {
+        "bad_pct": 0.0,
+        "cubic": 0.0,
+        "n": 21,
+        "pnl": 4.95
+      },
+      "fee>0 & good history": {
+        "bad_pct": 18.9,
+        "cubic": 2.15,
+        "n": 323,
+        "pnl": -14.94
+      },
+      "fee>0 & poor history": {
+        "bad_pct": 30.4,
+        "cubic": 23.57,
+        "n": 250,
+        "pnl": -30.61
+      }
+    }
+  },
+  "a1_9_2_mechanism": {
+    "bound": "rolling budget capped at A192_MAX_SUPPRESSION_PCT of entry opportunities per 200-tick window",
+    "bound_rationale": "a fee-only rule scored better on PnL but suppressed 78% of round trips, collapsing RT velocity 0.128 -> ~0.028 and failing Kappa on breadth instead of downside",
+    "decay": "escalating dwell, retired by A192_RECOVERY_CLEAN_RTS positive Maker-ending round trips",
+    "deliberately_excluded": "prior round-trip count (AUC 0.502)",
+    "entry_only": "the function returns before any economics unless inventory band is FLAT, so reduction can never reach the gate",
+    "hook": "_place_skewed_quotes, after the A1.7.4.5 accounting and before ENTRY_DECISION",
+    "new_events": [
+      "A192_ACTIVATION_BANNER",
+      "A192_ENTRY_SUPPRESSED",
+      "A192_CAP_BLOCK",
+      "A192_BOOK_RECOVERED",
+      "A192_ACTIVATION_ALARM"
+    ],
+    "order_of_checks": "fee sign FIRST, then book history -- a rebate short-circuits and never scores the book",
+    "risk_inputs": [
+      "net_bps_ewma",
+      "taker_net_shortfall_cube_ewma (cube-rooted back to bps)"
+    ]
+  },
+  "a1_9_2_telemetry_debt_repaired": {
+    "duplicate_cancel_ack": "every identity release also emitted a LEDGER_SETTLE ack one tick later (99 of 99 overlapped), inflating reprice ack counts ~2x. The identity path now claims the ack.",
+    "exchange_ack_off_by_one": "_log_notices receives the notice tick but the helper read self._tick, which has not advanced yet; the field read 0 on all 110 identity releases while the true exchange ack was 1 on 109 of 110. Now uses the notice-ingest clock.",
+    "stale_exit_refresh_version": "banner reported direct_exit_refresh_v4_16_2_a1_9_1_1 for the whole run; bumped to a1_9_2"
+  },
   "a3_accept_gate": {
     "behaviour_neutrality": "RT velocity, exposure, ownership violations unchanged vs A1.7.5",
     "blocks": "A1.9.1 stays blocked until this gate passes",
@@ -315,23 +406,14 @@
     ]
   },
   "abort_gate_500_ticks": {
-    "added_by_review": {
-      "is_it_working": "fill share of lifecycles (11.5% baseline) and median exit wait (16.19 s baseline) must move, or the mechanism is inert",
-      "taker_ending_rt_share": "must not rise vs A1.9.0.3 (20.4%) -- this is the target metric",
-      "validator_reject_rate": "INFLIGHT_BOOK_ORDER / PREEXISTING_BOOK_ORDER must not rise"
-    },
-    "aggressive_ladder_share_pct": "> 60",
-    "cancel_not_acked_share_of_reprices_pct": "> 5",
-    "exposure_base": "> 2.0",
-    "latency_p95_ms": "> 120",
-    "maker_fill_share_pct": "< 87",
-    "ownership_violations": "> 0",
-    "positive_rt_share_pct": "< 75",
-    "restated": {
-      "hold_rate_floor_20pct": "measured on observations in Phase A but on acted-on decisions in Phase B; a stale order is now cancelled on its first REPRICE vote instead of voting every tick, so the rate rises mechanically. Use direct_a191_hold_share_pct and treat it as monitored, not gating"
-    },
-    "rt_velocity": "< 0.110",
-    "then": "~4,000 ticks, acceptance is beating A1.7.5 rather than surviving"
+    "absolute_events_per_100_ticks": "must trend down",
+    "activation": "A192_ACTIVATION_ALARM must not fire",
+    "latency_p95_ms_max": 120,
+    "max_total_abs_base": 2.0,
+    "ownership_violations": 0,
+    "rt_velocity_min": 0.09,
+    "suppression_rate_pct_max": 50,
+    "taker_ending_share_target_pct": 40
   },
   "baseline": {
     "release": "A1.7.5",
@@ -342,7 +424,7 @@
     "agents/strategy/Strategy1_Research_Simple.py",
     "run_strategy1_research_simple_multi.sh"
   ],
-  "classification": "STRUCTURAL",
+  "classification": "HYBRID: structural principle (do not add fresh risk where realization is known to fail) + measured conjunction",
   "destination_targets": {
     "exit_wait_median_s": 30,
     "exit_wait_p90_s": [
@@ -388,15 +470,9 @@
     "research_profitable_exit_ttl_ms": 3000.0,
     "taker_authority_changed": false
   },
-  "frozen_file_sha256": {
-    "agents/strategy/Strategy1.py": "c1d4988781a67f4ba60ea780b7c02e913235776e51093e1f2e694e192cb5b08d",
-    "agents/strategy/Strategy1_Research.py": "aea45154b0bcca03ae65073d6166dfe7642de1a796eee2fef23762f3a91acf6d",
-    "agents/strategy/research_direct_positive_maker_kappa.py": "56b34c09f6a7036fa3e1aa0293ac50e79645755399ffb818a323dd45e157fb8d",
-    "agents/strategy/research_direct_quiet_entry.py": "1f6ea7edb27790b8920fbfcba2c711223944bbc730ee6e3eb5bad8ba55e068b5",
-    "agents/strategy/research_direct_tail_recovery.py": "32d2b9cb8954f93c1c7e7873623ff36c4ac31f019be9d3ecc32a2bde9a4d9a86"
-  },
+  "frozen_file_sha256": "aea45154b0bcca03ae65073d6166dfe7642de1a796eee2fef23762f3a91acf6d",
   "frozen_file_sha256_verified": true,
-  "goal": "Release the ownership reservation the moment the exchange confirms an A1.9 reprice cancel, instead of waiting for LOCAL_EXPIRY and leaving the book unquoted for a median of 4 ticks.",
+  "goal": "Cut ABSOLUTE_PROTECTION_REDUCE tail risk at entry admission rather than by further Maker-exit repricing, which the A1.9.1.2 run showed cannot reach it.",
   "kappa_downside_attribution": {
     "a1_9_2_target": "ABSOLUTE_PROTECTION_REDUCE is the dominant Kappa killer",
     "by_taker_reason": {
@@ -474,25 +550,18 @@
     "tests/test_research_strategy1_direct_a1_9_0_3.py",
     "tests/test_research_strategy1_direct_a1_9_1.py",
     "tests/test_research_strategy1_direct_a1_9_1_1.py",
-    "tests/test_research_strategy1_direct_a1_9_1_2.py"
+    "tests/test_research_strategy1_direct_a1_9_1_2.py",
+    "tests/test_research_strategy1_direct_a1_9_2.py"
   ],
   "next_run": {
-    "must_show": [
-      "a19_phase = B_QUEUE_PRESERVING_EXIT",
-      "behaviour_change = 1",
-      "shadow_mode = 0 on A19_TICK_OBSERVE",
-      "A191_EXIT_REPRICE_CANCEL > 0 when stale candidates occur",
-      "cancels use exact exchange order ids, no same-response replacement",
-      "A19_CANCEL_ACK at T+1",
-      "ownership overlaps and mismatched releases both 0"
-    ],
-    "sanity_run_ticks": [
-      50,
-      100
-    ],
-    "then": "the real 500-tick abort gate, then ~4,000 ticks if healthy"
+    "abort_gate_ticks": 500,
+    "explicitly_not_a_success_metric": "raw RT velocity -- A1.9.1.2 gained 22.6% on it and still lost",
+    "phase": "A1.9.2 behavioural",
+    "primary_metric": "cubic downside per round trip",
+    "secondary_metric": "positive-RT velocity >= 0.0849 (A1.7.5)",
+    "validation_ticks": 4000
   },
-  "phase": "B_QUEUE_PRESERVING_EXIT",
+  "phase": "C_FEE_CONDITIONED_BOOK_ADMISSION",
   "phase_a_run": {
     "a19_exit_eval_below_min_net": 2551,
     "a19_exit_eval_events": 3746,
@@ -546,20 +615,19 @@
       22.2
     ]
   },
-  "policy_version": "strategy1_direct_v4_16_2_a1_9_1_2",
+  "policy_version": "strategy1_direct_v4_16_2_a1_9_2",
   "release": "Strategy1-Direct V4.16.2 A1.9.1.2",
   "single_behavior_change": {
     "behaviour_change": true,
     "effective_profitable_exit_ttl_ms": 4000.0,
     "note": "First behavioural revision of A1.9. TTL raise and cancel-then-replace are one mechanism and ship together. All A1.7.5 limits, the QUIET gate, Taker authority and tail authority are unchanged."
   },
-  "title": "Reprice Ownership Release Integration",
+  "title": "Strategy1 Direct V4.16.2 A1.9.2 -- fee-conditioned book risk admission",
   "verification": {
-    "all_direct_regression": "427 passed, 11 skipped, 0 failed",
-    "bash_syntax": "PASS",
-    "end_to_end": "the hook is tested through the real _direct_note_cancellation_identity_notice",
+    "a1_9_2_suite": "44 passed",
     "frozen_base_untouched": true,
-    "mutation_tested": "success check, book check, uniqueness check and the notice-path hook are each caught when removed",
-    "python_compile": "PASS"
+    "mutation_testing": "11 mutations, all caught",
+    "preflight_guard": "executed against two deliberately broken builds; both rejected",
+    "suite": "468 passed, 11 skipped, 0 failed"
   }
 }

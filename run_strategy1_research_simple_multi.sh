@@ -63,7 +63,7 @@ done
 
 [[ -f "$SCRIPT_DIR/run_miner_multi.sh" ]] || { echo "ERROR: run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research_Simple.py" ]] || { echo "ERROR: Strategy1_Research_Simple.py missing" >&2; exit 1; }
-grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_2"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
   echo "ERROR: wrong Strategy1 direct candidate" >&2
   exit 1
 }
@@ -77,7 +77,7 @@ grep -q 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_2"' "$AGEN
 # cancels: a 4,000 ms TTL with no stale-cancel path, which is precisely the
 # split the A1.9 design says must never run. A behavioural build must prove it
 # can report behaviour_change=1, and must not hardcode Phase A anywhere.
-if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+if grep -qE 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_(1|2)' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
   grep -q 'def _a19_behaviour_change' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: A1.9.1 build cannot report behaviour_change from runtime state" >&2
     exit 1
@@ -88,6 +88,28 @@ if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1' "$AGENT_PA
     exit 1
   fi
   A191_BUILD=1
+fi
+
+# A1.9.2 activation guard.  Same failure mode, different phase: a build that
+# reports a1_9_2 while the admission gate can never fire would burn another
+# 4,000 ticks before anyone noticed.  Both halves must be provable up front.
+if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+  grep -q 'def _a192_behaviour_change' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.2 build cannot report behaviour_change from runtime state" >&2
+    exit 1
+  }
+  grep -q 'def _a192_admission_verdict' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.2 build has no admission verdict; the gate is not wired" >&2
+    exit 1
+  }
+  # Must match the CALL, not the def line: grepping the bare name matches the
+  # definition and can never fail, which is how a guard passes a build whose
+  # gate is unreachable.
+  grep -q 'self\._a192_admission_verdict(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.2 admission verdict is defined but never called" >&2
+    exit 1
+  }
+  A192_BUILD=1
 fi
 
 export STRATEGY1_DEBUG=1
@@ -134,7 +156,8 @@ research_post_only_safety_ticks=2 research_local_kappa_refresh_ticks=10 research
 research_lifecycle_taker_exit_prob=0.30 research_lifecycle_slippage_bps=0.75 research_lifecycle_holding_bps=0.50 \
 research_positive_maker_veto_enabled=1 research_positive_maker_veto_floor_bps=1.0 research_positive_maker_veto_max_failed_exits=4 research_bounded_loss_escape_min_age_ticks=2.0 \
 research_session_save_every_n=100 research_p95_target_ms=120 \
-research_profitable_exit_ttl_ms=4000 research_a191_queue_preservation_enabled=1"
+research_profitable_exit_ttl_ms=4000 research_a191_queue_preservation_enabled=1 \
+research_a192_book_risk_admission_enabled=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -149,6 +172,16 @@ if [[ "${A191_BUILD:-0}" == "1" ]]; then
     exit 1
   }
   echo "[preflight] A1.9.1 behavioural activation guard PASS"
+fi
+
+if [[ "${A192_BUILD:-0}" == "1" ]]; then
+  [[ "$PARAMS" == *"research_a192_book_risk_admission_enabled=1"* ]] || {
+    echo "ERROR: A1.9.2 build without research_a192_book_risk_admission_enabled=1" >&2
+    echo "       in PARAMS. The engine would report a1_9_2 with the admission" >&2
+    echo "       gate disabled -- the silent hybrid A1.9.1 already cost twice." >&2
+    exit 1
+  }
+  echo "[preflight] A1.9.2 book-risk admission activation guard PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -181,14 +214,15 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_strategy1_direct_a1_9_1.py \
       tests/test_research_strategy1_direct_a1_9_1_1.py \
       tests/test_research_strategy1_direct_a1_9_1_2.py \
+      tests/test_research_strategy1_direct_a1_9_2.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
-  echo "Strategy1 direct V4.16.2 A1.9.1.2 Phase B preflight PASS"
+  echo "Strategy1 direct V4.16.2 A1.9.2 book-risk admission preflight PASS"
   exit 0
 fi
 
-echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_1_2"
+echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_2"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 

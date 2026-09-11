@@ -58,8 +58,8 @@ BOOK = 7
 # --------------------------------------------------------------- versioning
 
 def test_version_advances_to_a1_9_1_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_2"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_2"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_2"' in SRC
 
 
 # ------------------------------------------- defect 2: telemetry told the truth
@@ -146,8 +146,8 @@ def _load():
         "classify_resting_maker_exit": classify_resting_maker_exit,
         "unified_completion_net_bps": unified_completion_net_bps,
         "DIRECT_MAKER_EXIT_TARGET_BPS": 2.0,
-        "SIMPLE_ENGINE_VERSION": "strategy1_direct_v4_16_2_a1_9_1_2",
-        "DIRECT_EXIT_REFRESH_VERSION": "direct_exit_refresh_v4_16_2_a1_9_1_1",
+        "SIMPLE_ENGINE_VERSION": "strategy1_direct_v4_16_2_a1_9_2",
+        "DIRECT_EXIT_REFRESH_VERSION": "direct_exit_refresh_v4_16_2_a1_9_2",
         "DIRECT_EXIT_LEDGER_VERSION": "direct_exit_ledger_v4_16_2_a1_9_0_3",
         "DIRECT_A19_PHASE_B_EVENTS": ("A19_QUEUE_HOLD", "A19_EXIT_REPRICE_CANCEL", "A19_REPRICE_BUDGET_BLOCK"),
 
@@ -371,7 +371,7 @@ def test_banner_reports_every_activation_field_the_gate_checks():
     assert row["a19_behaviour_change"] == 1
     assert row["shadow_mode"] == 0
     assert row["profitable_exit_ttl_ms"] == 4000.0
-    assert row["exit_refresh_version"] == "direct_exit_refresh_v4_16_2_a1_9_1_1"
+    assert row["exit_refresh_version"] == "direct_exit_refresh_v4_16_2_a1_9_2"
     assert row["phase_b_events"] == (
         "A19_QUEUE_HOLD,A19_EXIT_REPRICE_CANCEL,A19_REPRICE_BUDGET_BLOCK"
     )
@@ -441,4 +441,4 @@ def test_events_use_the_names_the_analysis_greps():
 
 def test_refresh_version_advances_so_it_is_an_activation_signal():
     from research_direct_exit_refresh import DIRECT_EXIT_REFRESH_VERSION
-    assert DIRECT_EXIT_REFRESH_VERSION == "direct_exit_refresh_v4_16_2_a1_9_1_1"
+    assert DIRECT_EXIT_REFRESH_VERSION == "direct_exit_refresh_v4_16_2_a1_9_2"

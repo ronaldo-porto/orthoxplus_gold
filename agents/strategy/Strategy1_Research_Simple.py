@@ -266,8 +266,47 @@ DIRECT_A19_PHASE_B_EVENTS = (
     "A19_QUEUE_HOLD", "A19_EXIT_REPRICE_CANCEL", "A19_REPRICE_BUDGET_BLOCK",
 )
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_2"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_2"
+# ---- A1.9.2 fee-conditioned book risk admission -----------------------------
+# A1.9.1.2 fixed exit realization but the 6,607-tick run still lost: 99.9% of
+# cubic downside came from Taker endings and 93.3% from ABSOLUTE_PROTECTION
+# alone, while Maker endings contributed 0.1%.  More exit repricing cannot
+# reach that, because 36 of 47 ABSOLUTE lifecycles never had a strong Maker
+# exit to preserve in the first place.
+#
+# The measured precursor is NOT bad book history on its own.  Reconstructing
+# 736 round trips and building the control group the first analysis lacked:
+#
+#   prior RT count            AUC 0.502   <- no signal whatsoever
+#   prior cumulative PnL      AUC 0.629
+#   entry Maker fee           AUC 0.669
+#
+#   fee <= 0 & good history   n=142   bad 7.7%   PnL +25.08   cubic  1.23
+#   fee <= 0 & poor history   n= 21   bad 0.0%   PnL  +4.95   cubic  0.00
+#   fee >  0 & good history   n=323   bad 18.9%  PnL -14.94   cubic  2.15
+#   fee >  0 & poor history   n=250   bad 30.4%  PnL -30.61   cubic 23.57
+#
+# A poor-history book entered at a rebate produced zero bad round trips.  The
+# harm lives in the conjunction, so quarantining on history alone would have
+# suppressed 21 profitable trips to no purpose.  One cell -- 34% of round
+# trips -- carries 87% of all cubic downside.
+DIRECT_A192_PHASE_BEHAVIOURAL = "C_FEE_CONDITIONED_BOOK_ADMISSION"
+DIRECT_A192_PHASE_DISABLED = "C_DISABLED"
+# The events a valid A1.9.2 run must produce.  Named here so an analysis greps
+# the config row instead of guessing, the way two A1.9.1 runs were lost.
+DIRECT_A192_EVENTS = (
+    "A192_ENTRY_SUPPRESSED", "A192_CAP_BLOCK", "A192_BOOK_RECOVERED",
+)
+# Admission verdicts.
+A192_ALLOW_DISABLED = "ALLOW_DISABLED"
+A192_ALLOW_REBATE = "ALLOW_REBATE_ENTRY"
+A192_ALLOW_NO_HISTORY = "ALLOW_INSUFFICIENT_HISTORY"
+A192_ALLOW_BOOK_OK = "ALLOW_BOOK_QUALITY_OK"
+A192_ALLOW_CAP = "ALLOW_SUPPRESSION_CAP"
+A192_SUPPRESS_FLAGGED = "SUPPRESS_FEE_AND_BOOK_RISK"
+A192_SUPPRESS_DWELL = "SUPPRESS_DWELL_ACTIVE"
+
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_2"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -280,7 +319,7 @@ DIRECT_A175_SHADOW_LEDGER_MAX = 256
 
 
 class Strategy1_Research_Simple(Strategy1_Research):
-    """V4.16.2 A1.9 Phase A queue-preserving exit measurement on A1.7.5.
+    """V4.16.2 A1.9.2 fee-conditioned book risk admission on A1.9.1.2.
 
     What is deliberately removed from the hot entry path:
       * maintenance as a separate economic authority;
@@ -307,7 +346,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
       * A1.7.4.3.2 exact exchange-order identity release; stale cancellation cannot release a newer owner;
       * A1.7.4.4 strongly-positive Maker veto over negative non-catastrophic HARD/ABSOLUTE Taker authority;
       * A1.7.4.5 15 bps entry floor only in QUIET/no-rebate/low-trade/wide-spread books;
-      * A1.9 Phase A shadow measurement of resting-exit queue preservation; no behaviour change;
+      * A1.9.1 queue-preserving Maker exit: hold by queue position, cancel only on structural staleness;
+      * A1.9.1.2 exact-identity ownership release on a confirmed reprice cancellation;
+      * A1.9.2 fee-conditioned book risk admission: fresh Maker entry only, bounded and decaying;
       * one-clip exposure/active-slot reserve while dust exists;
       * final authoritative contract validation;
       * existing Research learning/session state.
@@ -327,10 +368,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # PARAMS, where the frozen base clamps it to [1000, 5000] and the value
         # is visible in the run manifest.
         self._a19_reset_exit_observation()
+        self._a192_reset_admission()
         # A1.9.1 Phase B master switch, so the behavioural half can be turned
         # off without reverting to an older build during an abort.
         self.research_a191_queue_preservation_enabled = self._as_bool(
             getattr(self.config, "research_a191_queue_preservation_enabled", True)
+        )
+        # A1.9.2 master switch, so an abort can disable the admission gate
+        # without reverting to an older build mid-run.
+        self.research_a192_book_risk_admission_enabled = self._as_bool(
+            getattr(self.config, "research_a192_book_risk_admission_enabled", True)
         )
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
@@ -703,6 +750,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
 
     def _log_notices(self, state, tick: int) -> None:
+        # A1.9.2: the only correct clock for a notice.  `self._tick` has not yet
+        # been advanced for this state when notices are ingested, so anything
+        # measured against it is one tick early.
+        self._a19_notice_tick = int(tick)
         super()._log_notices(state, tick)
         try:
             notices = (getattr(state, "notices", None) or {}).get(self.uid, []) or []
@@ -793,6 +844,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     global_stats = MakerLifecycleStats()
                     self._direct_maker_quality_global = global_stats
                 global_stats.observe(net_bps=net_bps, gross_bps=gross_bps, exit_is_taker=exit_is_taker)
+                # A1.9.2: a clean Maker-ending round trip retires quarantine, so
+                # a recovered book is re-tested instead of starved forever.
+                try:
+                    self._a192_note_round_trip(
+                        bid, net_bps=float(net_bps), exit_is_taker=bool(exit_is_taker),
+                    )
+                except Exception:
+                    pass
                 recovery_row = (getattr(self, "_direct_tail_recovery_active", {}) or {}).pop(bid, None)
                 if isinstance(recovery_row, dict):
                     try:
@@ -1515,6 +1574,35 @@ class Strategy1_Research_Simple(Strategy1_Research):
     # accumulate with zero cancels emitted, the run says so itself.
     A191_ACTIVATION_ALARM_CANDIDATES = 20
 
+    # ---- A1.9.2 fee-conditioned book risk admission --------------------
+    # A book needs a real track record before its history may deny it work.
+    A192_MIN_BOOK_SAMPLES = 5
+    # Recency-weighted mean net realized bps per round trip.  Below zero the
+    # book loses money on average; `net_bps_ewma` is already persisted per book.
+    A192_NET_BPS_FLOOR = 0.0
+    # Cubic Taker shortfall, expressed back in bps by taking the cube root so
+    # the threshold stays interpretable and scale-stable.  Kappa's downside is
+    # cubic, so this is the term that actually tracks scoring harm rather than
+    # a PnL proxy.
+    A192_TAIL_SHORTFALL_FLOOR_BPS = 5.0
+    # Hard ceiling on how much entry flow this gate may remove.  A fee-only
+    # rule scored better in the counterfactual but suppressed 78% of round
+    # trips, which would collapse RT velocity from 0.128 to ~0.028 and take
+    # Kappa qualification breadth with it.  The cap is what keeps a tail-risk
+    # gate from becoming a volume gate.
+    A192_MAX_SUPPRESSION_PCT = 35.0
+    A192_WINDOW_TICKS = 200
+    # Escalating dwell: a book that keeps qualifying is suppressed for longer,
+    # but never permanently -- quarantine decays and a rebate always re-admits.
+    A192_DWELL_BASE_TICKS = 40
+    A192_DWELL_MAX_TICKS = 400
+    # Clean Maker-ending round trips that retire one escalation strike.
+    A192_RECOVERY_CLEAN_RTS = 2
+    # Activation watchdog, mirroring A1.9.1: if this many books are flagged and
+    # nothing is ever suppressed, the run says so itself instead of costing a
+    # full 4,000 ticks to discover afterwards.
+    A192_ACTIVATION_ALARM_CANDIDATES = 20
+
     def _a19_reset_exit_observation(self) -> None:
         """Initialise Phase A measurement state.  Touches no strategy threshold."""
         self._a19_exit_seen: dict[int, dict[str, Any]] = {}
@@ -1590,6 +1678,256 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a191_ownership_release_ticks_total = 0
         self._a191_exchange_ack_ticks_total = 0
         self._a191_exchange_acks = 0
+        # A1.9.2 telemetry repair: order ids already acked from the exchange
+        # notice, and the notice-ingest clock those acks are measured against.
+        self._a19_identity_acked: set[int] = set()
+        self._a19_duplicate_acks_suppressed = 0
+        self._a19_notice_tick = 0
+
+    def _a192_reset_admission(self) -> None:
+        """A1.9.2 admission state.  Touches no threshold owned by another phase."""
+        # book -> tick at which the current suppression dwell expires
+        self._a192_dwell_until: dict[int, int] = {}
+        # book -> consecutive escalation strikes (decayed by clean round trips)
+        self._a192_strikes: dict[int, int] = {}
+        # book -> clean Maker-ending round trips accumulated toward a decay
+        self._a192_clean_rts: dict[int, int] = {}
+        self._a192_window_start_tick = 0
+        self._a192_window_opportunities = 0
+        self._a192_window_suppressed = 0
+        self._a192_suppressions = 0
+        self._a192_dwell_suppressions = 0
+        self._a192_admissions = 0
+        self._a192_cap_blocks = 0
+        self._a192_rebate_admits = 0
+        self._a192_no_history_admits = 0
+        self._a192_book_ok_admits = 0
+        self._a192_flagged_books: set[int] = set()
+        self._a192_recoveries = 0
+        self._a192_candidates = 0
+        self._a192_activation_banner_emitted = False
+        self._a192_activation_alarm_emitted = False
+
+    def _a192_enabled(self) -> bool:
+        return bool(getattr(self, "research_a192_book_risk_admission_enabled", True))
+
+    def _a192_runtime_phase(self) -> str:
+        """The phase this process is ACTUALLY running, not the one it shipped as."""
+        return (
+            DIRECT_A192_PHASE_BEHAVIOURAL if self._a192_enabled()
+            else DIRECT_A192_PHASE_DISABLED
+        )
+
+    def _a192_behaviour_change(self) -> int:
+        return int(self._a192_enabled())
+
+    # ------------------------------------------------------------------
+    # A1.9.2 fee-conditioned book risk admission.  Fresh entry only: this gate
+    # is consulted from `_place_skewed_quotes`, which already returns before
+    # any economics when the book is not FLAT, so inventory reduction can never
+    # reach it.  Exits keep their full A1.7.x authority.
+    # ------------------------------------------------------------------
+
+    def _a192_book_risk(self, book_id: int) -> dict[str, Any]:
+        """Realized-quality read built only from state the strategy already keeps."""
+        stats = (getattr(self, "_direct_maker_quality_by_book", {}) or {}).get(int(book_id))
+        samples = int(getattr(stats, "count", 0) or 0) if stats is not None else 0
+        net_bps = float(getattr(stats, "net_bps_ewma", 0.0) or 0.0) if stats is not None else 0.0
+        cube = float(getattr(stats, "taker_net_shortfall_cube_ewma", 0.0) or 0.0) if stats is not None else 0.0
+        cube = max(0.0, cube)
+        # Cube root returns the EWMA to bps so the floor stays interpretable and
+        # does not have to be recalibrated when shortfall magnitudes move.
+        tail_bps = cube ** (1.0 / 3.0) if cube > 0.0 else 0.0
+        return {
+            "book_samples": samples,
+            "book_net_bps_ewma": round(net_bps, 4),
+            "book_tail_shortfall_bps": round(tail_bps, 4),
+        }
+
+    def _a192_window_roll(self, tick: int) -> None:
+        """Restart the suppression-rate window so the cap is rolling, not lifetime."""
+        if int(tick) - int(getattr(self, "_a192_window_start_tick", 0) or 0) >= int(self.A192_WINDOW_TICKS):
+            self._a192_window_start_tick = int(tick)
+            self._a192_window_opportunities = 0
+            self._a192_window_suppressed = 0
+
+    def _a192_admission_verdict(self, book_id: int, maker_fee_bps: float, tick: int) -> dict[str, Any]:
+        """Decide whether fresh Maker entry on this book is admitted.
+
+        The order of these checks is the finding, not a style choice.  Fee sign
+        is evaluated BEFORE any book history, because a poor-history book
+        entered at a rebate produced 0 bad round trips in 21 observations while
+        the same books at a positive fee produced a 30.4% bad rate and 87% of
+        all cubic downside.  History alone is not the discriminator and
+        `prior_n` is not consulted at all -- it measured AUC 0.502.
+        """
+        bid = int(book_id)
+        if not self._a192_enabled():
+            return {"suppress": False, "reason": A192_ALLOW_DISABLED}
+        self._a192_window_roll(int(tick))
+        self._a192_window_opportunities = int(getattr(self, "_a192_window_opportunities", 0) or 0) + 1
+
+        fee = float(maker_fee_bps or 0.0)
+        if fee <= 0.0:
+            self._a192_rebate_admits = int(getattr(self, "_a192_rebate_admits", 0) or 0) + 1
+            self._a192_admissions = int(getattr(self, "_a192_admissions", 0) or 0) + 1
+            return {"suppress": False, "reason": A192_ALLOW_REBATE, "maker_fee_bps": fee}
+
+        risk = self._a192_book_risk(bid)
+        dwell_until = int((getattr(self, "_a192_dwell_until", {}) or {}).get(bid, 0) or 0)
+        dwell_active = int(tick) < dwell_until
+
+        if not dwell_active:
+            if int(risk["book_samples"]) < int(self.A192_MIN_BOOK_SAMPLES):
+                self._a192_no_history_admits = int(getattr(self, "_a192_no_history_admits", 0) or 0) + 1
+                self._a192_admissions = int(getattr(self, "_a192_admissions", 0) or 0) + 1
+                return {"suppress": False, "reason": A192_ALLOW_NO_HISTORY,
+                        "maker_fee_bps": fee, **risk}
+            flagged = (
+                float(risk["book_net_bps_ewma"]) < float(self.A192_NET_BPS_FLOOR)
+                and float(risk["book_tail_shortfall_bps"]) > float(self.A192_TAIL_SHORTFALL_FLOOR_BPS)
+            )
+            if not flagged:
+                self._a192_book_ok_admits = int(getattr(self, "_a192_book_ok_admits", 0) or 0) + 1
+                self._a192_admissions = int(getattr(self, "_a192_admissions", 0) or 0) + 1
+                return {"suppress": False, "reason": A192_ALLOW_BOOK_OK,
+                        "maker_fee_bps": fee, **risk}
+
+        self._a192_candidates = int(getattr(self, "_a192_candidates", 0) or 0) + 1
+        try:
+            self._a192_flagged_books.add(bid)
+        except AttributeError:
+            self._a192_flagged_books = {bid}
+
+        # Bounded by construction.  A fee-only rule scored better on PnL in the
+        # counterfactual but suppressed 78% of round trips; a tail-risk gate
+        # that becomes a volume gate fails Kappa on breadth instead of downside.
+        opp = int(getattr(self, "_a192_window_opportunities", 0) or 0)
+        sup = int(getattr(self, "_a192_window_suppressed", 0) or 0)
+        # Rolling budget, not an instantaneous ratio.  Comparing (sup+1)/opp
+        # directly deadlocks the gate: the first opportunity in every window is
+        # 1/1 = 100%, so it always exceeds the cap and nothing is ever
+        # suppressed.  A budget converges to the cap over the window instead,
+        # and the max(1.0, ...) floor only frees the first suppression of a
+        # 200-tick window.
+        allowance = max(1.0, opp * float(self.A192_MAX_SUPPRESSION_PCT) / 100.0)
+        if (sup + 1) > allowance:
+            self._a192_cap_blocks = int(getattr(self, "_a192_cap_blocks", 0) or 0) + 1
+            self._a192_admissions = int(getattr(self, "_a192_admissions", 0) or 0) + 1
+            return {"suppress": False, "reason": A192_ALLOW_CAP, "maker_fee_bps": fee,
+                    "window_suppression_pct": round(100.0 * sup / opp, 2), **risk}
+
+        self._a192_window_suppressed = sup + 1
+        self._a192_suppressions = int(getattr(self, "_a192_suppressions", 0) or 0) + 1
+        if dwell_active:
+            self._a192_dwell_suppressions = int(getattr(self, "_a192_dwell_suppressions", 0) or 0) + 1
+            reason = A192_SUPPRESS_DWELL
+        else:
+            reason = A192_SUPPRESS_FLAGGED
+            strikes = int((getattr(self, "_a192_strikes", {}) or {}).get(bid, 0) or 0) + 1
+            self._a192_strikes[bid] = strikes
+            dwell_until = int(tick) + min(
+                int(self.A192_DWELL_MAX_TICKS),
+                int(self.A192_DWELL_BASE_TICKS) * strikes,
+            )
+            self._a192_dwell_until[bid] = dwell_until
+            self._a192_clean_rts[bid] = 0
+        return {
+            "suppress": True, "reason": reason, "maker_fee_bps": fee,
+            "dwell_until": int(dwell_until),
+            "dwell_remaining_ticks": max(0, int(dwell_until) - int(tick)),
+            "strikes": int((getattr(self, "_a192_strikes", {}) or {}).get(bid, 0) or 0),
+            "window_suppression_pct": round(100.0 * (sup + 1) / max(1, opp), 2),
+            **risk,
+        }
+
+    def _a192_note_round_trip(self, book_id: int, *, net_bps: float, exit_is_taker: bool) -> None:
+        """Retire quarantine on clean Maker-ending round trips.
+
+        Suppression must decay or a book that recovers is never re-tested, and
+        the gate slowly starves the portfolio.  Only a positive Maker-ending
+        round trip counts: a positive Taker exit does not prove the book stopped
+        producing tails.
+        """
+        if not self._a192_enabled():
+            return
+        bid = int(book_id)
+        strikes = int((getattr(self, "_a192_strikes", {}) or {}).get(bid, 0) or 0)
+        if strikes <= 0:
+            return
+        if bool(exit_is_taker) or float(net_bps or 0.0) <= 0.0:
+            return
+        clean = int((getattr(self, "_a192_clean_rts", {}) or {}).get(bid, 0) or 0) + 1
+        if clean < int(self.A192_RECOVERY_CLEAN_RTS):
+            self._a192_clean_rts[bid] = clean
+            return
+        self._a192_clean_rts[bid] = 0
+        remaining = strikes - 1
+        self._a192_strikes[bid] = remaining
+        self._a192_recoveries = int(getattr(self, "_a192_recoveries", 0) or 0) + 1
+        if remaining <= 0:
+            self._a192_dwell_until.pop(bid, None)
+            try:
+                self._a192_flagged_books.discard(bid)
+            except AttributeError:
+                pass
+        try:
+            self._emit(
+                "A192_BOOK_RECOVERED", force=True,
+                tick=int(getattr(self, "_tick", 0) or 0), book=bid,
+                strikes_remaining=int(remaining), net_bps=float(net_bps or 0.0),
+            )
+        except Exception:
+            pass
+
+    def _a192_check_activation(self, tick: int) -> None:
+        """Make an inert admission gate announce itself instead of costing a run.
+
+        A1.9.1 shipped twice with a correct mechanism that was never reached,
+        and both runs were only diagnosed by after-the-fact log analysis.
+        """
+        if not getattr(self, "_a192_activation_banner_emitted", False):
+            self._a192_activation_banner_emitted = True
+            try:
+                self._emit(
+                    "A192_ACTIVATION_BANNER", force=True, tick=int(tick),
+                    engine_version=SIMPLE_ENGINE_VERSION,
+                    a192_phase=self._a192_runtime_phase(),
+                    a192_behaviour_change=self._a192_behaviour_change(),
+                    admission_enabled=int(self._a192_enabled()),
+                    min_book_samples=int(self.A192_MIN_BOOK_SAMPLES),
+                    net_bps_floor=float(self.A192_NET_BPS_FLOOR),
+                    tail_shortfall_floor_bps=float(self.A192_TAIL_SHORTFALL_FLOOR_BPS),
+                    max_suppression_pct=float(self.A192_MAX_SUPPRESSION_PCT),
+                    window_ticks=int(self.A192_WINDOW_TICKS),
+                    dwell_base_ticks=int(self.A192_DWELL_BASE_TICKS),
+                    dwell_max_ticks=int(self.A192_DWELL_MAX_TICKS),
+                    recovery_clean_rts=int(self.A192_RECOVERY_CLEAN_RTS),
+                    a192_events=",".join(DIRECT_A192_EVENTS),
+                )
+            except Exception:
+                pass
+        if getattr(self, "_a192_activation_alarm_emitted", False) or not self._a192_enabled():
+            return
+        if (
+            int(getattr(self, "_a192_candidates", 0) or 0) >= int(self.A192_ACTIVATION_ALARM_CANDIDATES)
+            and int(getattr(self, "_a192_suppressions", 0) or 0) == 0
+        ):
+            self._a192_activation_alarm_emitted = True
+            try:
+                self._emit(
+                    "A192_ACTIVATION_ALARM", force=True, tick=int(tick),
+                    candidates=int(getattr(self, "_a192_candidates", 0) or 0),
+                    suppressions=0,
+                    cap_blocks=int(getattr(self, "_a192_cap_blocks", 0) or 0),
+                    verdict="A192_INERT_STOP_THE_RUN",
+                    detail=(
+                        "books are qualifying as fee-and-risk flagged but no entry "
+                        "has been suppressed; the admission gate is not wired"
+                    ),
+                )
+            except Exception:
+                pass
 
     def _a19_ledger_ref(self) -> DirectExitLedger | None:
         """Ledger handle that tolerates hot-reload and bare test objects."""
@@ -1731,6 +2069,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 self._a19_cancel_acks += 1
                 self._a19_cancel_ack_ticks_total += age
                 disposition = str(reason)
+                if int(key[1]) in (getattr(self, "_a19_identity_acked", None) or set()):
+                    # A1.9.1.2 already reported this cancellation from the
+                    # exchange notice; a second row would double-count it.
+                    self._a19_identity_acked.discard(int(key[1]))
+                    self._a19_duplicate_acks_suppressed = int(
+                        getattr(self, "_a19_duplicate_acks_suppressed", 0) or 0
+                    ) + 1
+                    continue
                 self._emit(
                     "A19_CANCEL_ACK", force=True, tick=tick, book=int(book_id),
                     order_id=int(key[1]), cancel_reason=str(reason),
@@ -2766,6 +3112,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a19_observe_tick_resting_exits(state)
         except Exception:
             pass
+        # A1.9.2 activation report.  Hoisted above super().respond so a build
+        # whose admission gate never fires still says so at tick 1 -- the exact
+        # failure that invalidated two A1.9.1 runs.
+        try:
+            self._a192_check_activation(int(getattr(self, "_tick", 0) or 0) + 1)
+        except Exception:
+            pass
         response = super().respond(state)
         # A1.9.1 Phase B: emit reprice cancels after the frozen chain has built
         # its instructions, so the shared per-book budget is known and a cancel
@@ -3394,6 +3747,44 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 pass
 
+        # A1.9.2 fee-conditioned book risk admission.  Placed after the A1.7.4.5
+        # accounting so that gate's block/allow counts stay comparable across
+        # versions, and before ENTRY_DECISION so the emitted action is the one
+        # actually taken.  Only a MAKER acquisition can be suppressed; SKIP and
+        # TAKER are left exactly as the economics decided them.
+        a192_verdict: dict[str, Any] = {}
+        if decision.action == EXEC_ACTION_MAKER:
+            try:
+                a192_verdict = self._a192_admission_verdict(
+                    int(book_id), float(maker_fee_bps), int(tick),
+                )
+            except Exception:
+                a192_verdict = {}
+            if a192_verdict.get("suppress"):
+                decision = replace(
+                    decision, action=EXEC_ACTION_SKIP,
+                    reason=str(a192_verdict.get("reason", A192_SUPPRESS_FLAGGED)),
+                )
+                try:
+                    self._emit(
+                        "A192_ENTRY_SUPPRESSED", force=True, tick=int(tick),
+                        book=int(book_id),
+                        current_maker_edge_bps=float(current_edge_bps),
+                        **{k: v for k, v in a192_verdict.items() if k != "suppress"},
+                    )
+                except Exception:
+                    pass
+            elif str(a192_verdict.get("reason", "")) == A192_ALLOW_CAP:
+                try:
+                    self._emit(
+                        "A192_CAP_BLOCK", force=True, tick=int(tick),
+                        book=int(book_id),
+                        max_suppression_pct=float(self.A192_MAX_SUPPRESSION_PCT),
+                        **{k: v for k, v in a192_verdict.items() if k != "suppress"},
+                    )
+                except Exception:
+                    pass
+
         if decision.action != EXEC_ACTION_SKIP or tick <= 2 or tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
             try:
                 self._emit(
@@ -3414,6 +3805,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     neutral_fallback_used=int(is_neutral_forecast(prediction)),
                     learned_entry_authority=0,
                     direct_mode=1,
+                    a192_admission=str(a192_verdict.get("reason", "")) or "NOT_EVALUATED",
+                    a192_suppressed=int(bool(a192_verdict.get("suppress"))),
                     **a1745_gate.as_log(),
                     **decision.as_log(),
                 )
@@ -4681,7 +5074,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         pending.pop(oid, None)
         bid = int(row["book_id"])
         side = str(row["side"])
-        tick = int(getattr(self, "_tick", 0) or 0)
+        # Notice-ingest clock, not `self._tick`: see `_log_notices`.
+        tick = int(getattr(self, "_a19_notice_tick", 0) or 0) or int(getattr(self, "_tick", 0) or 0)
         ack_ticks = max(0, tick - int(row.get("tick", tick)))
         self._a191_exchange_acks += 1
         self._a191_exchange_ack_ticks_total += ack_ticks
@@ -4720,6 +5114,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
         self._a191_ownership_releases += 1
         self._a191_ownership_release_ticks_total += ack_ticks
+        # Claim the ack so the ledger-settle path does not report the same
+        # cancellation a second time one tick later.
+        try:
+            self._a19_identity_acked.add(oid)
+        except AttributeError:
+            self._a19_identity_acked = {oid}
         self._emit(
             "A19_CANCEL_ACK", force=True, tick=tick, book=bid,
             order_id=oid, cancel_reason=ABSENT_REPRICE_CANCEL,
@@ -5685,6 +6085,44 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a191_hold_share_pct"] = round(
             100.0 * int(getattr(self, "_a191_holds", 0) or 0) / _a191_acted, 2
         ) if _a191_acted else 0.0
+        stats["direct_a19_duplicate_acks_suppressed"] = int(
+            getattr(self, "_a19_duplicate_acks_suppressed", 0) or 0
+        )
+        # ---- A1.9.2 fee-conditioned book risk admission ----
+        stats["direct_a192_admission_enabled"] = int(self._a192_enabled())
+        stats["direct_a192_phase"] = self._a192_runtime_phase()
+        stats["direct_a192_behaviour_change"] = int(self._a192_behaviour_change())
+        _sup = int(getattr(self, "_a192_suppressions", 0) or 0)
+        _adm = int(getattr(self, "_a192_admissions", 0) or 0)
+        stats["direct_a192_entries_suppressed"] = _sup
+        stats["direct_a192_entries_admitted"] = _adm
+        stats["direct_a192_dwell_suppressions"] = int(getattr(self, "_a192_dwell_suppressions", 0) or 0)
+        stats["direct_a192_candidates"] = int(getattr(self, "_a192_candidates", 0) or 0)
+        stats["direct_a192_cap_blocks"] = int(getattr(self, "_a192_cap_blocks", 0) or 0)
+        stats["direct_a192_rebate_admits"] = int(getattr(self, "_a192_rebate_admits", 0) or 0)
+        stats["direct_a192_no_history_admits"] = int(getattr(self, "_a192_no_history_admits", 0) or 0)
+        stats["direct_a192_book_ok_admits"] = int(getattr(self, "_a192_book_ok_admits", 0) or 0)
+        stats["direct_a192_recoveries"] = int(getattr(self, "_a192_recoveries", 0) or 0)
+        stats["direct_a192_books_flagged"] = len(getattr(self, "_a192_flagged_books", None) or set())
+        stats["direct_a192_books_quarantined"] = sum(
+            1 for _b, _u in (getattr(self, "_a192_dwell_until", {}) or {}).items()
+            if int(_u) > int(getattr(self, "_tick", 0) or 0)
+        )
+        # The headline safety number: how much entry flow this gate removed.
+        # Above A192_MAX_SUPPRESSION_PCT would mean the cap failed.
+        stats["direct_a192_suppression_pct"] = round(
+            100.0 * _sup / (_sup + _adm), 2
+        ) if (_sup + _adm) else 0.0
+        stats["direct_a192_window_suppression_pct"] = round(
+            100.0 * int(getattr(self, "_a192_window_suppressed", 0) or 0)
+            / int(getattr(self, "_a192_window_opportunities", 0) or 0), 2
+        ) if int(getattr(self, "_a192_window_opportunities", 0) or 0) else 0.0
+        stats["direct_a192_max_suppression_pct"] = float(self.A192_MAX_SUPPRESSION_PCT)
+        stats["direct_a192_net_bps_floor"] = float(self.A192_NET_BPS_FLOOR)
+        stats["direct_a192_tail_shortfall_floor_bps"] = float(self.A192_TAIL_SHORTFALL_FLOOR_BPS)
+        stats["direct_a192_activation_alarm"] = int(
+            bool(getattr(self, "_a192_activation_alarm_emitted", False))
+        )
         stats["direct_a1903_cancel_reasons_tracked"] = len(
             getattr(self, "_a19_cancel_reason", {}) or {}
         )

@@ -1,6 +1,8 @@
 # Strategy1-Direct V4.16.2 A1.9 — Queue-Preserving Maker Exit
 
-**Phase A2 (this revision, A1.9.0.1) is measurement only. Runtime behaviour is
+**Current revision: A1.9.2 — fee-conditioned book risk admission (behavioural).**
+
+**Historical note: Phase A2 (A1.9.0.1) was measurement only. Runtime behaviour was
 identical to A1.7.5.** A1.8 is fully reverted.
 
 ## Why A1.8 failed
@@ -614,6 +616,132 @@ ticks while the exchange was answering at T+1 on 42 of 42 cancels. Split:
 Replacement latency after a reprice cancel should fall from ~4 ticks to ~1–2.
 If `direct_a191_ownership_release_blocked` is material, the fallback is hitting
 ambiguity and that is the next thing to look at — not a reason to widen the rule.
+
+## A1.9.2 — fee-conditioned book risk admission (this revision)
+
+A1.9.1.2 was a structural pass and an economic fail. Over 6,607 ticks the queue
+mechanism worked exactly as designed — 1,750 reprice cancels, 1,748 confirmed at
+T+1 on the same book, 1,230 identity releases, zero ambiguous releases,
+cancel→replacement median down from 4 ticks to 1 — and the run still lost:
+
+| | |
+|---|---|
+| Maker PnL | +57.20 |
+| Taker PnL | −67.07 |
+| Total | −9.87 |
+| Cubic downside from Taker endings | 99.9% |
+| Cubic downside from Maker endings | 0.1% |
+| Cubic downside from `ABSOLUTE_PROTECTION_REDUCE` | 93.3% |
+
+**More exit repricing cannot reach that.** 36 of 47 ABSOLUTE lifecycles never
+had a strong Maker exit to preserve: median 1–2 reprices, median exit wait ~3 s.
+There was nothing to hold.
+
+### The control group changes the design
+
+The obvious reading — quarantine books with bad realized history — does not
+survive its own control group. Reconstructing 736 round trips and asking what
+the prior history of books whose trips came out *fine* looked like:
+
+| feature at entry | AUC for predicting a bad round trip |
+|---|---|
+| prior round-trip count | **0.502** — no signal whatsoever |
+| prior cumulative PnL | 0.629 |
+| entry Maker fee | 0.669 |
+
+Good round trips also sit on negative prior PnL (median −0.135). "Many prior
+round trips" is simply what a heavily-traded book looks like.
+
+The harm is in the **conjunction**:
+
+| stratum | n | bad rate | PnL | cubic |
+|---|---|---|---|---|
+| fee ≤ 0 & good history | 142 | 7.7% | +25.08 | 1.23 |
+| **fee ≤ 0 & poor history** | 21 | **0.0%** | **+4.95** | 0.00 |
+| fee > 0 & good history | 323 | 18.9% | −14.94 | 2.15 |
+| **fee > 0 & poor history** | **250** | **30.4%** | **−30.61** | **23.57** |
+
+A poor-history book entered at a rebate produced **zero** bad round trips.
+Quarantining on history alone would have suppressed those 21 profitable trips
+for nothing. One cell — 34% of round trips — carries 87% of all cubic downside.
+
+### The rule
+
+Fresh Maker entry is suppressed only when **both** hold:
+
+1. live Maker fee > 0 (no rebate), **and**
+2. the book loses money on average *and* does so through Taker tails —
+   `net_bps_ewma < 0` and cube-rooted `taker_net_shortfall_cube_ewma > 5 bps`
+
+Fee sign is evaluated **first**, so a rebate short-circuits and never scores the
+book. `prior round-trip count` is not an input.
+
+### What bounds it
+
+In-sample the rule turns −15.52 into +15.09 and cuts cubic downside from 26.95
+to 3.39 while keeping 66% of round trips. A fee-only rule scored better on PnL
+but suppressed 78% of round trips, which would collapse RT velocity from 0.128
+to ~0.028 and fail Kappa on breadth instead of downside. So the gate carries a
+hard cap: **it may never remove more than 35% of entry opportunities** in a
+rolling 200-tick window.
+
+The cap is a rolling budget, not an instantaneous ratio. Comparing
+`(suppressed+1)/opportunities` against the cap deadlocks — the first opportunity
+of every window is 1/1 = 100% and always exceeds it, so nothing would ever be
+suppressed. That is the A1.9.1 inertness failure in a new place, and it is
+pinned by a test.
+
+Quarantine escalates on repeat strikes, is bounded at 400 ticks, and is retired
+by two positive **Maker-ending** round trips. A positive Taker exit does not
+count: it does not prove the book stopped producing tails.
+
+**The counterfactual is in-sample, from one run, and assumes suppressing an
+entry leaves everything else unchanged — it does not.** 75 ABSOLUTE events drive
+a cubic metric dominated by a handful of tails. Treat +15.09 as directionally
+real and numerically optimistic.
+
+### Inventory reduction is untouched
+
+The gate lives inside `_place_skewed_quotes`, which returns before any economics
+unless the book's inventory band is `FLAT`. Reduction cannot reach it. A test
+pins that ordering.
+
+### Telemetry debt from A1.9.1.2, repaired here
+
+1. **`exchange_ack_ticks` was off by one.** `_log_notices` receives the notice
+   tick, but the helper read `self._tick`, which has not advanced yet when
+   notices are ingested. The field read 0 on all 110 identity releases while the
+   true exchange ack was 1 on 109 of 110. Now uses the notice-ingest clock.
+2. **Duplicate `A19_CANCEL_ACK`.** Every identity release also emitted a
+   `LEDGER_SETTLE` ack one tick later — 99 of 99 overlapped — inflating reprice
+   ack counts ~2×. The identity path now claims the ack.
+3. **`exit_refresh_version` reported `a1_9_1_1`** for the entire A1.9.1.2 run.
+
+### New telemetry
+
+`A192_ACTIVATION_BANNER` (tick 1, above every early return),
+`A192_ENTRY_SUPPRESSED`, `A192_CAP_BLOCK`, `A192_BOOK_RECOVERED`,
+`A192_ACTIVATION_ALARM`, plus `a192_admission` / `a192_suppressed` on every
+`ENTRY_DECISION` and `direct_a192_*` counters in the stats row — including
+`direct_a192_suppression_pct`, the headline check that the cap held.
+
+### Abort gate at 500 ticks
+
+- suppression rate > 50% of entries → too aggressive
+- RT velocity < 0.09/tick → volume damage
+- Taker-ending share not falling below ~40% → not reaching the target
+- ABSOLUTE events per 100 ticks not trending down → wrong lever
+- any ownership violation, exposure > 2.0 BASE, or p95 > 120 ms
+- `A192_ACTIVATION_ALARM` fires → the gate is inert, stop the run
+
+Success at 4,000 ticks is **cubic downside per round trip**, with positive-RT
+velocity ≥ 0.0849 (A1.7.5). Raw RT velocity is explicitly *not* a success
+metric: A1.9.1.2 gained 22.6% on it and still lost.
+
+### Frozen across A1.9.2
+
+Taker thresholds · QUIET gate · size 0.25 BASE · 6 active books · 2.0 BASE cap ·
+A1.7.5 tail authority · **the entire A1.9.1.2 queue/ownership implementation**.
 
 ## The A1.9 mechanism
 
