@@ -266,8 +266,8 @@ DIRECT_A19_PHASE_B_EVENTS = (
     "A19_QUEUE_HOLD", "A19_EXIT_REPRICE_CANCEL", "A19_REPRICE_BUDGET_BLOCK",
 )
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_2"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -1580,6 +1580,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a191_reprice_candidates = 0
         self._a191_activation_banner_emitted = False
         self._a191_activation_alarm_emitted = False
+        # A1.9.1.2: exchange order ids A1.9 has explicitly cancelled, with the
+        # identity needed to release their ownership reservation the moment the
+        # exchange confirms.  Without this the reservation survives to
+        # LOCAL_EXPIRY and the book sits unquoted for ~4 ticks after a cancel.
+        self._a191_reprice_release: dict[int, dict[str, Any]] = {}
+        self._a191_ownership_releases = 0
+        self._a191_ownership_release_blocked = 0
+        self._a191_ownership_release_ticks_total = 0
+        self._a191_exchange_ack_ticks_total = 0
+        self._a191_exchange_acks = 0
 
     def _a19_ledger_ref(self) -> DirectExitLedger | None:
         """Ledger handle that tolerates hot-reload and bare test objects."""
@@ -1723,7 +1733,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 disposition = str(reason)
                 self._emit(
                     "A19_CANCEL_ACK", force=True, tick=tick, book=int(book_id),
-                    order_id=int(key[1]), ack_ticks=age, cancel_reason=str(reason),
+                    order_id=int(key[1]), cancel_reason=str(reason),
+                    # A1.9.1.2: this path observes the order leaving the LEDGER,
+                    # which is internal settlement, not the exchange's answer.
+                    # Reporting it as ack_ticks read 4 ticks where the exchange
+                    # was answering at T+1 on 42 of 42 cancels.
+                    ownership_release_ticks=age, exchange_ack_ticks=None,
+                    release_path="LEDGER_SETTLE",
                 )
             elif age == self.A19_CANCEL_ACK_BUDGET_TICKS:
                 self._a19_cancel_not_acked += 1
@@ -1991,6 +2007,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
             verdict["cancelled"] = True
             emitted += 1
             self._a191_reprice_cancels += 1
+            # Capture the identity now: after the exchange confirms, the ledger
+            # row is gone and there is nothing left to match the notice against.
+            self._a191_reprice_release[order_id] = {
+                "book_id": int(bid),
+                "side": "sell" if int(getattr(row, "side", 1)) == 1 else "buy",
+                "client_id": getattr(row, "client_id", None),
+                "tick": int(tick),
+            }
+            if len(self._a191_reprice_release) > self.A19_CANCEL_MEMO_MAX:
+                for stale in sorted(
+                    self._a191_reprice_release,
+                    key=lambda k: self._a191_reprice_release[k]["tick"],
+                )[: self.A19_CANCEL_MEMO_MAX // 4]:
+                    self._a191_reprice_release.pop(stale, None)
             try:
                 self._a19_note_exit_cancel(int(bid), [order_id], ABSENT_REPRICE_CANCEL)
             except Exception:
@@ -4606,6 +4636,102 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 reason=f"NOTICE_{phase}", exchange_order_id=oid,
             )
 
+    def _a191_release_reprice_ownership(self, *, exchange_order_id, notice_book_id, success) -> bool:
+        """Release the reservation held by an exit A1.9 itself cancelled.
+
+        The A1.7.4.3.2 identity gate refuses to release on a cancellation whose
+        exchange order id it never registered (`UNKNOWN_EXCHANGE_ORDER_ID`), and
+        Maker exits are not in that registry -- the placement notice does not
+        carry a client order id to key them by.  So before A1.9.1.2 an explicit
+        reprice cancel was acknowledged by the exchange at T+1 and then sat on a
+        live local reservation until LOCAL_EXPIRY, leaving the book unquoted for
+        a measured median of 4 ticks.  That removed queue liquidity early and
+        bought no faster repricing, which is the opposite of the intent.
+
+        This narrows rather than weakens the rule.  Release requires ALL of:
+        an order A1.9 explicitly cancelled itself, an exact exchange-order-id
+        match, a successful cancellation, a matching book, and an unambiguous
+        pending row.  A stale or unrelated cancellation still cannot release
+        anything, and ambiguity is refused exactly as `_direct_release_pending_exact`
+        refuses it.
+        """
+        pending = getattr(self, "_a191_reprice_release", None) or {}
+        try:
+            oid = int(exchange_order_id)
+        except (TypeError, ValueError):
+            return False
+        row = pending.get(oid)
+        if row is None:
+            return False
+        if not bool(success):
+            # A failed cancellation is not proof the order is gone.
+            return False
+        try:
+            if notice_book_id is not None and int(notice_book_id) != int(row["book_id"]):
+                self._a191_ownership_release_blocked += 1
+                self._direct_emit_identity_diag(
+                    "A1912_REPRICE_RELEASE_BLOCKED", book=notice_book_id,
+                    exchange_order_id=oid, mapped_book=int(row["book_id"]),
+                    reason="CANCEL_BOOK_ID_MISMATCH",
+                )
+                return False
+        except (TypeError, ValueError):
+            return False
+
+        pending.pop(oid, None)
+        bid = int(row["book_id"])
+        side = str(row["side"])
+        tick = int(getattr(self, "_tick", 0) or 0)
+        ack_ticks = max(0, tick - int(row.get("tick", tick)))
+        self._a191_exchange_acks += 1
+        self._a191_exchange_ack_ticks_total += ack_ticks
+
+        cid = row.get("client_id")
+        released = False
+        if cid is not None:
+            released = self._direct_release_pending_exact(
+                book_id=bid, client_order_id=cid, side=side,
+                reason="A1912_REPRICE_CANCEL_EXACT", exchange_order_id=oid,
+            )
+        if not released:
+            # No client id on the notice, so fall back to the reservation for
+            # this exact book and side -- and only when there is exactly one.
+            # One match is identification, not a guess; more than one is refused.
+            ledger = self._direct_pending_ledger()
+            matches = [
+                key for key in ledger
+                if int(key[0]) == bid and canonical_order_side(key[2]) == side
+            ]
+            if len(matches) != 1:
+                self._a191_ownership_release_blocked += 1
+                self._direct_emit_identity_diag(
+                    "A1912_REPRICE_RELEASE_BLOCKED", book=bid, exchange_order_id=oid,
+                    side=side, matches=len(matches),
+                    reason="NO_UNIQUE_PENDING_RESERVATION",
+                )
+                return False
+            released = self._direct_release_pending_exact(
+                book_id=bid, client_order_id=matches[0][1], side=side,
+                reason="A1912_REPRICE_CANCEL_BOOK_SIDE_EXACT", exchange_order_id=oid,
+            )
+        if not released:
+            self._a191_ownership_release_blocked += 1
+            return False
+
+        self._a191_ownership_releases += 1
+        self._a191_ownership_release_ticks_total += ack_ticks
+        self._emit(
+            "A19_CANCEL_ACK", force=True, tick=tick, book=bid,
+            order_id=oid, cancel_reason=ABSENT_REPRICE_CANCEL,
+            # These were conflated before: ack_ticks reported the internal watch
+            # settling, not the exchange, and read 4 ticks where the exchange
+            # was answering at T+1 on 42 of 42 cancels.
+            exchange_ack_ticks=ack_ticks,
+            ownership_release_ticks=ack_ticks,
+            release_path="A1912_IDENTITY",
+        )
+        return True
+
     def _direct_note_cancellation_identity_notice(self, notice, *, phase: str) -> None:
         registry = self._direct_exchange_identity_registry()
         notice_book = getattr(notice, "bookId", None)
@@ -4620,6 +4746,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 registry, exchange_order_id=oid_int, notice_book_id=notice_book,
                 success=bool(getattr(cancellation, "success", False)),
             )
+            if decision == "STALE_UNKNOWN" and self._a191_release_reprice_ownership(
+                exchange_order_id=oid_int, notice_book_id=notice_book,
+                success=bool(getattr(cancellation, "success", False)),
+            ):
+                # An exit A1.9 cancelled itself, confirmed by the exchange and
+                # matched by exact id: released above, not a stale cancel.
+                continue
             if decision == "STALE_UNKNOWN":
                 self._direct_stale_cancels_ignored = int(getattr(self, "_direct_stale_cancels_ignored", 0) or 0) + 1
                 self._direct_emit_identity_diag(
@@ -5534,6 +5667,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a191_reprice_deferred_ttl"] = int(getattr(self, "_a191_reprice_deferred_ttl", 0) or 0)
         stats["direct_a191_reprice_deferred_budget"] = int(getattr(self, "_a191_reprice_deferred_budget", 0) or 0)
         stats["direct_a191_reprice_candidates"] = int(getattr(self, "_a191_reprice_candidates", 0) or 0)
+        stats["direct_a191_ownership_releases"] = int(getattr(self, "_a191_ownership_releases", 0) or 0)
+        stats["direct_a191_ownership_release_blocked"] = int(getattr(self, "_a191_ownership_release_blocked", 0) or 0)
+        stats["direct_a191_exchange_acks"] = int(getattr(self, "_a191_exchange_acks", 0) or 0)
+        _acks = int(getattr(self, "_a191_exchange_acks", 0) or 0)
+        stats["direct_a191_mean_exchange_ack_ticks"] = round(
+            int(getattr(self, "_a191_exchange_ack_ticks_total", 0) or 0) / _acks, 3
+        ) if _acks else 0.0
+        stats["direct_a191_pending_reprice_releases"] = len(getattr(self, "_a191_reprice_release", {}) or {})
         stats["direct_a191_activation_alarm"] = int(bool(getattr(self, "_a191_activation_alarm_emitted", False)))
         stats["direct_a191_cancel_emit_failures"] = int(getattr(self, "_a191_cancel_emit_failures", 0) or 0)
         stats["direct_a191_min_remaining_ttl_ms"] = float(self.A191_MIN_REMAINING_TTL_MS)

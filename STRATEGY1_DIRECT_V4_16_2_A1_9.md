@@ -548,6 +548,73 @@ rather than a stale-looking `a1_9_0_3`.
 - All direct regression suites: **409 passed, 11 skipped, 0 failed**
 - Disabling the watchdog, or reverting the seeding fix, is caught (1 and 8 tests)
 
+## A1.9.1.2 — reprice ownership release integration (this revision)
+
+A1.9.1.1 **activated correctly**: `a19_phase=B_QUEUE_PRESERVING_EXIT`,
+`behaviour_change=1`, `shadow_mode=0`, TTL 4,000 ms, and **42 reprice cancels by
+tick 100**, all 42 acknowledged by the exchange at exactly T+1. The classifier
+was healthy too — 63% HOLD, HOLD drift median ~1 tick vs REPRICE ~9.5, cancels
+fired at median age 967 ms with ~3,033 ms of TTL still left.
+
+But the intended cycle did not happen:
+
+```
+T    A19 cancels exchange order
+T+1  exchange confirms  ->  ownership: UNKNOWN_EXCHANGE_ORDER_ID
+T+3  ownership releases via LOCAL_EXPIRY
+T+4  replacement placed                      (median 4 ticks)
+```
+
+**Root cause.** The A1.7.4.3.2 identity gate can only release on a cancellation
+whose exchange order id it registered, and Maker exits are never registered:
+`register_exchange_identity` returns `None` when the placement notice carries no
+client order id. So the reservation survived to LOCAL_EXPIRY and the book sat
+unquoted for a median of 4 ticks.
+
+That inverts the whole point. A1.9.1 was removing queue liquidity *early* and
+gaining no faster repricing — strictly worse than leaving the quote alone.
+
+### The repair narrows the rule, it does not weaken it
+
+On a cancellation the identity gate calls `STALE_UNKNOWN`, the reservation is
+released **only** when all of these hold:
+
+1. A1.9 issued that cancel itself (exact exchange-order-id match in its own map)
+2. the cancellation succeeded — a failed cancel is not proof the order is gone
+3. the notice book matches the recorded book
+4. the pending reservation is unambiguous — exact client id when the notice
+   carries one, otherwise the single reservation for that exact book and side
+
+One match is identification; more than one is refused with
+`A1912_REPRICE_RELEASE_BLOCKED`, exactly as `_direct_release_pending_exact`
+refuses ambiguity. A stale or unrelated cancellation still releases nothing.
+
+### Telemetry: two clocks that were being mixed
+
+`A19_CANCEL_ACK` reported `ack_ticks` from the *ledger settling*, which read 4
+ticks while the exchange was answering at T+1 on 42 of 42 cancels. Split:
+
+| Field | Means |
+|---|---|
+| `exchange_ack_ticks` | ticks from cancel to the exchange's cancellation notice |
+| `ownership_release_ticks` | ticks from cancel to the local reservation clearing |
+| `release_path` | `A1912_IDENTITY` or `LEDGER_SETTLE` |
+
+### Verification
+
+- All direct regression suites: **427 passed, 11 skipped, 0 failed**
+- Every safety condition mutation-tested: dropping the success check, the book
+  check, the uniqueness check, or the notice-path hook is each caught
+- The hook has an **end-to-end test through the real notice handler**. A1.9.1
+  shipped a correct-looking mechanism that was never reached; a helper being
+  right is not evidence the caller reaches it.
+
+### Expected effect at the 500-tick gate
+
+Replacement latency after a reprice cancel should fall from ~4 ticks to ~1–2.
+If `direct_a191_ownership_release_blocked` is material, the fallback is hitting
+ambiguity and that is the next thing to look at — not a reason to widen the rule.
+
 ## The A1.9 mechanism
 
 Hold a resting profitable exit by queue position; reprice only for a structural

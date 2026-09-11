@@ -138,6 +138,33 @@
     "ticks": 260,
     "verdict": "PASS"
   },
+  "a1_9_1_1_activation_run": {
+    "a19_phase": "B_QUEUE_PRESERVING_EXIT",
+    "behaviour_change": 1,
+    "blocker": "ownership released only at LOCAL_EXPIRY; replacement delay median 4 ticks, so the book was unquoted after every reprice cancel",
+    "economics_note": "only 8 RTs by tick 100; far too small for the economic gate",
+    "exchange_ack": "42/42 at exactly T+1",
+    "exit_refresh_version": "direct_exit_refresh_v4_16_2_a1_9_1_1",
+    "hold_drift_median_ticks": 1,
+    "hold_share_pct": 63,
+    "ownership_diag": "A17432_STALE_CANCEL_IGNORED reason=UNKNOWN_EXCHANGE_ORDER_ID",
+    "quiet_share_pct": 98,
+    "reprice_cancels": 42,
+    "reprice_drift_median_ticks": 9.5,
+    "reprice_median_age_ms": 967,
+    "reprice_median_remaining_ttl_ms": 3033,
+    "safety": {
+      "latency_p95_ms": 92.5,
+      "max_book_exposure_base": 0.25,
+      "max_global_exposure_base": 1.5,
+      "ownership_mismatch": 0
+    },
+    "shadow_holds": 62,
+    "shadow_mode": 0,
+    "shadow_reprices": 36,
+    "ticks": 100,
+    "verdict": "ACTIVATION_PASS_OWNERSHIP_BLOCKER"
+  },
   "a1_9_1_1_activation_self_reporting": {
     "alarm_event": "A19_ACTIVATION_ALARM",
     "alarm_silent_in_shadow_mode": true,
@@ -171,6 +198,24 @@
     "d2_telemetry_lied": "three sites hardcoded Phase A (a19_phase, phase, behaviour_change) and shadow_mode=1 was unconditional. All now derive from the runtime enable flag through _a19_runtime_phase / _a19_behaviour_change.",
     "event_name_mismatch": "the run was grepped for A19_EXIT_REPRICE_CANCEL / A19_QUEUE_HOLD / A19_REPRICE_BUDGET_BLOCK, which do not exist; the events are A191_EXIT_HOLD, A191_EXIT_REPRICE_CANCEL, A191_REPRICE_DEFERRED. The config row now carries phase_b_events listing them.",
     "not_a_defect": "direct_exit_refresh_version=a1_9_0_3 is correct -- that module last changed in A1.9.0.3 and A1.9.1 did not touch it"
+  },
+  "a1_9_1_2_repair": {
+    "ambiguity": "refused with A1912_REPRICE_RELEASE_BLOCKED, never guessed",
+    "expected_effect": "replacement latency after a reprice cancel ~4 ticks -> ~1-2",
+    "release_requires_all_of": [
+      "A1.9 issued the cancel itself (exact exchange-order-id match)",
+      "cancellation succeeded",
+      "notice book matches the recorded book",
+      "unambiguous pending reservation (exact client id, else single book+side match)"
+    ],
+    "root_cause": "register_exchange_identity returns None when the placement notice has no client order id, so Maker exits are never in the identity registry and any cancellation of them is STALE_UNKNOWN",
+    "telemetry_split": {
+      "exchange_ack_ticks": "cancel -> exchange cancellation notice",
+      "ownership_release_ticks": "cancel -> local reservation cleared",
+      "release_path": "A1912_IDENTITY | LEDGER_SETTLE",
+      "why": "ack_ticks reported ledger settling and read 4 ticks where the exchange answered at T+1"
+    },
+    "watch": "direct_a191_ownership_release_blocked material => ambiguity, investigate rather than widen the rule"
   },
   "a1_9_1_extended_run_2961": {
     "causal_chain": "zero rebate -> exits go stale -> classifier says REPRICE 61.7% -> no cancel path -> 4000 ms quote rides to expiry -> Maker economics deteriorate -> WAIT -> inventory ages -> ABSOLUTE protection -> Taker",
@@ -351,7 +396,7 @@
     "agents/strategy/research_direct_tail_recovery.py": "32d2b9cb8954f93c1c7e7873623ff36c4ac31f019be9d3ecc32a2bde9a4d9a86"
   },
   "frozen_file_sha256_verified": true,
-  "goal": "Make Phase B actually run and report itself honestly. The A1.9.1 run had a live 4000 ms TTL but emitted 0 reprice cancels, and reported Phase A shadow mode while claiming an A1.9.1 engine.",
+  "goal": "Release the ownership reservation the moment the exchange confirms an A1.9 reprice cancel, instead of waiting for LOCAL_EXPIRY and leaving the book unquoted for a median of 4 ticks.",
   "kappa_downside_attribution": {
     "a1_9_2_target": "ABSOLUTE_PROTECTION_REDUCE is the dominant Kappa killer",
     "by_taker_reason": {
@@ -428,7 +473,8 @@
     "tests/test_research_strategy1_direct_a1_9_0_2.py",
     "tests/test_research_strategy1_direct_a1_9_0_3.py",
     "tests/test_research_strategy1_direct_a1_9_1.py",
-    "tests/test_research_strategy1_direct_a1_9_1_1.py"
+    "tests/test_research_strategy1_direct_a1_9_1_1.py",
+    "tests/test_research_strategy1_direct_a1_9_1_2.py"
   ],
   "next_run": {
     "must_show": [
@@ -500,20 +546,20 @@
       22.2
     ]
   },
-  "policy_version": "strategy1_direct_v4_16_2_a1_9_1_1",
-  "release": "Strategy1-Direct V4.16.2 A1.9.1.1",
+  "policy_version": "strategy1_direct_v4_16_2_a1_9_1_2",
+  "release": "Strategy1-Direct V4.16.2 A1.9.1.2",
   "single_behavior_change": {
     "behaviour_change": true,
     "effective_profitable_exit_ttl_ms": 4000.0,
     "note": "First behavioural revision of A1.9. TTL raise and cancel-then-replace are one mechanism and ship together. All A1.7.5 limits, the QUIET gate, Taker authority and tail authority are unchanged."
   },
-  "title": "Phase B Activation Repair",
+  "title": "Reprice Ownership Release Integration",
   "verification": {
-    "all_direct_regression": "409 passed, 11 skipped, 0 failed",
+    "all_direct_regression": "427 passed, 11 skipped, 0 failed",
     "bash_syntax": "PASS",
+    "end_to_end": "the hook is tested through the real _direct_note_cancellation_identity_notice",
     "frozen_base_untouched": true,
-    "launcher_guard_tested": "executed against four mutated builds",
-    "mutation_tested": "disabling the activation alarm is caught by 1 test; reverting the seeding fix reproduces the invalid run and is caught by 8",
+    "mutation_tested": "success check, book check, uniqueness check and the notice-path hook are each caught when removed",
     "python_compile": "PASS"
   }
 }

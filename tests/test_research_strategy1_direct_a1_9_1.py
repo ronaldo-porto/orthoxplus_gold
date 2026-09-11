@@ -62,8 +62,8 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_2"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_1_2"' in SRC
     # A1.9.1.1: derived from runtime state, not a literal.
     assert 'stats["direct_a19_phase"] = self._a19_runtime_phase()' in SRC
     assert 'stats["direct_a19_behaviour_change"] = self._a19_behaviour_change()' in SRC
@@ -138,7 +138,7 @@ def _load():
         "DIRECT_MAKER_EXIT_TARGET_BPS": 2.0,
         "DIRECT_A19_PHASE_BEHAVIOURAL": "B_QUEUE_PRESERVING_EXIT",
         "DIRECT_A19_PHASE_SHADOW": "A_SHADOW_MEASUREMENT",
-        "SIMPLE_ENGINE_VERSION": "strategy1_direct_v4_16_2_a1_9_1_1",
+        "SIMPLE_ENGINE_VERSION": "strategy1_direct_v4_16_2_a1_9_1_2",
         "DIRECT_EXIT_REFRESH_VERSION": "direct_exit_refresh_v4_16_2_a1_9_1_1",
         "DIRECT_EXIT_LEDGER_VERSION": "direct_exit_ledger_v4_16_2_a1_9_0_3",
         "DIRECT_A19_PHASE_B_EVENTS": ("A19_QUEUE_HOLD", "A19_EXIT_REPRICE_CANCEL", "A19_REPRICE_BUDGET_BLOCK"),
@@ -202,6 +202,7 @@ class _Agent:
         self._book_instructions = 0
         self._a191_activation_banner_emitted = False
         self._a191_activation_alarm_emitted = False
+        self._a191_reprice_release = {}
         for n in ("_a191_holds", "_a191_reprice_cancels", "_a191_reprice_deferred_ttl",
                   "_a191_reprice_deferred_budget", "_a191_placements_suppressed",
                   "_a191_cancel_emit_failures", "_a191_postpass_cancels",

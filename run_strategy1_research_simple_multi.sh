@@ -63,7 +63,7 @@ done
 
 [[ -f "$SCRIPT_DIR/run_miner_multi.sh" ]] || { echo "ERROR: run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research_Simple.py" ]] || { echo "ERROR: Strategy1_Research_Simple.py missing" >&2; exit 1; }
-grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_1"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_1_2"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
   echo "ERROR: wrong Strategy1 direct candidate" >&2
   exit 1
 }
@@ -180,14 +180,15 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_strategy1_direct_a1_9_0_3.py \
       tests/test_research_strategy1_direct_a1_9_1.py \
       tests/test_research_strategy1_direct_a1_9_1_1.py \
+      tests/test_research_strategy1_direct_a1_9_1_2.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
-  echo "Strategy1 direct V4.16.2 A1.9.1.1 Phase B preflight PASS"
+  echo "Strategy1 direct V4.16.2 A1.9.1.2 Phase B preflight PASS"
   exit 0
 fi
 
-echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_1_1"
+echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_1_2"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 
