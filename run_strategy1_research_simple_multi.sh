@@ -63,7 +63,7 @@ done
 
 [[ -f "$SCRIPT_DIR/run_miner_multi.sh" ]] || { echo "ERROR: run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research_Simple.py" ]] || { echo "ERROR: Strategy1_Research_Simple.py missing" >&2; exit 1; }
-grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
   echo "ERROR: wrong Strategy1 direct candidate" >&2
   exit 1
 }
@@ -93,7 +93,7 @@ fi
 # A1.9.2 activation guard.  Same failure mode, different phase: a build that
 # reports a1_9_2 while the admission gate can never fire would burn another
 # 4,000 ticks before anyone noticed.  Both halves must be provable up front.
-if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
   grep -q 'def _a192_behaviour_change' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: A1.9.2 build cannot report behaviour_change from runtime state" >&2
     exit 1
@@ -157,7 +157,8 @@ research_lifecycle_taker_exit_prob=0.30 research_lifecycle_slippage_bps=0.75 res
 research_positive_maker_veto_enabled=1 research_positive_maker_veto_floor_bps=1.0 research_positive_maker_veto_max_failed_exits=4 research_bounded_loss_escape_min_age_ticks=2.0 \
 research_session_save_every_n=100 research_p95_target_ms=120 \
 research_profitable_exit_ttl_ms=4000 research_a191_queue_preservation_enabled=1 \
-research_a192_book_risk_admission_enabled=1"
+research_a192_book_risk_admission_enabled=1 \
+research_a1921_severity_priority_enabled=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -182,6 +183,44 @@ if [[ "${A192_BUILD:-0}" == "1" ]]; then
     exit 1
   }
   echo "[preflight] A1.9.2 book-risk admission activation guard PASS"
+fi
+
+# A1.9.2.1 activation guard.  A1.9.2 suppressed in arrival order: the books that
+# got budget and the books denied by the cap had identical severity (median
+# 40.73 both).  A build that reports a1_9_2_1 while the severity path can never
+# fire would repeat A1.9.2 under a new name and cost another run.
+if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+  for _fn in _a1921_severity_threshold _a1921_shrink_risk _a1921_seed_severity_history; do
+    grep -q "def $_fn" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: A1.9.2.1 build is missing $_fn" >&2
+      exit 1
+    }
+    grep -q "self\.$_fn(" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: A1.9.2.1 $_fn is defined but never called -- the severity" >&2
+      echo "       path is inert and the run would repeat A1.9.2." >&2
+      exit 1
+    }
+  done
+  grep -q 'reason": A192_ALLOW_SEVERITY_RANK' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.2.1 never returns ALLOW_SEVERITY_RANK; prioritisation" >&2
+    echo "       cannot change any admission decision." >&2
+    exit 1
+  }
+  # The cap is deliberately NOT retuned in this revision.  Holding it fixed is
+  # what makes the allocation change attributable; moving it in the same run
+  # would confound the two and repeat the mistake A1.9.2.1 exists to avoid.
+  grep -q 'A192_MAX_SUPPRESSION_PCT = 35.0' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.2.1 changed the suppression cap. The cap must stay 35.0:" >&2
+    echo "       allocation and budget size cannot both move in one run." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_a1921_severity_priority_enabled=1"* ]] || {
+    echo "ERROR: A1.9.2.1 build without research_a1921_severity_priority_enabled=1" >&2
+    echo "       in PARAMS. The engine would report a1_9_2_1 while allocating in" >&2
+    echo "       arrival order -- exactly the A1.9.2 behaviour under a new name." >&2
+    exit 1
+  }
+  echo "[preflight] A1.9.2.1 severity-prioritised budget activation guard PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -215,14 +254,15 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_strategy1_direct_a1_9_1_1.py \
       tests/test_research_strategy1_direct_a1_9_1_2.py \
       tests/test_research_strategy1_direct_a1_9_2.py \
+      tests/test_research_strategy1_direct_a1_9_2_1.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
-  echo "Strategy1 direct V4.16.2 A1.9.2 book-risk admission preflight PASS"
+  echo "Strategy1 direct V4.16.2 A1.9.2.1 severity-prioritised budget preflight PASS"
   exit 0
 fi
 
-echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_2"
+echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_2_1"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 

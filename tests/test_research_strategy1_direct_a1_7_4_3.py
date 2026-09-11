@@ -25,7 +25,7 @@ from research_direct_tail_recovery import DIRECT_TAIL_RECOVERY_VERSION
 
 
 def test_a1743_version_and_frozen_economic_overlays():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"' in SRC
     assert DIRECT_INFLIGHT_RESERVATION_VERSION == "direct_inflight_reservation_v4_16_2_a1_7_4_3"
     # Both economic overlays carry the A1.7.5 module version; A1.7.5 extends them
     # without altering the A1.7.4.3 reservation contract asserted in this suite.
