@@ -35,7 +35,7 @@ A/B tested against the V4.16.2 baseline.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import replace
 import json
 import math
@@ -295,6 +295,7 @@ DIRECT_A192_PHASE_DISABLED = "C_DISABLED"
 # the config row instead of guessing, the way two A1.9.1 runs were lost.
 DIRECT_A192_EVENTS = (
     "A192_ENTRY_SUPPRESSED", "A192_CAP_BLOCK", "A192_BOOK_RECOVERED",
+    "A192_SEVERITY_DEFER", "A192_COLDSTART_SHRINK", "A192_SEVERITY_SEED",
 )
 # Admission verdicts.
 A192_ALLOW_DISABLED = "ALLOW_DISABLED"
@@ -304,9 +305,13 @@ A192_ALLOW_BOOK_OK = "ALLOW_BOOK_QUALITY_OK"
 A192_ALLOW_CAP = "ALLOW_SUPPRESSION_CAP"
 A192_SUPPRESS_FLAGGED = "SUPPRESS_FEE_AND_BOOK_RISK"
 A192_SUPPRESS_DWELL = "SUPPRESS_DWELL_ACTIVE"
+# A1.9.2.1: the budget was spent on a worse candidate, so this one is admitted
+# even though it is flagged.  Distinct from ALLOW_SUPPRESSION_CAP, which means
+# the budget was already exhausted for the window.
+A192_ALLOW_SEVERITY_RANK = "ALLOW_SEVERITY_RANK"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_2"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_2_1"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -378,6 +383,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # without reverting to an older build mid-run.
         self.research_a192_book_risk_admission_enabled = self._as_bool(
             getattr(self.config, "research_a192_book_risk_admission_enabled", True)
+        )
+        # A1.9.2.1 severity-prioritised budget.  Separate switch so the
+        # allocation change can be disabled without turning the A1.9.2 risk
+        # detector off, which is what makes the two attributable apart.
+        self.research_a1921_severity_priority_enabled = self._as_bool(
+            getattr(self.config, "research_a1921_severity_priority_enabled", True)
         )
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
@@ -1603,6 +1614,43 @@ class Strategy1_Research_Simple(Strategy1_Research):
     # full 4,000 ticks to discover afterwards.
     A192_ACTIVATION_ALARM_CANDIDATES = 20
 
+    # ---- A1.9.2.1 severity-prioritised suppression budget --------------
+    # A1.9.2 spent its 35% budget in arrival order.  Measured over 500 ticks,
+    # the books that GOT budget and the books DENIED by the cap had identical
+    # severity (median 40.73 both), i.e. the cap selected at random with
+    # respect to risk, and the three largest losses of the run were all
+    # cap-admitted Book 114 entries at severity 59-88.  Holding the budget
+    # fixed and spending it severity-first covers 33 of the 46 cap-blocks and
+    # removes 91% of the cap-bucket damage at zero volume cost, so the cap
+    # itself is NOT raised here.
+    #
+    # Severity deliberately excludes the maker fee.  Within the already
+    # flagged set, Spearman(fee, pnl) = +0.024 -- fee decides WHETHER an entry
+    # is dangerous and is already the first gate; it carries no ordering
+    # information about HOW dangerous.  Tail is the best single ranker
+    # (-0.380), net_bps_ewma second (-0.240).
+    A1921_SEVERITY_HISTORY = 256
+    # Below this many observed candidates the empirical quantile is noise, so
+    # the gate keeps A1.9.2 arrival-order behaviour instead of ranking badly.
+    A1921_MIN_SEVERITY_SAMPLES = 24
+    # Cold start.  ALLOW_INSUFFICIENT_HISTORY admitted 10 of 10 entries at a
+    # positive fee, 9 of 10 ended Taker, for 22.1% of the run's cubic downside:
+    # "no history" was being read as "no risk".  A book with n samples is
+    # shrunk toward the cross-book pool with weight n/(n+K); K is the sample
+    # floor, so a book at the threshold is already half its own evidence.
+    A1921_COLDSTART_PRIOR_SAMPLES = 5.0
+    # Pooling needs a pool.  Below this many qualified books the prior is not
+    # meaningful and the old ALLOW_INSUFFICIENT_HISTORY path is kept.
+    A1921_MIN_POOL_BOOKS = 3
+    # Warm-up is where this gate is worth the most and knows the least.  In the
+    # A1.9.2 sample, 81% of the cap-bucket damage landed in the first 50 ticks
+    # -- before 24 candidates had been observed, so an empirical quantile did
+    # not exist yet and allocation fell back to arrival order.  Book quality
+    # survives restarts (every one of the 46 cap-blocks already had >=5
+    # samples, median 30), so the candidate severity distribution can be seeded
+    # from state the strategy already carries instead of being relearned.
+    A1921_SEED_FROM_BOOK_HISTORY = True
+
     def _a19_reset_exit_observation(self) -> None:
         """Initialise Phase A measurement state.  Touches no strategy threshold."""
         self._a19_exit_seen: dict[int, dict[str, Any]] = {}
@@ -1707,6 +1755,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a192_candidates = 0
         self._a192_activation_banner_emitted = False
         self._a192_activation_alarm_emitted = False
+        # A1.9.2.1 allocation state.
+        self._a1921_sev_hist: deque[float] = deque(maxlen=int(self.A1921_SEVERITY_HISTORY))
+        self._a192_window_candidates = 0
+        self._a1921_rank_defers = 0
+        self._a1921_coldstart_shrinks = 0
+        self._a1921_coldstart_flagged = 0
+        self._a1921_pool_tick = -1
+        self._a1921_pool: dict[str, float] | None = None
+        self._a1921_seeded = False
+        self._a1921_seed_count = 0
 
     def _a192_enabled(self) -> bool:
         return bool(getattr(self, "research_a192_book_risk_admission_enabled", True))
@@ -1750,6 +1808,115 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a192_window_start_tick = int(tick)
             self._a192_window_opportunities = 0
             self._a192_window_suppressed = 0
+            self._a192_window_candidates = 0
+
+    def _a1921_enabled(self) -> bool:
+        return bool(getattr(self, "research_a1921_severity_priority_enabled", True))
+
+    @staticmethod
+    def _a1921_severity(risk: dict[str, Any]) -> float:
+        """How dangerous this book is, in bps.  Fee is excluded on purpose.
+
+        Both terms are already computed by `_a192_book_risk` and already logged
+        on every A192_CAP_BLOCK, so prioritisation needs no new market signal.
+        """
+        tail = max(0.0, float(risk.get("book_tail_shortfall_bps") or 0.0))
+        net = float(risk.get("book_net_bps_ewma") or 0.0)
+        return round(tail + abs(min(0.0, net)), 4)
+
+    def _a1921_pooled_risk(self, tick: int) -> dict[str, float] | None:
+        """Cross-book prior for cold-start shrinkage, cached per tick."""
+        if int(getattr(self, "_a1921_pool_tick", -1)) == int(tick):
+            return getattr(self, "_a1921_pool", None)
+        nets: list[float] = []
+        tails: list[float] = []
+        for _bid, st in (getattr(self, "_direct_maker_quality_by_book", {}) or {}).items():
+            if int(getattr(st, "count", 0) or 0) < int(self.A192_MIN_BOOK_SAMPLES):
+                continue
+            nets.append(float(getattr(st, "net_bps_ewma", 0.0) or 0.0))
+            cube = max(0.0, float(getattr(st, "taker_net_shortfall_cube_ewma", 0.0) or 0.0))
+            tails.append(cube ** (1.0 / 3.0) if cube > 0.0 else 0.0)
+        pool = None
+        if len(nets) >= int(self.A1921_MIN_POOL_BOOKS):
+            pool = {
+                "pool_books": float(len(nets)),
+                "pool_net_bps_ewma": sum(nets) / len(nets),
+                "pool_tail_shortfall_bps": sum(tails) / len(tails),
+            }
+        self._a1921_pool_tick = int(tick)
+        self._a1921_pool = pool
+        return pool
+
+    def _a1921_shrink_risk(self, risk: dict[str, Any], pool: dict[str, float]) -> dict[str, Any]:
+        """Hierarchical shrinkage toward the pool for a thin-history book."""
+        n = float(int(risk.get("book_samples", 0) or 0))
+        k = float(self.A1921_COLDSTART_PRIOR_SAMPLES)
+        w = n / (n + k) if (n + k) > 0.0 else 0.0
+        net = w * float(risk.get("book_net_bps_ewma") or 0.0) + (1.0 - w) * float(pool["pool_net_bps_ewma"])
+        tail = w * float(risk.get("book_tail_shortfall_bps") or 0.0) + (1.0 - w) * float(pool["pool_tail_shortfall_bps"])
+        out = dict(risk)
+        out["book_net_bps_ewma"] = round(net, 4)
+        out["book_tail_shortfall_bps"] = round(tail, 4)
+        out["a1921_coldstart_shrunk"] = 1
+        out["a1921_shrink_weight"] = round(w, 4)
+        out["a1921_pool_books"] = int(pool["pool_books"])
+        return out
+
+    def _a1921_seed_severity_history(self) -> int:
+        """Seed the severity quantile from persisted per-book quality.
+
+        Without this the first ~50 ticks of every run allocate by arrival
+        order, which is the behaviour A1.9.2.1 exists to remove.  Uses only
+        `_direct_maker_quality_by_book`, which the session already persists --
+        no new signal, and no constant fitted to any run.
+        """
+        if getattr(self, "_a1921_seeded", False):
+            return 0
+        self._a1921_seeded = True
+        if not bool(self.A1921_SEED_FROM_BOOK_HISTORY):
+            return 0
+        seeded = 0
+        for _bid, stx in (getattr(self, "_direct_maker_quality_by_book", {}) or {}).items():
+            if int(getattr(stx, "count", 0) or 0) < int(self.A192_MIN_BOOK_SAMPLES):
+                continue
+            cube = max(0.0, float(getattr(stx, "taker_net_shortfall_cube_ewma", 0.0) or 0.0))
+            tail = cube ** (1.0 / 3.0) if cube > 0.0 else 0.0
+            net = float(getattr(stx, "net_bps_ewma", 0.0) or 0.0)
+            self._a1921_sev_hist.append(round(max(0.0, tail) + abs(min(0.0, net)), 4))
+            seeded += 1
+        self._a1921_seed_count = seeded
+        return seeded
+
+    def _a1921_severity_threshold(self) -> float | None:
+        """Severity a candidate must reach to be worth spending budget on.
+
+        Ranking is an offline idea: candidates arrive one at a time and cannot
+        be compared against arrivals that have not happened yet.  The online
+        equivalent is a quantile of the recent candidate severity distribution,
+        placed so that the share of candidates above it is exactly the share
+        the 35% volume budget can pay for.  It self-calibrates to whatever the
+        severity distribution is and fits no constant to any single run.
+
+        Returns None when ranking should not apply -- too little history, or
+        the budget can already afford every candidate.
+        """
+        hist = getattr(self, "_a1921_sev_hist", None)
+        if not hist or len(hist) < int(self.A1921_MIN_SEVERITY_SAMPLES):
+            return None
+        opp = int(getattr(self, "_a192_window_opportunities", 0) or 0)
+        cand = int(getattr(self, "_a192_window_candidates", 0) or 0)
+        if opp <= 0 or cand <= 0:
+            return None
+        cand_rate = float(cand) / float(opp)
+        if cand_rate <= 0.0:
+            return None
+        # Share of CANDIDATES the volume budget can cover.
+        frac = (float(self.A192_MAX_SUPPRESSION_PCT) / 100.0) / cand_rate
+        if frac >= 1.0:
+            return None
+        ordered = sorted(hist)
+        idx = int(round((1.0 - frac) * (len(ordered) - 1)))
+        return float(ordered[max(0, min(idx, len(ordered) - 1))])
 
     def _a192_admission_verdict(self, book_id: int, maker_fee_bps: float, tick: int) -> dict[str, Any]:
         """Decide whether fresh Maker entry on this book is admitted.
@@ -1779,10 +1946,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
         if not dwell_active:
             if int(risk["book_samples"]) < int(self.A192_MIN_BOOK_SAMPLES):
-                self._a192_no_history_admits = int(getattr(self, "_a192_no_history_admits", 0) or 0) + 1
-                self._a192_admissions = int(getattr(self, "_a192_admissions", 0) or 0) + 1
-                return {"suppress": False, "reason": A192_ALLOW_NO_HISTORY,
-                        "maker_fee_bps": fee, **risk}
+                # A1.9.2.1: shrink toward the cross-book pool instead of
+                # admitting unconditionally.  "No history" is not evidence of
+                # low risk, and treating it as such leaked 22.1% of the run's
+                # cubic downside through this branch.  Falls back to the
+                # A1.9.2 behaviour when there is no pool to shrink toward.
+                pool = self._a1921_pooled_risk(int(tick)) if self._a1921_enabled() else None
+                if pool is None:
+                    self._a192_no_history_admits = int(getattr(self, "_a192_no_history_admits", 0) or 0) + 1
+                    self._a192_admissions = int(getattr(self, "_a192_admissions", 0) or 0) + 1
+                    return {"suppress": False, "reason": A192_ALLOW_NO_HISTORY,
+                            "maker_fee_bps": fee, **risk}
+                risk = self._a1921_shrink_risk(risk, pool)
+                self._a1921_coldstart_shrinks = int(getattr(self, "_a1921_coldstart_shrinks", 0) or 0) + 1
             flagged = (
                 float(risk["book_net_bps_ewma"]) < float(self.A192_NET_BPS_FLOOR)
                 and float(risk["book_tail_shortfall_bps"]) > float(self.A192_TAIL_SHORTFALL_FLOOR_BPS)
@@ -1794,10 +1970,42 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         "maker_fee_bps": fee, **risk}
 
         self._a192_candidates = int(getattr(self, "_a192_candidates", 0) or 0) + 1
+        self._a192_window_candidates = int(getattr(self, "_a192_window_candidates", 0) or 0) + 1
         try:
             self._a192_flagged_books.add(bid)
         except AttributeError:
             self._a192_flagged_books = {bid}
+
+        # A1.9.2.1.  Severity is recorded for EVERY candidate, whatever the
+        # outcome, because the quantile has to describe the candidate
+        # population -- recording only the suppressed ones would censor the
+        # distribution at exactly the point being measured.
+        severity = self._a1921_severity(risk)
+        if self._a1921_enabled():
+            try:
+                if not getattr(self, "_a1921_seeded", False):
+                    n_seed = self._a1921_seed_severity_history()
+                    try:
+                        self._emit(
+                            "A192_SEVERITY_SEED", force=True, tick=int(tick),
+                            seeded_books=int(n_seed),
+                            min_severity_samples=int(self.A1921_MIN_SEVERITY_SAMPLES),
+                            armed=int(n_seed >= int(self.A1921_MIN_SEVERITY_SAMPLES)),
+                        )
+                    except Exception:
+                        pass
+                self._a1921_sev_hist.append(severity)
+            except AttributeError:
+                self._a1921_sev_hist = deque([severity], maxlen=int(self.A1921_SEVERITY_HISTORY))
+            if int(risk.get("a1921_coldstart_shrunk", 0) or 0):
+                self._a1921_coldstart_flagged = int(getattr(self, "_a1921_coldstart_flagged", 0) or 0) + 1
+                try:
+                    self._emit(
+                        "A192_COLDSTART_SHRINK", force=True, tick=int(tick), book=bid,
+                        maker_fee_bps=fee, severity=float(severity), **risk,
+                    )
+                except Exception:
+                    pass
 
         # Bounded by construction.  A fee-only rule scored better on PnL in the
         # counterfactual but suppressed 78% of round trips; a tail-risk gate
@@ -1811,11 +2019,31 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # and the max(1.0, ...) floor only frees the first suppression of a
         # 200-tick window.
         allowance = max(1.0, opp * float(self.A192_MAX_SUPPRESSION_PCT) / 100.0)
+        threshold = self._a1921_severity_threshold() if self._a1921_enabled() else None
         if (sup + 1) > allowance:
             self._a192_cap_blocks = int(getattr(self, "_a192_cap_blocks", 0) or 0) + 1
             self._a192_admissions = int(getattr(self, "_a192_admissions", 0) or 0) + 1
             return {"suppress": False, "reason": A192_ALLOW_CAP, "maker_fee_bps": fee,
-                    "window_suppression_pct": round(100.0 * sup / opp, 2), **risk}
+                    "window_suppression_pct": round(100.0 * sup / opp, 2),
+                    "severity": float(severity),
+                    "severity_threshold": (float(threshold) if threshold is not None else None),
+                    **risk}
+
+        # A1.9.2.1.  The budget is intact, but it is not spent on this
+        # candidate: less severe than the share of the candidate distribution
+        # the budget can cover, so it is reserved for a worse one.  This is the
+        # only new way an entry can be admitted, and it strictly REDUCES
+        # suppression, so the <=35% volume guarantee is unchanged.  Dwell
+        # re-suppressions reach this test on the same terms as fresh
+        # candidates: a quarantine no longer holds a standing claim on budget
+        # that newly arriving, more severe books cannot outbid.
+        if threshold is not None and float(severity) < float(threshold):
+            self._a1921_rank_defers = int(getattr(self, "_a1921_rank_defers", 0) or 0) + 1
+            self._a192_admissions = int(getattr(self, "_a192_admissions", 0) or 0) + 1
+            return {"suppress": False, "reason": A192_ALLOW_SEVERITY_RANK, "maker_fee_bps": fee,
+                    "window_suppression_pct": round(100.0 * sup / opp, 2),
+                    "severity": float(severity), "severity_threshold": float(threshold),
+                    "dwell_active": int(bool(dwell_active)), **risk}
 
         self._a192_window_suppressed = sup + 1
         self._a192_suppressions = int(getattr(self, "_a192_suppressions", 0) or 0) + 1
@@ -1838,6 +2066,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "dwell_remaining_ticks": max(0, int(dwell_until) - int(tick)),
             "strikes": int((getattr(self, "_a192_strikes", {}) or {}).get(bid, 0) or 0),
             "window_suppression_pct": round(100.0 * (sup + 1) / max(1, opp), 2),
+            "severity": float(severity),
+            "severity_threshold": (float(threshold) if threshold is not None else None),
             **risk,
         }
 
@@ -1903,6 +2133,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     dwell_base_ticks=int(self.A192_DWELL_BASE_TICKS),
                     dwell_max_ticks=int(self.A192_DWELL_MAX_TICKS),
                     recovery_clean_rts=int(self.A192_RECOVERY_CLEAN_RTS),
+                    a1921_severity_priority_enabled=int(self._a1921_enabled()),
+                    a1921_severity_history=int(self.A1921_SEVERITY_HISTORY),
+                    a1921_min_severity_samples=int(self.A1921_MIN_SEVERITY_SAMPLES),
+                    a1921_coldstart_prior_samples=float(self.A1921_COLDSTART_PRIOR_SAMPLES),
+                    a1921_min_pool_books=int(self.A1921_MIN_POOL_BOOKS),
                     a192_events=",".join(DIRECT_A192_EVENTS),
                 )
             except Exception:
@@ -3779,6 +4014,22 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     self._emit(
                         "A192_CAP_BLOCK", force=True, tick=int(tick),
                         book=int(book_id),
+                        max_suppression_pct=float(self.A192_MAX_SUPPRESSION_PCT),
+                        **{k: v for k, v in a192_verdict.items() if k != "suppress"},
+                    )
+                except Exception:
+                    pass
+            elif str(a192_verdict.get("reason", "")) == A192_ALLOW_SEVERITY_RANK:
+                # A1.9.2.1.  Force-emitted like the other two so the allocation
+                # can be audited without the ENTRY_DECISION sampling rate: the
+                # A1.9.2 review could not measure true suppression share
+                # because ENTRY_DECISION is written every Nth tick while the
+                # A192 events are not.
+                try:
+                    self._emit(
+                        "A192_SEVERITY_DEFER", force=True, tick=int(tick),
+                        book=int(book_id),
+                        current_maker_edge_bps=float(current_edge_bps),
                         max_suppression_pct=float(self.A192_MAX_SUPPRESSION_PCT),
                         **{k: v for k, v in a192_verdict.items() if k != "suppress"},
                     )
@@ -6117,6 +6368,22 @@ class Strategy1_Research_Simple(Strategy1_Research):
             100.0 * int(getattr(self, "_a192_window_suppressed", 0) or 0)
             / int(getattr(self, "_a192_window_opportunities", 0) or 0), 2
         ) if int(getattr(self, "_a192_window_opportunities", 0) or 0) else 0.0
+        stats["direct_a1921_severity_priority_enabled"] = int(self._a1921_enabled())
+        stats["direct_a1921_rank_defers"] = int(getattr(self, "_a1921_rank_defers", 0) or 0)
+        stats["direct_a1921_coldstart_shrinks"] = int(getattr(self, "_a1921_coldstart_shrinks", 0) or 0)
+        stats["direct_a1921_coldstart_flagged"] = int(getattr(self, "_a1921_coldstart_flagged", 0) or 0)
+        stats["direct_a1921_window_candidates"] = int(getattr(self, "_a192_window_candidates", 0) or 0)
+        _thr = self._a1921_severity_threshold() if self._a1921_enabled() else None
+        stats["direct_a1921_severity_threshold"] = round(float(_thr), 4) if _thr is not None else None
+        stats["direct_a1921_severity_samples"] = len(getattr(self, "_a1921_sev_hist", None) or ())
+        stats["direct_a1921_seed_count"] = int(getattr(self, "_a1921_seed_count", 0) or 0)
+        # Budget utilisation.  Severity deferral can only lower suppression, so
+        # this is the number that says whether prioritisation is leaving volume
+        # protection unused rather than reallocating it.
+        _alw = int(getattr(self, "_a192_window_opportunities", 0) or 0) * float(self.A192_MAX_SUPPRESSION_PCT) / 100.0
+        stats["direct_a1921_budget_utilization_pct"] = round(
+            100.0 * int(getattr(self, "_a192_window_suppressed", 0) or 0) / _alw, 2
+        ) if _alw > 0.0 else 0.0
         stats["direct_a192_max_suppression_pct"] = float(self.A192_MAX_SUPPRESSION_PCT)
         stats["direct_a192_net_bps_floor"] = float(self.A192_NET_BPS_FLOOR)
         stats["direct_a192_tail_shortfall_floor_bps"] = float(self.A192_TAIL_SHORTFALL_FLOOR_BPS)
