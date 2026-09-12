@@ -115,7 +115,11 @@ def test_source_has_directional_final_validation_and_inflight_reservation():
 def test_build_reserves_open_orders_before_new_entry_capacity():
     build = ast.get_source_segment(SRC, METHODS['build_mm_strategy_instructions'])
     assert '_direct_outstanding_exposure_reservation(state)' in build
-    assert 'effective_abs_now = abs_now + float(reserved_abs)' in build
+    # A1.9.5 F3 subtracts the parked-dust class exemption from the same
+    # expression.  The A1.6.3 invariant this test exists for -- outstanding
+    # orders reserve their exposure BEFORE new-entry capacity is computed --
+    # is unchanged; only the literal text moved.
+    assert 'effective_abs_now = abs_now - dust_exempt_abs + float(reserved_abs)' in build
     assert 'effective_open_now += int(reserved_open)' in build
     assert '_direct_book_has_live_order(book_id)' in build
 

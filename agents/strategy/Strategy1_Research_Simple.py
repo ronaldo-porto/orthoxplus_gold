@@ -236,6 +236,22 @@ from research_direct_dust_kappa import (
     REASON_AGE_ESCALATED,
     decide_kappa_safe_dust_compaction,
 )
+from research_direct_reconcile import (
+    A195_RECONCILE_VERSION,
+    A195_DEFAULT_TOLERANCE_BASE,
+    A195_MAX_DETAIL_ROWS,
+    reconcile_books,
+)
+from research_direct_dust_capacity import (
+    A195_DUST_CAPACITY_VERSION,
+    A195_DUST_CLASS_MAX_CLIPS,
+    dust_capacity_report,
+    dust_class_exempt_abs,
+)
+# Only for the balance-vs-position comparison in A195_RECONCILE: this returns
+# Balance.total, not a net position, which is exactly what the observer exists
+# to make visible.  Nothing in this file treats its output as inventory.
+from research_session_state import reconcile_account_base
 from research_direct_liveness import (
     DIRECT_LIVENESS_VERSION,
     DIRECT_DUST_NORMALIZE_MIN_AGE_TICKS,
@@ -411,6 +427,45 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self.research_a194_rebate_conjunction_enabled = self._as_bool(
             getattr(self.config, "research_a194_rebate_conjunction_enabled", True)
         )
+        # A1.9.5 step 1.  Measurement only: compares the local position tracker
+        # against the venue accounts and emits A195_RECONCILE.  It places no
+        # orders and mutates no state, so unlike the other a19x switches it is
+        # safe to leave on -- but it is still a switch, so a noisy universe can
+        # be silenced without a rebuild.
+        self.research_a195_reconcile_observe = self._as_bool(
+            getattr(self.config, "research_a195_reconcile_observe", True)
+        )
+        self.research_a195_reconcile_tolerance_base = max(
+            0.0,
+            float(getattr(
+                self.config,
+                "research_a195_reconcile_tolerance_base",
+                A195_DEFAULT_TOLERANCE_BASE,
+            )),
+        )
+        self._a195_reconcile_emits = 0
+        self._a195_reconcile_diverged_books: set[int] = set()
+        self._a195_reconcile_unresolved_books: set[int] = set()
+        self._a195_reconcile_max_abs_divergence = 0.0
+        self._a195_reconcile_last: dict[str, Any] = {}
+        # A1.9.5 step 2 (F3): parked dust is its own capacity class.  A1.6.1
+        # excused dust from the open-BOOK count but never from the aggregate
+        # absolute-BASE budget, and the BASE budget is what actually closed the
+        # agent -- at tick 10,000 dust held 1.3257 of a 2.0 cap, leaving
+        # abs_slots = 0 while book slots sat at active 1/6, open 1/8.
+        self.research_a195_dust_capacity_class = self._as_bool(
+            getattr(self.config, "research_a195_dust_capacity_class", True)
+        )
+        self.research_a195_dust_class_max_clips = max(0.0, float(getattr(
+            self.config,
+            "research_a195_dust_class_max_clips",
+            A195_DUST_CLASS_MAX_CLIPS,
+        )))
+        self._a195_dust_capacity_emits = 0
+        self._a195_dust_capacity_slots_recovered = 0
+        self._a195_dust_capacity_max_exempt_abs = 0.0
+        self._a195_dust_capacity_overflow_ticks = 0
+        self._a195_dust_capacity_last: dict[str, Any] = {}
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1949,6 +2004,137 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return max(0.0, -float(maker_fee_bps or 0.0))
         except (TypeError, ValueError):
             return 0.0
+
+    # ---- A1.9.5 step 1: inventory reconciliation observer ---------------
+    def _a195_reconcile_enabled(self) -> bool:
+        return bool(getattr(self, "research_a195_reconcile_observe", True))
+
+    def _a195_local_base_by_book(self, books: Any) -> dict[int, float]:
+        """Signed net base per book, from the pure tracker snapshot.
+
+        ``_net_inventory`` is deliberately not used: it advances
+        ``_position_ticks``, which drives the exit escalation ladder, so
+        calling it from an observer would be a live behaviour change.
+        """
+        out: dict[int, float] = {}
+        for raw_id in (books or {}):
+            try:
+                book_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            try:
+                snap = self._position_tracker_snapshot(book_id)
+                out[book_id] = float(getattr(snap, "net_qty", 0.0) or 0.0)
+            except Exception:
+                out[book_id] = 0.0
+        return out
+
+    def _a195_emit_reconcile(self, state, tick: int) -> None:
+        """Measure venue-vs-local inventory divergence.  Never mutates."""
+        if not self._a195_reconcile_enabled():
+            return
+        books = getattr(state, "books", None) or {}
+        if not books:
+            return
+        local = self._a195_local_base_by_book(books)
+        accounts = getattr(self, "accounts", None)
+        try:
+            legacy = reconcile_account_base(accounts)
+        except Exception:
+            legacy = {}
+        report = reconcile_books(
+            local,
+            accounts,
+            tolerance=float(getattr(
+                self, "research_a195_reconcile_tolerance_base", A195_DEFAULT_TOLERANCE_BASE
+            )),
+            legacy_base_by_book=legacy,
+            max_detail_rows=A195_MAX_DETAIL_ROWS,
+        )
+
+        self._a195_reconcile_emits = int(getattr(self, "_a195_reconcile_emits", 0) or 0) + 1
+        self._a195_reconcile_max_abs_divergence = max(
+            float(getattr(self, "_a195_reconcile_max_abs_divergence", 0.0) or 0.0),
+            float(report.max_abs_divergence),
+        )
+        for row in report.diverged_rows:
+            if row.resolved:
+                self._a195_reconcile_diverged_books.add(int(row.book_id))
+            else:
+                self._a195_reconcile_unresolved_books.add(int(row.book_id))
+
+        payload = report.as_log()
+        self._a195_reconcile_last = payload
+        # Step 1 is observation, so nothing acts on this.  The interlock that
+        # blocks quoting on a diverged book lands with F2 in step 3.
+        self._emit("A195_RECONCILE", force=True, tick=int(tick), **payload)
+
+    # ---- A1.9.5 step 2 (F3): parked-dust capacity class ----------------
+    def _a195_dust_capacity_enabled(self) -> bool:
+        return bool(getattr(self, "research_a195_dust_capacity_class", True))
+
+    def _a195_dust_exempt_abs(
+        self, *, total_abs: float, dust_abs: float, min_order: float, max_abs: float,
+    ) -> float:
+        """Parked BASE excused from the acquisition budget, 0.0 when disabled.
+
+        Clamped to ``total_abs`` so a stale diag can never hand back more
+        exemption than there is inventory, which would manufacture headroom.
+        """
+        if not self._a195_dust_capacity_enabled():
+            return 0.0
+        try:
+            return dust_class_exempt_abs(
+                dust_abs=min(float(dust_abs), float(total_abs)),
+                min_order=float(min_order),
+                max_abs=float(max_abs),
+                max_clips=float(getattr(
+                    self, "research_a195_dust_class_max_clips",
+                    A195_DUST_CLASS_MAX_CLIPS,
+                )),
+            )
+        except Exception:
+            # Capacity accounting must fail closed: no exemption is exactly
+            # the pre-A1.9.5 behaviour.
+            return 0.0
+
+    def _a195_emit_dust_capacity(
+        self, *, tick: int, total_abs: float, dust_abs: float, min_order: float,
+        max_abs: float, slots_before: int, slots_after: int,
+    ) -> None:
+        if not self._a195_dust_capacity_enabled():
+            return
+        try:
+            payload = dust_capacity_report(
+                total_abs=total_abs, dust_abs=dust_abs, min_order=min_order,
+                max_abs=max_abs,
+                max_clips=float(getattr(
+                    self, "research_a195_dust_class_max_clips",
+                    A195_DUST_CLASS_MAX_CLIPS,
+                )),
+            )
+        except Exception:
+            return
+        recovered = max(0, int(slots_after) - int(slots_before))
+        payload["slots_without_class"] = int(slots_before)
+        payload["slots_with_class"] = int(slots_after)
+        payload["slots_recovered"] = int(recovered)
+        self._a195_dust_capacity_emits = int(
+            getattr(self, "_a195_dust_capacity_emits", 0) or 0
+        ) + 1
+        self._a195_dust_capacity_slots_recovered = int(
+            getattr(self, "_a195_dust_capacity_slots_recovered", 0) or 0
+        ) + recovered
+        self._a195_dust_capacity_max_exempt_abs = max(
+            float(getattr(self, "_a195_dust_capacity_max_exempt_abs", 0.0) or 0.0),
+            float(payload.get("dust_class_exempt_abs", 0.0) or 0.0),
+        )
+        if float(payload.get("dust_class_overflow_abs", 0.0) or 0.0) > 0.0:
+            self._a195_dust_capacity_overflow_ticks = int(
+                getattr(self, "_a195_dust_capacity_overflow_ticks", 0) or 0
+            ) + 1
+        self._a195_dust_capacity_last = payload
+        self._emit("A195_DUST_CAPACITY", force=True, tick=int(tick), **payload)
 
     # ---- A1.9.3 breadth-critical admission -----------------------------
     def _a193_enabled(self) -> bool:
@@ -4485,6 +4671,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         active_nonflat = 0
         dust_nonflat = 0
         total_abs_base = 0.0
+        # A1.9.5 F3 needs dust BASE separated from productive BASE, and this
+        # is the only loop that already classifies every book.
+        dust_abs_base = 0.0
         for raw_id, book in books.items():
             bid = int(raw_id)
             try:
@@ -4498,6 +4687,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 total_abs_base += qty
                 if is_dust:
                     dust_nonflat += 1
+                    dust_abs_base += qty
                 else:
                     active_nonflat += 1
 
@@ -4606,6 +4796,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "active_nonflat_inventory": int(active_nonflat),
             "dust_nonflat_inventory": int(dust_nonflat),
             "total_abs_base_inventory": float(total_abs_base),
+            "dust_abs_base_inventory": float(dust_abs_base),
             # A1.6.1: every sub-minimum dust book is excluded from productive
             # open-book capacity. Exact BASE remains in total_abs_base_inventory.
             "direct_effective_open_books": int(active_nonflat),
@@ -4623,6 +4814,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     cooled_books=sum(1 for r in rows if r.cooled),
                     nonnegative_edge_books=sum(1 for r in rows if r.observable_edge_bps >= 0.0),
                 )
+            except Exception:
+                pass
+            # A1.9.5 step 1, same sampled cadence.  Observation only.
+            try:
+                self._a195_emit_reconcile(state, tick)
             except Exception:
                 pass
         return result
@@ -4680,6 +4876,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._research_timing["ranking_ms"] = elapsed
         return selection
 
+    # NOTE: this definition is SHADOWED.  A second
+    # `_research_final_validate_instructions` is defined later in this same
+    # class body (the A1.6.3 directional validator), so Python binds that one
+    # and this A1.6.2 wrapper never executes.  Left byte-identical to HEAD --
+    # A1.9.5 F3 puts its capacity accounting in the live validator instead.
     def _research_final_validate_instructions(self, response, state) -> None:
         # Preserve the authoritative validator, changing only total-open capacity
         # accounting for legal-uncloseable dust.  Absolute BASE risk is untouched.
@@ -6047,6 +6248,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
         shadow_net = {int(bid): self._direct_signed_inventory(int(bid)) for bid in books.keys()}
         filled_abs = sum(abs(float(net)) for net in shadow_net.values())
         filled_active = sum(1 for net in shadow_net.values() if abs(float(net)) + eps >= min_size)
+        # A1.9.5 F3, gate B.  `filled_active` already excludes dust from the
+        # BOOK count; `filled_abs` still charges it to the BASE budget, so this
+        # validator becomes the next binding gate as soon as admission is
+        # relaxed.  EXPOSURE_HEADROOM fired 0 times across the whole A1.9.4 run
+        # only because admission never let anything reach here -- that silence
+        # was not headroom, and relaxing one gate without the other would move
+        # the block rather than remove it.
+        filled_dust_abs = sum(
+            abs(float(net)) for net in shadow_net.values()
+            if eps < abs(float(net)) + 1e-12 < min_size
+        )
+        filled_abs = max(0.0, filled_abs - self._a195_dust_exempt_abs(
+            total_abs=filled_abs, dust_abs=filled_dust_abs,
+            min_order=min_size, max_abs=max_abs,
+        ))
         reserved_abs, reserved_open = self._direct_outstanding_exposure_reservation(state)
         shadow_abs = filled_abs + reserved_abs
         shadow_open = filled_active + reserved_open
@@ -6401,7 +6617,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         max_active = int(getattr(self, "research_max_active_open_books", 6) or 6)
         min_size = max(1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25))
         reserved_abs, reserved_open = self._direct_outstanding_exposure_reservation(state)
-        effective_abs_now = abs_now + float(reserved_abs)
+        # A1.9.5 F3: charge acquisition against PRODUCTIVE base only.  Parked
+        # dust is sub-min_order residue the Kappa loss floor correctly refuses
+        # to realize, so it is permanent; billing it to the acquisition budget
+        # decays productive capacity to zero.  Bounded by the dust class
+        # ceiling, and the overflow past that ceiling still counts.
+        dust_abs_now = float(diag.get("dust_abs_base_inventory", 0.0) or 0.0)
+        dust_exempt_abs = self._a195_dust_exempt_abs(
+            total_abs=abs_now, dust_abs=dust_abs_now,
+            min_order=min_size, max_abs=max_abs,
+        )
+        stats["direct_a195_dust_exempt_abs"] = float(dust_exempt_abs)
+        effective_abs_now = abs_now - dust_exempt_abs + float(reserved_abs)
         effective_open_now += int(reserved_open)
         effective_active_now = active_now + int(reserved_open)
         stats["direct_reserved_abs_base"] = float(reserved_abs)
@@ -6420,6 +6647,33 @@ class Strategy1_Research_Simple(Strategy1_Research):
             max_open=max_open,
             min_order=min_size,
         )
+        # A1.9.5 F3 telemetry: the counterfactual slot count, so the class's
+        # effect is a measured number rather than an inference.  Sampled on the
+        # existing cadence -- this recomputes admission, so it is not free.
+        a195_tick = int(getattr(self, "_tick", 0) or 0)
+        if (
+            self._a195_dust_capacity_enabled()
+            and (a195_tick <= 2 or a195_tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0)
+        ):
+            try:
+                slots_without = direct_liveness_admission_slots(
+                    effective_abs=abs_now + float(reserved_abs),
+                    active_books=effective_active_now,
+                    effective_open_books=effective_open_now,
+                    dust_count=dust_now,
+                    max_abs=max_abs,
+                    max_active=max_active,
+                    max_open=max_open,
+                    min_order=min_size,
+                )
+                self._a195_emit_dust_capacity(
+                    tick=a195_tick, total_abs=abs_now, dust_abs=dust_abs_now,
+                    min_order=min_size, max_abs=max_abs,
+                    slots_before=slots_without, slots_after=portfolio_slots,
+                )
+            except Exception:
+                pass
+
         if selected_ids and portfolio_slots <= 0:
             self._direct_liveness_blocked_ticks = int(
                 getattr(self, "_direct_liveness_blocked_ticks", 0) or 0
@@ -6736,6 +6990,37 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a194_covered_books"] = len(getattr(self, "_a194_covered_books", set()) or set())
         stats["direct_a194_uncovered_bps_total"] = round(
             float(getattr(self, "_a194_uncovered_bps_total", 0.0) or 0.0), 4
+        )
+        # ---- A1.9.5 step 1 reconciliation observer ----
+        stats["direct_a195_reconcile_observe"] = int(bool(self._a195_reconcile_enabled()))
+        stats["direct_a195_reconcile_version"] = A195_RECONCILE_VERSION
+        stats["direct_a195_reconcile_emits"] = int(getattr(self, "_a195_reconcile_emits", 0) or 0)
+        stats["direct_a195_reconcile_diverged_books"] = len(
+            getattr(self, "_a195_reconcile_diverged_books", set()) or set()
+        )
+        stats["direct_a195_reconcile_unresolved_books"] = len(
+            getattr(self, "_a195_reconcile_unresolved_books", set()) or set()
+        )
+        stats["direct_a195_reconcile_max_abs_divergence"] = round(
+            float(getattr(self, "_a195_reconcile_max_abs_divergence", 0.0) or 0.0), 6
+        )
+        stats["direct_a195_dust_capacity_class"] = int(
+            bool(self._a195_dust_capacity_enabled())
+        )
+        stats["direct_a195_dust_capacity_version"] = A195_DUST_CAPACITY_VERSION
+        stats["direct_a195_dust_capacity_emits"] = int(
+            getattr(self, "_a195_dust_capacity_emits", 0) or 0
+        )
+        stats["direct_a195_dust_slots_recovered"] = int(
+            getattr(self, "_a195_dust_capacity_slots_recovered", 0) or 0
+        )
+        stats["direct_a195_dust_max_exempt_abs"] = round(
+            float(getattr(self, "_a195_dust_capacity_max_exempt_abs", 0.0) or 0.0), 6
+        )
+        # Ticks where dust exceeded its class ceiling and started counting
+        # against acquisition again -- the signal that a purge is overdue.
+        stats["direct_a195_dust_overflow_ticks"] = int(
+            getattr(self, "_a195_dust_capacity_overflow_ticks", 0) or 0
         )
         stats["direct_a192_max_suppression_pct"] = float(self.A192_MAX_SUPPRESSION_PCT)
         stats["direct_a192_net_bps_floor"] = float(self.A192_NET_BPS_FLOOR)
