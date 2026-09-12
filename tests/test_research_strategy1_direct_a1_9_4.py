@@ -64,8 +64,8 @@ SRC = SIMPLE.read_text()
 # ------------------------------------------------------------ versioning
 
 def test_version_advances_to_a1_9_4():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_4"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_4"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_5"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_5"' in SRC
 
 
 def test_launcher_guards_the_new_phase():

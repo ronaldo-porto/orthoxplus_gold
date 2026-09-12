@@ -22,7 +22,7 @@ def _gate(*, regime="QUIET", fee=0.0, spread=31.5, trade_rate=0.0):
 
 
 def test_version_and_integration_markers_present():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_4"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_5"' in SRC
     assert DIRECT_QUIET_ENTRY_VERSION == "direct_quiet_entry_v4_16_2_a1_7_4_5"
     assert "quiet_zero_rebate_entry_gate(" in SRC
     assert "A1745_ENTRY_BLOCK_LOW_EDGE" in SRC

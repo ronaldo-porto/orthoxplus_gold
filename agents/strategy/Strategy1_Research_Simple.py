@@ -364,8 +364,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_4"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_4"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_5"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_5"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an

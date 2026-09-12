@@ -63,10 +63,19 @@ done
 
 [[ -f "$SCRIPT_DIR/run_miner_multi.sh" ]] || { echo "ERROR: run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research_Simple.py" ]] || { echo "ERROR: Strategy1_Research_Simple.py missing" >&2; exit 1; }
-grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_4"' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
-  echo "ERROR: wrong Strategy1 direct candidate" >&2
-  exit 1
-}
+POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1)"
+# A1.9.5 ships as its own policy version.  The A1.9.2 / A1.9.2.1 / A1.9.3 /
+# A1.9.4 guards below still apply to it -- those invariants are cumulative, not
+# per-revision -- so they gate on A19X_BUILD rather than on one literal.
+A19X_BUILD=0; A195_BUILD=0
+case "$POLICY_VER" in
+  strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
+  strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
+  *)
+    echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
+    exit 1
+    ;;
+esac
 grep -q 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_2"' "$AGENT_PATH/Strategy1_Research.py" || {
   echo "ERROR: baseline Strategy1_Research.py must remain V4.16.2" >&2
   exit 1
@@ -93,7 +102,7 @@ fi
 # A1.9.2 activation guard.  Same failure mode, different phase: a build that
 # reports a1_9_2 while the admission gate can never fire would burn another
 # 4,000 ticks before anyone noticed.  Both halves must be provable up front.
-if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_4"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+if [[ "$A19X_BUILD" == "1" ]]; then
   grep -q 'def _a192_behaviour_change' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: A1.9.2 build cannot report behaviour_change from runtime state" >&2
     exit 1
@@ -160,7 +169,11 @@ research_profitable_exit_ttl_ms=4000 research_a191_queue_preservation_enabled=1 
 research_a192_book_risk_admission_enabled=1 \
 research_a1921_severity_priority_enabled=1 \
 research_a193_breadth_admission_enabled=1 \
-research_a194_rebate_conjunction_enabled=1"
+research_a194_rebate_conjunction_enabled=1 \
+research_a195_reconcile_observe=1 research_a195_dust_capacity_class=1 \
+research_a195_taker_floor_enforce=1 research_a195_taker_floor_bps=-25.0 \
+research_a195_inventory_truth_enabled=1 research_a195_startup_orphan_cancel=1 \
+research_a195_breadth_lane_enabled=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -191,7 +204,7 @@ fi
 # got budget and the books denied by the cap had identical severity (median
 # 40.73 both).  A build that reports a1_9_2_1 while the severity path can never
 # fire would repeat A1.9.2 under a new name and cost another run.
-if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_4"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+if [[ "$A19X_BUILD" == "1" ]]; then
   for _fn in _a1921_severity_threshold _a1921_shrink_risk _a1921_seed_severity_history; do
     grep -q "def $_fn" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
       echo "ERROR: A1.9.2.1 build is missing $_fn" >&2
@@ -232,24 +245,49 @@ fi
 # completion ladder and the frozen base's expiry/deadline rank bonuses could
 # apply, so every mechanism built to hold breadth was unreachable in exactly
 # the positive-fee regime where breadth is hardest to hold.
-if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_4"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+if [[ "$A19X_BUILD" == "1" ]]; then
   for _fn in _a193_breadth_override _a193_breadth_lane _a193_breadth_budget; do
     grep -q "def $_fn" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
       echo "ERROR: A1.9.3 build is missing $_fn" >&2
       exit 1
     }
   done
-  grep -q 'self\._a193_breadth_override(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
-    echo "ERROR: A1.9.3 _a193_breadth_override is defined but never called --" >&2
-    echo "       breadth-critical books stay unreachable and the run is inert." >&2
-    exit 1
-  }
-  # It must override NEGATIVE_CURRENT_EDGE and nothing else.  TOXIC,
-  # INVENTORY_BLOCKED, UNSAFE and VOLUME_CAP stay hard rejects.
-  grep -q 'if reject == "NEGATIVE_CURRENT_EDGE":' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
-    echo "ERROR: A1.9.3 does not scope its override to NEGATIVE_CURRENT_EDGE." >&2
-    exit 1
-  }
+  if [[ "$A195_BUILD" == "1" ]]; then
+    # A1.9.5 step 4 RETIRES this call site, and the retirement is measured, not
+    # assumed: across two runs (9,738 + 4,688 ticks) the override produced zero
+    # admits and zero denies, because one-away books never reach
+    # NEGATIVE_CURRENT_EDGE -- all 1,421 one-away RANK rows of the A1.9.5 run
+    # were eligible=True, reject_reason=None, with no negative trading_ev.
+    # There was nothing at this stage to override.  So the guard INVERTS rather
+    # than disappearing: the dead site must be gone AND the relocation must be
+    # present.  Dropping the check outright would let a later edit delete
+    # breadth authority in silence -- the A1.9.3 inert-feature failure wearing
+    # a new costume, which is exactly what this guard family exists to catch.
+    grep -q 'RETIRED in A1.9.5 step 4' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: A1.9.5 build without the step-4 retirement record at the" >&2
+      echo "       A1.9.3 hook site. Retire it with its evidence, or revert." >&2
+      exit 1
+    }
+    grep -q 'self\._a195_breadth_relief(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: A1.9.5 retired the A1.9.3 hook without wiring" >&2
+      echo "       _a195_breadth_relief at the A1.7.4.5 floor -- breadth then" >&2
+      echo "       has NO authority anywhere and the run is inert. That is the" >&2
+      echo "       precise failure the retirement was meant to end." >&2
+      exit 1
+    }
+  else
+    grep -q 'self\._a193_breadth_override(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: A1.9.3 _a193_breadth_override is defined but never called --" >&2
+      echo "       breadth-critical books stay unreachable and the run is inert." >&2
+      exit 1
+    }
+    # It must override NEGATIVE_CURRENT_EDGE and nothing else.  TOXIC,
+    # INVENTORY_BLOCKED, UNSAFE and VOLUME_CAP stay hard rejects.
+    grep -q 'if reject == "NEGATIVE_CURRENT_EDGE":' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: A1.9.3 does not scope its override to NEGATIVE_CURRENT_EDGE." >&2
+      exit 1
+    }
+  fi
   # THE safety property: books two or more observations away must get nothing.
   # One round trip does not change their qualification state, so admitting them
   # at negative edge buys volume, not breadth -- which is the activity
@@ -277,7 +315,11 @@ if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_4"' "$AGENT_P
     echo "       breadth-critical book unreachable -- A1.9.2.1 under a new name." >&2
     exit 1
   }
-  echo "[preflight] A1.9.3 breadth-critical admission activation guard PASS"
+  if [[ "$A195_BUILD" == "1" ]]; then
+    echo "[preflight] A1.9.3 hook retired; breadth relocated to A1.7.4.5 PASS"
+  else
+    echo "[preflight] A1.9.3 breadth-critical admission activation guard PASS"
+  fi
 fi
 
 # ---------------------------------------------------------------- A1.9.4
@@ -288,7 +330,7 @@ fi
 # on all 116 of their entries through it, and their damage ranked in exactly
 # the order of their rebate depth.  A1.9.4 keeps fee sign as a discriminator
 # and removes it as immunity.
-if grep -q 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_4"' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+if [[ "$A19X_BUILD" == "1" ]]; then
   for _fn in _a194_enabled _a194_rebate_bps; do
     grep -q "def $_fn" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
       echo "ERROR: A1.9.4 build is missing $_fn" >&2
@@ -338,6 +380,91 @@ EOF
     exit 1
   }
   echo "[preflight] A1.9.4 rebate conjunction activation guard PASS"
+fi
+
+# A1.9.5 activation guard.  Steps 1+2 ran 4,688 ticks and produced the first
+# breadth gain of the series (qualified 53 -> 70) together with a 3.71x breach
+# of the phase's own cubic-downside abort gate (0.0277 -> 0.1027).  Both came
+# from one mechanism: F3 freed capacity, the capacity became taker exits, and
+# every taker exit ships its loss floor declared and unenforced.  The guards
+# below pin the four invariants that make steps 2.5/3/4 safe to run at all.
+if [[ "$A195_BUILD" == "1" ]]; then
+  for _mod in research_direct_taker_bound research_direct_inventory_truth \
+              research_direct_breadth_lane; do
+    [[ -f "$AGENT_PATH/$_mod.py" ]] || {
+      echo "ERROR: A1.9.5 build is missing $_mod.py" >&2
+      exit 1
+    }
+  done
+
+  # F8, step 2.5.  THE property: the taker exit must carry a bound.  The frozen
+  # base calls response.market_order() with max_slippage omitted, and
+  # instructions.py serialises a missing bound as 0.0 -- which the venue reads
+  # as UNBOUNDED, not as zero loss.  147 of 442 round trips realised past their
+  # own declared floor because of it, worst -262 bps against a -25 bps floor.
+  grep -q 'def _execute_aggressive_close' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.5 does not override _execute_aggressive_close; the taker" >&2
+    echo "       exit still ships unbounded and F8 is inert." >&2
+    exit 1
+  }
+  grep -q 'placed = super()._execute_aggressive_close(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.5 reimplements the taker close instead of delegating to" >&2
+    echo "       the frozen base. The fee gate, volume cap, balance checks and" >&2
+    echo "       cancel-before-taker ordering must stay exactly as frozen." >&2
+    exit 1
+  }
+  # The zero-floor inversion: seven triggers declare a floor of exactly 0.0 --
+  # their STRICTEST floor.  Forwarding it verbatim turns the strictest floor
+  # into no floor.  The clamp must be strictly positive.
+  grep -q 'A195_MIN_SLIPPAGE_FRACTION = 1e-4' "$AGENT_PATH/research_direct_taker_bound.py" || {
+    echo "ERROR: A1.9.5 taker bound has no positive minimum slippage fraction." >&2
+    echo "       A declared floor of 0.0 would ship as max_slippage=0.0, which" >&2
+    echo "       the wire format means as UNBOUNDED. That inverts the gate." >&2
+    exit 1
+  }
+
+  # F2, step 3.  Venue net position is total - initial.  The legacy helper
+  # reads `total` -- the whole account balance on the book, two orders of
+  # magnitude out and of the wrong sign (book 101: total 79.9076,
+  # initial 80.5658, true net -0.6582).
+  grep -q 'venue_net_base' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.5 seeding does not use venue_net_base; reconciling from" >&2
+    echo "       reconcile_account_base seeds the account balance as a position." >&2
+    exit 1
+  }
+  # A1.9.0.3 invariant, reintroduced by a new path and caught by the test diff:
+  # an unregistered cancel falls through to EXPIRED and overstates exchange-side
+  # expiry.  The startup orphan cancel is ours and must say so.
+  grep -q 'ABSENT_ORPHAN_CANCEL' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.5 startup orphan cancel does not register a reason." >&2
+    echo "       Unregistered cancels read as EXPIRED -- the A1.9.0.3 defect." >&2
+    exit 1
+  }
+
+  # Step 4.  Relief restores the BASE floor and never goes below it.  Admitting
+  # a negative or sub-base edge buys breadth by destroying kappa, which is the
+  # trade A1.9.2/A1.9.4 exist to prevent and G10 exists to detect.
+  grep -q 'relieved_min_edge_bps=base,' "$AGENT_PATH/research_direct_breadth_lane.py" || {
+    echo "ERROR: A1.9.5 breadth relief does not floor at the A1.7.4.5 base." >&2
+    echo "       Relief below base buys volume at the cost of cubic downside." >&2
+    exit 1
+  }
+  grep -q 'if remaining != 1:' "$AGENT_PATH/research_direct_breadth_lane.py" || {
+    echo "ERROR: A1.9.5 breadth relief is not restricted to one-away books;" >&2
+    echo "       two-away relief buys volume, not breadth." >&2
+    exit 1
+  }
+
+  for _p in research_a195_taker_floor_enforce=1 \
+            research_a195_inventory_truth_enabled=1 \
+            research_a195_breadth_lane_enabled=1; do
+    [[ "$PARAMS" == *"$_p"* ]] || {
+      echo "ERROR: A1.9.5 build without $_p in PARAMS. The engine would report" >&2
+      echo "       a1_9_5 while the step it names does nothing -- A1.9.3 again." >&2
+      exit 1
+    }
+  done
+  echo "[preflight] A1.9.5 taker bound / inventory truth / breadth relief PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
