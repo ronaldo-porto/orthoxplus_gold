@@ -63,14 +63,24 @@ def dust_class_ceiling_abs(
     min_order: float,
     max_abs: float,
     max_clips: float = A195_DUST_CLASS_MAX_CLIPS,
+    legacy_bonus_abs: float = 0.0,
 ) -> float:
     """Most parked BASE the dust class may ever excuse.
 
     Bounded twice over: by one clip per book slot, and by the productive cap
     itself, so total exposure cannot exceed ``2 * max_abs``.
+
+    ``legacy_bonus_abs`` (A1.9.5 step 3) adds headroom for dust that already
+    existed at startup and was imported from venue truth.  It is measured once,
+    at the seed, and never grows -- dust created after startup still competes
+    for the original ceiling, so the overflow signal keeps its meaning.  The
+    worst-case exposure bound becomes ``2 * max_abs + legacy_bonus_abs``, and
+    the legacy term is itself bounded by the seeding caps in
+    ``research_direct_inventory_truth``.
     """
     clips = max(0.0, _finite(max_clips)) * max(1e-12, _finite(min_order, 0.25))
-    return max(0.0, min(clips, max(0.0, _finite(max_abs))))
+    base = max(0.0, min(clips, max(0.0, _finite(max_abs))))
+    return base + max(0.0, _finite(legacy_bonus_abs))
 
 
 def dust_class_exempt_abs(
@@ -79,10 +89,12 @@ def dust_class_exempt_abs(
     min_order: float,
     max_abs: float,
     max_clips: float = A195_DUST_CLASS_MAX_CLIPS,
+    legacy_bonus_abs: float = 0.0,
 ) -> float:
     """Parked-dust BASE excused from the productive acquisition budget."""
     ceiling = dust_class_ceiling_abs(
         min_order=min_order, max_abs=max_abs, max_clips=max_clips,
+        legacy_bonus_abs=legacy_bonus_abs,
     )
     return min(max(0.0, _finite(dust_abs)), ceiling)
 
@@ -94,6 +106,7 @@ def productive_abs_base(
     min_order: float,
     max_abs: float,
     max_clips: float = A195_DUST_CLASS_MAX_CLIPS,
+    legacy_bonus_abs: float = 0.0,
 ) -> float:
     """Aggregate absolute BASE that should be charged to new acquisition.
 
@@ -104,6 +117,7 @@ def productive_abs_base(
     exempt = dust_class_exempt_abs(
         dust_abs=min(max(0.0, _finite(dust_abs)), total),
         min_order=min_order, max_abs=max_abs, max_clips=max_clips,
+        legacy_bonus_abs=legacy_bonus_abs,
     )
     return max(0.0, total - exempt)
 
@@ -115,12 +129,14 @@ def dust_capacity_report(
     min_order: float,
     max_abs: float,
     max_clips: float = A195_DUST_CLASS_MAX_CLIPS,
+    legacy_bonus_abs: float = 0.0,
 ) -> dict:
     """Telemetry payload for one admission decision."""
     total = max(0.0, _finite(total_abs))
     dust = min(max(0.0, _finite(dust_abs)), total)
     ceiling = dust_class_ceiling_abs(
         min_order=min_order, max_abs=max_abs, max_clips=max_clips,
+        legacy_bonus_abs=legacy_bonus_abs,
     )
     exempt = min(dust, ceiling)
     return {
@@ -133,4 +149,5 @@ def dust_capacity_report(
         "dust_class_overflow_abs": max(0.0, dust - ceiling),
         "productive_abs_base": max(0.0, total - exempt),
         "dust_class_headroom_abs": max(0.0, ceiling - dust),
+        "dust_class_legacy_bonus_abs": max(0.0, _finite(legacy_bonus_abs)),
     }

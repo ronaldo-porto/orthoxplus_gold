@@ -182,6 +182,7 @@ from research_direct_exit_refresh import (
     ABSENT_LEDGER_SWEEP,
     ABSENT_NEG_AGGRESSIVE_CANCEL,
     ABSENT_NEVER_PLACED,
+    ABSENT_ORPHAN_CANCEL,
     ABSENT_PARTIAL_REMAINDER_CANCEL,
     ABSENT_WAIT_CANCEL,
     AGENT_CANCEL_DISPOSITIONS,
@@ -241,12 +242,34 @@ from research_direct_reconcile import (
     A195_DEFAULT_TOLERANCE_BASE,
     A195_MAX_DETAIL_ROWS,
     reconcile_books,
+    venue_net_base,
 )
 from research_direct_dust_capacity import (
     A195_DUST_CAPACITY_VERSION,
     A195_DUST_CLASS_MAX_CLIPS,
     dust_capacity_report,
     dust_class_exempt_abs,
+)
+from research_direct_taker_bound import (
+    A195_DEFAULT_TAKER_FLOOR_BPS,
+    A195_TAKER_BOUND_VERSION,
+    slippage_fraction_for_floor,
+    taker_bound_report,
+)
+from research_direct_inventory_truth import (
+    A195_INVENTORY_TRUTH_VERSION,
+    A195_MAX_SEED_ABS_BASE,
+    A195_MAX_SEED_BOOKS,
+    SEED_LEGACY_DUST,
+    SEED_REAL,
+    build_seed_plan,
+    legacy_dust_ceiling_bonus,
+)
+from research_direct_breadth_lane import (
+    A195_BREADTH_LANE_VERSION,
+    A195_BREADTH_RELIEF_COOLDOWN_TICKS,
+    A195_MAX_BREADTH_RELIEF_PER_TICK,
+    evaluate_breadth_relief,
 )
 # Only for the balance-vs-position comparison in A195_RECONCILE: this returns
 # Balance.total, not a net position, which is exactly what the observer exists
@@ -466,6 +489,64 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a195_dust_capacity_max_exempt_abs = 0.0
         self._a195_dust_capacity_overflow_ticks = 0
         self._a195_dust_capacity_last: dict[str, Any] = {}
+
+        # A1.9.5 step 2.5 (F8): make the declared taker loss floor bind.
+        self.research_a195_taker_floor_enforce = self._as_bool(
+            getattr(self.config, "research_a195_taker_floor_enforce", True)
+        )
+        self.research_a195_taker_floor_bps = -abs(float(getattr(
+            self.config, "research_a195_taker_floor_bps",
+            A195_DEFAULT_TAKER_FLOOR_BPS,
+        )))
+        self._a195_taker_bound_applied = 0
+        self._a195_taker_bound_zero_floor = 0
+        self._a195_taker_bound_min_fraction = 0.0
+        self._a195_taker_bound_last: dict[str, Any] = {}
+
+        # A1.9.5 step 3 (F2 behaviour): local inventory seeded from venue truth.
+        self.research_a195_inventory_truth_enabled = self._as_bool(
+            getattr(self.config, "research_a195_inventory_truth_enabled", True)
+        )
+        self.research_a195_startup_orphan_cancel = self._as_bool(
+            getattr(self.config, "research_a195_startup_orphan_cancel", True)
+        )
+        self.research_a195_max_seed_books = max(0, int(getattr(
+            self.config, "research_a195_max_seed_books", A195_MAX_SEED_BOOKS,
+        )))
+        self.research_a195_max_seed_abs_base = max(0.0, float(getattr(
+            self.config, "research_a195_max_seed_abs_base", A195_MAX_SEED_ABS_BASE,
+        )))
+        self._a195_seed_done = False
+        self._a195_seed_books = 0
+        self._a195_seed_real_books = 0
+        self._a195_seed_real_abs = 0.0
+        self._a195_seed_dust_books = 0
+        self._a195_seed_dust_abs = 0.0
+        self._a195_seed_legacy_ceiling_bonus = 0.0
+        self._a195_seed_last: dict[str, Any] = {}
+        self._a195_orphan_cancel_done = False
+        self._a195_orphan_orders_cancelled = 0
+        self._a195_orphan_books = 0
+
+        # A1.9.5 step 4: breadth authority moved to the A1.7.4.5 boundary.
+        self.research_a195_breadth_lane_enabled = self._as_bool(
+            getattr(self.config, "research_a195_breadth_lane_enabled", True)
+        )
+        self.research_a195_breadth_relief_per_tick = max(0, int(getattr(
+            self.config, "research_a195_breadth_relief_per_tick",
+            A195_MAX_BREADTH_RELIEF_PER_TICK,
+        )))
+        self.research_a195_breadth_relief_cooldown = max(0, int(getattr(
+            self.config, "research_a195_breadth_relief_cooldown",
+            A195_BREADTH_RELIEF_COOLDOWN_TICKS,
+        )))
+        self._a195_breadth_grants = 0
+        self._a195_breadth_denies = 0
+        self._a195_breadth_deny_reasons: dict[str, int] = {}
+        self._a195_breadth_relief_bps_total = 0.0
+        self._a195_breadth_last_relief_tick: dict[int, int] = {}
+        self._a195_breadth_tick = -1
+        self._a195_breadth_granted_this_tick = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1121,22 +1202,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
             reject = "VOLUME_CAP"
         elif current_edge_bps < 0.0:
             reject = "NEGATIVE_CURRENT_EDGE"
-        # A1.9.3: override NEGATIVE_CURRENT_EDGE -- and only that reject -- when
-        # one round trip would change this book's qualification state.  Clearing
-        # it here is what makes the completion ladder below and the frozen base's
-        # expiry / deadline rank bonuses reachable at all; both are gated on
-        # `eligible` downstream.
+        # A1.9.3 hooked `_a193_breadth_override` here, on NEGATIVE_CURRENT_EDGE.
+        # RETIRED in A1.9.5 step 4 -- measured, not assumed.  Across two runs
+        # (9,738 and 4,233 ticks) it produced zero admits and zero denies,
+        # because one-away books do not reach this reject: all 1,320 one-away
+        # RANK rows were already `eligible=True` with `reject_reason=None`.
+        # Their edge is positive; what refuses them is the A1.7.4.5 floor one
+        # stage later, where `_a195_breadth_relief` now sits.  The override and
+        # its budget helpers are kept and still own the budget arithmetic that
+        # step 4 draws on -- only this dead call site is gone.
         a193 = None
-        if reject == "NEGATIVE_CURRENT_EDGE":
-            try:
-                a193 = self._a193_breadth_override(
-                    bid, remaining=remaining, capture_bps=capture_bps,
-                    maker_fee_bps=maker_fee, current_edge_bps=current_edge_bps,
-                )
-            except Exception:
-                a193 = None
-            if a193 is not None and a193.get("allow"):
-                reject = None
         eligible = reject is None
         final_score = edge_signal + completion if eligible else float("-inf")
         lane = "NORMAL" if remaining <= 0 else ("COVERAGE" if obs <= 0 else "COMPLETION")
@@ -1526,6 +1601,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         taker_authority="NONE", trigger=str(getattr(decision, "reason", "WAIT")),
                         hybrid_reason=str(getattr(decision, "reason", "WAIT")),
                     )
+                # A1.9.5 F8: carry the FINAL floor -- after the recovery and
+                # WAIT reclassifications above have had their say -- so the
+                # execution path can bound the order it actually sends.  The
+                # record is written before those `replace` calls, so reading
+                # `result` here rather than there is what makes the recorded
+                # floor match the decision that ships.
+                self._direct_exit_authority_last[book_id]["allowed_loss_floor_bps"] = float(
+                    getattr(result, "allowed_loss_floor_bps", 0.0) or 0.0
+                )
+                self._direct_exit_authority_last[book_id]["taker_authority"] = str(
+                    getattr(result, "taker_authority", "") or ""
+                )
         except Exception:
             pass
 
@@ -2073,6 +2160,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _a195_dust_capacity_enabled(self) -> bool:
         return bool(getattr(self, "research_a195_dust_capacity_class", True))
 
+    def _a195_legacy_ceiling_bonus(self) -> float:
+        """Extra parked-dust headroom bought by the A1.9.5 step-3 seed.
+
+        Zero until a seed actually imports legacy dust, so a build running
+        without F2 behaviour keeps exactly the F3 ceiling it had.
+        """
+        return max(0.0, float(
+            getattr(self, "_a195_seed_legacy_ceiling_bonus", 0.0) or 0.0
+        ))
+
     def _a195_dust_exempt_abs(
         self, *, total_abs: float, dust_abs: float, min_order: float, max_abs: float,
     ) -> float:
@@ -2092,6 +2189,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     self, "research_a195_dust_class_max_clips",
                     A195_DUST_CLASS_MAX_CLIPS,
                 )),
+                legacy_bonus_abs=self._a195_legacy_ceiling_bonus(),
             )
         except Exception:
             # Capacity accounting must fail closed: no exemption is exactly
@@ -2112,6 +2210,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     self, "research_a195_dust_class_max_clips",
                     A195_DUST_CLASS_MAX_CLIPS,
                 )),
+                legacy_bonus_abs=self._a195_legacy_ceiling_bonus(),
             )
         except Exception:
             return
@@ -2135,6 +2234,363 @@ class Strategy1_Research_Simple(Strategy1_Research):
             ) + 1
         self._a195_dust_capacity_last = payload
         self._emit("A195_DUST_CAPACITY", force=True, tick=int(tick), **payload)
+
+    # ---- A1.9.5 F8: bind the declared taker loss floor ------------------
+    def _a195_taker_floor_enabled(self) -> bool:
+        return bool(getattr(self, "research_a195_taker_floor_enforce", True))
+
+    def _a195_declared_floor_bps(self, book_id: int) -> float:
+        """The loss floor the exit decision declared for this book, this tick.
+
+        Falls back to the configured default rather than to zero: zero is the
+        wire value for "unbounded", so a missing record must not disarm the
+        bound it exists to apply.
+        """
+        default = float(getattr(
+            self, "research_a195_taker_floor_bps", A195_DEFAULT_TAKER_FLOOR_BPS,
+        ))
+        row = (getattr(self, "_direct_exit_authority_last", {}) or {}).get(int(book_id))
+        if not isinstance(row, dict):
+            return default
+        if int(row.get("tick", -1) or -1) != int(getattr(self, "_tick", 0) or 0):
+            # A stale row is a different decision; do not bound this order by it.
+            return default
+        if "allowed_loss_floor_bps" not in row:
+            return default
+        return float(row.get("allowed_loss_floor_bps") or 0.0)
+
+    def _a195_bind_taker_slippage(
+        self, response: Any, book_id: int, first_new: int,
+    ) -> dict[str, Any]:
+        """Attach `max_slippage` to market orders the base just queued.
+
+        The frozen base builds the order; this only tightens it.  Rewriting the
+        queued instruction rather than reimplementing `_execute_aggressive_close`
+        keeps the fee gate, volume cap, balance checks and cancel-before-taker
+        sequencing exactly as the base defines them.
+        """
+        applied: dict[str, Any] = {}
+        instructions = list(getattr(response, "instructions", None) or ())
+        floor_bps = self._a195_declared_floor_bps(book_id)
+        fraction = slippage_fraction_for_floor(
+            floor_bps,
+            fallback_bps=float(getattr(
+                self, "research_a195_taker_floor_bps", A195_DEFAULT_TAKER_FLOOR_BPS,
+            )),
+        )
+        row = (getattr(self, "_direct_exit_authority_last", {}) or {}).get(int(book_id))
+        for instruction in instructions[max(0, int(first_new)):]:
+            if str(getattr(instruction, "type", "")) != "PLACE_ORDER_MARKET":
+                continue
+            if int(getattr(instruction, "bookId", -1) or -1) != int(book_id):
+                continue
+            if getattr(instruction, "max_slippage", None) is not None:
+                continue
+            instruction.max_slippage = fraction
+            applied = taker_bound_report(
+                book_id=book_id, floor_bps=floor_bps,
+                authority=(row or {}).get("taker_authority"),
+                trigger=(row or {}).get("reason"),
+                fallback_bps=float(getattr(
+                    self, "research_a195_taker_floor_bps",
+                    A195_DEFAULT_TAKER_FLOOR_BPS,
+                )),
+            )
+            self._a195_taker_bound_applied = int(
+                getattr(self, "_a195_taker_bound_applied", 0) or 0
+            ) + 1
+            if applied.get("floor_was_zero"):
+                self._a195_taker_bound_zero_floor = int(
+                    getattr(self, "_a195_taker_bound_zero_floor", 0) or 0
+                ) + 1
+            prior = float(getattr(self, "_a195_taker_bound_min_fraction", 0.0) or 0.0)
+            self._a195_taker_bound_min_fraction = (
+                fraction if prior <= 0.0 else min(prior, fraction)
+            )
+        if applied:
+            self._a195_taker_bound_last = applied
+            try:
+                self._emit(
+                    "A195_TAKER_BOUND", force=True,
+                    tick=int(getattr(self, "_tick", 0) or 0), **applied,
+                )
+            except Exception:
+                pass
+        return applied
+
+    def _execute_aggressive_close(
+        self,
+        response: Any,
+        book_id: int,
+        book: Any,
+        qty: float,
+        long_pos: bool,
+    ) -> bool:
+        """A1.9.5 F8: the frozen base sends this market order unbounded.
+
+        `allowed_loss_floor_bps` has been computed on every risk-authorized
+        taker exit since A1.6 and read by nothing.  Measured over 4,233 ticks,
+        100% of ABSOLUTE_PROTECTION_REDUCE exits breached their own declared
+        -25 bps floor, worst -213.9 bps, and that trigger alone carried 97.2%
+        of the run's cubic downside.
+        """
+        before = len(getattr(response, "instructions", None) or ())
+        placed = super()._execute_aggressive_close(
+            response, book_id, book, qty, long_pos,
+        )
+        if not placed or not self._a195_taker_floor_enabled():
+            return placed
+        try:
+            self._a195_bind_taker_slippage(response, int(book_id), before)
+        except Exception:
+            # A bound that cannot be attached must not cancel the exit; the
+            # pre-A1.9.5 behaviour (unbounded) is the fail-open path here.
+            pass
+        return placed
+
+    # ---- A1.9.5 step 3 (F2 behaviour): venue truth seeds the tracker ----
+    def _a195_inventory_truth_enabled(self) -> bool:
+        return bool(getattr(self, "research_a195_inventory_truth_enabled", True))
+
+    def _a195_mid_by_book(self, books: Any) -> dict[int, float]:
+        """Current mid per book, used only to price seeded lots at zero PnL."""
+        out: dict[int, float] = {}
+        for raw_id, book in (books or {}).items():
+            try:
+                book_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            try:
+                bid = float(book.bids[0].price)
+                ask = float(book.asks[0].price)
+            except (TypeError, ValueError, IndexError, AttributeError):
+                continue
+            if bid > 0.0 and ask > 0.0:
+                out[book_id] = (bid + ask) / 2.0
+        return out
+
+    def _a195_venue_net_by_book(self, books: Any) -> dict[int, float]:
+        """Signed venue net base per book: `total - initial`, never `total`."""
+        out: dict[int, float] = {}
+        accounts = getattr(self, "accounts", None)
+        if accounts is None:
+            return out
+        for raw_id in (books or {}):
+            try:
+                book_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            try:
+                account = accounts[book_id]
+            except Exception:
+                continue
+            net, _components, reason = venue_net_base(account)
+            if reason is None and net is not None:
+                out[book_id] = float(net)
+        return out
+
+    def _a195_seed_inventory_from_venue(self, state) -> None:
+        """One-shot import of venue inventory into the local position tracker.
+
+        Runs before the frozen chain so every downstream consumer -- exit
+        controller, capacity accounting, ownership -- sees the true book on the
+        first tick it could possibly act on.
+        """
+        if self._a195_seed_done or not self._a195_inventory_truth_enabled():
+            return
+        books = getattr(state, "books", None) or {}
+        if not books:
+            return
+        # Mark done before any mutation: a partial seed must not be retried on
+        # the next tick, which would double-count whatever landed first time.
+        self._a195_seed_done = True
+        venue = self._a195_venue_net_by_book(books)
+        if not venue:
+            return
+        min_order = float(
+            getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25
+        )
+        plan = build_seed_plan(
+            venue_net_by_book=venue,
+            local_net_by_book=self._a195_local_base_by_book(books),
+            mid_by_book=self._a195_mid_by_book(books),
+            min_order=min_order,
+            tick=int(getattr(self, "_tick", 0) or 0),
+            max_books=int(getattr(self, "research_a195_max_seed_books", A195_MAX_SEED_BOOKS)),
+            max_abs_base=float(getattr(
+                self, "research_a195_max_seed_abs_base", A195_MAX_SEED_ABS_BASE,
+            )),
+        )
+        seeded = 0
+        for lot in plan.lots:
+            try:
+                pos = self._open_positions[int(lot.book_id)]
+                side = "longs" if lot.is_long else "shorts"
+                pos[side].append(lot.as_tuple())
+                seeded += 1
+            except Exception:
+                continue
+        # F3 headroom for the legacy dust only.  Dust created after startup
+        # still competes for the original ceiling, so the overflow signal that
+        # says "a purge is overdue" keeps working.
+        self._a195_seed_legacy_ceiling_bonus = legacy_dust_ceiling_bonus(plan)
+        self._a195_seed_books = seeded
+        self._a195_seed_real_books = int(plan.real_books)
+        self._a195_seed_real_abs = float(plan.real_abs_base)
+        self._a195_seed_dust_books = int(plan.dust_books)
+        self._a195_seed_dust_abs = float(plan.dust_abs_base)
+        payload = plan.as_log()
+        payload["seeded_applied"] = int(seeded)
+        payload["legacy_ceiling_bonus_abs"] = float(self._a195_seed_legacy_ceiling_bonus)
+        self._a195_seed_last = payload
+        try:
+            self._emit(
+                "A195_INVENTORY_SEED", force=True,
+                tick=int(getattr(self, "_tick", 0) or 0), **payload,
+            )
+        except Exception:
+            pass
+
+    def _a195_cancel_orphan_orders(self, response: Any, state) -> None:
+        """Cancel resting orders inherited from a previous process.
+
+        The spec called this "shutdown cancel", but the only shutdown hook is
+        an `atexit` handler with no response object and no live simulation, so
+        nothing can be sent from it -- and a crash would skip it regardless.
+        Cancelling on the way IN covers both, and is what actually protects the
+        new session: after a restart these orders are in no identity registry,
+        so the agent can neither reprice nor release them, and they can fill
+        into inventory it has no record of requesting.
+        """
+        if self._a195_orphan_cancel_done:
+            return
+        if not bool(getattr(self, "research_a195_startup_orphan_cancel", True)):
+            return
+        self._a195_orphan_cancel_done = True
+        accounts = getattr(self, "accounts", None)
+        if accounts is None:
+            return
+        cancelled = books_touched = 0
+        for raw_id in (getattr(state, "books", None) or {}):
+            try:
+                book_id = int(raw_id)
+                resting = getattr(accounts[book_id], "orders", None) or []
+            except Exception:
+                continue
+            order_ids = [
+                getattr(order, "id", None) for order in resting
+                if getattr(order, "id", None) is not None
+            ]
+            if not order_ids:
+                continue
+            try:
+                if self._count_book_instructions(response, book_id) >= self.max_instructions_per_book:
+                    continue
+                response.cancel_orders(book_id=book_id, order_ids=order_ids, delay=0)
+                # A1.9.0.3 invariant: an unregistered cancel falls through to
+                # EXPIRED and overstates exchange-side expiry.  These are ours.
+                self._a19_note_exit_cancel(
+                    int(book_id), order_ids, ABSENT_ORPHAN_CANCEL,
+                )
+            except Exception:
+                continue
+            cancelled += len(order_ids)
+            books_touched += 1
+        self._a195_orphan_orders_cancelled = cancelled
+        self._a195_orphan_books = books_touched
+        if cancelled:
+            try:
+                self._emit(
+                    "A195_ORPHAN_CANCEL", force=True,
+                    tick=int(getattr(self, "_tick", 0) or 0),
+                    a195_inventory_truth_version=A195_INVENTORY_TRUTH_VERSION,
+                    orders_cancelled=int(cancelled), books=int(books_touched),
+                )
+            except Exception:
+                pass
+
+    # ---- A1.9.5 step 4: breadth relief at the A1.7.4.5 boundary ---------
+    def _a195_breadth_lane_enabled(self) -> bool:
+        return bool(getattr(self, "research_a195_breadth_lane_enabled", True))
+
+    def _a195_breadth_relief(
+        self, *, book_id: int, observations_remaining: int,
+        current_edge_bps: float, base_min_edge_bps: float,
+        effective_min_edge_bps: float,
+    ) -> float:
+        """Effective entry floor for this book, after breadth relief.
+
+        Returns the floor to use.  A1.9.3 put this authority on the
+        NEGATIVE_CURRENT_EDGE reject, which two runs measured at zero events --
+        one-away books are 100% eligible with no reject at all.  The block is
+        here instead: the quiet-entry conjunction raises the floor from 2.5 to
+        15.0 bps, and 545 one-away blocks land on it with median edge +8.40.
+        """
+        if not self._a195_breadth_lane_enabled():
+            return float(effective_min_edge_bps)
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if tick != int(getattr(self, "_a195_breadth_tick", -1)):
+            self._a195_breadth_tick = tick
+            self._a195_breadth_granted_this_tick = 0
+        last = self._a195_breadth_last_relief_tick.get(int(book_id))
+        try:
+            verdict = evaluate_breadth_relief(
+                enabled=True,
+                observations_remaining=int(observations_remaining),
+                current_edge_bps=float(current_edge_bps),
+                base_min_edge_bps=float(base_min_edge_bps),
+                effective_min_edge_bps=float(effective_min_edge_bps),
+                # Shares A1.9.3's budget rather than inventing a second one, so
+                # relief can never exceed the books the agent could hold.
+                score_deficit=self._a193_breadth_budget(self._a193_score_deficit()),
+                granted_this_tick=int(getattr(self, "_a195_breadth_granted_this_tick", 0)),
+                ticks_since_last_relief=None if last is None else max(0, tick - int(last)),
+                max_per_tick=int(getattr(
+                    self, "research_a195_breadth_relief_per_tick",
+                    A195_MAX_BREADTH_RELIEF_PER_TICK,
+                )),
+                cooldown_ticks=int(getattr(
+                    self, "research_a195_breadth_relief_cooldown",
+                    A195_BREADTH_RELIEF_COOLDOWN_TICKS,
+                )),
+            )
+        except Exception:
+            # Relief must fail closed: the unrelieved floor is the pre-A1.9.5
+            # behaviour, which is strictly the more conservative one.
+            return float(effective_min_edge_bps)
+
+        if not verdict.allow:
+            # Only count a denial where relief was actually on the table; the
+            # other reasons fire on every ordinary book and would drown the
+            # signal that breadth-critical books are being refused.
+            if verdict.reason not in ("NOT_ONE_AWAY", "GATE_INACTIVE", "DISABLED"):
+                self._a195_breadth_denies += 1
+                self._a195_breadth_deny_reasons[verdict.reason] = (
+                    self._a195_breadth_deny_reasons.get(verdict.reason, 0) + 1
+                )
+                try:
+                    self._emit(
+                        "A195_BREADTH_DENY", force=True, tick=tick,
+                        book=int(book_id), **verdict.as_log(),
+                    )
+                except Exception:
+                    pass
+            return float(effective_min_edge_bps)
+
+        self._a195_breadth_granted_this_tick = int(
+            getattr(self, "_a195_breadth_granted_this_tick", 0)
+        ) + 1
+        self._a195_breadth_grants += 1
+        self._a195_breadth_relief_bps_total += float(verdict.relief_bps)
+        self._a195_breadth_last_relief_tick[int(book_id)] = tick
+        try:
+            self._emit(
+                "A195_BREADTH_ADMIT", force=True, tick=tick,
+                book=int(book_id), **verdict.as_log(),
+            )
+        except Exception:
+            pass
+        return float(verdict.relieved_min_edge_bps)
 
     # ---- A1.9.3 breadth-critical admission -----------------------------
     def _a193_enabled(self) -> bool:
@@ -3870,7 +4326,22 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a192_check_activation(int(getattr(self, "_tick", 0) or 0) + 1)
         except Exception:
             pass
+        # A1.9.5 step 3 (F2 behaviour).  Must run BEFORE the frozen chain: a
+        # restart leaves the tracker empty while the venue still holds real
+        # inventory (measured: 8.85 BASE across 120 books at tick 1), and every
+        # capacity, exit and ownership decision this tick reads that tracker.
+        try:
+            self._a195_seed_inventory_from_venue(state)
+        except Exception:
+            pass
         response = super().respond(state)
+        # Orphan cancels go out AFTER the chain has built its instructions, so
+        # the shared per-book budget is known and a cancel can never displace a
+        # placement the strategy already decided on.
+        try:
+            self._a195_cancel_orphan_orders(response, state)
+        except Exception:
+            pass
         # A1.9.1 Phase B: emit reprice cancels after the frozen chain has built
         # its instructions, so the shared per-book budget is known and a cancel
         # can never displace a placement the strategy already decided on.
@@ -4428,6 +4899,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
             base_min_edge_bps=DIRECT_MAKER_MIN_EDGE_BPS,
         )
         effective_maker_min_edge_bps = float(a1745_gate.effective_min_edge_bps)
+        # A1.9.5 step 4: breadth relief, applied to the floor BEFORE
+        # `choose_direct_execution` reads it.  This is the stage that actually
+        # refuses one-away books (545 blocks, median edge +8.40 against a
+        # floor raised from 2.5 to 15.0); A1.9.3's hook one stage earlier
+        # measured zero events across two runs.
+        effective_maker_min_edge_bps = self._a195_breadth_relief(
+            book_id=int(book_id),
+            observations_remaining=int(getattr(ev, "observations_remaining", 3) or 3),
+            current_edge_bps=float(current_edge_bps),
+            base_min_edge_bps=float(DIRECT_MAKER_MIN_EDGE_BPS),
+            effective_min_edge_bps=effective_maker_min_edge_bps,
+        )
         # A1.7.5: resolve any matured shadow entries for this book. Strictly
         # diagnostic and deliberately placed after the floor is already fixed.
         self._direct_a175_shadow_resolve(int(book_id), book)
@@ -7021,6 +7504,60 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # against acquisition again -- the signal that a purge is overdue.
         stats["direct_a195_dust_overflow_ticks"] = int(
             getattr(self, "_a195_dust_capacity_overflow_ticks", 0) or 0
+        )
+        # A1.9.5 F8: the declared taker loss floor, now actually on the wire.
+        stats["direct_a195_taker_floor_enforce"] = int(self._a195_taker_floor_enabled())
+        stats["direct_a195_taker_bound_version"] = A195_TAKER_BOUND_VERSION
+        stats["direct_a195_taker_bound_applied"] = int(
+            getattr(self, "_a195_taker_bound_applied", 0) or 0
+        )
+        # Exits whose declared floor was exactly 0.0 -- these are the ones that
+        # would have been sent as "unbounded" by a naive forward of the floor.
+        stats["direct_a195_taker_bound_zero_floor"] = int(
+            getattr(self, "_a195_taker_bound_zero_floor", 0) or 0
+        )
+        stats["direct_a195_taker_bound_min_fraction"] = float(
+            getattr(self, "_a195_taker_bound_min_fraction", 0.0) or 0.0
+        )
+        # A1.9.5 step 3: what the startup seed actually imported.
+        stats["direct_a195_inventory_truth"] = int(self._a195_inventory_truth_enabled())
+        stats["direct_a195_inventory_truth_version"] = A195_INVENTORY_TRUTH_VERSION
+        stats["direct_a195_seed_books"] = int(getattr(self, "_a195_seed_books", 0) or 0)
+        stats["direct_a195_seed_real_books"] = int(
+            getattr(self, "_a195_seed_real_books", 0) or 0
+        )
+        stats["direct_a195_seed_real_abs"] = float(
+            getattr(self, "_a195_seed_real_abs", 0.0) or 0.0
+        )
+        stats["direct_a195_seed_dust_books"] = int(
+            getattr(self, "_a195_seed_dust_books", 0) or 0
+        )
+        stats["direct_a195_seed_dust_abs"] = float(
+            getattr(self, "_a195_seed_dust_abs", 0.0) or 0.0
+        )
+        stats["direct_a195_legacy_ceiling_bonus"] = float(
+            self._a195_legacy_ceiling_bonus()
+        )
+        stats["direct_a195_orphan_orders_cancelled"] = int(
+            getattr(self, "_a195_orphan_orders_cancelled", 0) or 0
+        )
+        stats["direct_a195_orphan_books"] = int(
+            getattr(self, "_a195_orphan_books", 0) or 0
+        )
+        # A1.9.5 step 4: breadth relief where the block actually is.
+        stats["direct_a195_breadth_lane"] = int(self._a195_breadth_lane_enabled())
+        stats["direct_a195_breadth_lane_version"] = A195_BREADTH_LANE_VERSION
+        stats["direct_a195_breadth_grants"] = int(
+            getattr(self, "_a195_breadth_grants", 0) or 0
+        )
+        stats["direct_a195_breadth_denies"] = int(
+            getattr(self, "_a195_breadth_denies", 0) or 0
+        )
+        stats["direct_a195_breadth_relief_bps_total"] = float(
+            getattr(self, "_a195_breadth_relief_bps_total", 0.0) or 0.0
+        )
+        stats["direct_a195_breadth_deny_reasons"] = dict(
+            getattr(self, "_a195_breadth_deny_reasons", {}) or {}
         )
         stats["direct_a192_max_suppression_pct"] = float(self.A192_MAX_SUPPRESSION_PCT)
         stats["direct_a192_net_bps_floor"] = float(self.A192_NET_BPS_FLOOR)

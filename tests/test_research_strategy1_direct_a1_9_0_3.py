@@ -97,9 +97,11 @@ def test_still_measurement_only():
 
 def test_all_three_cancel_paths_register_a_reason():
     """The defect was silence, so assert each cancel site names itself."""
-    # 1 definition + 4 sites: WAIT, entry-quote, partial-remainder, and the
-    # A1.9.1 Phase B reprice cancel.
-    assert SRC.count("_a19_note_exit_cancel(") == 5
+    # 1 definition + 5 sites: WAIT, entry-quote, partial-remainder, the
+    # A1.9.1 Phase B reprice cancel, and the A1.9.5 step-3 startup orphan
+    # cancel.  This count is the guard itself -- it must rise only alongside a
+    # new *registered* site, never to accommodate an unregistered one.
+    assert SRC.count("_a19_note_exit_cancel(") == 6
     for reason in (
         "ABSENT_WAIT_CANCEL", "ABSENT_ENTRY_QUOTE_CANCEL",
         "ABSENT_PARTIAL_REMAINDER_CANCEL", "ABSENT_REPRICE_CANCEL",

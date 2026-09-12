@@ -28,7 +28,7 @@ advances ``_position_ticks`` as a side effect.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from typing import Any
 
@@ -114,6 +114,9 @@ class ReconciliationReport:
     worst_book: int | None
     unresolved_counts: dict[str, int]
     diverged_rows: tuple[BookReconciliation, ...]
+    # Every diverged book, not just the ranked detail rows.  Step 3 seeds the
+    # tracker from this, so it must be complete rather than worst-first.
+    venue_net_by_book: dict[int, float] = field(default_factory=dict)
 
     def as_log(self, *, max_rows: int = A195_MAX_DETAIL_ROWS) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -134,6 +137,16 @@ class ReconciliationReport:
             payload["diverged"] = [
                 row.as_log() for row in self.diverged_rows[:max(0, int(max_rows))]
             ]
+        # A1.9.5 step 3: the ranked detail rows are capped and worst-first, so
+        # on a 120-book divergence the same 12 books appear in every emission
+        # and the other 108 are never identifiable.  This compact map carries
+        # every diverged book as `book: signed_venue_net`, rounded, at roughly
+        # 18 bytes a book -- affordable where 128 full rows are not.
+        if self.venue_net_by_book:
+            payload["venue_net_map"] = {
+                str(book): round(net, 6)
+                for book, net in sorted(self.venue_net_by_book.items())
+            }
         return payload
 
 
@@ -191,6 +204,7 @@ def reconcile_books(
     worst_book: int | None = None
     unresolved_counts: dict[str, int] = {}
     rows: list[BookReconciliation] = []
+    venue_net_map: dict[int, float] = {}
 
     for book_id in sorted(local_base_by_book):
         local = _finite(local_base_by_book.get(book_id)) or 0.0
@@ -231,6 +245,8 @@ def reconcile_books(
 
         resolved += 1
         venue_abs += abs(net)
+        if abs(net) > tol:
+            venue_net_map[int(book_id)] = float(net)
         gap = abs(row.divergence or 0.0)
         total_abs += gap
         if gap > max_abs:
@@ -242,6 +258,7 @@ def reconcile_books(
 
     rows.sort(key=lambda r: abs(r.divergence) if r.divergence is not None else float("inf"), reverse=True)
     return ReconciliationReport(
+        venue_net_by_book=venue_net_map,
         books_seen=len(local_base_by_book),
         books_resolved=resolved,
         books_unresolved=unresolved,

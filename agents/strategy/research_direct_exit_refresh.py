@@ -69,6 +69,11 @@ ABSENT_REPRICE_CANCEL = "REPRICE_CANCEL"
 # killed fell through to EXPIRED and overstated exchange-side expiry.
 ABSENT_ENTRY_QUOTE_CANCEL = "ENTRY_QUOTE_CANCEL"
 ABSENT_PARTIAL_REMAINDER_CANCEL = "PARTIAL_REMAINDER_CANCEL"
+# A1.9.5 step 3: resting orders inherited from a previous process, cancelled on
+# the first tick.  We asked for these, so they must not read as exchange-side
+# expiry -- and they are worth distinguishing from our own in-session cancels,
+# because a nonzero count means the last shutdown left orders live.
+ABSENT_ORPHAN_CANCEL = "ORPHAN_CANCEL"
 # Bounded memory, not a real disposition: the row aged out of the ledger without
 # any notice explaining it.  Must stay distinct from a measured expiry.
 ABSENT_LEDGER_SWEEP = "LEDGER_SWEEP"
@@ -81,6 +86,7 @@ AGENT_CANCEL_DISPOSITIONS = frozenset({
     ABSENT_REPRICE_CANCEL,
     ABSENT_ENTRY_QUOTE_CANCEL,
     ABSENT_PARTIAL_REMAINDER_CANCEL,
+    ABSENT_ORPHAN_CANCEL,
 })
 
 _LADDER_RUNG = {
