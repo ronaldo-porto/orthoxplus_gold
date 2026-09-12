@@ -54,14 +54,19 @@ def _ledger_with(**kw):
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_0_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_5"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_5"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_6"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_6"' in SRC
     assert DIRECT_EXIT_LEDGER_VERSION == "direct_exit_ledger_v4_16_2_a1_9_0_3"
 
 
 def test_launcher_pins_the_same_version_and_preflights_this_suite():
     text = LAUNCHER.read_text()
-    assert 'strategy1_direct_v4_16_2_a1_9_4"' in text
+    # The launcher's case arm must recognise the build Simple reports.  This
+    # used to pin a1_9_4 through the launcher's hardcoded version echo, which
+    # went stale when A1.9.5 shipped; the echo now prints the detected version.
+    simple = (LAUNCHER.parent / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
+    version = simple.split('SIMPLE_POLICY_VERSION = "', 1)[1].split('"', 1)[0]
+    assert f"  {version}) A19X_BUILD=1" in text
     assert "test_research_strategy1_direct_a1_9_0_1.py" in text
     # A1.9.1 Phase B raises the TTL through PARAMS, where the frozen base
     # clamps it to [1000, 5000] and the run manifest records the value.

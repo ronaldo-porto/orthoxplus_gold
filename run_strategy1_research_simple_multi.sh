@@ -64,13 +64,15 @@ done
 [[ -f "$SCRIPT_DIR/run_miner_multi.sh" ]] || { echo "ERROR: run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research_Simple.py" ]] || { echo "ERROR: Strategy1_Research_Simple.py missing" >&2; exit 1; }
 POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1)"
-# A1.9.5 ships as its own policy version.  The A1.9.2 / A1.9.2.1 / A1.9.3 /
-# A1.9.4 guards below still apply to it -- those invariants are cumulative, not
-# per-revision -- so they gate on A19X_BUILD rather than on one literal.
-A19X_BUILD=0; A195_BUILD=0
+# A1.9.5 and A1.9.6 ship as their own policy versions.  The A1.9.2 / A1.9.2.1 /
+# A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
+# cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
+# literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
+  strategy1_direct_v4_16_2_a1_9_6) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -173,7 +175,9 @@ research_a194_rebate_conjunction_enabled=1 \
 research_a195_reconcile_observe=1 research_a195_dust_capacity_class=1 \
 research_a195_taker_floor_enforce=1 research_a195_taker_floor_bps=-25.0 \
 research_a195_inventory_truth_enabled=1 research_a195_startup_orphan_cancel=1 \
-research_a195_breadth_lane_enabled=1"
+research_a195_breadth_lane_enabled=1 \
+research_a196_legacy_dust_ledger=1 research_a196_inherited_parked_allowance=1 \
+research_a196_quantity_grid_snap=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -467,6 +471,89 @@ if [[ "$A195_BUILD" == "1" ]]; then
   echo "[preflight] A1.9.5 taker bound / inventory truth / breadth relief PASS"
 fi
 
+# A1.9.6 activation guard.  A1.9.5 step 3 made inventory true and closed
+# admission: round trips fell 442 -> 10 in 2,060 ticks.  109 legacy-dust books
+# written into the tracker read non-FLAT and left the enterable universe (397 of
+# the prior run's 442 round trips were on them), an inherited lot the loss floor
+# parked held 52% of productive BASE, and float-noisy quantities left one-unit
+# residues the venue's truncation never cleared.  One guard per fix.
+if [[ "$A196_BUILD" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_direct_legacy_baseline.py" ]] || {
+    echo "ERROR: A1.9.6 build is missing research_direct_legacy_baseline.py" >&2
+    exit 1
+  }
+
+  # F9.  The seed routes through the split.  Appending plan.lots whole puts every
+  # legacy-dust book in the tracker, where the entry builder skips it.
+  grep -qF 'for lot in split.tracker_lots:' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.6 seed does not route through split_seed_plan; legacy dust" >&2
+    echo "       would leave ~109 books non-FLAT and unenterable, as in A1.9.5." >&2
+    exit 1
+  }
+  if grep -qF 'for lot in plan.lots:' "$AGENT_PATH/Strategy1_Research_Simple.py"; then
+    echo "ERROR: A1.9.6 still appends plan.lots to the tracker." >&2
+    exit 1
+  fi
+  # The ledger is still exposure, on both gates -- otherwise legacy dust is
+  # invisible risk again, the pre-A1.9.5 state the seed existed to end.
+  # Whole-line matches: `abs_now += ...` is a substring of the `dust_abs_now`
+  # line, so a plain substring grep would pass with the charge deleted.
+  for _re in '^[[:space:]]+abs_now \+= a196_ledger_abs_now$' \
+             '^[[:space:]]+filled_abs \+= a196_ledger_abs_now$'; do
+    grep -qE "$_re" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: A1.9.6 legacy ledger is not charged to exposure ($_re)." >&2
+      exit 1
+    }
+  done
+  # The ledger is excused by the F3 legacy bonus.  Without the dust class it is
+  # charged in full and admission reads zero from the first tick.
+  [[ "$PARAMS" == *"research_a195_dust_capacity_class=1"* ]] || {
+    echo "ERROR: A1.9.6 legacy ledger requires research_a195_dust_capacity_class=1." >&2
+    exit 1
+  }
+
+  # F10.  The allowance lands on BOTH gates: admission alone moves the block
+  # into the final validator, where STRICT_EXPOSURE_HEADROOM refuses the entry.
+  grep -qF 'a196_inherited = self._a196_inherited_parked_report(max_abs=max_abs)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.6 inherited-parked allowance is not applied at admission." >&2
+    exit 1
+  }
+  grep -qF 'filled_abs - self._a196_inherited_parked_exempt(max_abs=max_abs)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.6 inherited-parked allowance is not applied in the final" >&2
+    echo "       validator; the block would move downstream, not go away." >&2
+    exit 1
+  }
+  # And it is bounded.  An unbounded allowance is an unbounded position.
+  grep -q '^A196_INHERITED_PARKED_MAX_FRACTION = 0.5$' "$AGENT_PATH/research_direct_legacy_baseline.py" || {
+    echo "ERROR: A1.9.6 inherited-parked allowance is not capped at 0.5 x max_abs." >&2
+    exit 1
+  }
+
+  # F11.  Placements go on the grid after the chain has built them, and a grid
+  # value whose double sits below its decimal is lifted by one ulp -- without
+  # the lift a clean 0.2501 can still execute as 0.2500.
+  grep -qF 'self._a196_snap_outgoing_quantities(response, state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.6 does not snap outgoing quantities; noisy exits keep" >&2
+    echo "       leaving one-unit residues behind." >&2
+    exit 1
+  }
+  grep -qF 'math.nextafter(q, math.inf)' "$AGENT_PATH/research_direct_legacy_baseline.py" || {
+    echo "ERROR: A1.9.6 grid snap has no one-ulp lift." >&2
+    exit 1
+  }
+
+  for _p in research_a196_legacy_dust_ledger=1 \
+            research_a196_inherited_parked_allowance=1 \
+            research_a196_quantity_grid_snap=1; do
+    [[ "$PARAMS" == *"$_p"* ]] || {
+      echo "ERROR: A1.9.6 build without $_p in PARAMS. The engine would report" >&2
+      echo "       a1_9_6 while the fix it names does nothing." >&2
+      exit 1
+    }
+  done
+  echo "[preflight] A1.9.6 legacy baseline / inherited parked / quantity grid PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -500,14 +587,20 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_strategy1_direct_a1_9_2.py \
       tests/test_research_strategy1_direct_a1_9_2_1.py \
       tests/test_research_strategy1_direct_a1_9_4.py \
+      tests/test_research_a1_9_5_reconcile.py \
+      tests/test_research_a1_9_5_dust_capacity.py \
+      tests/test_research_a1_9_5_taker_bound.py \
+      tests/test_research_a1_9_5_inventory_truth.py \
+      tests/test_research_a1_9_5_breadth_lane.py \
+      tests/test_research_a1_9_6_legacy_baseline.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
-  echo "Strategy1 direct V4.16.2 A1.9.4 rebate conjunction preflight PASS"
+  echo "Strategy1 direct V4.16.2 ${POLICY_VER} preflight PASS"
   exit 0
 fi
 
-echo "[Strategy1_Research_Simple] version=strategy1_direct_v4_16_2_a1_9_4"
+echo "[Strategy1_Research_Simple] version=${POLICY_VER}"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 

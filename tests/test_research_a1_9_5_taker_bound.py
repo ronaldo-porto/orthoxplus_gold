@@ -182,8 +182,8 @@ def test_module_records_why_zero_is_dangerous():
 def test_the_version_advances_so_the_guards_can_tell_the_builds_apart():
     """Steps 1+2 ran 4,688 ticks reporting a1_9_4.  That is the A1.9.3
     failure shape: a log that names the wrong revision cannot be attributed."""
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_5"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_5"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_6"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_6"' in SIMPLE
 
 
 def test_launcher_guards_the_new_phase():

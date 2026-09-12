@@ -271,6 +271,16 @@ from research_direct_breadth_lane import (
     A195_MAX_BREADTH_RELIEF_PER_TICK,
     evaluate_breadth_relief,
 )
+from research_direct_legacy_baseline import (
+    A196_INHERITED_PARKED_MAX_FRACTION,
+    A196_LEGACY_BASELINE_VERSION,
+    NO_INHERITED_EXEMPTION,
+    admission_decomposition as a196_admission_decomposition,
+    inherited_parked_exemption,
+    ledger_abs as a196_ledger_total_abs,
+    snap_instruction_quantities,
+    split_seed_plan,
+)
 # Only for the balance-vs-position comparison in A195_RECONCILE: this returns
 # Balance.total, not a net position, which is exactly what the observer exists
 # to make visible.  Nothing in this file treats its output as inventory.
@@ -364,8 +374,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_5"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_5"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_6"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_6"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -547,6 +557,33 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a195_breadth_last_relief_tick: dict[int, int] = {}
         self._a195_breadth_tick = -1
         self._a195_breadth_granted_this_tick = 0
+
+        # A1.9.6 F9/F10/F11.  Each switch set to 0 restores the A1.9.5
+        # behaviour of that one mechanism and nothing else.
+        self.research_a196_legacy_dust_ledger = self._as_bool(
+            getattr(self.config, "research_a196_legacy_dust_ledger", True)
+        )
+        self.research_a196_inherited_parked_allowance = self._as_bool(
+            getattr(self.config, "research_a196_inherited_parked_allowance", True)
+        )
+        self.research_a196_quantity_grid_snap = self._as_bool(
+            getattr(self.config, "research_a196_quantity_grid_snap", True)
+        )
+        self.research_a196_inherited_parked_max_fraction = min(1.0, max(0.0, float(getattr(
+            self.config, "research_a196_inherited_parked_max_fraction",
+            A196_INHERITED_PARKED_MAX_FRACTION,
+        ))))
+        self._a196_legacy_dust_ledger: dict[int, float] = {}
+        self._a196_inherited_real: dict[int, float] = {}
+        self._a196_inherited_retired: list[int] = []
+        self._a196_inherited_last = NO_INHERITED_EXEMPTION
+        self._a196_inherited_exempt_max = 0.0
+        self._a196_inherited_capped_samples = 0
+        self._a196_seed_last: dict[str, Any] = {}
+        self._a196_wire_quantities_moved = 0
+        self._a196_admission_samples = 0
+        self._a196_admission_zero_samples = 0
+        self._a196_admission_last: dict[str, Any] = {}
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -2104,6 +2141,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         calling it from an observer would be a live behaviour change.
         """
         out: dict[int, float] = {}
+        ledger = getattr(self, "_a196_legacy_dust_ledger", None) or {}
         for raw_id in (books or {}):
             try:
                 book_id = int(raw_id)
@@ -2114,6 +2152,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 out[book_id] = float(getattr(snap, "net_qty", 0.0) or 0.0)
             except Exception:
                 out[book_id] = 0.0
+            # A1.9.6 F9: the legacy ledger is local inventory too.  Without it
+            # every ledger book would read as diverged by exactly its dust.
+            out[book_id] += float(ledger.get(book_id, 0.0) or 0.0)
         return out
 
     def _a195_emit_reconcile(self, state, tick: int) -> None:
@@ -2195,6 +2236,143 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # Capacity accounting must fail closed: no exemption is exactly
             # the pre-A1.9.5 behaviour.
             return 0.0
+
+    # ---- A1.9.6: legacy baseline, inherited parked allowance, grid ------
+    def _a196_ledger_enabled(self) -> bool:
+        return bool(getattr(self, "research_a196_legacy_dust_ledger", True))
+
+    def _a196_inherited_parked_enabled(self) -> bool:
+        return bool(getattr(self, "research_a196_inherited_parked_allowance", True))
+
+    def _a196_grid_snap_enabled(self) -> bool:
+        return bool(getattr(self, "research_a196_quantity_grid_snap", True))
+
+    def _a196_volume_decimals(self, state=None) -> int:
+        """The venue quantity grid, read from the state first.
+
+        The seed runs ahead of the frozen chain, i.e. before the chain copies
+        ``volumeDecimals`` into ``_research_volume_decimals`` on the first tick.
+        """
+        cfg = getattr(state, "config", None) if state is not None else None
+        for source in (
+            getattr(cfg, "volumeDecimals", None),
+            getattr(self, "_research_volume_decimals", None),
+        ):
+            if source is None:
+                continue
+            try:
+                return max(0, int(source))
+            except (TypeError, ValueError):
+                continue
+        return 8
+
+    def _a196_ledger_abs(self) -> float:
+        """Legacy dust BASE held outside the tracker: exposure, not a position.
+
+        Written once by the startup seed and never grown.  Dust made in this
+        session lives in the tracker, where the F3 class, recovery and the
+        overflow signal that says a purge is overdue can all see it.
+        """
+        return float(a196_ledger_total_abs(getattr(self, "_a196_legacy_dust_ledger", None)))
+
+    def _a196_inherited_parked_report(self, *, max_abs: float):
+        """The inherited-parked exemption, with retirement applied.  Fails closed.
+
+        Any fault returns the empty exemption, which is exactly the A1.9.5
+        charge.  Retirement is permanent: once an inherited lot's lifecycle has
+        ended -- flat, or crossed to the other side -- the book is ordinary.
+        """
+        if not self._a196_inherited_parked_enabled():
+            return NO_INHERITED_EXEMPTION
+        inherited = getattr(self, "_a196_inherited_real", None)
+        if not inherited:
+            return NO_INHERITED_EXEMPTION
+        try:
+            nets: dict[int, float] = {}
+            for book_id in list(inherited):
+                try:
+                    nets[int(book_id)] = float(
+                        self._position_tracker_snapshot(int(book_id)).net_qty
+                    )
+                except Exception:
+                    continue          # no reading: neither exempt nor retired
+            report = inherited_parked_exemption(
+                inherited_real=inherited,
+                net_by_book=nets,
+                parked_books=list((getattr(self, "_research_parked_inventory", {}) or {}).keys()),
+                cap_abs=float(getattr(
+                    self, "research_a196_inherited_parked_max_fraction",
+                    A196_INHERITED_PARKED_MAX_FRACTION,
+                )) * float(max_abs),
+                eps=float(self._execution_flat_epsilon()),
+            )
+        except Exception:
+            return NO_INHERITED_EXEMPTION
+        for book_id in report.retired:
+            if inherited.pop(int(book_id), None) is not None:
+                retired = getattr(self, "_a196_inherited_retired", None)
+                if isinstance(retired, list):
+                    retired.append(int(book_id))
+        self._a196_inherited_last = report
+        self._a196_inherited_exempt_max = max(
+            float(getattr(self, "_a196_inherited_exempt_max", 0.0) or 0.0),
+            float(report.exempt_abs),
+        )
+        return report
+
+    def _a196_inherited_parked_exempt(self, *, max_abs: float) -> float:
+        """BASE excused from acquisition for parked inherited lots; 0.0 when off."""
+        return max(0.0, float(self._a196_inherited_parked_report(max_abs=max_abs).exempt_abs))
+
+    def _a196_emit_admission(
+        self, *, tick: int, gate_slots: int, final_slots: int, selected: int,
+        normalize_override: bool, **terms: Any,
+    ) -> None:
+        """One row with every term of the admission formula.  Never mutates state.
+
+        ``gate_slots`` is what the gate itself returned, so a decomposition that
+        disagreed with it would be visible on the same row.
+        """
+        decomposition = a196_admission_decomposition(**terms)
+        last = getattr(self, "_a196_inherited_last", NO_INHERITED_EXEMPTION)
+        payload = decomposition.as_log()
+        payload.update(
+            gate_slots=int(gate_slots),
+            final_slots=int(final_slots),
+            decomposition_matches_gate=int(int(decomposition.portfolio_slots) == int(gate_slots)),
+            selected_candidates=int(selected),
+            normalize_override=int(bool(normalize_override)),
+            ledger_books=len(getattr(self, "_a196_legacy_dust_ledger", {}) or {}),
+            inherited_tracked_books=len(getattr(self, "_a196_inherited_real", {}) or {}),
+            inherited_exempt_books=list(last.books),
+            inherited_uncapped_abs=round(float(last.uncapped_abs), 6),
+            inherited_capped=int(bool(last.capped)),
+        )
+        self._a196_admission_samples = int(getattr(self, "_a196_admission_samples", 0) or 0) + 1
+        if int(final_slots) <= 0:
+            self._a196_admission_zero_samples = int(
+                getattr(self, "_a196_admission_zero_samples", 0) or 0
+            ) + 1
+        if last.capped:
+            self._a196_inherited_capped_samples = int(
+                getattr(self, "_a196_inherited_capped_samples", 0) or 0
+            ) + 1
+        self._a196_admission_last = payload
+        self._emit("A196_ADMISSION", force=True, tick=int(tick), **payload)
+
+    def _a196_snap_outgoing_quantities(self, response: Any, state) -> int:
+        """F11 on the wire: every queued placement executes the unit it names."""
+        if not self._a196_grid_snap_enabled():
+            return 0
+        instructions = getattr(response, "instructions", None)
+        if not instructions:
+            return 0
+        moved = snap_instruction_quantities(instructions, self._a196_volume_decimals(state))
+        if moved:
+            self._a196_wire_quantities_moved = int(
+                getattr(self, "_a196_wire_quantities_moved", 0) or 0
+            ) + int(moved)
+        return int(moved)
 
     def _a195_emit_dust_capacity(
         self, *, tick: int, total_abs: float, dust_abs: float, min_order: float,
@@ -2421,8 +2599,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 self, "research_a195_max_seed_abs_base", A195_MAX_SEED_ABS_BASE,
             )),
         )
+        # A1.9.6 F9/F11.  REAL lots to the tracker, legacy dust to the ledger,
+        # every quantity on the venue grid.  A1.9.5 appended plan.lots whole:
+        # 109 dust books then read non-FLAT, the entry builder skipped every
+        # one, and round trips fell from 442 to 10.  Ledger off == A1.9.5.
+        split = split_seed_plan(
+            plan,
+            volume_decimals=self._a196_volume_decimals(state),
+            min_order=min_order,
+            ledger_enabled=self._a196_ledger_enabled(),
+            grid_snap=self._a196_grid_snap_enabled(),
+        )
         seeded = 0
-        for lot in plan.lots:
+        inherited: dict[int, float] = {}
+        for lot in split.tracker_lots:
             try:
                 pos = self._open_positions[int(lot.book_id)]
                 side = "longs" if lot.is_long else "shorts"
@@ -2430,10 +2620,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 seeded += 1
             except Exception:
                 continue
-        # F3 headroom for the legacy dust only.  Dust created after startup
-        # still competes for the original ceiling, so the overflow signal that
-        # says "a purge is overdue" keeps working.
-        self._a195_seed_legacy_ceiling_bonus = legacy_dust_ceiling_bonus(plan)
+            if lot.residue_class == SEED_REAL:
+                inherited[int(lot.book_id)] = float(lot.net_base)
+        self._a196_legacy_dust_ledger = dict(split.ledger)
+        self._a196_inherited_real = inherited
+        # F3 headroom for the legacy dust only, raised by exactly what was
+        # imported -- into the ledger or, with the ledger off, the tracker.
+        # Dust created after startup still competes for the original ceiling,
+        # so the overflow signal that says "a purge is overdue" keeps working.
+        self._a195_seed_legacy_ceiling_bonus = float(split.legacy_dust_abs)
         self._a195_seed_books = seeded
         self._a195_seed_real_books = int(plan.real_books)
         self._a195_seed_real_abs = float(plan.real_abs_base)
@@ -2442,6 +2637,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         payload = plan.as_log()
         payload["seeded_applied"] = int(seeded)
         payload["legacy_ceiling_bonus_abs"] = float(self._a195_seed_legacy_ceiling_bonus)
+        self._a196_seed_last = split.as_log()
+        payload.update(self._a196_seed_last)
         self._a195_seed_last = payload
         try:
             self._emit(
@@ -4335,6 +4532,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             pass
         response = super().respond(state)
+        # A1.9.6 F11.  The venue truncates volume to its grid and the final
+        # validator leaves sub-1e-12 noise in place, so 0.25009999999999827
+        # shipped and executed as 0.2500, leaving one unit behind on every
+        # clip.  Runs first, so every placement this tick is on the grid.
+        try:
+            self._a196_snap_outgoing_quantities(response, state)
+        except Exception:
+            pass
         # Orphan cancels go out AFTER the chain has built its instructions, so
         # the shared per-book budget is known and a cancel can never displace a
         # placement the strategy already decided on.
@@ -6742,10 +6947,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
             abs(float(net)) for net in shadow_net.values()
             if eps < abs(float(net)) + 1e-12 < min_size
         )
+        # A1.9.6 F9: charge the legacy ledger here exactly as admission does.
+        a196_ledger_abs_now = self._a196_ledger_abs()
+        filled_abs += a196_ledger_abs_now
+        filled_dust_abs += a196_ledger_abs_now
         filled_abs = max(0.0, filled_abs - self._a195_dust_exempt_abs(
             total_abs=filled_abs, dust_abs=filled_dust_abs,
             min_order=min_size, max_abs=max_abs,
         ))
+        # A1.9.6 F10: the same inherited-parked exemption admission applied.
+        filled_abs = max(0.0, filled_abs - self._a196_inherited_parked_exempt(max_abs=max_abs))
         reserved_abs, reserved_open = self._direct_outstanding_exposure_reservation(state)
         shadow_abs = filled_abs + reserved_abs
         shadow_open = filled_active + reserved_open
@@ -7106,12 +7317,24 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # decays productive capacity to zero.  Bounded by the dust class
         # ceiling, and the overflow past that ceiling still counts.
         dust_abs_now = float(diag.get("dust_abs_base_inventory", 0.0) or 0.0)
+        # A1.9.6 F9: the legacy ledger is outside the tracker, so the inventory
+        # scan no longer sees it.  It is still exposure and still dust, and the
+        # F3 legacy bonus exempts exactly this amount -- charged, then excused.
+        a196_ledger_abs_now = self._a196_ledger_abs()
+        abs_now += a196_ledger_abs_now
+        dust_abs_now += a196_ledger_abs_now
         dust_exempt_abs = self._a195_dust_exempt_abs(
             total_abs=abs_now, dust_abs=dust_abs_now,
             min_order=min_size, max_abs=max_abs,
         )
         stats["direct_a195_dust_exempt_abs"] = float(dust_exempt_abs)
         effective_abs_now = abs_now - dust_exempt_abs + float(reserved_abs)
+        # A1.9.6 F10: an inherited lot the loss floor has parked is excused,
+        # bounded, and the live validator applies the identical exemption --
+        # relaxing one gate alone would only move the block downstream.
+        a196_inherited = self._a196_inherited_parked_report(max_abs=max_abs)
+        effective_abs_now -= float(a196_inherited.exempt_abs)
+        stats["direct_a196_inherited_exempt_abs"] = float(a196_inherited.exempt_abs)
         effective_open_now += int(reserved_open)
         effective_active_now = active_now + int(reserved_open)
         stats["direct_reserved_abs_base"] = float(reserved_abs)
@@ -7130,6 +7353,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             max_open=max_open,
             min_order=min_size,
         )
+        a196_gate_slots = int(portfolio_slots)
         # A1.9.5 F3 telemetry: the counterfactual slot count, so the class's
         # effect is a measured number rather than an inference.  Sampled on the
         # existing cadence -- this recomputes admission, so it is not free.
@@ -7140,7 +7364,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         ):
             try:
                 slots_without = direct_liveness_admission_slots(
-                    effective_abs=abs_now + float(reserved_abs),
+                    effective_abs=abs_now - float(a196_inherited.exempt_abs) + float(reserved_abs),
                     active_books=effective_active_now,
                     effective_open_books=effective_open_now,
                     dust_count=dust_now,
@@ -7182,6 +7406,34 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # admitting a fresh acquisition in the same batch.
             portfolio_slots = 0
         stats["portfolio_open_slots"] = int(portfolio_slots)
+        # A1.9.6 telemetry: every term of the admission formula on one row.
+        # The A1.9.5 run needed an offline replay to learn which constraint was
+        # binding and why; from here a zero is read, never inferred.
+        if a195_tick <= 2 or a195_tick % DIRECT_TELEMETRY_SAMPLE_TICKS == 0:
+            try:
+                self._a196_emit_admission(
+                    tick=a195_tick,
+                    gate_slots=a196_gate_slots,
+                    final_slots=int(portfolio_slots),
+                    selected=len(selected_ids or ()),
+                    normalize_override=bool(normalize_n),
+                    raw_total_abs=abs_now,
+                    ledger_abs=a196_ledger_abs_now,
+                    dust_abs=dust_abs_now,
+                    dust_exempt_abs=dust_exempt_abs,
+                    inherited_exempt_abs=float(a196_inherited.exempt_abs),
+                    reserved_abs=float(reserved_abs),
+                    active_books=effective_active_now,
+                    effective_open_books=effective_open_now,
+                    dust_count=dust_now,
+                    max_abs=max_abs,
+                    max_active=max_active,
+                    max_open=max_open,
+                    min_order=min_size,
+                    enterable_books=max(0, len(getattr(state, "books", None) or {}) - open_now),
+                )
+            except Exception:
+                pass
 
         # One flat-entry path. No maintenance branch and no separate alpha branch.
         if portfolio_slots > 0:
@@ -7559,6 +7811,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a195_breadth_deny_reasons"] = dict(
             getattr(self, "_a195_breadth_deny_reasons", {}) or {}
         )
+        # A1.9.6: legacy baseline, inherited parked allowance, quantity grid.
+        stats["direct_a196_legacy_baseline_version"] = A196_LEGACY_BASELINE_VERSION
+        stats["direct_a196_legacy_dust_ledger"] = int(self._a196_ledger_enabled())
+        stats["direct_a196_ledger_books"] = len(getattr(self, "_a196_legacy_dust_ledger", {}) or {})
+        stats["direct_a196_ledger_abs"] = float(self._a196_ledger_abs())
+        stats["direct_a196_inherited_parked_allowance"] = int(self._a196_inherited_parked_enabled())
+        stats["direct_a196_inherited_tracked_books"] = len(getattr(self, "_a196_inherited_real", {}) or {})
+        stats["direct_a196_inherited_retired_books"] = len(getattr(self, "_a196_inherited_retired", []) or [])
+        stats["direct_a196_inherited_exempt_max"] = float(getattr(self, "_a196_inherited_exempt_max", 0.0) or 0.0)
+        stats["direct_a196_inherited_capped_samples"] = int(getattr(self, "_a196_inherited_capped_samples", 0) or 0)
+        stats["direct_a196_quantity_grid_snap"] = int(self._a196_grid_snap_enabled())
+        stats["direct_a196_wire_quantities_moved"] = int(getattr(self, "_a196_wire_quantities_moved", 0) or 0)
+        stats["direct_a196_admission_samples"] = int(getattr(self, "_a196_admission_samples", 0) or 0)
+        stats["direct_a196_admission_zero_samples"] = int(getattr(self, "_a196_admission_zero_samples", 0) or 0)
         stats["direct_a192_max_suppression_pct"] = float(self.A192_MAX_SUPPRESSION_PCT)
         stats["direct_a192_net_bps_floor"] = float(self.A192_NET_BPS_FLOOR)
         stats["direct_a192_tail_shortfall_floor_bps"] = float(self.A192_TAIL_SHORTFALL_FLOOR_BPS)
