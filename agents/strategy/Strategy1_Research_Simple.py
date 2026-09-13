@@ -294,6 +294,23 @@ from research_direct_venue_integrity import (
     touch_mid,
     valid_touch,
 )
+from research_direct_postfill_protection import (
+    A197_FLIP_WATCH_TICKS,
+    A197_POSTFILL_PROTECTION_VERSION,
+    SKIP_INVENTORY_OPENED,
+    SKIP_LIVE_ORDER,
+    SKIP_NO_PROFILE,
+    SKIP_NOT_MANAGED,
+    book_cancelled_order_ids,
+    book_instruction_kinds,
+    close_gap,
+    note_gap_skip,
+    open_gap,
+    position_mark_bps,
+    postfill_protect_eligible,
+    sign_flipped,
+    strip_book_limit_orders,
+)
 # Only for the balance-vs-position comparison in A195_RECONCILE: this returns
 # Balance.total, not a net position, which is exactly what the observer exists
 # to make visible.  Nothing in this file treats its output as inventory.
@@ -387,8 +404,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_6_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_6_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_7"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_7"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -622,6 +639,25 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a1961_slippage_breaches = 0
         self._a1961_late_triggers = 0
         self._a1961_worst_slippage_bps = 0.0
+
+        # A1.9.7: evaluate an ABSOLUTE position on the tick after its entry fill
+        # (P1), and record the ticks between every opening fill and its first
+        # exit evaluation (P3).  P2 is the order-side fix in book ownership.
+        self.research_a197_postfill_protect = self._as_bool(
+            getattr(self.config, "research_a197_postfill_protect", True)
+        )
+        self._a197_exit_gap: dict[int, Any] = {}
+        self._a197_postfill_book: int | None = None
+        self._a197_postfill_watch: dict[int, int] = {}
+        self._a197_postfill_acts = 0
+        self._a197_postfill_market = 0
+        self._a197_postfill_fallback_cancels = 0
+        self._a197_postfill_limits_stripped = 0
+        self._a197_postfill_maker_refused = 0
+        self._a197_postfill_sign_flips = 0
+        self._a197_postfill_truncated = 0
+        self._a197_exit_gap_rows = 0
+        self._a197_exit_gap_ticks_total = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1059,6 +1095,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_note_partial_fill_recovery(
             book_id=int(book_id), before=float(before), after=float(after), is_maker=bool(is_maker), event=event,
         )
+        # A1.9.7: open the exit-gap record on an opening fill, and watch a
+        # post-fill protective exit for a sign flip.
+        try:
+            self._a197_note_own_fill(book_id=int(book_id), before=float(before), after=float(after))
+        except Exception:
+            pass
         try:
             bid = int(book_id)
             eps = float(self._execution_flat_epsilon())
@@ -2482,6 +2524,171 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return int(moved)
 
     # ---- A1.9.6.1: seed quote guard, fee residue, taker outcome ---------
+    # ---- A1.9.7: the ticks between an entry fill and its first exit evaluation ----
+    def _a197_postfill_enabled(self) -> bool:
+        return bool(getattr(self, "research_a197_postfill_protect", True))
+
+    def _a197_gap_records(self) -> dict:
+        records = getattr(self, "_a197_exit_gap", None)
+        if not isinstance(records, dict):
+            records = {}
+            self._a197_exit_gap = records
+        return records
+
+    def _a197_mark(self, inventory, mid) -> float | None:
+        return position_mark_bps(
+            net_base=getattr(inventory, "net_base", 0.0),
+            vwap_entry=getattr(inventory, "vwap_entry", None),
+            mid=mid,
+            fallback=getattr(inventory, "unrealized_bps", None),
+        )
+
+    def _a197_postfill_candidate(self, book_id: int, inventory, mid) -> bool:
+        """P1: may this book be evaluated on the tick after its entry fill?"""
+        if not self._a197_postfill_enabled():
+            return False
+        return postfill_protect_eligible(self._a197_mark(inventory, mid))
+
+    def _a197_note_gap_skip(self, book_id: int, reason: str, inventory, mid) -> None:
+        try:
+            note_gap_skip(
+                self._a197_gap_records(), int(book_id),
+                tick=int(getattr(self, "_tick", 0) or 0), reason=str(reason),
+                mark_bps=self._a197_mark(inventory, mid),
+            )
+        except Exception:
+            pass
+
+    def _a197_close_gap(self, book_id: int, *, p1_acted: bool) -> None:
+        """P3: the first managed evaluation ends the gap and logs it."""
+        try:
+            row = close_gap(
+                self._a197_gap_records(), int(book_id),
+                eval_tick=int(getattr(self, "_tick", 0) or 0), p1_acted=bool(p1_acted),
+            )
+        except Exception:
+            return
+        if row is None:
+            return
+        self._a197_exit_gap_rows = int(getattr(self, "_a197_exit_gap_rows", 0) or 0) + 1
+        self._a197_exit_gap_ticks_total = int(
+            getattr(self, "_a197_exit_gap_ticks_total", 0) or 0
+        ) + int(row["gap_ticks"])
+        try:
+            self._emit("A197_EXIT_GAP", force=True, tick=int(row["eval_tick"]), **row)
+        except Exception:
+            pass
+
+    def _a197_note_own_fill(self, *, book_id: int, before: float, after: float) -> None:
+        """P3 opens a gap on an opening fill; P1 watches its exits for a sign flip."""
+        eps = float(self._execution_flat_epsilon())
+        tick = int(getattr(self, "_tick", 0) or 0)
+        bid = int(book_id)
+        flipped = sign_flipped(before, after, eps)
+        watch = getattr(self, "_a197_postfill_watch", None)
+        if isinstance(watch, dict) and bid in watch:
+            protect_tick = int(watch.get(bid, tick))
+            if flipped:
+                watch.pop(bid, None)
+                self._a197_postfill_sign_flips = int(
+                    getattr(self, "_a197_postfill_sign_flips", 0) or 0
+                ) + 1
+                try:
+                    self._emit(
+                        "A197_POSTFILL_FLIP", force=True, tick=tick, book=bid,
+                        before=float(before), after=float(after), protect_tick=protect_tick,
+                        a197_postfill_protection_version=A197_POSTFILL_PROTECTION_VERSION,
+                    )
+                except Exception:
+                    pass
+            elif abs(float(after)) <= eps or tick - protect_tick > A197_FLIP_WATCH_TICKS:
+                watch.pop(bid, None)
+        records = self._a197_gap_records()
+        if abs(float(after)) <= eps:
+            records.pop(bid, None)
+        elif abs(float(before)) <= eps or flipped:
+            open_gap(records, bid, fill_tick=tick)
+
+    def _a197_manage_postfill(
+        self, response, state, book_id, book, inventory, params, regime, archetype,
+    ) -> int:
+        """P1: evaluate an ABSOLUTE position on the tick after its entry fill.
+
+        The exit decision runs exactly as on any other tick.  A taker exit goes
+        through the frozen `_execute_aggressive_close`, which cancels every
+        resting order on the book -- the entry quotes included -- before the
+        market order.  A maker exit is refused (see `_research_place_maker_exit`)
+        and any other limit placement for this book is removed, because a
+        cancel and a replacement never share a response.  When no cancel covered
+        the entry quotes they are cancelled here, as on any post-fill tick.
+        """
+        bid = int(book_id)
+        tick = int(getattr(self, "_tick", 0) or 0)
+        entry_ids: list[int] = []
+        for order in self._direct_entry_quote_orders(bid):
+            try:
+                entry_ids.append(int(getattr(order, "id", None)))
+            except (TypeError, ValueError):
+                continue
+        try:
+            mid = 0.5 * (float(book.bids[0].price) + float(book.asks[0].price))
+        except Exception:
+            mid = None
+        mark = self._a197_mark(inventory, mid)
+        record = self._a197_gap_records().get(bid)
+        fill_tick = getattr(record, "fill_tick", None)
+        first_new = len(getattr(response, "instructions", None) or ())
+        self._a197_close_gap(bid, p1_acted=True)
+        self._a197_postfill_book = bid
+        try:
+            n = int(self._manage_inventory(
+                response, state, book_id, book, inventory, params, regime, archetype,
+            ) or 0)
+        finally:
+            self._a197_postfill_book = None
+        instructions = getattr(response, "instructions", None)
+        stripped = strip_book_limit_orders(instructions, book_id=bid, first_new=first_new)
+        kinds = book_instruction_kinds(instructions, book_id=bid, first_new=first_new)
+        market = "PLACE_ORDER_MARKET" in kinds
+        covered = sorted(set(entry_ids) & book_cancelled_order_ids(
+            instructions, book_id=bid, first_new=first_new,
+        ))
+        fallback = 0
+        if covered:
+            # The frozen cancel-before-taker cancelled them: register it, so the
+            # lifecycle reads an agent cancel rather than an expiry (A1.9.0.3).
+            self._a19_note_exit_cancel(bid, covered, ABSENT_ENTRY_QUOTE_CANCEL)
+        if len(covered) < len(set(entry_ids)):
+            fallback = int(self._direct_cancel_entry_quotes(
+                response, bid, reason="INVENTORY_OPENED",
+            ))
+        if market:
+            watch = getattr(self, "_a197_postfill_watch", None)
+            if not isinstance(watch, dict):
+                watch = {}
+                self._a197_postfill_watch = watch
+            watch[bid] = tick
+        self._a197_postfill_acts = int(getattr(self, "_a197_postfill_acts", 0) or 0) + 1
+        self._a197_postfill_market = int(getattr(self, "_a197_postfill_market", 0) or 0) + int(market)
+        self._a197_postfill_fallback_cancels = int(
+            getattr(self, "_a197_postfill_fallback_cancels", 0) or 0
+        ) + int(bool(fallback))
+        self._a197_postfill_limits_stripped = int(
+            getattr(self, "_a197_postfill_limits_stripped", 0) or 0
+        ) + int(stripped)
+        try:
+            self._emit(
+                "A197_POSTFILL_PROTECT", force=True, tick=tick, book=bid,
+                fill_tick=fill_tick, mark_bps=None if mark is None else round(float(mark), 3),
+                entry_quotes=len(entry_ids), entry_quotes_cancelled_by_exit=len(covered),
+                market_queued=int(market), fallback_cancel=int(bool(fallback)),
+                limits_stripped=int(stripped), managed_instructions=int(n),
+                a197_postfill_protection_version=A197_POSTFILL_PROTECTION_VERSION,
+            )
+        except Exception:
+            pass
+        return max(0, n - int(stripped)) + int(fallback)
+
     def _a1961_seed_quote_guard_enabled(self) -> bool:
         return bool(getattr(self, "research_a1961_seed_quote_guard", True))
 
@@ -4685,6 +4892,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
         close_price: float | None = None, maker_net_bps: float | None = None,
     ) -> int:
         """A1.7.2 final execution invariant for Direct inventory realization."""
+        # A1.9.7 P1: on the post-fill tick the entry quotes are cancelled in this
+        # same response, so a maker exit here would be the cancel-and-replace
+        # A1.7.4.3.1 forbids.  Refuse it; the ordinary one-tick wait applies.
+        if getattr(self, "_a197_postfill_book", None) == int(book_id):
+            self._a197_postfill_maker_refused = int(
+                getattr(self, "_a197_postfill_maker_refused", 0) or 0
+            ) + 1
+            return 0
         if self._direct_partial_hold_active(int(book_id), state):
             self._direct_emit_partial_replacement_block(int(book_id), path="MAKER_EXIT")
             return 0
@@ -7582,6 +7797,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
         stats["instructions"] += int(compact_instructions)
 
+        # A1.9.7 P1: books evaluated on the tick after their entry fill.
+        a197_postfill_books: set[int] = set()
         # Inventory is never dependent on acquisition shortlist membership.
         for raw_id, book in (getattr(state, "books", None) or {}).items():
             book_id = int(raw_id)
@@ -7598,13 +7815,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     continue
                 # Persistent entry quotes must be canceled as soon as inventory
                 # opens.  Legitimate inventory-exit orders remain authoritative.
+                # A1.9.7 P1: unless the position is already inside ABSOLUTE
+                # protection.  Then it is evaluated on this tick, and a taker exit
+                # cancels the entry quotes itself (cancel-before-taker).
+                a197_postfill = False
                 if self._direct_entry_quote_orders(book_id):
-                    n_cancel = self._direct_cancel_entry_quotes(
-                        response, book_id, reason="INVENTORY_OPENED",
-                    )
-                    stats["instructions"] += int(n_cancel)
-                    continue
-                if self._direct_book_has_live_order(book_id):
+                    a197_postfill = self._a197_postfill_candidate(book_id, inventory, mid)
+                    if not a197_postfill:
+                        self._a197_note_gap_skip(book_id, SKIP_INVENTORY_OPENED, inventory, mid)
+                        n_cancel = self._direct_cancel_entry_quotes(
+                            response, book_id, reason="INVENTORY_OPENED",
+                        )
+                        stats["instructions"] += int(n_cancel)
+                        continue
+                if not a197_postfill and self._direct_book_has_live_order(book_id):
+                    self._a197_note_gap_skip(book_id, SKIP_LIVE_ORDER, inventory, mid)
                     continue
                 profile = profile_by_id.get(book_id)
                 prediction = (predictions or {}).get(book_id)
@@ -7612,27 +7837,49 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     # A forced inventory book should normally have a profile.
                     # If it does not, avoid creating new exposure; the next tick
                     # can retry once the profile is available.
+                    self._a197_note_gap_skip(book_id, SKIP_NO_PROFILE, inventory, mid)
+                    if a197_postfill:
+                        stats["instructions"] += int(self._direct_cancel_entry_quotes(
+                            response, book_id, reason="INVENTORY_OPENED",
+                        ))
                     continue
                 archetype = self.classify_book_archetype(profile, regime)
                 params = self.merge_regime_and_archetype_params(regime_params, archetype)
                 urgency = self._inventory_urgency(inventory, params, regime, archetype)
                 manage_queue.append((urgency, book_id, book, inventory, params, archetype))
+                if a197_postfill:
+                    a197_postfill_books.add(book_id)
 
         manage_queue.sort(key=lambda row: row[0], reverse=True)
         for _urg, book_id, book, inventory, params, archetype in manage_queue[: self.max_managed_books_per_tick]:
-            n = self._manage_inventory(
-                response,
-                state,
-                book_id,
-                book,
-                inventory,
-                params,
-                regime,
-                archetype,
-            )
+            if book_id in a197_postfill_books:
+                n = self._a197_manage_postfill(
+                    response, state, book_id, book, inventory, params, regime, archetype,
+                )
+            else:
+                self._a197_close_gap(book_id, p1_acted=False)
+                n = self._manage_inventory(
+                    response,
+                    state,
+                    book_id,
+                    book,
+                    inventory,
+                    params,
+                    regime,
+                    archetype,
+                )
             if n:
                 stats["managed"] += 1
                 stats["instructions"] += int(n)
+        # A1.9.7: books the per-tick management cap left out wait one more tick.
+        # A post-fill book among them still has its entry quotes cancelled.
+        for _urg, book_id, _book, inventory, _params, _arch in manage_queue[self.max_managed_books_per_tick:]:
+            self._a197_note_gap_skip(book_id, SKIP_NOT_MANAGED, inventory, None)
+            if book_id in a197_postfill_books:
+                self._a197_postfill_truncated = int(getattr(self, "_a197_postfill_truncated", 0) or 0) + 1
+                stats["instructions"] += int(self._direct_cancel_entry_quotes(
+                    response, book_id, reason="INVENTORY_OPENED",
+                ))
 
         # A1.5 keeps A1.3 early portfolio admission.  Final contract validation remains the
         # last authority, but do not build more new-exposure books than the
@@ -7910,6 +8157,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_identity_releases"] = int(getattr(self, "_direct_identity_releases", 0) or 0)
         stats["direct_stale_cancels_ignored"] = int(getattr(self, "_direct_stale_cancels_ignored", 0) or 0)
         stats["direct_release_mismatch_blocks"] = int(getattr(self, "_direct_release_mismatch_blocks", 0) or 0)
+        stats["direct_a197_version"] = A197_POSTFILL_PROTECTION_VERSION
+        stats["direct_a197_postfill_acts"] = int(getattr(self, "_a197_postfill_acts", 0) or 0)
+        stats["direct_a197_postfill_market"] = int(getattr(self, "_a197_postfill_market", 0) or 0)
+        stats["direct_a197_postfill_fallback_cancels"] = int(getattr(self, "_a197_postfill_fallback_cancels", 0) or 0)
+        stats["direct_a197_postfill_limits_stripped"] = int(getattr(self, "_a197_postfill_limits_stripped", 0) or 0)
+        stats["direct_a197_postfill_maker_refused"] = int(getattr(self, "_a197_postfill_maker_refused", 0) or 0)
+        stats["direct_a197_postfill_sign_flips"] = int(getattr(self, "_a197_postfill_sign_flips", 0) or 0)
+        stats["direct_a197_postfill_truncated"] = int(getattr(self, "_a197_postfill_truncated", 0) or 0)
+        stats["direct_a197_exit_gap_rows"] = int(getattr(self, "_a197_exit_gap_rows", 0) or 0)
+        stats["direct_a197_exit_gap_ticks_total"] = int(getattr(self, "_a197_exit_gap_ticks_total", 0) or 0)
         stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
         stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
         stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)

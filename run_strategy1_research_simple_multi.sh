@@ -68,12 +68,13 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_6) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_6_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1 ;;
+  strategy1_direct_v4_16_2_a1_9_7) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -179,7 +180,8 @@ research_a195_inventory_truth_enabled=1 research_a195_startup_orphan_cancel=1 \
 research_a195_breadth_lane_enabled=1 \
 research_a196_legacy_dust_ledger=1 research_a196_inherited_parked_allowance=1 \
 research_a196_quantity_grid_snap=1 \
-research_a1961_seed_quote_guard=1 research_a1961_fee_residue_ledger=1"
+research_a1961_seed_quote_guard=1 research_a1961_fee_residue_ledger=1 \
+research_a197_postfill_protect=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -613,6 +615,58 @@ if [[ "$A1961_BUILD" == "1" ]]; then
   echo "[preflight] A1.9.6.1 seed quote guard / fee residue / taker outcome PASS"
 fi
 
+# A1.9.7.  Measured on the A1.9.6.1 run (log 20260913_053425): 579 of 600 round
+# trips were first evaluated two or more ticks after their opening fill.  Every
+# buy fill waited three ticks for LOCAL_EXPIRY because side 0 read as no side, and
+# the tick after every fill skipped exit management while the other entry quote
+# was cancelled -- book 81 went from -137 to -597 bps across that one tick.
+if [[ "$A197_BUILD" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_direct_postfill_protection.py" ]] || {
+    echo "ERROR: A1.9.7 build is missing research_direct_postfill_protection.py" >&2
+    exit 1
+  }
+
+  # P2: a buy side sent as the integer 0 is still a side.
+  grep -qF 'token = "" if side is None else str(side).strip().lower()' "$AGENT_PATH/research_direct_book_ownership.py" || {
+    echo "ERROR: A1.9.7 canonical_order_side still drops side 0; buy fills cannot" >&2
+    echo "       release their reservation and wait for LOCAL_EXPIRY." >&2
+    exit 1
+  }
+
+  # P1: the post-fill tick evaluates an ABSOLUTE position instead of skipping it,
+  # only an ABSOLUTE one, and never places a maker exit beside the cancel.
+  grep -qF 'a197_postfill = self._a197_postfill_candidate(book_id, inventory, mid)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.7 never evaluates a position on the tick after its entry fill." >&2
+    exit 1
+  }
+  grep -qE '^[[:space:]]+return m is not None and classify_risk_band\(m\) == BAND_ABSOLUTE$' "$AGENT_PATH/research_direct_postfill_protection.py" || {
+    echo "ERROR: A1.9.7 post-fill protection is not limited to ABSOLUTE positions." >&2
+    exit 1
+  }
+  grep -qF 'if getattr(self, "_a197_postfill_book", None) == int(book_id):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.7 could place a maker exit in the response that cancels the" >&2
+    echo "       entry quotes -- the cancel-and-replace A1.7.4.3.1 forbids." >&2
+    exit 1
+  }
+  grep -qF 'stripped = strip_book_limit_orders(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.7 does not remove limit placements from a post-fill response." >&2
+    exit 1
+  }
+
+  # P1 sign-flip watch and P3 exit-gap record, both fed by the own-fill hook.
+  grep -qF 'self._a197_note_own_fill(book_id=int(book_id), before=float(before), after=float(after))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.7 does not watch protective exits for a sign flip or record exit gaps." >&2
+    exit 1
+  }
+
+  [[ "$PARAMS" == *"research_a197_postfill_protect=1"* ]] || {
+    echo "ERROR: A1.9.7 build without research_a197_postfill_protect=1 in PARAMS. The" >&2
+    echo "       engine would report a1_9_7 while the post-fill tick stays blind." >&2
+    exit 1
+  }
+  echo "[preflight] A1.9.7 post-fill protection / order-side identity / exit gap PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -653,6 +707,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_a1_9_5_breadth_lane.py \
       tests/test_research_a1_9_6_legacy_baseline.py \
       tests/test_research_a1_9_6_1_venue_integrity.py \
+      tests/test_research_a1_9_7_postfill_protection.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py

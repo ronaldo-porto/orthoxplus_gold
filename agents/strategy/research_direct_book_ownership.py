@@ -19,7 +19,13 @@ DIRECT_ORDER_IDENTITY_MAX = 32768
 
 
 def canonical_order_side(side) -> str:
-    token = str(side or "").strip().lower()
+    # A1.9.7 P2: the venue sends a buy as the integer 0, and `str(side or "")`
+    # turned that falsy zero into "".  Every buy identity was registered with
+    # no side, its pending key never matched the "buy" reservation, and a buy
+    # fill released nothing: 161 of 161 same-state buy fills on the A1.9.6.1
+    # run waited three ticks for LOCAL_EXPIRY, while every sell released on
+    # the fill.  A zero is still a side.
+    token = "" if side is None else str(side).strip().lower()
     if token in {"buy", "bid", "b", "0"} or token.endswith(".buy"):
         return "buy"
     if token in {"sell", "ask", "s", "1"} or token.endswith(".sell"):
