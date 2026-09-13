@@ -68,11 +68,12 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_6) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1 ;;
+  strategy1_direct_v4_16_2_a1_9_6_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -177,7 +178,8 @@ research_a195_taker_floor_enforce=1 research_a195_taker_floor_bps=-25.0 \
 research_a195_inventory_truth_enabled=1 research_a195_startup_orphan_cancel=1 \
 research_a195_breadth_lane_enabled=1 \
 research_a196_legacy_dust_ledger=1 research_a196_inherited_parked_allowance=1 \
-research_a196_quantity_grid_snap=1"
+research_a196_quantity_grid_snap=1 \
+research_a1961_seed_quote_guard=1 research_a1961_fee_residue_ledger=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -554,6 +556,63 @@ if [[ "$A196_BUILD" == "1" ]]; then
   echo "[preflight] A1.9.6 legacy baseline / inherited parked / quantity grid PASS"
 fi
 
+# A1.9.6.1 activation guard.  The first A1.9.6 run priced two inherited lots from
+# crossed quotes (book 99: bid 411.37 / ask 285.28) and held one of them on
+# +1,805 bps of profit that never existed for 2,326 ticks; every fee-paying buy
+# left the venue a BASE unit below the tracker; and the loss-floor abort rule
+# measured trigger timing instead of F8.  One guard per fix.
+if [[ "$A1961_BUILD" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_direct_venue_integrity.py" ]] || {
+    echo "ERROR: A1.9.6.1 build is missing research_direct_venue_integrity.py" >&2
+    exit 1
+  }
+
+  # Seed pricing: the mid comes from a touch that is a market, and a crossed
+  # touch is refused -- otherwise a crossed book becomes a cost basis again.
+  grep -qF 'mid = touch_mid(getattr(book, "bids", None), getattr(book, "asks", None))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.6.1 seed does not price from a validated touch." >&2
+    exit 1
+  }
+  grep -qF 'if bid is None or ask is None or ask < bid:' "$AGENT_PATH/research_direct_venue_integrity.py" || {
+    echo "ERROR: A1.9.6.1 valid_touch does not refuse a crossed quote." >&2
+    exit 1
+  }
+  # A REAL lot without a price waits -- and stays charged on both gates meanwhile.
+  grep -qF 'self._a1961_service_pending_seed(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.6.1 never retries the lots the seed could not price;" >&2
+    echo "       they would stay out of the tracker for the whole run." >&2
+    exit 1
+  }
+  for _re in '^[[:space:]]+abs_now \+= a1961_pending_abs_now$' \
+             '^[[:space:]]+filled_abs \+= a1961_pending_abs_now$'; do
+    grep -qE "$_re" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: A1.9.6.1 waiting inherited lots are not charged to exposure ($_re)." >&2
+      exit 1
+    }
+  done
+
+  # Fee residue: mirrored once per trade, rounded up exactly as the venue does.
+  grep -qF 'self._a1961_note_fee_residue(event)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.6.1 does not mirror BASE-denominated fees; reconcile" >&2
+    echo "       divergence would grow by a unit per fee-paying buy." >&2
+    exit 1
+  }
+  grep -qF 'rounding=ROUND_CEILING' "$AGENT_PATH/research_direct_venue_integrity.py" || {
+    echo "ERROR: A1.9.6.1 fee residue does not round up like ClearingManager." >&2
+    exit 1
+  }
+
+  for _p in research_a1961_seed_quote_guard=1 \
+            research_a1961_fee_residue_ledger=1; do
+    [[ "$PARAMS" == *"$_p"* ]] || {
+      echo "ERROR: A1.9.6.1 build without $_p in PARAMS. The engine would report" >&2
+      echo "       a1_9_6_1 while the fix it names does nothing." >&2
+      exit 1
+    }
+  done
+  echo "[preflight] A1.9.6.1 seed quote guard / fee residue / taker outcome PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -593,6 +652,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_a1_9_5_inventory_truth.py \
       tests/test_research_a1_9_5_breadth_lane.py \
       tests/test_research_a1_9_6_legacy_baseline.py \
+      tests/test_research_a1_9_6_1_venue_integrity.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py

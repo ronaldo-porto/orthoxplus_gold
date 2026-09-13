@@ -279,7 +279,20 @@ from research_direct_legacy_baseline import (
     inherited_parked_exemption,
     ledger_abs as a196_ledger_total_abs,
     snap_instruction_quantities,
+    snap_quantity,
     split_seed_plan,
+)
+from research_direct_venue_integrity import (
+    A1961_VENUE_INTEGRITY_VERSION,
+    SEED_DROP,
+    SEED_NOW,
+    apply_fee_residue,
+    base_fee_units,
+    pending_seed_step,
+    route_unpriced_books,
+    taker_outcome,
+    touch_mid,
+    valid_touch,
 )
 # Only for the balance-vs-position comparison in A195_RECONCILE: this returns
 # Balance.total, not a net position, which is exactly what the observer exists
@@ -374,8 +387,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_6"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_6"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_6_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_6_1"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -584,6 +597,31 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a196_admission_samples = 0
         self._a196_admission_zero_samples = 0
         self._a196_admission_last: dict[str, Any] = {}
+
+        # A1.9.6.1: seed only from a quote that is a market, mirror the BASE the
+        # venue takes as fees, and judge taker exits against their own decision.
+        self.research_a1961_seed_quote_guard = self._as_bool(
+            getattr(self.config, "research_a1961_seed_quote_guard", True)
+        )
+        self.research_a1961_fee_residue_ledger = self._as_bool(
+            getattr(self.config, "research_a1961_fee_residue_ledger", True)
+        )
+        self._a1961_pending_seed: dict[int, dict[str, Any]] = {}
+        self._a1961_seed_unpriced_books = 0
+        self._a1961_pending_resolved = 0
+        self._a1961_pending_dropped = 0
+        self._a1961_pending_seeded_abs = 0.0
+        self._a1961_base_decimals: int | None = None
+        self._a1961_fee_residue: dict[int, float] = {}
+        self._a1961_fee_residue_units = 0
+        self._a1961_fee_residue_fills = 0
+        self._a1961_fee_residue_skipped = 0
+        self._a1961_taker_decision: dict[int, dict[str, Any]] = {}
+        self._a1961_taker_outcomes = 0
+        self._a1961_taker_unmatched = 0
+        self._a1961_slippage_breaches = 0
+        self._a1961_late_triggers = 0
+        self._a1961_worst_slippage_bps = 0.0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -869,6 +907,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
             )
         return super()._format_human(record)
 
+    def update(self, state) -> None:
+        # A1.9.6.1: the framework ingests this state's trades inside update(),
+        # before respond().  The venue's BASE precision must be known first, or
+        # the fee residue of the first fills after a restart would be skipped.
+        try:
+            self._a1961_note_base_decimals(state)
+        except Exception:
+            pass
+        return super().update(state)
+
     # ------------------------------------------------------------------
     # A1.5.1 Maker lifecycle learning.  Learn NET realized downside, including
     # partial reductions and fees, rather than gross entry-to-final-price drift.
@@ -937,6 +985,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                             getattr(event, attr, None),
                             cause=LEDGER_REMOVED_FILLED, filled_qty=qty,
                         )
+            except Exception:
+                pass
+            # A1.9.6.1: the venue takes a buy's positive fee in BASE, rounded up
+            # to a whole unit, and the tracker never sees it.  Mirror it into the
+            # fee-residue ledger -- once per trade, after the replay guard.
+            try:
+                self._a1961_note_fee_residue(event)
             except Exception:
                 pass
 
@@ -1095,6 +1150,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     )
                 except Exception:
                     pass
+                # A1.9.6.1: judge a taker exit against its own decision, and say
+                # separately when the loss was already past the floor at the decision.
+                if exit_is_taker:
+                    try:
+                        self._a1961_emit_taker_outcome(book_id=bid, net_bps=float(net_bps))
+                    except Exception:
+                        pass
                 self._direct_maker_open.pop(bid, None)
                 row = None
 
@@ -1701,6 +1763,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     taker_net_bps=float(captured.get("taker_net_bps", 0.0) or 0.0),
                     wait_is_terminal=int(str(getattr(decision, "action", "")) == ACTION_WAIT),
                 )
+                if str(getattr(decision, "action", "") or "") == ACTION_TAKER_EXIT:
+                    self._a1961_note_taker_decision(
+                        book_id=int(kwargs.get("book_id", -1)),
+                        tick=int(getattr(self, "_tick", 0) or 0),
+                        taker_net_bps=float(captured.get("taker_net_bps", 0.0) or 0.0),
+                        reason=str(getattr(decision, "reason", "") or ""),
+                    )
         except Exception:
             pass
 
@@ -2142,6 +2211,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         """
         out: dict[int, float] = {}
         ledger = getattr(self, "_a196_legacy_dust_ledger", None) or {}
+        fee_residue = getattr(self, "_a1961_fee_residue", None) or {}
+        pending = getattr(self, "_a1961_pending_seed", None) or {}
         for raw_id in (books or {}):
             try:
                 book_id = int(raw_id)
@@ -2155,6 +2226,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # A1.9.6 F9: the legacy ledger is local inventory too.  Without it
             # every ledger book would read as diverged by exactly its dust.
             out[book_id] += float(ledger.get(book_id, 0.0) or 0.0)
+            # A1.9.6.1: BASE the venue took as fees, and inherited lots still
+            # waiting for a quote, are local inventory as well.
+            out[book_id] += float(fee_residue.get(book_id, 0.0) or 0.0)
+            out[book_id] += float((pending.get(book_id) or {}).get("net", 0.0) or 0.0)
         return out
 
     def _a195_emit_reconcile(self, state, tick: int) -> None:
@@ -2267,13 +2342,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return 8
 
     def _a196_ledger_abs(self) -> float:
-        """Legacy dust BASE held outside the tracker: exposure, not a position.
+        """BASE held outside the tracker's lifecycle: exposure, not a position.
 
-        Written once by the startup seed and never grown.  Dust made in this
-        session lives in the tracker, where the F3 class, recovery and the
-        overflow signal that says a purge is overdue can all see it.
+        The legacy part is written once by the startup seed.  A1.9.6.1 adds the
+        BASE the venue takes as fees on buys, which accrues per fill and is never
+        a position the agent could exit.  Dust a lifecycle leaves behind still
+        lives in the tracker, where F3's overflow signal can see it.
         """
-        return float(a196_ledger_total_abs(getattr(self, "_a196_legacy_dust_ledger", None)))
+        return float(a196_ledger_total_abs(getattr(self, "_a196_legacy_dust_ledger", None))) + self._a1961_fee_residue_abs()
 
     def _a196_inherited_parked_report(self, *, max_abs: float):
         """The inherited-parked exemption, with retirement applied.  Fails closed.
@@ -2285,8 +2361,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if not self._a196_inherited_parked_enabled():
             return NO_INHERITED_EXEMPTION
         inherited = getattr(self, "_a196_inherited_real", None)
-        if not inherited:
+        pending_abs = self._a1961_pending_abs()
+        if not inherited and pending_abs <= 0.0:
             return NO_INHERITED_EXEMPTION
+        if not isinstance(inherited, dict):
+            inherited = {}
         try:
             nets: dict[int, float] = {}
             for book_id in list(inherited):
@@ -2305,6 +2384,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     A196_INHERITED_PARKED_MAX_FRACTION,
                 )) * float(max_abs),
                 eps=float(self._execution_flat_epsilon()),
+                extra_abs=pending_abs,
             )
         except Exception:
             return NO_INHERITED_EXEMPTION
@@ -2348,6 +2428,33 @@ class Strategy1_Research_Simple(Strategy1_Research):
             inherited_uncapped_abs=round(float(last.uncapped_abs), 6),
             inherited_capped=int(bool(last.capped)),
         )
+        # A1.9.6.1 counterfactual, telemetry only: the slots admission would have
+        # if a parked inherited lot stopped occupying an active book as well as
+        # BASE.  ACTIVE bound 76 of 95 rows in the first A1.9.6 run.
+        try:
+            eps = float(self._execution_flat_epsilon())
+            min_order = float(terms.get("min_order", 0.25) or 0.25)
+            parked_active = 0
+            for parked_book in last.books:
+                try:
+                    net = float(self._position_tracker_snapshot(int(parked_book)).net_qty)
+                except Exception:
+                    continue
+                if abs(net) + eps >= min_order:
+                    parked_active += 1
+            reserve = 1 if int(terms.get("dust_count", 0) or 0) > 0 else 0
+            active_if = max(0, int(terms.get("max_active", 6)) - (int(terms.get("active_books", 0)) - parked_active) - reserve)
+            open_if = max(0, int(terms.get("max_open", 8)) - (int(terms.get("effective_open_books", 0)) - parked_active) - reserve)
+            payload.update(
+                parked_inherited_active_books=int(parked_active),
+                active_slots_if_parked_excused=int(active_if),
+                portfolio_slots_if_parked_excused=int(max(0, min(int(decomposition.abs_slots), active_if, open_if))),
+                pending_seed_books=len(getattr(self, "_a1961_pending_seed", {}) or {}),
+                pending_seed_abs=round(self._a1961_pending_abs(), 6),
+                fee_residue_abs=round(self._a1961_fee_residue_abs(), 6),
+            )
+        except Exception:
+            pass
         self._a196_admission_samples = int(getattr(self, "_a196_admission_samples", 0) or 0) + 1
         if int(final_slots) <= 0:
             self._a196_admission_zero_samples = int(
@@ -2373,6 +2480,186 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 getattr(self, "_a196_wire_quantities_moved", 0) or 0
             ) + int(moved)
         return int(moved)
+
+    # ---- A1.9.6.1: seed quote guard, fee residue, taker outcome ---------
+    def _a1961_seed_quote_guard_enabled(self) -> bool:
+        return bool(getattr(self, "research_a1961_seed_quote_guard", True))
+
+    def _a1961_fee_residue_enabled(self) -> bool:
+        return bool(getattr(self, "research_a1961_fee_residue_ledger", True))
+
+    def _a1961_pending_abs(self) -> float:
+        """Inherited lots still waiting for a believable quote.  Real exposure."""
+        pending = getattr(self, "_a1961_pending_seed", None) or {}
+        return float(sum(abs(float((row or {}).get("net", 0.0) or 0.0)) for row in pending.values()))
+
+    def _a1961_fee_residue_abs(self) -> float:
+        residue = getattr(self, "_a1961_fee_residue", None) or {}
+        return float(sum(abs(float(value or 0.0)) for value in residue.values()))
+
+    def _a1961_note_base_decimals(self, state) -> None:
+        """Cache the venue's BASE increment; the fee round-up depends on it."""
+        cfg = getattr(state, "config", None)
+        value = getattr(cfg, "baseDecimals", None) if cfg is not None else None
+        try:
+            if value is not None:
+                self._a1961_base_decimals = max(0, int(value))
+        except (TypeError, ValueError):
+            pass
+
+    def _a1961_note_fee_residue(self, event) -> int:
+        """Mirror the BASE the venue took for this fill's fee.  Returns units charged."""
+        if not self._a1961_fee_residue_enabled():
+            return 0
+        uid = getattr(self, "uid", None)
+        is_taker = getattr(event, "takerAgentId", None) == uid
+        is_maker = getattr(event, "makerAgentId", None) == uid
+        if is_taker == is_maker:
+            return 0
+        try:
+            side = int(getattr(event, "side", -1))
+            book_id = int(getattr(event, "bookId"))
+        except (TypeError, ValueError):
+            return 0
+        if not ((is_taker and side == 0) or (is_maker and side == 1)):
+            return 0
+        decimals = getattr(self, "_a1961_base_decimals", None)
+        if decimals is None:
+            # Never guess the increment: the round-up IS the effect, and it is
+            # taken at the venue's BASE precision, not the order-volume one.
+            self._a1961_fee_residue_skipped = int(
+                getattr(self, "_a1961_fee_residue_skipped", 0) or 0
+            ) + 1
+            return 0
+        units = base_fee_units(
+            agent_buy=True,
+            fee=getattr(event, "takerFee" if is_taker else "makerFee", None),
+            price=getattr(event, "price", None),
+            base_decimals=decimals,
+        )
+        if units <= 0:
+            return 0
+        residue = getattr(self, "_a1961_fee_residue", None)
+        if not isinstance(residue, dict):
+            residue = {}
+            self._a1961_fee_residue = residue
+        apply_fee_residue(residue, book_id=book_id, units=units, base_decimals=decimals)
+        self._a1961_fee_residue_units = int(getattr(self, "_a1961_fee_residue_units", 0) or 0) + int(units)
+        self._a1961_fee_residue_fills = int(getattr(self, "_a1961_fee_residue_fills", 0) or 0) + 1
+        return int(units)
+
+    def _a1961_service_pending_seed(self, state) -> int:
+        """Seed deferred inherited lots once their quote has been a market long enough.
+
+        Never ages positions: reads the pure tracker snapshot, like the seed.
+        """
+        pending = getattr(self, "_a1961_pending_seed", None)
+        if not pending:
+            return 0
+        books = getattr(state, "books", None) or {}
+        eps = float(self._execution_flat_epsilon())
+        min_order = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        tick = int(getattr(self, "_tick", 0) or 0)
+        decimals = self._a196_volume_decimals(state)
+        seeded = 0
+        for book_id in list(pending):
+            row = pending.get(book_id) or {}
+            try:
+                book = books.get(book_id)
+            except Exception:
+                book = None
+            touch = None
+            if book is not None:
+                try:
+                    touch = valid_touch(getattr(book, "bids", None), getattr(book, "asks", None))
+                except Exception:
+                    touch = None
+            venue_net = self._a195_venue_net_by_book({book_id: None}).get(book_id)
+            try:
+                local = float(self._position_tracker_snapshot(int(book_id)).net_qty)
+            except Exception:
+                local = 0.0
+            step = pending_seed_step(
+                streak=row.get("streak", 0), touch=touch, venue_net=venue_net,
+                local_net=local, eps=eps,
+            )
+            row["streak"] = int(step.streak)
+            row["last_reason"] = step.reason
+            if step.action not in (SEED_NOW, SEED_DROP):
+                continue
+            pending.pop(book_id, None)
+            since = int(row.get("since_tick", tick) or 0)
+            outcome: dict[str, Any] = {
+                "book": int(book_id), "action": step.action, "reason": step.reason,
+                "waited_ticks": max(0, tick - since),
+                "pending_net": float(row.get("net", 0.0) or 0.0),
+            }
+            if step.action == SEED_DROP:
+                self._a1961_pending_dropped = int(getattr(self, "_a1961_pending_dropped", 0) or 0) + 1
+            else:
+                net = float(venue_net)
+                if self._a196_grid_snap_enabled():
+                    net = snap_quantity(net, decimals)
+                outcome.update(net_base=net, mid=float(step.mid), bid=float(touch[0]), ask=float(touch[1]))
+                if abs(net) >= min_order or not self._a196_ledger_enabled():
+                    pos = self._open_positions[int(book_id)]
+                    pos["longs" if net > 0 else "shorts"].append((tick, abs(net), float(step.mid), 0.0))
+                    if abs(net) >= min_order:
+                        inherited = getattr(self, "_a196_inherited_real", None)
+                        if not isinstance(inherited, dict):
+                            inherited = {}
+                            self._a196_inherited_real = inherited
+                        inherited[int(book_id)] = net
+                    outcome["routed"] = "TRACKER"
+                else:
+                    ledger = getattr(self, "_a196_legacy_dust_ledger", None)
+                    if not isinstance(ledger, dict):
+                        ledger = {}
+                        self._a196_legacy_dust_ledger = ledger
+                    ledger[int(book_id)] = net
+                    self._a195_seed_legacy_ceiling_bonus = float(
+                        getattr(self, "_a195_seed_legacy_ceiling_bonus", 0.0) or 0.0
+                    ) + abs(net)
+                    outcome["routed"] = "LEDGER"
+                self._a1961_pending_resolved = int(getattr(self, "_a1961_pending_resolved", 0) or 0) + 1
+                self._a1961_pending_seeded_abs = float(
+                    getattr(self, "_a1961_pending_seeded_abs", 0.0) or 0.0
+                ) + abs(net)
+                seeded += 1
+            try:
+                self._emit("A1961_PENDING_SEED", force=True, tick=tick, **outcome)
+            except Exception:
+                pass
+        return seeded
+
+    def _a1961_note_taker_decision(self, *, book_id: int, tick: int, taker_net_bps: float, reason: str) -> None:
+        cache = getattr(self, "_a1961_taker_decision", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._a1961_taker_decision = cache
+        cache[int(book_id)] = {
+            "tick": int(tick), "taker_net_bps": float(taker_net_bps), "reason": str(reason),
+        }
+
+    def _a1961_emit_taker_outcome(self, *, book_id: int, net_bps: float) -> None:
+        """Judge a completed taker round trip against its own decision-time estimate."""
+        cache = getattr(self, "_a1961_taker_decision", None)
+        decision = cache.pop(int(book_id), None) if isinstance(cache, dict) else None
+        tick = int(getattr(self, "_tick", 0) or 0)
+        outcome = taker_outcome(book=int(book_id), tick=tick, realized_net_bps=float(net_bps), decision=decision)
+        self._a1961_taker_outcomes = int(getattr(self, "_a1961_taker_outcomes", 0) or 0) + 1
+        if outcome.decision_net_bps is None:
+            self._a1961_taker_unmatched = int(getattr(self, "_a1961_taker_unmatched", 0) or 0) + 1
+        else:
+            if outcome.slippage_breach:
+                self._a1961_slippage_breaches = int(getattr(self, "_a1961_slippage_breaches", 0) or 0) + 1
+            if outcome.late_trigger:
+                self._a1961_late_triggers = int(getattr(self, "_a1961_late_triggers", 0) or 0) + 1
+            self._a1961_worst_slippage_bps = min(
+                float(getattr(self, "_a1961_worst_slippage_bps", 0.0) or 0.0),
+                float(outcome.slippage_bps),
+            )
+        self._emit("A1961_TAKER_OUTCOME", force=True, tick=tick, **outcome.as_log())
 
     def _a195_emit_dust_capacity(
         self, *, tick: int, total_abs: float, dust_abs: float, min_order: float,
@@ -2538,6 +2825,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 book_id = int(raw_id)
             except (TypeError, ValueError):
                 continue
+            if self._a1961_seed_quote_guard_enabled():
+                # A1.9.6.1: a crossed or out-of-order touch is not a price.  On
+                # tick 1 of the first A1.9.6 run book 99 read bid 411.37 / ask
+                # 285.28, and the lot seeded at their midpoint carried +1,805 bps
+                # of profit that never existed for the rest of the run.
+                try:
+                    mid = touch_mid(getattr(book, "bids", None), getattr(book, "asks", None))
+                except Exception:
+                    mid = None
+                if mid is not None:
+                    out[book_id] = mid
+                continue
             try:
                 bid = float(book.bids[0].price)
                 ask = float(book.asks[0].price)
@@ -2624,11 +2923,39 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 inherited[int(lot.book_id)] = float(lot.net_base)
         self._a196_legacy_dust_ledger = dict(split.ledger)
         self._a196_inherited_real = inherited
+        # A1.9.6.1: books the seed could not price.  Dust needs no price, so it
+        # joins the ledger; a REAL lot needs a cost basis, so it waits for a quote
+        # that is a market -- charged to exposure, covered by F10, meanwhile.
+        route = None
+        if self._a1961_seed_quote_guard_enabled() and plan.skipped_no_price:
+            route = route_unpriced_books(
+                books=plan.skipped_no_price,
+                venue_net_by_book=venue,
+                min_order=min_order,
+                volume_decimals=self._a196_volume_decimals(state),
+                ledger_enabled=self._a196_ledger_enabled(),
+                grid_snap=self._a196_grid_snap_enabled(),
+                remaining_books=int(getattr(
+                    self, "research_a195_max_seed_books", A195_MAX_SEED_BOOKS,
+                )) - len(plan.lots),
+                remaining_abs=float(getattr(
+                    self, "research_a195_max_seed_abs_base", A195_MAX_SEED_ABS_BASE,
+                )) - float(plan.total_abs_base),
+            )
+            self._a196_legacy_dust_ledger.update(route.ledger)
+            seed_tick = int(getattr(self, "_tick", 0) or 0)
+            self._a1961_pending_seed = {
+                int(book_id): {"net": float(net), "since_tick": seed_tick, "streak": 0}
+                for book_id, net in route.pending.items()
+            }
+            self._a1961_seed_unpriced_books = len(plan.skipped_no_price)
         # F3 headroom for the legacy dust only, raised by exactly what was
         # imported -- into the ledger or, with the ledger off, the tracker.
         # Dust created after startup still competes for the original ceiling,
         # so the overflow signal that says "a purge is overdue" keeps working.
         self._a195_seed_legacy_ceiling_bonus = float(split.legacy_dust_abs)
+        if route is not None:
+            self._a195_seed_legacy_ceiling_bonus += float(route.ledger_abs)
         self._a195_seed_books = seeded
         self._a195_seed_real_books = int(plan.real_books)
         self._a195_seed_real_abs = float(plan.real_abs_base)
@@ -2639,6 +2966,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         payload["legacy_ceiling_bonus_abs"] = float(self._a195_seed_legacy_ceiling_bonus)
         self._a196_seed_last = split.as_log()
         payload.update(self._a196_seed_last)
+        if route is not None:
+            payload.update(route.as_log())
         self._a195_seed_last = payload
         try:
             self._emit(
@@ -4507,6 +4836,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # diagnostic only and does not gate trading.
         self._direct_current_state_timestamp_ns = int(getattr(state, "timestamp", 0) or 0)
         self._direct_request_wall_started = time.perf_counter()
+        try:
+            self._a1961_note_base_decimals(state)
+        except Exception:
+            pass
         # A1.9.0.2 live resting-exit observer.  Runs before super().respond so
         # it sees every open-inventory book while its Maker exit is still alive,
         # ahead of every live-order and ownership gate that would skip the book.
@@ -4529,6 +4862,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # capacity, exit and ownership decision this tick reads that tracker.
         try:
             self._a195_seed_inventory_from_venue(state)
+        except Exception:
+            pass
+        # A1.9.6.1: seed the lots the startup seed could not price, once their
+        # quote has been a market for long enough to believe.
+        try:
+            self._a1961_service_pending_seed(state)
         except Exception:
             pass
         response = super().respond(state)
@@ -6951,6 +7290,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         a196_ledger_abs_now = self._a196_ledger_abs()
         filled_abs += a196_ledger_abs_now
         filled_dust_abs += a196_ledger_abs_now
+        a1961_pending_abs_now = self._a1961_pending_abs()
+        filled_abs += a1961_pending_abs_now
         filled_abs = max(0.0, filled_abs - self._a195_dust_exempt_abs(
             total_abs=filled_abs, dust_abs=filled_dust_abs,
             min_order=min_size, max_abs=max_abs,
@@ -7323,6 +7664,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         a196_ledger_abs_now = self._a196_ledger_abs()
         abs_now += a196_ledger_abs_now
         dust_abs_now += a196_ledger_abs_now
+        # A1.9.6.1: inherited lots waiting for a believable quote are exposure;
+        # the F10 allowance below covers them inside its cap.
+        a1961_pending_abs_now = self._a1961_pending_abs()
+        abs_now += a1961_pending_abs_now
         dust_exempt_abs = self._a195_dust_exempt_abs(
             total_abs=abs_now, dust_abs=dust_abs_now,
             min_order=min_size, max_abs=max_abs,
@@ -7825,6 +8170,24 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a196_wire_quantities_moved"] = int(getattr(self, "_a196_wire_quantities_moved", 0) or 0)
         stats["direct_a196_admission_samples"] = int(getattr(self, "_a196_admission_samples", 0) or 0)
         stats["direct_a196_admission_zero_samples"] = int(getattr(self, "_a196_admission_zero_samples", 0) or 0)
+        # A1.9.6.1: seed quote guard, fee residue, taker outcome.
+        stats["direct_a1961_venue_integrity_version"] = A1961_VENUE_INTEGRITY_VERSION
+        stats["direct_a1961_seed_quote_guard"] = int(self._a1961_seed_quote_guard_enabled())
+        stats["direct_a1961_seed_unpriced_books"] = int(getattr(self, "_a1961_seed_unpriced_books", 0) or 0)
+        stats["direct_a1961_pending_seed_books"] = len(getattr(self, "_a1961_pending_seed", {}) or {})
+        stats["direct_a1961_pending_seed_abs"] = float(self._a1961_pending_abs())
+        stats["direct_a1961_pending_resolved"] = int(getattr(self, "_a1961_pending_resolved", 0) or 0)
+        stats["direct_a1961_pending_dropped"] = int(getattr(self, "_a1961_pending_dropped", 0) or 0)
+        stats["direct_a1961_fee_residue_ledger"] = int(self._a1961_fee_residue_enabled())
+        stats["direct_a1961_fee_residue_books"] = len(getattr(self, "_a1961_fee_residue", {}) or {})
+        stats["direct_a1961_fee_residue_abs"] = float(self._a1961_fee_residue_abs())
+        stats["direct_a1961_fee_residue_units"] = int(getattr(self, "_a1961_fee_residue_units", 0) or 0)
+        stats["direct_a1961_fee_residue_skipped"] = int(getattr(self, "_a1961_fee_residue_skipped", 0) or 0)
+        stats["direct_a1961_taker_outcomes"] = int(getattr(self, "_a1961_taker_outcomes", 0) or 0)
+        stats["direct_a1961_taker_unmatched"] = int(getattr(self, "_a1961_taker_unmatched", 0) or 0)
+        stats["direct_a1961_slippage_breaches"] = int(getattr(self, "_a1961_slippage_breaches", 0) or 0)
+        stats["direct_a1961_late_triggers"] = int(getattr(self, "_a1961_late_triggers", 0) or 0)
+        stats["direct_a1961_worst_slippage_bps"] = float(getattr(self, "_a1961_worst_slippage_bps", 0.0) or 0.0)
         stats["direct_a192_max_suppression_pct"] = float(self.A192_MAX_SUPPRESSION_PCT)
         stats["direct_a192_net_bps_floor"] = float(self.A192_NET_BPS_FLOOR)
         stats["direct_a192_tail_shortfall_floor_bps"] = float(self.A192_TAIL_SHORTFALL_FLOOR_BPS)

@@ -270,6 +270,7 @@ def inherited_parked_exemption(
     parked_books: Iterable[int],
     cap_abs: float,
     eps: float,
+    extra_abs: float = 0.0,
 ) -> InheritedExemption:
     """Acquisition BASE excused for inherited lots the loss floor has parked.
 
@@ -277,6 +278,10 @@ def inherited_parked_exemption(
     ends: it goes flat, or it crosses to the other side.  A book with no net
     reading is left alone rather than retired on missing data.  Session
     add-ons are never excused: only ``min(|net|, |inherited|)`` counts.
+
+    ``extra_abs`` is inherited exposure outside the tracker -- A1.9.6.1 lots still
+    waiting for a believable quote.  The caller charges it; it is excused here,
+    inside the same cap.
     """
     tol = abs(_finite(eps, 5e-5))
     parked = {int(b) for b in (parked_books or ())}
@@ -296,6 +301,7 @@ def inherited_parked_exemption(
             continue
         total += min(abs(net), abs(seeded))
         books.append(book)
+    total += max(0.0, _finite(extra_abs))
     cap = max(0.0, _finite(cap_abs))
     return InheritedExemption(
         exempt_abs=min(total, cap), uncapped_abs=total,
