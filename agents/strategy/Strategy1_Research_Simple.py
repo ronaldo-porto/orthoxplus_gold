@@ -311,6 +311,12 @@ from research_direct_postfill_protection import (
     sign_flipped,
     strip_book_limit_orders,
 )
+from research_direct_absolute_authority import (
+    A198_ABSOLUTE_AUTHORITY_VERSION,
+    ARM_RECOVERY_MAKER,
+    ARM_RELATIVE_VETO,
+    restore_absolute_taker,
+)
 # Only for the balance-vs-position comparison in A195_RECONCILE: this returns
 # Balance.total, not a net position, which is exactly what the observer exists
 # to make visible.  Nothing in this file treats its output as inventory.
@@ -404,8 +410,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_7"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_7"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_8"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_8"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -658,6 +664,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a197_postfill_truncated = 0
         self._a197_exit_gap_rows = 0
         self._a197_exit_gap_ticks_total = 0
+
+        # A1.9.8: ABSOLUTE_PROTECTION keeps its taker against the two loss-recovery
+        # maker arms (the A1.7.4 recovery maker and the A1.7.5 relative veto).
+        self.research_a198_absolute_taker_authority = self._as_bool(
+            getattr(self.config, "research_a198_absolute_taker_authority", True)
+        )
+        self._a198_restores = 0
+        self._a198_restored_recovery = 0
+        self._a198_restored_relative = 0
+        self._a198_restored_postfill = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1561,6 +1577,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 inventory_qty=float(exit_kwargs.get("inventory_qty", 0.0) or 0.0),
                 tail_budget_exhausted=budget_exhausted,
             )
+            # A1.9.8: in ABSOLUTE_PROTECTION neither loss-recovery arm may swap the
+            # frozen taker for a resting maker exit priced at a loss.  Book 95 went
+            # from -40 to -110..-130 bps in the two ticks one held the book.
+            a198_replaced = decision
+            decision, a198_arm = restore_absolute_taker(
+                base_decision=base_decision, decision=a198_replaced,
+                enabled=self._a198_enabled(),
+            )
+            captured["a198_arm"] = a198_arm
+            captured["a198_replaced"] = a198_replaced if a198_arm else None
             captured["pre_a1744_decision"] = pre_a1744_decision
             captured["a175_tail_budget_exhausted"] = budget_exhausted
             captured.update(exit_kwargs)
@@ -1576,6 +1602,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             result = super()._research_apply_unified_exit(legacy, **kwargs)
         finally:
             setattr(module, "choose_position_exit", original)
+
+        # A1.9.8: count and log every ABSOLUTE taker restored over a loss-recovery maker.
+        try:
+            if captured.get("a198_arm") and book_id_outer >= 0:
+                self._a198_note_restore(book_id_outer, captured)
+        except Exception:
+            pass
 
         # A1.7.4.4: explicit Kappa-risk-veto telemetry. This state is diagnostic
         # only and never changes execution after the chooser has returned.
@@ -2688,6 +2721,36 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             pass
         return max(0, n - int(stripped)) + int(fallback)
+
+    # ---- A1.9.8: ABSOLUTE_PROTECTION keeps its taker ------------------------------
+    def _a198_enabled(self) -> bool:
+        return bool(getattr(self, "research_a198_absolute_taker_authority", True))
+
+    def _a198_note_restore(self, book_id: int, captured: dict) -> None:
+        """Count and log one ABSOLUTE taker restored over a loss-recovery maker exit."""
+        bid = int(book_id)
+        arm = str(captured.get("a198_arm") or "")
+        replaced = captured.get("a198_replaced")
+        postfill = getattr(self, "_a197_postfill_book", None) == bid
+        self._a198_restores = int(getattr(self, "_a198_restores", 0) or 0) + 1
+        if arm == ARM_RECOVERY_MAKER:
+            self._a198_restored_recovery = int(getattr(self, "_a198_restored_recovery", 0) or 0) + 1
+        elif arm == ARM_RELATIVE_VETO:
+            self._a198_restored_relative = int(getattr(self, "_a198_restored_relative", 0) or 0) + 1
+        if postfill:
+            self._a198_restored_postfill = int(getattr(self, "_a198_restored_postfill", 0) or 0) + 1
+        self._emit(
+            "A198_ABSOLUTE_TAKER", force=True,
+            tick=int(getattr(self, "_tick", 0) or 0), book=bid, arm=arm,
+            replaced_reason=str(getattr(replaced, "reason", "") or ""),
+            position_risk_bps=float(captured.get("position_risk_bps", 0.0) or 0.0),
+            maker_net_bps=float(captured.get("maker_net_bps", 0.0) or 0.0),
+            taker_net_bps=float(captured.get("taker_net_bps", 0.0) or 0.0),
+            inventory_age=float(captured.get("inventory_age", 0.0) or 0.0),
+            failed_exit_count=int(captured.get("failed_exit_count", 0) or 0),
+            postfill=int(postfill),
+            a198_absolute_authority_version=A198_ABSOLUTE_AUTHORITY_VERSION,
+        )
 
     def _a1961_seed_quote_guard_enabled(self) -> bool:
         return bool(getattr(self, "research_a1961_seed_quote_guard", True))
@@ -8167,6 +8230,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a197_postfill_truncated"] = int(getattr(self, "_a197_postfill_truncated", 0) or 0)
         stats["direct_a197_exit_gap_rows"] = int(getattr(self, "_a197_exit_gap_rows", 0) or 0)
         stats["direct_a197_exit_gap_ticks_total"] = int(getattr(self, "_a197_exit_gap_ticks_total", 0) or 0)
+        stats["direct_a198_version"] = A198_ABSOLUTE_AUTHORITY_VERSION
+        stats["direct_a198_absolute_taker_authority"] = int(bool(getattr(self, "research_a198_absolute_taker_authority", True)))
+        stats["direct_a198_restores"] = int(getattr(self, "_a198_restores", 0) or 0)
+        stats["direct_a198_restored_recovery"] = int(getattr(self, "_a198_restored_recovery", 0) or 0)
+        stats["direct_a198_restored_relative"] = int(getattr(self, "_a198_restored_relative", 0) or 0)
+        stats["direct_a198_restored_postfill"] = int(getattr(self, "_a198_restored_postfill", 0) or 0)
         stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
         stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
         stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)
