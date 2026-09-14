@@ -68,7 +68,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -76,6 +76,7 @@ case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_6_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_7) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_8) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1 ;;
+  strategy1_direct_v4_16_2_a1_9_9) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -183,7 +184,8 @@ research_a196_legacy_dust_ledger=1 research_a196_inherited_parked_allowance=1 \
 research_a196_quantity_grid_snap=1 \
 research_a1961_seed_quote_guard=1 research_a1961_fee_residue_ledger=1 \
 research_a197_postfill_protect=1 \
-research_a198_absolute_taker_authority=1"
+research_a198_absolute_taker_authority=1 \
+research_a199_exit_pending_authority=1 research_a199_epoch_resync=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -710,6 +712,65 @@ if [[ "$A198_BUILD" == "1" ]]; then
   echo "[preflight] A1.9.8 ABSOLUTE taker authority PASS"
 fi
 
+# A1.9.9.  Measured on the A1.9.8 run (log 20260914_012543, ticks 1-4,000).  Book 49
+# reached ABSOLUTE and parked on 216 of its 218 evaluations because its published
+# touch was crossed; it exited at -1,211 bps, 92.6% of all cubic downside.  At tick
+# 2,467 the validator resumed from a checkpoint 36 s earlier; six books diverged from
+# the venue by 1.2498 BASE and stayed diverged to tick 4,000.
+if [[ "$A199_BUILD" == "1" ]]; then
+  for module in research_direct_risk_state.py research_direct_session_epoch.py; do
+    [[ -f "$AGENT_PATH/$module" ]] || {
+      echo "ERROR: A1.9.9 build is missing $module" >&2
+      exit 1
+    }
+  done
+
+  # A pending ABSOLUTE exit must refuse WAIT, PARK and a loss maker -- not just name them.
+  grep -qF 'if action in (ACTION_WAIT, ACTION_PARK_EXIT):' "$AGENT_PATH/research_direct_risk_state.py" || {
+    echo "ERROR: A1.9.9 lets a pending ABSOLUTE exit WAIT or PARK." >&2
+    exit 1
+  }
+  grep -qF 'if action == ACTION_MAKER_EXIT and maker + 1e-12 < float(grace_floor_bps):' "$AGENT_PATH/research_direct_risk_state.py" || {
+    echo "ERROR: A1.9.9 lets a pending ABSOLUTE exit rest a maker priced at a loss." >&2
+    exit 1
+  }
+  # Dust, a short quantity and an empty book side stay on the frozen PARK path.
+  grep -qF 'executable = qty + 1e-12 >= floor and not bool(is_dust) and bool(touch_two_sided)' "$AGENT_PATH/research_direct_risk_state.py" || {
+    echo "ERROR: A1.9.9 could send a taker for dust or into an empty book side." >&2
+    exit 1
+  }
+  # Must match the CALL in the chooser: an authority nobody asks decides nothing.
+  grep -qF 'decision, a199_rule, a198_arm = self._a199_authorize_exit(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.9 exit authority is never called from the Direct chooser." >&2
+    exit 1
+  }
+
+  # Session epoch: a same-simulation rewind is a boundary, seen before its trades are ingested.
+  grep -qF 'if now < last:' "$AGENT_PATH/research_direct_session_epoch.py" || {
+    echo "ERROR: A1.9.9 does not treat a simulation clock rewind as a session boundary." >&2
+    exit 1
+  }
+  for call in 'self._a199_observe_epoch(state)' 'self._a199_service_resync(state)' \
+              'self._a199_strip_resync_exposure(response)' 'if self._a199_entry_blocked(book_id):'; do
+    grep -qF "$call" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: A1.9.9 session epoch is not wired: missing $call" >&2
+      exit 1
+    }
+  done
+
+  [[ "$PARAMS" == *"research_a199_exit_pending_authority=1"* ]] || {
+    echo "ERROR: A1.9.9 build without research_a199_exit_pending_authority=1 in PARAMS. The" >&2
+    echo "       engine would report a1_9_9 while an ABSOLUTE position can still park." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_a199_epoch_resync=1"* ]] || {
+    echo "ERROR: A1.9.9 build without research_a199_epoch_resync=1 in PARAMS. A clock rewind" >&2
+    echo "       would again leave the tracker trading positions the venue does not hold." >&2
+    exit 1
+  }
+  echo "[preflight] A1.9.9 exit-pending authority / session epoch resync PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -752,6 +813,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_a1_9_6_1_venue_integrity.py \
       tests/test_research_a1_9_7_postfill_protection.py \
       tests/test_research_a1_9_8_absolute_authority.py \
+      tests/test_research_a1_9_9_controllers.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py

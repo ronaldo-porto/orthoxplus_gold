@@ -317,10 +317,38 @@ from research_direct_absolute_authority import (
     ARM_RELATIVE_VETO,
     restore_absolute_taker,
 )
+from research_direct_risk_state import (
+    A199_RISK_STATE_VERSION,
+    CLEAR_EPOCH,
+    CLEAR_FLAT,
+    CLEAR_NEW_POSITION,
+    ENTER,
+    RULE_LOSS_MAKER,
+    RULE_NOT_EXITING,
+    authorize_exit,
+    end_exit_stall,
+    note_exit_stall,
+    step_exit_pending,
+    two_sided_touch,
+)
+from research_direct_session_epoch import (
+    A199_RESYNC_MAX_TICKS,
+    A199_RESYNC_MIN_TICKS,
+    A199_SESSION_EPOCH_VERSION,
+    RESEED_DEFER,
+    RESEED_DUST,
+    RESEED_KEEP,
+    RESEED_REAL,
+    clear_book_runtime,
+    clear_epoch_registries,
+    detect_rewind,
+    plan_book_reseed,
+    strip_exposure_increasing,
+)
 # Only for the balance-vs-position comparison in A195_RECONCILE: this returns
 # Balance.total, not a net position, which is exactly what the observer exists
 # to make visible.  Nothing in this file treats its output as inventory.
-from research_session_state import reconcile_account_base
+from research_session_state import extract_simulation_id, reconcile_account_base
 from research_direct_liveness import (
     DIRECT_LIVENESS_VERSION,
     DIRECT_DUST_NORMALIZE_MIN_AGE_TICKS,
@@ -410,8 +438,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_8"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_8"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_9"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_9"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -674,6 +702,34 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a198_restored_recovery = 0
         self._a198_restored_relative = 0
         self._a198_restored_postfill = 0
+
+        # A1.9.9: two explicit controllers.  The position risk state machine owns
+        # the exit once a position has reached ABSOLUTE_PROTECTION; the session
+        # epoch controller owns venue-coupled state across a simulation clock rewind.
+        self.research_a199_exit_pending_authority = self._as_bool(
+            getattr(self.config, "research_a199_exit_pending_authority", True)
+        )
+        self.research_a199_epoch_resync = self._as_bool(
+            getattr(self.config, "research_a199_epoch_resync", True)
+        )
+        self._a199_exit_pending: dict[int, Any] = {}
+        self._a199_exit_stalls: dict[int, dict[str, int]] = {}
+        self._a199_pending_entered = 0
+        self._a199_pending_cleared = 0
+        self._a199_rule_loss_maker = 0
+        self._a199_rule_not_exiting = 0
+        self._a199_stall_rows = 0
+        self._a199_stall_max_ticks = 0
+        self._a199_last_state_ts: int | None = None
+        self._a199_last_sim_id: str | None = None
+        self._a199_resync: dict[str, Any] = {}
+        self._a199_deferred: dict[int, dict[str, Any]] = {}
+        self._a199_epoch_rewinds = 0
+        self._a199_epoch_registry_rows_cleared = 0
+        self._a199_epoch_reseeds = 0
+        self._a199_epoch_entries_blocked = 0
+        self._a199_epoch_placements_stripped = 0
+        self._a199_epoch_resyncs_closed = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -967,6 +1023,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a1961_note_base_decimals(state)
         except Exception:
             pass
+        # A1.9.9: a clock rewind is detected before this state's trades are
+        # ingested, so every order registry is cleared before a replayed or
+        # resurrected event can be matched against it.
+        try:
+            self._a199_observe_epoch(state)
+        except Exception:
+            pass
         return super().update(state)
 
     # ------------------------------------------------------------------
@@ -1115,6 +1178,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # post-fill protective exit for a sign flip.
         try:
             self._a197_note_own_fill(book_id=int(book_id), before=float(before), after=float(after))
+        except Exception:
+            pass
+        # A1.9.9: a position that went flat or flipped ends its ABSOLUTE exit state.
+        try:
+            self._a199_note_own_fill(book_id=int(book_id), before=float(before), after=float(after))
         except Exception:
             pass
         try:
@@ -1581,12 +1649,28 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # frozen taker for a resting maker exit priced at a loss.  Book 95 went
             # from -40 to -110..-130 bps in the two ticks one held the book.
             a198_replaced = decision
-            decision, a198_arm = restore_absolute_taker(
-                base_decision=base_decision, decision=a198_replaced,
-                enabled=self._a198_enabled(),
-            )
+            a199_rule = None
+            if self._a199_exit_pending_enabled():
+                # A1.9.9: once a position has reached ABSOLUTE its risk state owns
+                # the exit.  A1.9.8 runs first, unchanged; then a loss maker, WAIT
+                # or PARK is refused while the position is pending.  Book 49 parked
+                # 216 evaluations on a crossed touch and exited at -1,211 bps.
+                decision, a199_rule, a198_arm = self._a199_authorize_exit(
+                    book_id_outer, base_decision=base_decision, decision=a198_replaced,
+                    exit_kwargs=exit_kwargs, inventory=inventory, book=kwargs.get("book"),
+                    position_risk_bps=position_risk_bps,
+                )
+            else:
+                decision, a198_arm = restore_absolute_taker(
+                    base_decision=base_decision, decision=a198_replaced,
+                    enabled=self._a198_enabled(),
+                )
             captured["a198_arm"] = a198_arm
             captured["a198_replaced"] = a198_replaced if a198_arm else None
+            captured["a199_rule"] = a199_rule
+            captured["a199_replaced"] = (
+                a198_replaced if a199_rule in (RULE_LOSS_MAKER, RULE_NOT_EXITING) else None
+            )
             captured["pre_a1744_decision"] = pre_a1744_decision
             captured["a175_tail_budget_exhausted"] = budget_exhausted
             captured.update(exit_kwargs)
@@ -1607,6 +1691,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         try:
             if captured.get("a198_arm") and book_id_outer >= 0:
                 self._a198_note_restore(book_id_outer, captured)
+        except Exception:
+            pass
+        # A1.9.9: count and log every exit the pending state refused to leave resting.
+        try:
+            if captured.get("a199_replaced") is not None and book_id_outer >= 0:
+                self._a199_note_override(book_id_outer, captured)
         except Exception:
             pass
 
@@ -2751,6 +2841,404 @@ class Strategy1_Research_Simple(Strategy1_Research):
             postfill=int(postfill),
             a198_absolute_authority_version=A198_ABSOLUTE_AUTHORITY_VERSION,
         )
+
+    # ---- A1.9.9: position risk state machine --------------------------------------
+    def _a199_exit_pending_enabled(self) -> bool:
+        return bool(getattr(self, "research_a199_exit_pending_authority", True))
+
+    def _a199_pending_table(self) -> dict:
+        table = getattr(self, "_a199_exit_pending", None)
+        if not isinstance(table, dict):
+            table = {}
+            self._a199_exit_pending = table
+        return table
+
+    def _a199_authorize_exit(
+        self, book_id: int, *, base_decision, decision, exit_kwargs: dict,
+        inventory, book, position_risk_bps: float,
+    ):
+        """Advance the book's position risk state, then let it authorize the exit."""
+        bid = int(book_id)
+        tick = int(getattr(self, "_tick", 0) or 0)
+        net_base = float(getattr(inventory, "net_base", 0.0) or 0.0)
+        pending, transitions = step_exit_pending(
+            self._a199_pending_table(), bid,
+            base_band=str(getattr(base_decision, "risk_band", "") or ""),
+            net_base=net_base, vwap_entry=getattr(inventory, "vwap_entry", None),
+            tick=tick, eps=float(self._execution_flat_epsilon()),
+        )
+        for transition, state in transitions:
+            self._a199_note_transition(
+                bid, transition, state, position_risk_bps=position_risk_bps, net_base=net_base,
+            )
+        final, rule, arm = authorize_exit(
+            pending=pending, base_decision=base_decision, decision=decision,
+            maker_net_bps=exit_kwargs.get("maker_net_bps", 0.0),
+            taker_net_bps=exit_kwargs.get("taker_net_bps", 0.0),
+            inventory_qty=exit_kwargs.get("inventory_qty", 0.0),
+            min_order=exit_kwargs.get("min_order", 0.25),
+            taker_clip=exit_kwargs.get("taker_clip", 0.25),
+            is_dust=bool(exit_kwargs.get("is_dust", False)),
+            touch_two_sided=two_sided_touch(
+                getattr(book, "bids", None), getattr(book, "asks", None),
+            ),
+            a198_enabled=self._a198_enabled(),
+        )
+        if pending is not None and rule in (RULE_LOSS_MAKER, RULE_NOT_EXITING):
+            pending.overrides += 1
+        return final, rule, arm
+
+    def _a199_note_transition(
+        self, book_id: int, transition: str, state, *, position_risk_bps=None, net_base=None,
+    ) -> None:
+        """Count and log one ABSOLUTE exit state entering or ending."""
+        if transition == ENTER:
+            self._a199_pending_entered = int(getattr(self, "_a199_pending_entered", 0) or 0) + 1
+        else:
+            self._a199_pending_cleared = int(getattr(self, "_a199_pending_cleared", 0) or 0) + 1
+        self._emit(
+            "A199_EXIT_PENDING", force=True,
+            tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+            transition=str(transition),
+            since_tick=int(getattr(state, "since_tick", -1)) if state is not None else -1,
+            evaluations=int(getattr(state, "evaluations", 0)) if state is not None else 0,
+            overrides=int(getattr(state, "overrides", 0)) if state is not None else 0,
+            position_risk_bps=None if position_risk_bps is None else float(position_risk_bps),
+            net_base=None if net_base is None else float(net_base),
+            a199_risk_state_version=A199_RISK_STATE_VERSION,
+        )
+
+    def _a199_note_override(self, book_id: int, captured: dict) -> None:
+        """Count and log one exit the pending state refused: a loss maker, WAIT or PARK."""
+        bid = int(book_id)
+        rule = str(captured.get("a199_rule") or "")
+        replaced = captured.get("a199_replaced")
+        base = captured.get("base_decision")
+        state = self._a199_pending_table().get(bid)
+        if rule == RULE_LOSS_MAKER:
+            self._a199_rule_loss_maker = int(getattr(self, "_a199_rule_loss_maker", 0) or 0) + 1
+        elif rule == RULE_NOT_EXITING:
+            self._a199_rule_not_exiting = int(getattr(self, "_a199_rule_not_exiting", 0) or 0) + 1
+        self._emit(
+            "A199_EXIT_AUTHORITY", force=True,
+            tick=int(getattr(self, "_tick", 0) or 0), book=bid, rule=rule,
+            replaced_action=str(getattr(replaced, "action", "") or ""),
+            replaced_reason=str(getattr(replaced, "reason", "") or ""),
+            base_band=str(getattr(base, "risk_band", "") or ""),
+            base_reason=str(getattr(base, "reason", "") or ""),
+            position_risk_bps=float(captured.get("position_risk_bps", 0.0) or 0.0),
+            maker_net_bps=float(captured.get("maker_net_bps", 0.0) or 0.0),
+            taker_net_bps=float(captured.get("taker_net_bps", 0.0) or 0.0),
+            inventory_qty=float(captured.get("inventory_qty", 0.0) or 0.0),
+            inventory_age=float(captured.get("inventory_age", 0.0) or 0.0),
+            failed_exit_count=int(captured.get("failed_exit_count", 0) or 0),
+            valid_opposite_touch=int(bool(captured.get("valid_opposite_touch", True))),
+            pending_since_tick=int(getattr(state, "since_tick", -1)) if state is not None else -1,
+            pending_evaluations=int(getattr(state, "evaluations", 0)) if state is not None else 0,
+            postfill=int(getattr(self, "_a197_postfill_book", None) == bid),
+            a199_risk_state_version=A199_RISK_STATE_VERSION,
+        )
+
+    def _a199_note_own_fill(self, *, book_id: int, before: float, after: float) -> None:
+        """A position that went flat or flipped ends its pending exit."""
+        table = getattr(self, "_a199_exit_pending", None)
+        if not isinstance(table, dict) or int(book_id) not in table:
+            return
+        eps = float(self._execution_flat_epsilon())
+        flat = abs(float(after)) <= eps
+        flipped = float(before) * float(after) < -(eps * eps)
+        if not (flat or flipped):
+            return
+        state = table.pop(int(book_id), None)
+        self._a199_note_transition(
+            int(book_id), CLEAR_FLAT if flat else CLEAR_NEW_POSITION, state, net_base=float(after),
+        )
+
+    def _a199_note_exit_stalls(self, response) -> int:
+        """Measurement: pending exits with an executable quantity that sent nothing this tick."""
+        table = getattr(self, "_a199_exit_pending", None) or {}
+        stalls = getattr(self, "_a199_exit_stalls", None)
+        if not isinstance(stalls, dict):
+            stalls = {}
+            self._a199_exit_stalls = stalls
+        if not table and not stalls:
+            return 0
+        tick = int(getattr(self, "_tick", 0) or 0)
+        touched: set[int] = set()
+        for instruction in getattr(response, "instructions", None) or ():
+            raw = getattr(instruction, "bookId", getattr(instruction, "book_id", None))
+            try:
+                touched.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+        min_order = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        rows = []
+        for bid in list(table):
+            try:
+                net = float(self._position_tracker_snapshot(int(bid)).net_qty)
+            except Exception:
+                net = 0.0
+            if abs(net) + 1e-12 < min_order:
+                rows.append(end_exit_stall(stalls, bid, tick=tick, ended_by="NOT_EXECUTABLE"))
+            else:
+                rows.append(note_exit_stall(stalls, bid, tick=tick, has_instruction=int(bid) in touched))
+        for bid in [b for b in stalls if b not in table]:
+            rows.append(end_exit_stall(stalls, bid, tick=tick, ended_by="CLEARED"))
+        emitted = 0
+        for row in rows:
+            if not row:
+                continue
+            emitted += 1
+            self._a199_stall_rows = int(getattr(self, "_a199_stall_rows", 0) or 0) + 1
+            self._a199_stall_max_ticks = max(
+                int(getattr(self, "_a199_stall_max_ticks", 0) or 0), int(row["ticks"]),
+            )
+            self._emit(
+                "A199_EXIT_STALL", force=True, tick=tick,
+                a199_risk_state_version=A199_RISK_STATE_VERSION, **row,
+            )
+        return emitted
+
+    # ---- A1.9.9: session epoch controller ----------------------------------------
+    def _a199_epoch_enabled(self) -> bool:
+        return bool(getattr(self, "research_a199_epoch_resync", True))
+
+    def _a199_observe_epoch(self, state):
+        """Detect a clock rewind on the state about to be ingested, and open a resync."""
+        try:
+            ts = int(getattr(state, "timestamp", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        try:
+            sim_id = extract_simulation_id(state)
+        except Exception:
+            sim_id = None
+        event = detect_rewind(
+            last_ts=getattr(self, "_a199_last_state_ts", None), ts=ts,
+            last_sim_id=getattr(self, "_a199_last_sim_id", None), sim_id=sim_id,
+        )
+        if ts > 0:
+            self._a199_last_state_ts = ts
+        if sim_id:
+            self._a199_last_sim_id = sim_id
+        if event is None or not self._a199_epoch_enabled():
+            return event
+        tick = int(getattr(self, "_tick", 0) or 0)
+        dropped = clear_epoch_registries(self)
+        ledger_rows = 0
+        try:
+            ledger = self._a19_ledger_ref()
+            if ledger is not None:
+                ledger_rows = int(ledger.reset() or 0)
+        except Exception:
+            ledger_rows = 0
+        self._a197_postfill_book = None
+        rows = int(sum(dropped.values())) + ledger_rows
+        self._a199_epoch_rewinds = int(getattr(self, "_a199_epoch_rewinds", 0) or 0) + 1
+        self._a199_epoch_registry_rows_cleared = int(
+            getattr(self, "_a199_epoch_registry_rows_cleared", 0) or 0
+        ) + rows
+        # `Strategy1.respond` increments _tick first, so this state is tick + 1.
+        start = tick + 1
+        self._a199_resync = {
+            "since_tick": start,
+            "min_until_tick": start + int(A199_RESYNC_MIN_TICKS),
+            "max_until_tick": start + int(A199_RESYNC_MAX_TICKS),
+            "old_ts": int(event["old_ts"]),
+            "new_ts": int(event["new_ts"]),
+            "reseeds": 0,
+            "entries_blocked": 0,
+            "placements_stripped": 0,
+        }
+        self._emit(
+            "A199_EPOCH_REWIND", force=True, tick=tick, state_tick=start,
+            old_ts=int(event["old_ts"]), new_ts=int(event["new_ts"]),
+            rewind_s=float(event["rewind_s"]), simulation_id=sim_id,
+            registries={name: n for name, n in dropped.items() if n},
+            exit_ledger_rows=ledger_rows, registry_rows_cleared=rows,
+            pending_exit_books=len(self._a199_pending_table()),
+            resync_min_ticks=int(A199_RESYNC_MIN_TICKS),
+            resync_max_ticks=int(A199_RESYNC_MAX_TICKS),
+            a199_session_epoch_version=A199_SESSION_EPOCH_VERSION,
+        )
+        return event
+
+    def _a199_resync_active(self) -> bool:
+        return bool(getattr(self, "_a199_resync", None))
+
+    def _a199_entry_blocked(self, book_id) -> bool:
+        """No new exposure during a resync, nor on a book still waiting to be reseeded."""
+        resync = getattr(self, "_a199_resync", None)
+        deferred = getattr(self, "_a199_deferred", None) or {}
+        if not resync and int(book_id) not in deferred:
+            return False
+        self._a199_epoch_entries_blocked = int(getattr(self, "_a199_epoch_entries_blocked", 0) or 0) + 1
+        if resync:
+            resync["entries_blocked"] = int(resync.get("entries_blocked", 0) or 0) + 1
+        return True
+
+    def _a199_service_resync(self, state) -> int:
+        """Rebuild every diverged book from venue truth while a resync is open."""
+        resync = getattr(self, "_a199_resync", None) or {}
+        deferred = getattr(self, "_a199_deferred", None)
+        if not isinstance(deferred, dict):
+            deferred = {}
+            self._a199_deferred = deferred
+        if not resync and not deferred:
+            return 0
+        books = getattr(state, "books", None) or {}
+        if not books:
+            return 0
+        if resync:
+            scope = books
+        else:
+            scope = {bid: books[bid] for bid in list(deferred) if bid in books}
+        # `Strategy1.respond` has not incremented _tick yet: this state is tick + 1.
+        tick = int(getattr(self, "_tick", 0) or 0) + 1
+        venue = self._a195_venue_net_by_book(scope)
+        mids = self._a195_mid_by_book(scope)
+        min_order = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        decimals = self._a196_volume_decimals(state)
+        ledger = getattr(self, "_a196_legacy_dust_ledger", None) or {}
+        residue = getattr(self, "_a1961_fee_residue", None) or {}
+        pending_seed = getattr(self, "_a1961_pending_seed", None) or {}
+        changed = 0
+        for book_id in sorted(venue):
+            try:
+                tracker = float(self._position_tracker_snapshot(int(book_id)).net_qty)
+            except Exception:
+                tracker = 0.0
+            plan = plan_book_reseed(
+                book_id=book_id, venue_net=venue[book_id], tracker_net=tracker,
+                ledger=ledger.get(book_id, 0.0), fee_residue=residue.get(book_id, 0.0),
+                pending=(pending_seed.get(book_id) or {}).get("net", 0.0),
+                min_order=min_order, volume_decimals=decimals, mid=mids.get(book_id),
+                ledger_enabled=self._a196_ledger_enabled(),
+            )
+            if plan.action == RESEED_KEEP:
+                deferred.pop(int(book_id), None)
+                continue
+            if self._a199_apply_reseed(plan, tick=tick):
+                changed += 1
+        if resync:
+            resync["reseeds"] = int(resync.get("reseeds", 0) or 0) + changed
+            clean = changed == 0
+            if (clean and tick >= int(resync["min_until_tick"])) or tick >= int(resync["max_until_tick"]):
+                self._a199_close_resync(tick, clean=clean)
+        return changed
+
+    def _a199_apply_reseed(self, plan, *, tick: int) -> bool:
+        """Write one book's reseed into the tracker and the ledger.  False when nothing changed."""
+        bid = int(plan.book_id)
+        deferred = getattr(self, "_a199_deferred", None)
+        if not isinstance(deferred, dict):
+            deferred = {}
+            self._a199_deferred = deferred
+        waiting = deferred.get(bid)
+        if (
+            plan.action == RESEED_DEFER and waiting is not None
+            and abs(float(waiting.get("target", 0.0)) - float(plan.target)) <= 1e-12
+            and abs(float(plan.tracker_before)) <= 1e-12
+        ):
+            return False
+        positions = self._open_positions[bid]
+        positions["longs"].clear()
+        positions["shorts"].clear()
+        runtime = clear_book_runtime(self, bid)
+        folded = None
+        pending_seed = getattr(self, "_a1961_pending_seed", None)
+        if isinstance(pending_seed, dict):
+            folded = pending_seed.pop(bid, None)
+        state = self._a199_pending_table().pop(bid, None)
+        if state is not None:
+            self._a199_note_transition(bid, CLEAR_EPOCH, state, net_base=float(plan.venue_net))
+        stalls = getattr(self, "_a199_exit_stalls", None)
+        if isinstance(stalls, dict):
+            stalls.pop(bid, None)
+        if plan.action == RESEED_REAL:
+            side = "longs" if float(plan.target) > 0.0 else "shorts"
+            positions[side].append((int(tick), abs(float(plan.target)), float(plan.price), 0.0))
+            deferred.pop(bid, None)
+        elif plan.action == RESEED_DUST:
+            ledger = getattr(self, "_a196_legacy_dust_ledger", None)
+            if not isinstance(ledger, dict):
+                ledger = {}
+                self._a196_legacy_dust_ledger = ledger
+            ledger[bid] = float(ledger.get(bid, 0.0) or 0.0) + float(plan.ledger_delta)
+            deferred.pop(bid, None)
+        elif plan.action == RESEED_DEFER:
+            since = int((waiting or {}).get("since_tick", tick))
+            deferred[bid] = {
+                "since_tick": since, "target": float(plan.target), "venue_net": float(plan.venue_net),
+            }
+        else:
+            deferred.pop(bid, None)
+        self._a199_epoch_reseeds = int(getattr(self, "_a199_epoch_reseeds", 0) or 0) + 1
+        payload = plan.as_log()
+        payload.update(
+            runtime_cleared=runtime, pending_exit_cleared=int(state is not None),
+            pending_seed_folded=None if not folded else float((folded or {}).get("net", 0.0) or 0.0),
+            in_resync=int(bool(getattr(self, "_a199_resync", None))),
+        )
+        self._emit("A199_EPOCH_RESEED", force=True, tick=int(tick), **payload)
+        return True
+
+    def _a199_close_resync(self, tick: int, *, clean: bool) -> None:
+        resync = getattr(self, "_a199_resync", None) or {}
+        self._a199_resync = {}
+        self._a199_epoch_resyncs_closed = int(getattr(self, "_a199_epoch_resyncs_closed", 0) or 0) + 1
+        since = int(resync.get("since_tick", tick) or tick)
+        self._emit(
+            "A199_EPOCH_RESUME", force=True, tick=int(tick), since_tick=since,
+            resync_ticks=max(0, int(tick) - since + 1),
+            reseeds=int(resync.get("reseeds", 0) or 0), clean=int(bool(clean)),
+            entries_blocked=int(resync.get("entries_blocked", 0) or 0),
+            placements_stripped=int(resync.get("placements_stripped", 0) or 0),
+            deferred_books=sorted(int(b) for b in (getattr(self, "_a199_deferred", None) or {})),
+            a199_session_epoch_version=A199_SESSION_EPOCH_VERSION,
+        )
+
+    def _a199_strip_resync_exposure(self, response) -> int:
+        """The invariant: nothing opens or adds exposure during a resync, whatever built it."""
+        resync = getattr(self, "_a199_resync", None) or {}
+        deferred = getattr(self, "_a199_deferred", None) or {}
+        if not resync and not deferred:
+            return 0
+        instructions = getattr(response, "instructions", None)
+        if not isinstance(instructions, list) or not instructions:
+            return 0
+        nets: dict[int, float] = {}
+        for instruction in instructions:
+            raw = getattr(instruction, "bookId", getattr(instruction, "book_id", None))
+            try:
+                bid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if bid not in nets:
+                try:
+                    nets[bid] = float(self._position_tracker_snapshot(bid).net_qty)
+                except Exception:
+                    nets[bid] = 0.0
+        removed = strip_exposure_increasing(
+            instructions, net_by_book=nets, deferred=list(deferred),
+            eps=float(self._execution_flat_epsilon()),
+            only_books=None if resync else list(deferred),
+        )
+        if not removed:
+            return 0
+        self._a199_epoch_placements_stripped = int(
+            getattr(self, "_a199_epoch_placements_stripped", 0) or 0
+        ) + len(removed)
+        if resync:
+            resync["placements_stripped"] = int(resync.get("placements_stripped", 0) or 0) + len(removed)
+        self._emit(
+            "A199_EPOCH_EXPOSURE_STRIP", force=True, tick=int(getattr(self, "_tick", 0) or 0),
+            removed=len(removed), books=sorted({book for book, _ in removed}),
+            market_orders=sum(1 for _, kind in removed if kind == "PLACE_ORDER_MARKET"),
+            in_resync=int(bool(resync)),
+            a199_session_epoch_version=A199_SESSION_EPOCH_VERSION,
+        )
+        return len(removed)
 
     def _a1961_seed_quote_guard_enabled(self) -> bool:
         return bool(getattr(self, "research_a1961_seed_quote_guard", True))
@@ -5148,6 +5636,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a1961_service_pending_seed(state)
         except Exception:
             pass
+        # A1.9.9 session epoch: while a rewind resync is open, rebuild every
+        # diverged book from venue truth before any exit or capacity decision
+        # reads the tracker.
+        try:
+            self._a199_service_resync(state)
+        except Exception:
+            pass
         response = super().respond(state)
         # A1.9.6 F11.  The venue truncates volume to its grid and the final
         # validator leaves sub-1e-12 noise in place, so 0.25009999999999827
@@ -5155,6 +5650,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # clip.  Runs first, so every placement this tick is on the grid.
         try:
             self._a196_snap_outgoing_quantities(response, state)
+        except Exception:
+            pass
+        # A1.9.9: nothing opens or adds exposure during a resync, whichever path
+        # built the order.  Runs on the wire quantities, after the grid snap.
+        try:
+            self._a199_strip_resync_exposure(response)
         except Exception:
             pass
         # Orphan cancels go out AFTER the chain has built its instructions, so
@@ -5169,6 +5670,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # can never displace a placement the strategy already decided on.
         try:
             self._a191_service_reprice_cancels(response, state)
+        except Exception:
+            pass
+        # A1.9.9: measure pending ABSOLUTE exits that sent nothing this tick.
+        try:
+            self._a199_note_exit_stalls(response)
         except Exception:
             pass
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
@@ -5663,6 +6169,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
     ) -> int:
         """Single entry authority: hard safety -> current Maker edge -> Maker/Skip."""
         if self._research_in_transition_quarantine():
+            return 0
+        # A1.9.9: no new exposure while a rewind resync is open, nor on a book
+        # whose venue position is still waiting for a price to be reseeded at.
+        if self._a199_entry_blocked(book_id):
             return 0
         if str(getattr(inventory, "band", "FLAT") or "FLAT").upper() != "FLAT":
             return 0
@@ -8236,6 +8746,25 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a198_restored_recovery"] = int(getattr(self, "_a198_restored_recovery", 0) or 0)
         stats["direct_a198_restored_relative"] = int(getattr(self, "_a198_restored_relative", 0) or 0)
         stats["direct_a198_restored_postfill"] = int(getattr(self, "_a198_restored_postfill", 0) or 0)
+        stats["direct_a199_version"] = A199_RISK_STATE_VERSION
+        stats["direct_a199_session_epoch_version"] = A199_SESSION_EPOCH_VERSION
+        stats["direct_a199_exit_pending_authority"] = int(bool(getattr(self, "research_a199_exit_pending_authority", True)))
+        stats["direct_a199_epoch_resync"] = int(bool(getattr(self, "research_a199_epoch_resync", True)))
+        stats["direct_a199_pending_books"] = len(getattr(self, "_a199_exit_pending", {}) or {})
+        stats["direct_a199_pending_entered"] = int(getattr(self, "_a199_pending_entered", 0) or 0)
+        stats["direct_a199_pending_cleared"] = int(getattr(self, "_a199_pending_cleared", 0) or 0)
+        stats["direct_a199_rule_loss_maker"] = int(getattr(self, "_a199_rule_loss_maker", 0) or 0)
+        stats["direct_a199_rule_not_exiting"] = int(getattr(self, "_a199_rule_not_exiting", 0) or 0)
+        stats["direct_a199_stall_rows"] = int(getattr(self, "_a199_stall_rows", 0) or 0)
+        stats["direct_a199_stall_max_ticks"] = int(getattr(self, "_a199_stall_max_ticks", 0) or 0)
+        stats["direct_a199_epoch_rewinds"] = int(getattr(self, "_a199_epoch_rewinds", 0) or 0)
+        stats["direct_a199_epoch_registry_rows_cleared"] = int(getattr(self, "_a199_epoch_registry_rows_cleared", 0) or 0)
+        stats["direct_a199_epoch_reseeds"] = int(getattr(self, "_a199_epoch_reseeds", 0) or 0)
+        stats["direct_a199_epoch_deferred_books"] = len(getattr(self, "_a199_deferred", {}) or {})
+        stats["direct_a199_epoch_entries_blocked"] = int(getattr(self, "_a199_epoch_entries_blocked", 0) or 0)
+        stats["direct_a199_epoch_placements_stripped"] = int(getattr(self, "_a199_epoch_placements_stripped", 0) or 0)
+        stats["direct_a199_epoch_resync_active"] = int(bool(getattr(self, "_a199_resync", None)))
+        stats["direct_a199_epoch_resyncs_closed"] = int(getattr(self, "_a199_epoch_resyncs_closed", 0) or 0)
         stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
         stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
         stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)
