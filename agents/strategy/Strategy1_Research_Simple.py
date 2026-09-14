@@ -318,6 +318,7 @@ from research_direct_absolute_authority import (
     restore_absolute_taker,
 )
 from research_direct_risk_state import (
+    A1991_PENDING_OWNER_VERSION,
     A199_RISK_STATE_VERSION,
     CLEAR_EPOCH,
     CLEAR_FLAT,
@@ -325,6 +326,7 @@ from research_direct_risk_state import (
     ENTER,
     RULE_LOSS_MAKER,
     RULE_NOT_EXITING,
+    RULE_POSITIVE_MAKER,
     authorize_exit,
     end_exit_stall,
     note_exit_stall,
@@ -438,8 +440,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_9"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_9"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_9_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_9_1"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -730,6 +732,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a199_epoch_entries_blocked = 0
         self._a199_epoch_placements_stripped = 0
         self._a199_epoch_resyncs_closed = 0
+        # A1.9.9.1: a pending ABSOLUTE position owns its book -- no maker exit rests
+        # at any price.  Off restores A1.9.9, which let a positive maker rest.
+        self.research_a1991_pending_owns_book = self._as_bool(
+            getattr(self.config, "research_a1991_pending_owns_book", True)
+        )
+        self._a1991_rule_positive_maker = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1669,7 +1677,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             captured["a198_replaced"] = a198_replaced if a198_arm else None
             captured["a199_rule"] = a199_rule
             captured["a199_replaced"] = (
-                a198_replaced if a199_rule in (RULE_LOSS_MAKER, RULE_NOT_EXITING) else None
+                a198_replaced if a199_rule in (RULE_LOSS_MAKER, RULE_NOT_EXITING, RULE_POSITIVE_MAKER) else None
             )
             captured["pre_a1744_decision"] = pre_a1744_decision
             captured["a175_tail_budget_exhausted"] = budget_exhausted
@@ -2883,8 +2891,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 getattr(book, "bids", None), getattr(book, "asks", None),
             ),
             a198_enabled=self._a198_enabled(),
+            allow_positive_maker=not bool(getattr(self, "research_a1991_pending_owns_book", True)),
         )
-        if pending is not None and rule in (RULE_LOSS_MAKER, RULE_NOT_EXITING):
+        if pending is not None and rule in (RULE_LOSS_MAKER, RULE_NOT_EXITING, RULE_POSITIVE_MAKER):
             pending.overrides += 1
         return final, rule, arm
 
@@ -2909,7 +2918,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
 
     def _a199_note_override(self, book_id: int, captured: dict) -> None:
-        """Count and log one exit the pending state refused: a loss maker, WAIT or PARK."""
+        """Count and log one exit the pending state refused: a maker exit, WAIT or PARK."""
         bid = int(book_id)
         rule = str(captured.get("a199_rule") or "")
         replaced = captured.get("a199_replaced")
@@ -2919,6 +2928,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a199_rule_loss_maker = int(getattr(self, "_a199_rule_loss_maker", 0) or 0) + 1
         elif rule == RULE_NOT_EXITING:
             self._a199_rule_not_exiting = int(getattr(self, "_a199_rule_not_exiting", 0) or 0) + 1
+        elif rule == RULE_POSITIVE_MAKER:
+            self._a1991_rule_positive_maker = int(getattr(self, "_a1991_rule_positive_maker", 0) or 0) + 1
         self._emit(
             "A199_EXIT_AUTHORITY", force=True,
             tick=int(getattr(self, "_tick", 0) or 0), book=bid, rule=rule,
@@ -8765,6 +8776,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a199_epoch_placements_stripped"] = int(getattr(self, "_a199_epoch_placements_stripped", 0) or 0)
         stats["direct_a199_epoch_resync_active"] = int(bool(getattr(self, "_a199_resync", None)))
         stats["direct_a199_epoch_resyncs_closed"] = int(getattr(self, "_a199_epoch_resyncs_closed", 0) or 0)
+        stats["direct_a1991_version"] = A1991_PENDING_OWNER_VERSION
+        stats["direct_a1991_pending_owns_book"] = int(bool(getattr(self, "research_a1991_pending_owns_book", True)))
+        stats["direct_a1991_rule_positive_maker"] = int(getattr(self, "_a1991_rule_positive_maker", 0) or 0)
         stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
         stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
         stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)

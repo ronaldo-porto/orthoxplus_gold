@@ -68,7 +68,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -77,6 +77,7 @@ case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_7) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_8) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_9) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1 ;;
+  strategy1_direct_v4_16_2_a1_9_9_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -185,7 +186,8 @@ research_a196_quantity_grid_snap=1 \
 research_a1961_seed_quote_guard=1 research_a1961_fee_residue_ledger=1 \
 research_a197_postfill_protect=1 \
 research_a198_absolute_taker_authority=1 \
-research_a199_exit_pending_authority=1 research_a199_epoch_resync=1"
+research_a199_exit_pending_authority=1 research_a199_epoch_resync=1 \
+research_a1991_pending_owns_book=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -771,6 +773,30 @@ if [[ "$A199_BUILD" == "1" ]]; then
   echo "[preflight] A1.9.9 exit-pending authority / session epoch resync PASS"
 fi
 
+# A1.9.9.1.  Measured on the A1.9.9 run (log 20260914_083519, ticks 1-3,732).  A1.9.9
+# let a pending ABSOLUTE position rest any maker at or above +1 bps.  Book 74 rested an
+# A1.7.4.4 maker for 109 ticks and then for 129; a resting exit is not evaluated, so the
+# A1.7.5 hold budget never ran out.  2 of the 14 pending episodes that rested a positive
+# maker across A1.9.7-A1.9.9 ended positive.
+if [[ "$A1991_BUILD" == "1" ]]; then
+  # A pending position must refuse every maker exit, not only one priced at a loss.
+  grep -qF 'if action == ACTION_MAKER_EXIT and not allow_positive_maker:' "$AGENT_PATH/research_direct_risk_state.py" || {
+    echo "ERROR: A1.9.9.1 lets a pending ABSOLUTE exit rest a positive maker." >&2
+    exit 1
+  }
+  # Must match the CALL: a rule the chooser never switches on refuses nothing.
+  grep -qF 'allow_positive_maker=not bool(getattr(self, "research_a1991_pending_owns_book", True)),' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.9.1 pending ownership is never passed to the exit authority." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_a1991_pending_owns_book=1"* ]] || {
+    echo "ERROR: A1.9.9.1 build without research_a1991_pending_owns_book=1 in PARAMS. The" >&2
+    echo "       engine would report a1_9_9_1 while a pending position can still rest a maker." >&2
+    exit 1
+  }
+  echo "[preflight] A1.9.9.1 pending position owns its book PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -814,6 +840,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_a1_9_7_postfill_protection.py \
       tests/test_research_a1_9_8_absolute_authority.py \
       tests/test_research_a1_9_9_controllers.py \
+      tests/test_research_a1_9_9_1_pending_owner.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py

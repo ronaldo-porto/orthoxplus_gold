@@ -35,11 +35,23 @@ While a position is pending, the final decision must be an exit:
     R2  a maker exit priced below the +1 bps grace floor becomes the taker.
     R3  WAIT or PARK becomes the taker.
 
-A taker and a positive maker (>= +1 bps, the A1.7.2 grace) pass unchanged.  R2
-and R3 need an executable quantity -- at least the minimum order, not dust --
-and a price on both sides of the book: an empty side is a market that cannot be
-exited, and the frozen close path reads that side's price.  Those positions stay
-on the frozen PARK path.
+A taker passes unchanged.  A1.9.9 also let a positive maker (>= +1 bps, the
+A1.7.2 grace or the A1.7.4.4 arm) rest while pending; A1.9.9.1 refuses it (R4):
+
+    R4  any other maker exit becomes the taker.
+
+Measured on the A1.9.9 run, log 20260914_083519, ticks 1-3,732: 5 pending
+episodes rested a positive maker.  Book 74 held a +75 bps A1.7.4.4 maker for
+109 ticks -- each 4,000 ms exit expired unfilled and was placed again, and the
+A1.7.5 60-tick hold budget spends only on evaluated ticks, so it had used 22 --
+then crossed at -165.7 bps against -38.1 when it became pending.  Across A1.9.7, A1.9.8 and
+A1.9.9, 2 of the 14 episodes that rested a positive maker after reaching
+ABSOLUTE ended positive.
+
+R2, R3 and R4 need an executable quantity -- at least the minimum order, not
+dust -- and a price on both sides of the book: an empty side is a market that
+cannot be exited, and the frozen close path reads that side's price.  Those
+positions stay on the frozen PARK path.
 """
 from __future__ import annotations
 
@@ -59,6 +71,7 @@ from research_position_exit import (
 )
 
 A199_RISK_STATE_VERSION = "direct_risk_state_v4_16_2_a1_9_9"
+A1991_PENDING_OWNER_VERSION = "direct_pending_owner_v4_16_2_a1_9_9_1"
 
 STATE_EXIT_PENDING = "ABSOLUTE_EXIT_PENDING"
 # The pending taker keeps the frozen reason token, so the RISK authority, the
@@ -72,6 +85,7 @@ A199_GRACE_MAKER_FLOOR_BPS = 1.0
 RULE_A198_ARM = "A198_ARM"
 RULE_LOSS_MAKER = "LOSS_MAKER"
 RULE_NOT_EXITING = "NOT_EXITING"
+RULE_POSITIVE_MAKER = "POSITIVE_MAKER"
 
 ENTER = "ENTER"
 CLEAR_FLAT = "CLEAR_FLAT"
@@ -230,6 +244,7 @@ def authorize_exit(
     touch_two_sided: Any,
     a198_enabled: bool = True,
     grace_floor_bps: float = A199_GRACE_MAKER_FLOOR_BPS,
+    allow_positive_maker: bool = True,
 ) -> tuple[Any, str | None, str | None]:
     """The final exit decision, the rule that set it, and the A1.9.8 arm when R1 did."""
     if decision is None:
@@ -259,6 +274,9 @@ def authorize_exit(
     # R2: a resting maker exit priced at a loss holds the book for two ticks.
     if action == ACTION_MAKER_EXIT and maker + 1e-12 < float(grace_floor_bps):
         return pending_taker(base_decision, decision, **reduce_inputs), RULE_LOSS_MAKER, None
+    # R4 (A1.9.9.1): a pending position owns its book; no maker exit rests at any price.
+    if action == ACTION_MAKER_EXIT and not allow_positive_maker:
+        return pending_taker(base_decision, decision, **reduce_inputs), RULE_POSITIVE_MAKER, None
     # R3: a pending position is never left without an exit.
     if action in (ACTION_WAIT, ACTION_PARK_EXIT):
         return pending_taker(base_decision, decision, **reduce_inputs), RULE_NOT_EXITING, None
