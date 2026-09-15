@@ -47,13 +47,14 @@ tolerance on the Python side.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_DOWN, Decimal
 import math
 from typing import Any, Iterable
 
 from research_direct_inventory_truth import SEED_LEGACY_DUST, SEED_REAL, SeedLot, SeedPlan
 from research_direct_liveness import admission_slots, dust_recovery_reserve_abs
+from research_v5_dust_liveness import clip_split
 
 A196_LEGACY_BASELINE_VERSION = "direct_legacy_baseline_v4_16_2_a1_9_6"
 
@@ -168,6 +169,9 @@ class SeedSplit:
     legacy_dust_abs: float
     ledger_enabled: bool
     grid_snap: bool
+    # v5.0.2 F2: inherited clips a unit or two short, seeded whole, and their shortfall.
+    clip_residue: dict[int, float] = field(default_factory=dict)
+    clip_lots: int = 0
 
     @property
     def ledger_abs(self) -> float:
@@ -190,6 +194,8 @@ class SeedSplit:
             "a196_inherited_real_abs": round(self.inherited_abs, 6),
             "a196_snapped_lots": int(self.snapped_lots),
             "a196_reclassified_lots": int(self.reclassified_lots),
+            "v502_clip_lots": int(self.clip_lots),
+            "v502_clip_residue_abs": round(sum(abs(v) for v in self.clip_residue.values()), 6),
         }
 
 
@@ -200,13 +206,16 @@ def split_seed_plan(
     min_order: Any = None,
     ledger_enabled: bool = True,
     grid_snap: bool = True,
+    clip_tolerance: float = 0.0,
 ) -> SeedSplit:
     """REAL lots to the tracker, legacy dust to the ledger, all on the grid.
 
     With the ledger disabled every lot goes to the tracker, which is exactly
     the A1.9.5 behaviour -- the switch is a clean rollback, not a new mode.
     With the grid on, the REAL/DUST boundary is re-read on the grid value:
-    0.24999999999999994 is an exitable 0.25, not dust.
+    0.24999999999999994 is an exitable 0.25, not dust.  v5.0.2 F2: with
+    ``clip_tolerance``, a legacy lot at most that far below the minimum order is one exitable
+    clip, and its shortfall is residue.
     """
     floor = None if min_order is None else max(1e-12, abs(_finite(min_order, 0.25)))
     tracker: list[SeedLot] = []
@@ -214,6 +223,8 @@ def split_seed_plan(
     inherited: dict[int, float] = {}
     snapped = reclassified = 0
     dust_abs = 0.0
+    clip_residue: dict[int, float] = {}
+    clips = 0
     for lot in plan.lots:
         net = snap_quantity(lot.net_base, volume_decimals) if grid_snap else _finite(lot.net_base)
         if net != lot.net_base:
@@ -226,6 +237,15 @@ def split_seed_plan(
             if on_grid != residue:
                 reclassified += 1
                 residue = on_grid
+        clip = None
+        if residue == SEED_LEGACY_DUST and floor is not None:
+            clip = clip_split(net, min_order=floor, tolerance=clip_tolerance)
+        if clip is not None:
+            tracker.append(replace(lot, net_base=clip[0], residue_class=SEED_REAL))
+            inherited[int(lot.book_id)] = clip[0]
+            clip_residue[int(lot.book_id)] = clip[1]
+            clips += 1
+            continue
         fixed = replace(lot, net_base=net, residue_class=residue)
         if residue == SEED_REAL:
             tracker.append(fixed)
@@ -240,6 +260,7 @@ def split_seed_plan(
         tracker_lots=tuple(tracker), ledger=ledger, inherited_real=inherited,
         snapped_lots=snapped, reclassified_lots=reclassified, legacy_dust_abs=dust_abs,
         ledger_enabled=bool(ledger_enabled), grid_snap=bool(grid_snap),
+        clip_residue=clip_residue, clip_lots=clips,
     )
 
 

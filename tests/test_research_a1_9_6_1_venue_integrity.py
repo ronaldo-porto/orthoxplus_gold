@@ -244,6 +244,8 @@ def _harness():
         "_a1961_pending_abs", "_a1961_fee_residue_abs", "_a1961_note_base_decimals",
         "_a1961_note_fee_residue", "_a1961_service_pending_seed", "_a1961_note_taker_decision",
         "_a1961_emit_taker_outcome",
+        # v5.0.2: the seed and exposure now read the residue ledger and the clip tolerance.
+        "_v502_clip_tolerance", "_v502_residue_abs", "_v502_add_residue", "_v502_count",
     }
     ns = {"Any": typing.Any, "collections": collections, "math": math,
           "PositionTracker": collections.namedtuple("PositionTracker", "net_qty vwap opened_at long_qty short_qty")}
@@ -384,8 +386,8 @@ def test_taker_outcomes_are_matched_to_their_own_decision():
 # ---- wiring ---------------------------------------------------------------------------------------
 
 def test_the_version_names_a1961():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_1"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_1"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_2"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_2"' in SIMPLE
 
 
 def test_switches_exist_and_default_on():

@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import research_direct_risk_state as rs
 import research_direct_session_epoch as se
+import research_v5_dust_liveness as dl
 from research_direct_absolute_authority import ARM_RECOVERY_MAKER, ARM_RELATIVE_VETO, restore_absolute_taker
 from research_direct_exit import choose_observable_position_exit
 from research_direct_positive_maker_kappa import apply_positive_maker_kappa_veto
@@ -387,7 +388,7 @@ class _Agent:
         return {b: self.mids[b] for b in books if self.mids.get(b)}
 
 
-NAMESPACE = {name: getattr(module, name) for module in (se, rs) for name in dir(module)
+NAMESPACE = {name: getattr(module, name) for module in (se, rs, dl) for name in dir(module)
              if not name.startswith("__")}
 NAMESPACE.update(extract_simulation_id=extract_simulation_id, Any=typing.Any)
 
@@ -508,7 +509,9 @@ def test_a_new_simulation_and_the_switch_leave_order_state_alone():
 
 
 RESYNC = ("_a199_service_resync", "_a199_apply_reseed", "_a199_close_resync", "_a199_pending_table",
-          "_a199_note_transition", "_a199_resync_active", "_a199_entry_blocked", "_a199_strip_resync_exposure")
+          "_a199_note_transition", "_a199_resync_active", "_a199_entry_blocked", "_a199_strip_resync_exposure",
+          # v5.0.2: the reseed keeps the residue ledger and recognizes a clip.
+          "_v502_clip_tolerance", "_v502_add_residue", "_v502_count", "_v502_residue_abs")
 
 
 def _open(agent, since=2467):
@@ -642,8 +645,8 @@ def test_the_controllers_are_wired_where_they_hold_authority():
 
 
 def test_stats_version_switches_and_launcher():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_1"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_1"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_2"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_2"' in SIMPLE
     assert rs.A199_RISK_STATE_VERSION.endswith("a1_9_9") and se.A199_SESSION_EPOCH_VERSION.endswith("a1_9_9")
     for key in ("direct_a199_version", "direct_a199_session_epoch_version", "direct_a199_exit_pending_authority",
                 "direct_a199_epoch_resync", "direct_a199_pending_books", "direct_a199_pending_entered",

@@ -68,7 +68,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -81,6 +81,7 @@ case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_9_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1 ;;
   strategy1_direct_v5_0_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1 ;;
   strategy1_direct_v5_0_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1 ;;
+  strategy1_direct_v5_0_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -193,7 +194,9 @@ research_a199_exit_pending_authority=1 research_a199_epoch_resync=1 \
 research_a1991_pending_owns_book=1 \
 research_a1992_idle_gc=1 \
 research_v500_analytics=1 \
-research_v501_activity_alignment=1"
+research_v501_activity_alignment=1 \
+research_v502_flat_residue=1 research_v502_clip_recognition=1 \
+research_v502_compactor_turn=1 research_v502_market_terminal=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -888,6 +891,45 @@ if [[ "$V501_BUILD" == "1" ]]; then
   echo "[preflight] v5.0.1 validator activity alignment PASS"
 fi
 
+# v5.0.2.  UID 18 on RealNet (log 20260915_063311) stopped trading after tick 9,229: admission read
+# zero slots because 3.54 BASE counted as dust against a 2.0 BASE dust class.  Half of it was full
+# positions -- residue a flat lifecycle carried into the next entry (F1) and clips a unit or two short
+# that the rewind reseed froze in the ledger (F2).  The compactor spent both its slots on books the
+# loss floor refuses (F3), and an unfilled market exit held its book for four ticks (F4).
+if [[ "$V502_BUILD" == "1" ]]; then
+  grep -qF 'self._v502_settle_flat_residue(int(book_id))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.2 F1 missing: a flat lifecycle's residue rides into the next entry and parks a full clip as dust." >&2
+    exit 1
+  }
+  grep -qF 'fee_residue=residue.get(book_id, 0.0) + v502_residue.get(book_id, 0.0),' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.2 rewind reseed ignores the residue ledger; every settled book would read as diverged." >&2
+    exit 1
+  }
+  grep -qF 'return plan(RESEED_CLIP, tracker_after=clip[0], ledger_delta=clip[1], px=price)' "$AGENT_PATH/research_direct_session_epoch.py" || {
+    echo "ERROR: v5.0.2 F2 missing: the rewind reseed freezes a clip one unit short in the ledger." >&2
+    exit 1
+  }
+  grep -qF 'clip = clip_split(net, min_order=floor, tolerance=clip_tolerance)' "$AGENT_PATH/research_direct_legacy_baseline.py" || {
+    echo "ERROR: v5.0.2 F2 missing: the startup seed sends an inherited clip one unit short to the ledger." >&2
+    exit 1
+  }
+  grep -qF 'self._v502_note_compaction_refusal(int(book_id))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.2 F3 missing: a dust book the loss floor refuses keeps the compactor's slot." >&2
+    exit 1
+  }
+  grep -qF 'self._v502_release_market_terminal()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.2 F4 missing: an unfilled market exit holds its book until local expiry." >&2
+    exit 1
+  }
+  for v502_switch in research_v502_flat_residue research_v502_clip_recognition research_v502_compactor_turn research_v502_market_terminal; do
+    [[ "$PARAMS" == *"${v502_switch}=1"* ]] || {
+      echo "ERROR: v5.0.2 build without ${v502_switch}=1 in PARAMS." >&2
+      exit 1
+    }
+  done
+  echo "[preflight] v5.0.2 dust liveness PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -935,6 +977,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_a1_9_9_2_idle_gc.py \
       tests/test_research_v5_0_0_analytics.py \
       tests/test_research_v5_0_1_activity.py \
+      tests/test_research_v5_0_2_dust_liveness.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py

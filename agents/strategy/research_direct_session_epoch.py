@@ -50,6 +50,7 @@ import math
 from typing import Any, Iterable
 
 from research_direct_legacy_baseline import snap_quantity
+from research_v5_dust_liveness import clip_split
 
 A199_SESSION_EPOCH_VERSION = "direct_session_epoch_v4_16_2_a1_9_9"
 EPOCH_TIMESTAMP_REWIND = "TIMESTAMP_REWIND"
@@ -69,6 +70,9 @@ RESEED_REAL = "REAL"
 RESEED_DUST = "DUST"
 RESEED_CLEAR = "CLEAR"
 RESEED_DEFER = "DEFER"
+# v5.0.2 F2: a clip the venue's settlement left a unit or two short -- one lot of min_order,
+# with the shortfall in the residue ledger.
+RESEED_CLIP = "CLIP"
 
 LIMIT = "PLACE_ORDER_LIMIT"
 MARKET = "PLACE_ORDER_MARKET"
@@ -198,6 +202,7 @@ def plan_book_reseed(
     mid: Any = None,
     ledger_enabled: bool = True,
     tolerance: float = A199_RESEED_TOLERANCE_BASE,
+    clip_tolerance: float = 0.0,
 ) -> BookReseed:
     """What makes local base equal venue base on one book.
 
@@ -205,6 +210,10 @@ def plan_book_reseed(
     A1.9.5 reconciliation reads it.  The ledger and the residue stay: they are
     BASE no lot can carry.  A pending seed is folded into the rebuilt book.  The
     tracker must hold the rest of venue truth.
+
+    v5.0.2 F2: a target at most ``clip_tolerance`` below the minimum order is one clip of
+    exactly min_order (RESEED_CLIP), and the shortfall is residue.  A1.9.9 sent it to the
+    ledger, where nothing exits it.  ``clip_tolerance`` 0.0 is A1.9.9.
     """
     venue = _finite(venue_net, 0.0) or 0.0
     tracker = _finite(tracker_net, 0.0) or 0.0
@@ -233,6 +242,11 @@ def plan_book_reseed(
         if price is None:
             return plan(RESEED_DEFER)
         return plan(RESEED_REAL, tracker_after=target, px=price)
+    clip = clip_split(target, min_order=floor, tolerance=clip_tolerance)
+    if clip is not None:
+        if price is None:
+            return plan(RESEED_DEFER)
+        return plan(RESEED_CLIP, tracker_after=clip[0], ledger_delta=clip[1], px=price)
     return plan(RESEED_DUST, ledger_delta=target)
 
 

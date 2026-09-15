@@ -347,6 +347,16 @@ from research_v5_activity import (
     activity_view,
     cliff_needed,
 )
+from research_v5_dust_liveness import (
+    RESIDUE_FLAT,
+    RESIDUE_NONE,
+    V502_DUST_LIVENESS_VERSION,
+    V502_STATE_EVERY_TICKS,
+    clip_tolerance_base,
+    flat_residue,
+    refusal_cooldown_ticks,
+    unique_market_reservation,
+)
 from research_direct_risk_state import (
     A1991_PENDING_OWNER_VERSION,
     A199_RISK_STATE_VERSION,
@@ -367,6 +377,7 @@ from research_direct_session_epoch import (
     A199_RESYNC_MAX_TICKS,
     A199_RESYNC_MIN_TICKS,
     A199_SESSION_EPOCH_VERSION,
+    RESEED_CLIP,
     RESEED_DEFER,
     RESEED_DUST,
     RESEED_KEEP,
@@ -470,8 +481,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_2"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -815,6 +826,27 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v501_pending_rows: list[dict[str, Any]] = []
         self._v501_window_reported: bool | None = None
         self._v501_errors = 0
+        # v5.0.2: dust liveness from inventory and terminal-order truth.  Each switch off restores
+        # v5.0.1 for its own mechanism: F1 flat residue, F2 clip recognition, F3 compactor turn,
+        # F4 market terminal.
+        self.research_v502_flat_residue = self._as_bool(
+            getattr(self.config, "research_v502_flat_residue", True)
+        )
+        self.research_v502_clip_recognition = self._as_bool(
+            getattr(self.config, "research_v502_clip_recognition", True)
+        )
+        self.research_v502_compactor_turn = self._as_bool(
+            getattr(self.config, "research_v502_compactor_turn", True)
+        )
+        self.research_v502_market_terminal = self._as_bool(
+            getattr(self.config, "research_v502_market_terminal", True)
+        )
+        self._v502_residue: dict[int, float] = {}
+        self._v502_refusal_streak: dict[int, int] = {}
+        self._v502_market_notices: set[tuple[int, str]] = set()
+        self._v502_compaction_seen: set[int] = set()
+        self._v502_counts: dict[str, int] = {}
+        self._v502_errors = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1207,6 +1239,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         finally:
             if book_id is not None:
                 self._direct_event_pnl_before.pop(int(book_id), None)
+        # v5.0.2 F1: a flat book's tracker is exactly zero; what it still held joins the residue ledger.
+        if own and book_id is not None:
+            try:
+                self._v502_settle_flat_residue(int(book_id))
+            except Exception:
+                self._v502_errors = int(getattr(self, "_v502_errors", 0) or 0) + 1
         # v5.0.0: who took the other side of our own trade, for concentration telemetry.
         if own:
             analytics = getattr(self, "_v500_analytics", None)
@@ -1235,6 +1273,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             try:
                 if "PLACEMENTEVENT" in phase:
                     self._direct_note_placement_identity_notice(notice, phase=phase)
+                    # v5.0.2 F4: the venue has processed this market order; decided after update().
+                    self._v502_note_market_notice(notice, phase=phase)
                     continue
                 if "ORDERCANCELLATIONSEVENT" in phase:
                     self._direct_note_cancellation_identity_notice(notice, phase=phase)
@@ -2482,6 +2522,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         ledger = getattr(self, "_a196_legacy_dust_ledger", None) or {}
         fee_residue = getattr(self, "_a1961_fee_residue", None) or {}
         pending = getattr(self, "_a1961_pending_seed", None) or {}
+        v502_residue = getattr(self, "_v502_residue", None) or {}
         for raw_id in (books or {}):
             try:
                 book_id = int(raw_id)
@@ -2499,6 +2540,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # waiting for a quote, are local inventory as well.
             out[book_id] += float(fee_residue.get(book_id, 0.0) or 0.0)
             out[book_id] += float((pending.get(book_id) or {}).get("net", 0.0) or 0.0)
+            # v5.0.2: BASE a flat lifecycle, or a clip's settlement, left behind.
+            out[book_id] += float(v502_residue.get(book_id, 0.0) or 0.0)
         return out
 
     def _a195_emit_reconcile(self, state, tick: int) -> None:
@@ -2618,7 +2661,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         a position the agent could exit.  Dust a lifecycle leaves behind still
         lives in the tracker, where F3's overflow signal can see it.
         """
-        return float(a196_ledger_total_abs(getattr(self, "_a196_legacy_dust_ledger", None))) + self._a1961_fee_residue_abs()
+        return (
+            float(a196_ledger_total_abs(getattr(self, "_a196_legacy_dust_ledger", None)))
+            + self._a1961_fee_residue_abs()
+            # v5.0.2: residue a flat lifecycle or a clip's settlement left behind.
+            + self._v502_residue_abs()
+        )
 
     def _a196_inherited_parked_report(self, *, max_abs: float):
         """The inherited-parked exemption, with retirement applied.  Fails closed.
@@ -3209,6 +3257,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         ledger = getattr(self, "_a196_legacy_dust_ledger", None) or {}
         residue = getattr(self, "_a1961_fee_residue", None) or {}
         pending_seed = getattr(self, "_a1961_pending_seed", None) or {}
+        v502_residue = getattr(self, "_v502_residue", None) or {}
+        clip_tolerance = self._v502_clip_tolerance(state)
         changed = 0
         for book_id in sorted(venue):
             try:
@@ -3217,10 +3267,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 tracker = 0.0
             plan = plan_book_reseed(
                 book_id=book_id, venue_net=venue[book_id], tracker_net=tracker,
-                ledger=ledger.get(book_id, 0.0), fee_residue=residue.get(book_id, 0.0),
+                ledger=ledger.get(book_id, 0.0),
+                fee_residue=residue.get(book_id, 0.0) + v502_residue.get(book_id, 0.0),
                 pending=(pending_seed.get(book_id) or {}).get("net", 0.0),
                 min_order=min_order, volume_decimals=decimals, mid=mids.get(book_id),
                 ledger_enabled=self._a196_ledger_enabled(),
+                clip_tolerance=clip_tolerance,
             )
             if plan.action == RESEED_KEEP:
                 deferred.pop(int(book_id), None)
@@ -3265,6 +3317,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if plan.action == RESEED_REAL:
             side = "longs" if float(plan.target) > 0.0 else "shorts"
             positions[side].append((int(tick), abs(float(plan.target)), float(plan.price), 0.0))
+            deferred.pop(bid, None)
+        elif plan.action == RESEED_CLIP:
+            # v5.0.2 F2: one clip of exactly min_order; the venue's shortfall joins the residue ledger.
+            side = "longs" if float(plan.tracker_after) > 0.0 else "shorts"
+            positions[side].append((int(tick), abs(float(plan.tracker_after)), float(plan.price), 0.0))
+            self._v502_add_residue(bid, float(plan.ledger_delta))
+            self._v502_count("clip_reseed")
             deferred.pop(bid, None)
         elif plan.action == RESEED_DUST:
             ledger = getattr(self, "_a196_legacy_dust_ledger", None)
@@ -3773,6 +3832,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             min_order=min_order,
             ledger_enabled=self._a196_ledger_enabled(),
             grid_snap=self._a196_grid_snap_enabled(),
+            clip_tolerance=self._v502_clip_tolerance(state),
         )
         seeded = 0
         inherited: dict[int, float] = {}
@@ -3787,6 +3847,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if lot.residue_class == SEED_REAL:
                 inherited[int(lot.book_id)] = float(lot.net_base)
         self._a196_legacy_dust_ledger = dict(split.ledger)
+        # v5.0.2 F2: an inherited clip a unit or two short is seeded whole; the shortfall is residue.
+        for clip_book, clip_rest in sorted(split.clip_residue.items()):
+            self._v502_add_residue(int(clip_book), float(clip_rest))
+            self._v502_count("clip_seed")
         self._a196_inherited_real = inherited
         # A1.9.6.1: books the seed could not price.  Dust needs no price, so it
         # joins the ledger; a REAL lot needs a cost basis, so it waits for a quote
@@ -5927,6 +5991,239 @@ class Strategy1_Research_Simple(Strategy1_Research):
             cold_books=sorted(view.cold)[:64], activation_value=V501_ACTIVATION_VALUE,
         )
 
+    # ---- v5.0.2: dust liveness from inventory and terminal-order truth -------------------------------
+    def _v502_count(self, name: str, n: int = 1) -> None:
+        counts = getattr(self, "_v502_counts", None)
+        if not isinstance(counts, dict):
+            counts = {}
+            self._v502_counts = counts
+        counts[str(name)] = int(counts.get(str(name), 0) or 0) + int(n)
+
+    def _v502_add_residue(self, book_id: int, amount: float) -> float:
+        """Add BASE no lot carries to one book's residue.  Returns the book's new residue."""
+        table = getattr(self, "_v502_residue", None)
+        if not isinstance(table, dict):
+            table = {}
+            self._v502_residue = table
+        bid = int(book_id)
+        value = float(table.get(bid, 0.0) or 0.0) + float(amount)
+        if abs(value) <= 1e-12:
+            table.pop(bid, None)
+            return 0.0
+        table[bid] = value
+        return value
+
+    def _v502_residue_abs(self) -> float:
+        table = getattr(self, "_v502_residue", None) or {}
+        return float(sum(abs(float(value or 0.0)) for value in table.values()))
+
+    def _v502_clip_tolerance(self, state=None) -> float:
+        """F2: how far below the minimum order a venue position is still one clip; 0.0 when off."""
+        if not bool(getattr(self, "research_v502_clip_recognition", True)):
+            return 0.0
+        decimals = getattr(self, "_a1961_base_decimals", None)
+        if decimals is None:
+            decimals = self._a196_volume_decimals(state)
+        return float(clip_tolerance_base(decimals))
+
+    def _v502_settle_flat_residue(self, book_id: int) -> str:
+        """F1: a flat lifecycle ends with the tracker at exactly zero.
+
+        The round trip has already closed inside the execution flat epsilon.  What the tracker still
+        holds is not on the venue's grid, and a full entry on top of an opposite residue reads as
+        dust.  It moves to the residue ledger, which every reader of local base adds back, so
+        reconciliation is unchanged.  Float noise is dropped.  Returns the residue class.
+        """
+        if not bool(getattr(self, "research_v502_flat_residue", True)):
+            return RESIDUE_NONE
+        bid = int(book_id)
+        table = getattr(self, "_open_positions", None)
+        positions = table.get(bid) if hasattr(table, "get") else None
+        if not positions:
+            return RESIDUE_NONE
+        net = float(self._position_tracker_snapshot(bid).net_qty)
+        kind, amount = flat_residue(net, flat_eps=float(self._execution_flat_epsilon()))
+        if kind == RESIDUE_NONE:
+            return kind
+        positions["longs"].clear()
+        positions["shorts"].clear()
+        if kind != RESIDUE_FLAT:
+            self._v502_count("flat_noise_zeroed")
+            return kind
+        total = self._v502_add_residue(bid, amount)
+        self._v502_count("flat_residue_moved")
+        self._emit(
+            "V502_FLAT_RESIDUE", force=True, tick=int(getattr(self, "_tick", 0) or 0),
+            book=bid, residue=float(amount), book_residue=float(total),
+            residue_abs=round(self._v502_residue_abs(), 8),
+            v502_dust_liveness_version=V502_DUST_LIVENESS_VERSION,
+        )
+        return kind
+
+    def _v502_note_compaction_refusal(self, book_id: int) -> int:
+        """F3: the loss floor refused this book, so it waits a backoff like a failed attempt.
+
+        The floor is untouched: the book is refused again when its turn comes back.  What changes is
+        that a refusal no longer keeps the book first in line ahead of every book the floor would
+        allow.  Returns the cooldown set, 0 when none.
+        """
+        try:
+            bid = int(book_id)
+            seen = getattr(self, "_v502_compaction_seen", None)
+            if isinstance(seen, set):
+                seen.add(bid)
+            if not bool(getattr(self, "research_v502_compactor_turn", True)):
+                return 0
+            if not bool(getattr(self, "research_dust_compact_adaptive", True)):
+                return 0
+            learning = getattr(self, "_research_dust_compact_learning", None)
+            if not isinstance(learning, dict):
+                return 0
+            streaks = getattr(self, "_v502_refusal_streak", None)
+            if not isinstance(streaks, dict):
+                streaks = {}
+                self._v502_refusal_streak = streaks
+            streak = int(streaks.get(bid, 0) or 0) + 1
+            streaks[bid] = streak
+            wait = refusal_cooldown_ticks(
+                streak,
+                base=int(getattr(self, "research_dust_compact_cooldown_ticks", 8) or 8),
+                maximum=int(getattr(self, "research_dust_compact_max_cooldown_ticks", 40) or 40),
+            )
+            row = learning.setdefault(bid, {
+                "attempts": 0, "successful_attempts": 0, "failure_streak": 0,
+                "last_attempt_tick": -1, "last_success_attempt_tick": -1,
+                "next_allowed_tick": 0,
+            })
+            tick = int(getattr(self, "_tick", 0) or 0)
+            row["next_allowed_tick"] = max(int(row.get("next_allowed_tick", 0) or 0), tick + int(wait))
+            self._v502_count("compactor_refusal_turns")
+            return int(wait)
+        except Exception:
+            self._v502_errors = int(getattr(self, "_v502_errors", 0) or 0) + 1
+            return 0
+
+    def _v502_note_compaction_allowed(self, book_id: int) -> None:
+        """F3: an allowed evaluation ends the book's refusal streak."""
+        try:
+            bid = int(book_id)
+            seen = getattr(self, "_v502_compaction_seen", None)
+            if isinstance(seen, set):
+                seen.add(bid)
+            streaks = getattr(self, "_v502_refusal_streak", None)
+            if isinstance(streaks, dict):
+                streaks.pop(bid, None)
+        except Exception:
+            self._v502_errors = int(getattr(self, "_v502_errors", 0) or 0) + 1
+
+    def _v502_note_market_notice(self, notice, *, phase: str) -> bool:
+        """F4: the venue has processed one of our market orders.  Acted on after update()."""
+        if not bool(getattr(self, "research_v502_market_terminal", True)):
+            return False
+        if "MARKETORDERPLACEMENTEVENT" not in str(phase or "").upper():
+            return False
+        try:
+            bid = int(getattr(notice, "bookId"))
+        except (TypeError, ValueError, AttributeError):
+            return False
+        notes = getattr(self, "_v502_market_notices", None)
+        if not isinstance(notes, set):
+            notes = set()
+            self._v502_market_notices = notes
+        notes.add((bid, canonical_order_side(getattr(notice, "side", ""))))
+        return True
+
+    def _v502_release_market_terminal(self) -> int:
+        """F4: free the book a processed market order still reserves while its position is open.
+
+        Runs at the top of respond(), after update() has applied the state's fills, so the tracker
+        already says whether the order closed the position.  A filled exit keeps the hold it had.
+        Returns the reservations released.
+        """
+        notes = getattr(self, "_v502_market_notices", None)
+        if not notes:
+            return 0
+        self._v502_market_notices = set()
+        if not bool(getattr(self, "research_v502_market_terminal", True)):
+            return 0
+        ledger = self._direct_pending_ledger()
+        eps = float(self._execution_flat_epsilon())
+        # respond() has not advanced _tick yet: this state is tick + 1.
+        tick = int(getattr(self, "_tick", 0) or 0) + 1
+        released = 0
+        for bid, side in sorted(notes):
+            key, matches = unique_market_reservation(ledger, book_id=bid, side=side)
+            if key is None:
+                self._v502_count("market_notice_unmatched" if matches == 0 else "market_notice_ambiguous")
+                continue
+            net = float(self._position_tracker_snapshot(int(bid)).net_qty)
+            if abs(net) < eps:
+                self._v502_count("market_filled_kept")
+                continue
+            row = ledger.pop(key, None)
+            if row is None:
+                continue
+            self._direct_emit_book_ownership_release(row=row, reason="V502_MARKET_TERMINAL")
+            self._v502_count("market_terminal_released")
+            released += 1
+            self._emit(
+                "V502_MARKET_TERMINAL", force=True, tick=tick, book=int(bid), side=side,
+                net_base=net, submitted_tick=int(row.submitted_tick),
+                held_ticks=max(0, tick - int(row.submitted_tick)),
+                v502_dust_liveness_version=V502_DUST_LIVENESS_VERSION,
+            )
+        return released
+
+    def _v502_service(self, state) -> None:
+        """v5.0.2 telemetry: V502_DUST_STATE once per V502_STATE_EVERY_TICKS requests."""
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if tick <= 0 or tick % V502_STATE_EVERY_TICKS != 0:
+            return
+        min_order = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        decimals = getattr(self, "_a1961_base_decimals", None)
+        if decimals is None:
+            decimals = self._a196_volume_decimals(state)
+        tolerance = float(clip_tolerance_base(decimals))
+        parked = getattr(self, "_research_parked_dust", None) or {}
+        parked_abs = 0.0
+        near_full = []
+        for raw_id, info in parked.items():
+            qty = abs(float((info or {}).get("net_base", 0.0) or 0.0))
+            parked_abs += qty
+            if min_order - qty <= tolerance + 1e-12:
+                near_full.append(int(raw_id))
+        seen = getattr(self, "_v502_compaction_seen", None)
+        evaluated = sorted(seen) if isinstance(seen, set) else []
+        if isinstance(seen, set):
+            seen.clear()
+        learning = getattr(self, "_research_dust_compact_learning", None) or {}
+        cooling = sorted(
+            int(book) for book in (getattr(self, "_v502_refusal_streak", None) or {})
+            if int((learning.get(book) or {}).get("next_allowed_tick", 0) or 0) > tick
+        )
+        admission = getattr(self, "_a196_admission_last", None) or {}
+        residue = getattr(self, "_v502_residue", None) or {}
+        self._emit(
+            "V502_DUST_STATE", force=True, tick=tick,
+            v502_dust_liveness_version=V502_DUST_LIVENESS_VERSION,
+            flat_residue=int(bool(getattr(self, "research_v502_flat_residue", True))),
+            clip_recognition=int(bool(getattr(self, "research_v502_clip_recognition", True))),
+            compactor_turn=int(bool(getattr(self, "research_v502_compactor_turn", True))),
+            market_terminal=int(bool(getattr(self, "research_v502_market_terminal", True))),
+            counts=dict(sorted((getattr(self, "_v502_counts", None) or {}).items())),
+            residue_books=len(residue), residue_abs=round(self._v502_residue_abs(), 8),
+            clip_tolerance=tolerance,
+            parked_dust=len(parked), parked_dust_abs=round(parked_abs, 6),
+            near_full_parked=len(near_full), near_full_books=sorted(near_full)[:32],
+            compaction_books_evaluated=len(evaluated), compaction_books=evaluated[:32],
+            refusal_cooling_books=cooling[:32],
+            admission_final_slots=admission.get("final_slots"),
+            admission_binding=admission.get("binding"),
+            admission_dust_abs=admission.get("dust_abs"),
+            admission_dust_exempt_abs=admission.get("dust_exempt_abs"),
+            errors=int(getattr(self, "_v502_errors", 0) or 0),
+        )
+
     def handle(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
         # A1.9.9.2: the collector's full pass is scheduled on the miner's event loop
         # after this request returns, so it runs in the gap before the next one.
@@ -6017,6 +6314,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a199_service_resync(state)
         except Exception:
             pass
+        # v5.0.2 F4: a market order the venue processed without closing its position frees the
+        # book now -- update() has applied its fills -- so a pending exit resends on this request.
+        try:
+            self._v502_release_market_terminal()
+        except Exception:
+            self._v502_errors = int(getattr(self, "_v502_errors", 0) or 0) + 1
         response = super().respond(state)
         # A1.9.6 F11.  The venue truncates volume to its grid and the final
         # validator leaves sub-1e-12 noise in place, so 0.25009999999999827
@@ -6061,6 +6364,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v501_service(state)
         except Exception:
             self._v501_errors = int(getattr(self, "_v501_errors", 0) or 0) + 1
+        # v5.0.2 telemetry: the dust state row.
+        try:
+            self._v502_service(state)
+        except Exception:
+            self._v502_errors = int(getattr(self, "_v502_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -7788,10 +8096,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     )
                 except Exception:
                     pass
+                # v5.0.2 F3: a refusal costs the book its turn, as a failed attempt does.
+                self._v502_note_compaction_refusal(int(book_id))
                 continue
             self._direct_dust_kappa_allows = int(
                 getattr(self, "_direct_dust_kappa_allows", 0) or 0
             ) + 1
+            self._v502_note_compaction_allowed(int(book_id))
             if kappa_decision.reason == REASON_AGE_ESCALATED:
                 self._direct_a175_dust_escalated_allows = int(
                     getattr(self, "_direct_a175_dust_escalated_allows", 0) or 0
@@ -9189,6 +9500,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
             stats["direct_v501_activated_eligible"], stats["direct_v501_eligible_books"],
         )
         stats["direct_v501_errors"] = int(getattr(self, "_v501_errors", 0) or 0)
+        v502_counts = getattr(self, "_v502_counts", None) or {}
+        stats["direct_v502_dust_liveness_version"] = V502_DUST_LIVENESS_VERSION
+        stats["direct_v502_flat_residue"] = int(bool(getattr(self, "research_v502_flat_residue", True)))
+        stats["direct_v502_clip_recognition"] = int(bool(getattr(self, "research_v502_clip_recognition", True)))
+        stats["direct_v502_compactor_turn"] = int(bool(getattr(self, "research_v502_compactor_turn", True)))
+        stats["direct_v502_market_terminal"] = int(bool(getattr(self, "research_v502_market_terminal", True)))
+        stats["direct_v502_residue_abs"] = round(self._v502_residue_abs(), 8)
+        stats["direct_v502_flat_residue_moved"] = int(v502_counts.get("flat_residue_moved", 0) or 0)
+        stats["direct_v502_clips"] = (
+            int(v502_counts.get("clip_seed", 0) or 0) + int(v502_counts.get("clip_reseed", 0) or 0)
+        )
+        stats["direct_v502_refusal_turns"] = int(v502_counts.get("compactor_refusal_turns", 0) or 0)
+        stats["direct_v502_market_released"] = int(v502_counts.get("market_terminal_released", 0) or 0)
+        stats["direct_v502_errors"] = int(getattr(self, "_v502_errors", 0) or 0)
         stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
         stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
         stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)
