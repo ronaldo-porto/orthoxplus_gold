@@ -333,6 +333,20 @@ from research_v5_score_mirror import (
     VALIDATOR_SCORING_DEFAULTS,
     mirror_score,
 )
+from research_v5_activity import (
+    EVIDENCE_FIRST_STATE,
+    EVIDENCE_OBSERVATION,
+    REBASE_MIN_JUMP_NS,
+    STATE_ACTIVATED,
+    STATE_COLD,
+    STATE_GATE_CLOSED,
+    STATE_INCOMPLETE,
+    V501_ACTIVITY_VERSION,
+    ActivationScoreEV,
+    ActivityBelief,
+    activity_view,
+    cliff_needed,
+)
 from research_direct_risk_state import (
     A1991_PENDING_OWNER_VERSION,
     A199_RISK_STATE_VERSION,
@@ -456,12 +470,17 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_0"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_0"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_1"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
 V500_ROLLUP_EVERY_TICKS = 500
+# v5.0.1.  A cold book -- Kappa-eligible, activity factor 0.0 -- is one round trip from counting,
+# as a one-away book is, so the rank values it at the one-away completion value of
+# _research_score_ev_for_book.  The state row goes out on the score mirror's cadence.
+V501_ACTIVATION_VALUE = 0.20
+V501_STATE_EVERY_TICKS = 100
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -781,6 +800,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v500_universe_key: tuple | None = None
         self._v500_last_score: dict[str, Any] | None = None
         self._v500_service_errors = 0
+        # v5.0.1: a Kappa-eligible book counts in the validator's median only once its activity
+        # factor is 1.0.  The fast screen and the rank treat a cold book as one round trip away,
+        # as they treat a one-away book.  Off restores v5.0.0's screen and rank exactly.
+        self.research_v501_activity_alignment = self._as_bool(
+            getattr(self.config, "research_v501_activity_alignment", True)
+        )
+        self._v501_belief = ActivityBelief() if self.research_v501_activity_alignment else None
+        self._v501_tick: int | None = None
+        self._v501_last_now: int | None = None
+        self._v501_view = None
+        self._v501_seen_activated: set[int] = set()
+        self._v501_cold_since: dict[int, int] = {}
+        self._v501_pending_rows: list[dict[str, Any]] = []
+        self._v501_window_reported: bool | None = None
+        self._v501_errors = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1499,24 +1533,32 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # its budget helpers are kept and still own the budget arithmetic that
         # step 4 draws on -- only this dead call site is gone.
         a193 = None
+        # v5.0.1: a Kappa-eligible book the validator has not activated is scored 0.0 inside the
+        # median, and one round trip activates it -- the distance a one-away book is from counting.
+        activation_value, score_state = self._v501_activation_value(bid, remaining)
         eligible = reject is None
-        final_score = edge_signal + completion if eligible else float("-inf")
+        total_score = completion + activation_value
+        final_score = edge_signal + total_score if eligible else float("-inf")
         lane = "NORMAL" if remaining <= 0 else ("COVERAGE" if obs <= 0 else "COMPLETION")
+        breakdown = ScoreEVBreakdown if score_state is None else ActivationScoreEV
+        extra = {} if score_state is None else {
+            "activation_value": activation_value, "score_state": score_state,
+        }
 
-        return ScoreEVBreakdown(
+        return breakdown(
             book=bid, side="MM", alpha=float(expected_alpha or 0.0),
             fill_prob_old=0.50, fill_prob_hazard=None, actionable_fill_prob=0.50,
             dust_prob=0.0, spread_capture_bps=capture_bps, expected_markout_bps=0.0,
             fees_bps=maker_fee, trading_ev=edge_signal, observation_count=obs,
             required_observation_count=required, observations_remaining=remaining,
             completion_value=completion, dust_cost=0.0, inventory_cost=0.0,
-            latency_cost=0.0, activity_deficit_value=0.0, adverse_selection_risk=0.0,
+            latency_cost=0.0, activity_deficit_value=activation_value, adverse_selection_risk=0.0,
             last_realization_time=None, recent_realized_pnl=None,
             inventory_state="FLAT" if not inventory_blocked else "OPEN", lane=lane,
             volume_cap_headroom=headroom, final_score=final_score, eligible=eligible,
             reject_reason=reject, score_velocity_value=0.0,
             expected_realization_time=None, realization_time_reference=None,
-            lifecycle_ev=edge_signal, total_score_component=completion,
+            lifecycle_ev=edge_signal, total_score_component=total_score,
             required_entry_ev=0.0, taker_prob_live=0.0, taker_prob_prior=0.0,
             taker_prob_effective=0.0, taker_prob_excess=0.0,
             expected_taker_cost=0.0, expected_future_taker_cost_bps=0.0,
@@ -1526,7 +1568,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             raw_taker_penalty=0.0, capped_taker_penalty=0.0, adverse_penalty=0.0,
             holding_penalty=0.0, latency_penalty=0.0, crossing_penalty=0.0,
             completion_multiplier=1.0, entry_ev_margin=current_edge_bps,
-            entry_ev_pass=eligible,
+            entry_ev_pass=eligible, **extra,
         )
 
     def _direct_tail_history_rows(self, book_id: int) -> list[dict[str, float | int]]:
@@ -5729,12 +5771,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if book_count <= 0:
             return
         decimals = getattr(cfg, "volumeDecimals", None)
+        # v5.0.1: score with the activity factor the validator holds, not an assumed 1.0.
+        belief = getattr(self, "_v501_belief", None)
+        factors = None
+        if belief is not None:
+            factors = belief.factors(
+                getattr(self, "_research_kappa_roll_ts_cache", {}) or {}, book_count=book_count, now=now_ts,
+            )
         started = time.perf_counter()
         mirror = mirror_score(
             getattr(self, "realized_pnl_history", {}) or {}, analytics.rounds, now_ts=now_ts,
             book_count=book_count, miner_wealth=float(getattr(cfg, "miner_wealth", 0.0) or 0.0),
             grace_period_ns=int(getattr(cfg, "grace_period", 0) or 0),
             volume_decimals=None if decimals is None else int(decimals),
+            activity_factors=factors,
         )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         lookback = int(VALIDATOR_SCORING_DEFAULTS["kappa_lookback_ns"])
@@ -5763,6 +5813,119 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
         self._v500_last_score = row
         self._emit("V500_SCORE", force=True, tick=tick, **row)
+
+    def _v501_refresh(self) -> None:
+        """v5.0.1, once per request: each book's standing with the validator's activity factor."""
+        belief = getattr(self, "_v501_belief", None)
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if belief is None or getattr(self, "_v501_tick", None) == tick:
+            return
+        self._v501_tick = tick
+        now = getattr(self, "_research_last_sim_ts", None)
+        if now is None:
+            return
+        now = int(now)
+        last = getattr(self, "_v501_last_now", None)
+        if last is not None and now <= last - REBASE_MIN_JUMP_NS:
+            # A new simulation.  The validator rebases the rounds it keeps onto the new clock and the
+            # rolling Kappa evidence is rebased the same way, so the estimated start moves with them.
+            belief.rebase(now - last)
+        self._v501_last_now = now
+        start = getattr(self, "_research_sim_start_ts", None)
+        if start is not None:
+            belief.note_evidence(start, EVIDENCE_FIRST_STATE)
+        self._research_refresh_rolling_kappa_cache()
+        rolling = getattr(self, "_research_kappa_roll_ts_cache", {}) or {}
+        earliest = min((rows[0] for rows in rolling.values() if rows), default=None)
+        if earliest is not None:
+            belief.note_evidence(earliest, EVIDENCE_OBSERVATION)
+        view = activity_view(
+            belief, rolling, required=int(self._research_required_observation_count()), now=now,
+        )
+        previous = getattr(self, "_v501_view", None)
+        cold_since = self._v501_cold_since
+        for book in view.cold:
+            cold_since.setdefault(book, tick)
+        for book, book_state in view.states.items():
+            if book_state != STATE_ACTIVATED or book in self._v501_seen_activated:
+                continue
+            self._v501_seen_activated.add(book)
+            since = cold_since.get(book)
+            self._v501_pending_rows.append({
+                "book": int(book), "ts": now,
+                "was_cold": int(previous is not None and book in previous.cold),
+                "cold_ticks": None if since is None else tick - since,
+                "observations": len(rolling.get(book, ())),
+            })
+        for book in [b for b in cold_since if b not in view.cold]:
+            del cold_since[book]
+        self._v501_view = view
+
+    def _v501_cold_books(self) -> frozenset[int]:
+        """Kappa-eligible books the validator still scores 0.0.  Empty with the switch off."""
+        if getattr(self, "_v501_belief", None) is None:
+            return frozenset()
+        try:
+            self._v501_refresh()
+        except Exception:
+            self._v501_errors = int(getattr(self, "_v501_errors", 0) or 0) + 1
+            return frozenset()
+        view = getattr(self, "_v501_view", None)
+        return view.cold if view is not None else frozenset()
+
+    def _v501_activation_value(self, book_id: int, remaining: int) -> tuple[float, str | None]:
+        """The rank's activation term and the book's score state; (0.0, None) with the switch off."""
+        if getattr(self, "_v501_belief", None) is None:
+            return 0.0, None
+        try:
+            self._v501_refresh()
+        except Exception:
+            self._v501_errors = int(getattr(self, "_v501_errors", 0) or 0) + 1
+            return 0.0, None
+        view = getattr(self, "_v501_view", None)
+        if view is None or not view.window_open:
+            return 0.0, STATE_GATE_CLOSED
+        score_state = view.states.get(int(book_id), STATE_INCOMPLETE)
+        if score_state == STATE_COLD and int(remaining) <= 0:
+            return V501_ACTIVATION_VALUE, score_state
+        return 0.0, score_state
+
+    def _v501_service(self, state) -> None:
+        """v5.0.1 telemetry, after the post-passes: each activation as it happens, and the state row."""
+        belief = getattr(self, "_v501_belief", None)
+        if belief is None:
+            return
+        self._v501_refresh()
+        tick = int(getattr(self, "_tick", 0) or 0)
+        rows, self._v501_pending_rows = list(self._v501_pending_rows), []
+        for row in rows:
+            self._emit("V501_ACTIVATION", force=True, tick=tick, **row)
+        view = getattr(self, "_v501_view", None)
+        if view is None:
+            return
+        flipped = view.window_open != self._v501_window_reported
+        if not flipped and not (tick > 0 and tick % V501_STATE_EVERY_TICKS == 0):
+            return
+        self._v501_window_reported = view.window_open
+        cfg = getattr(state, "config", None)
+        book_count = int(getattr(cfg, "book_count", 0) or 0) or len(getattr(state, "books", None) or {})
+        now = int(self._v501_last_now or 0)
+        gate = belief.gate_ts
+        seen = len(self._v501_seen_activated)
+        self._emit(
+            "V501_ACTIVITY_STATE", force=True, tick=tick,
+            v501_activity_version=V501_ACTIVITY_VERSION,
+            history_start_ts=belief.history_start_ts, history_start_source=belief.history_start_source,
+            gate_ts=gate, floor_ts=belief.floor_ts, rebases=belief.rebases,
+            gate_open=int(view.gate_open), window_open=int(view.window_open),
+            s_to_gate=None if gate is None else round((gate - now) / 1e9, 1),
+            eligible_books=view.eligible, activated_eligible=view.activated_eligible,
+            cold_eligible=len(view.cold),
+            cliff_needed=cliff_needed(view.activated_eligible, view.eligible),
+            activated_books_seen=seen,
+            activity_mean_seen=round(seen / book_count, 4) if book_count > 0 else None,
+            cold_books=sorted(view.cold)[:64], activation_value=V501_ACTIVATION_VALUE,
+        )
 
     def handle(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
         # A1.9.9.2: the collector's full pass is scheduled on the miner's event loop
@@ -5893,6 +6056,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v500_service(state)
         except Exception:
             self._v500_service_errors = int(getattr(self, "_v500_service_errors", 0) or 0) + 1
+        # v5.0.1 telemetry: activations and the activity state.
+        try:
+            self._v501_service(state)
+        except Exception:
+            self._v501_errors = int(getattr(self, "_v501_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -6696,6 +6864,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         last_selected = getattr(self, "_direct_fastpath_last_selected_tick", {}) or {}
         cooldown_until = getattr(self, "_direct_edge_cooldown_until", {}) or {}
 
+        cold = self._v501_cold_books()
         raw_rows = []
         qualified_count = 0
         actual_nonflat = 0
@@ -6728,6 +6897,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 qualified = bool(getattr(kappa, "eligible", False))
             except Exception:
                 remaining, qualified = 3, False
+            if bid in cold:
+                # v5.0.1: eligible, but scored 0.0 until one more round trip activates it.
+                remaining, qualified = 1, False
             if qualified:
                 qualified_count += 1
 
@@ -9005,6 +9177,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         v500_score = getattr(self, "_v500_last_score", None) or {}
         stats["direct_v500_trading_score"] = v500_score.get("trading_score")
         stats["direct_v500_scored_books"] = v500_score.get("scored_books")
+        stats["direct_v500_kappa_score"] = v500_score.get("kappa_score")
+        v501_view = getattr(self, "_v501_view", None)
+        stats["direct_v501_activity_version"] = V501_ACTIVITY_VERSION
+        stats["direct_v501_activity_alignment"] = int(bool(getattr(self, "research_v501_activity_alignment", True)))
+        stats["direct_v501_window_open"] = int(bool(getattr(v501_view, "window_open", False)))
+        stats["direct_v501_eligible_books"] = int(getattr(v501_view, "eligible", 0) or 0)
+        stats["direct_v501_activated_eligible"] = int(getattr(v501_view, "activated_eligible", 0) or 0)
+        stats["direct_v501_cold_eligible"] = len(getattr(v501_view, "cold", ()) or ())
+        stats["direct_v501_cliff_needed"] = cliff_needed(
+            stats["direct_v501_activated_eligible"], stats["direct_v501_eligible_books"],
+        )
+        stats["direct_v501_errors"] = int(getattr(self, "_v501_errors", 0) or 0)
         stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
         stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
         stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)

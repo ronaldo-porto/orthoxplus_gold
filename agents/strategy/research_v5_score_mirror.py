@@ -313,9 +313,11 @@ class ScoreMirror:
     n_rounds: int
     span_ns: int
     books: dict[int, dict[str, Any]]
+    kappa_score_all_active: float | None = None
+    activated_scored: int | None = None
 
     def as_log(self) -> dict[str, Any]:
-        return {
+        row = {
             "trading_score": round(self.trading_score, 6),
             "kappa_score": round(self.kappa_score, 6),
             "pnl_score": round(self.pnl_score, 6),
@@ -329,6 +331,17 @@ class ScoreMirror:
             "n_rounds": self.n_rounds,
             "span_s": round(self.span_ns / 1e9, 1),
         }
+        if self.activated_scored is not None:
+            # v5.0.1: scored with the activity factor.  The v5.0.0 number, every factor 1.0, is kept
+            # beside it: it is the score this history earns once every scored book is activated.
+            row["activity_weighted"] = 1
+            row["activated_scored"] = self.activated_scored
+            row["cold_scored"] = self.scored_books - self.activated_scored
+            row["cliff_needed"] = max(0, self.scored_books // 2 + 1 - self.activated_scored)
+            row["kappa_score_all_active"] = (
+                None if self.kappa_score_all_active is None else round(self.kappa_score_all_active, 6)
+            )
+        return row
 
 
 def mirror_score(
@@ -342,6 +355,7 @@ def mirror_score(
     volume_decimals: int | None = None,
     params: Mapping[str, float] | None = None,
     marginal: bool = True,
+    activity_factors: Mapping[int, float] | None = None,
 ) -> ScoreMirror:
     p = dict(VALIDATOR_SCORING_DEFAULTS)
     p.update(params or {})
@@ -359,18 +373,30 @@ def mirror_score(
     penalty = 0.0
     median = float("nan")
     scored = no_kappa = zeroed_n = 0
+    all_active: float | None = None
+    activated_scored: int | None = None
     if window is not None:
         weighted: dict[int, float | None] = {}
         for book in range(book_count):
             norm = normalized_kappa(window.books.get(book), p["kappa_normalization_min"], p["kappa_normalization_max"])
-            weighted[book] = weighted_kappa(norm)
+            # v5.0.1: the validator's activity factor, when the caller knows it.  None keeps
+            # v5.0.0's assumption of 1.0 for every book.
+            factor = 1.0 if activity_factors is None else float(activity_factors.get(book, 0.0))
+            weighted[book] = weighted_kappa(norm, factor)
             books[book] = {
                 "obs": window.observations.get(book, 0),
                 "kappa": window.books.get(book),
                 "norm": norm,
                 "oldest_ts": window.oldest_observation_ts.get(book),
+                "activity": factor,
             }
         kappa_score_value, penalty, median, _, zeroed = _kappa_aggregate(weighted, max_inactive)
+        if activity_factors is not None:
+            everyone = {b: weighted_kappa(row["norm"]) for b, row in books.items()}
+            all_active = _kappa_aggregate(everyone, max_inactive)[0]
+            activated_scored = sum(
+                1 for b, w in weighted.items() if w is not None and books[b]["activity"] >= 1.0
+            )
         zeroed_set = set(zeroed)
         for book, row in books.items():
             if weighted[book] is not None:
@@ -422,4 +448,5 @@ def mirror_score(
         scored_books=scored, no_kappa_books=no_kappa, zeroed_books=zeroed_n,
         max_inactive_books=max_inactive, n_rounds=window.n_rounds if window else len(set(rounds)),
         span_ns=window.span_ns if window else 0, books=books,
+        kappa_score_all_active=all_active, activated_scored=activated_scored,
     )

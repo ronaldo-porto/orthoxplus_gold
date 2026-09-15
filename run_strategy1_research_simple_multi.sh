@@ -68,7 +68,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -80,6 +80,7 @@ case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_9_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_9_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1 ;;
   strategy1_direct_v5_0_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1 ;;
+  strategy1_direct_v5_0_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -191,7 +192,8 @@ research_a198_absolute_taker_authority=1 \
 research_a199_exit_pending_authority=1 research_a199_epoch_resync=1 \
 research_a1991_pending_owns_book=1 \
 research_a1992_idle_gc=1 \
-research_v500_analytics=1"
+research_v500_analytics=1 \
+research_v501_activity_alignment=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -854,6 +856,38 @@ if [[ "$V500_BUILD" == "1" ]]; then
   echo "[preflight] v5.0.0 analytics / validator score mirror PASS"
 fi
 
+# v5.0.1.  The validator scores a Kappa-eligible book at its normalized Kappa-3 times an activity
+# factor that starts at 0.0 and becomes 1.0 only with a round trip once the uid's Kappa gate opens
+# (reward.py, default flags).  Replaying UID 18's RealNet log (20260915_063311) that way gives both
+# activity means the dashboard showed (0.2656, 0.2969) and a Kappa-3 score of 0 to tick 8,489.  The
+# fast screen and the rank now treat an eligible book the validator has not activated as one round
+# trip away, as they treat a one-away book.
+if [[ "$V501_BUILD" == "1" ]]; then
+  grep -qF 'remaining, qualified = 1, False' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.1 fast screen still counts a book the validator scores 0.0 as qualified." >&2
+    exit 1
+  }
+  grep -qF 'activation_value, score_state = self._v501_activation_value(bid, remaining)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.1 rank never values activating a cold book." >&2
+    exit 1
+  }
+  grep -qF 'return (int(gate_ts) // int(sampling_ns)) * int(sampling_ns) - int(sampling_ns)' "$AGENT_PATH/research_v5_activity.py" || {
+    echo "ERROR: v5.0.1 activation floor is not the validator's: the first pass after the gate" >&2
+    echo "       counts a round trip in the bucket before the gate's bucket." >&2
+    exit 1
+  }
+  grep -qF 'weighted[book] = weighted_kappa(norm, factor)' "$AGENT_PATH/research_v5_score_mirror.py" || {
+    echo "ERROR: v5.0.1 score mirror ignores the activity factor; V500_SCORE would repeat v5.0.0's error." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v501_activity_alignment=1"* ]] || {
+    echo "ERROR: v5.0.1 build without research_v501_activity_alignment=1 in PARAMS. The engine would" >&2
+    echo "       report v5_0_1 while ranking cold books as v5.0.0 did." >&2
+    exit 1
+  }
+  echo "[preflight] v5.0.1 validator activity alignment PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -900,6 +934,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_a1_9_9_1_pending_owner.py \
       tests/test_research_a1_9_9_2_idle_gc.py \
       tests/test_research_v5_0_0_analytics.py \
+      tests/test_research_v5_0_1_activity.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
