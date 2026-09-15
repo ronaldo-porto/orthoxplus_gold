@@ -68,7 +68,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -79,6 +79,7 @@ case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_9) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_9_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_9_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1 ;;
+  strategy1_direct_v5_0_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -189,7 +190,8 @@ research_a197_postfill_protect=1 \
 research_a198_absolute_taker_authority=1 \
 research_a199_exit_pending_authority=1 research_a199_epoch_resync=1 \
 research_a1991_pending_owns_book=1 \
-research_a1992_idle_gc=1"
+research_a1992_idle_gc=1 \
+research_v500_analytics=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -827,6 +829,31 @@ if [[ "$A1992_BUILD" == "1" ]]; then
   echo "[preflight] A1.9.9.2 idle-gap garbage collection PASS"
 fi
 
+# v5.0.0.  Telemetry only: a round-trip ledger fed by the rows the strategy already writes, and a
+# local copy of the validator's score.  Replaying the A1.9.9.1 log (20260914_141324) through the
+# ledger gives back its 810 round trips and 79.60 of realized PnL.  The validator stores a bucket
+# for every round, traded or not, so a mirror that skips empty rounds puts Kappa-3 on another scale.
+if [[ "$V500_BUILD" == "1" ]]; then
+  grep -qF 'analytics.observe(event_type, payload)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.0 analytics never read the rows the strategy writes." >&2
+    exit 1
+  }
+  grep -qF 'self._v500_service(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.0 analytics are never flushed; no V500_RT or V500_SCORE row would be written." >&2
+    exit 1
+  }
+  grep -qF '    for ts in rounds:' "$AGENT_PATH/research_v5_score_mirror.py" || {
+    echo "ERROR: v5.0.0 score mirror does not count every round; its Kappa-3 is not the validator's." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v500_analytics=1"* ]] || {
+    echo "ERROR: v5.0.0 build without research_v500_analytics=1 in PARAMS. The engine would" >&2
+    echo "       report v5_0_0 while writing none of its analytics." >&2
+    exit 1
+  }
+  echo "[preflight] v5.0.0 analytics / validator score mirror PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -872,6 +899,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_a1_9_9_controllers.py \
       tests/test_research_a1_9_9_1_pending_owner.py \
       tests/test_research_a1_9_9_2_idle_gc.py \
+      tests/test_research_v5_0_0_analytics.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py

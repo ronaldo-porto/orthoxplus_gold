@@ -323,6 +323,16 @@ from research_direct_idle_gc import (
     IdleCollector,
     running_loop,
 )
+from research_v5_analytics import (
+    V500_ANALYTICS_VERSION,
+    V500_TAPPED_ROWS,
+    TradeAnalytics,
+)
+from research_v5_score_mirror import (
+    V500_SCORE_MIRROR_VERSION,
+    VALIDATOR_SCORING_DEFAULTS,
+    mirror_score,
+)
 from research_direct_risk_state import (
     A1991_PENDING_OWNER_VERSION,
     A199_RISK_STATE_VERSION,
@@ -446,8 +456,12 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_9_2"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_9_2"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_0"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_0"
+
+# v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
+V500_SCORE_EVERY_TICKS = 100
+V500_ROLLUP_EVERY_TICKS = 500
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -758,6 +772,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if self.research_a1992_idle_gc else None
         )
         self._a1992_reported: tuple[int, str, str] | None = None
+        # v5.0.0: analytics only -- a ledger fed by the rows this strategy already writes, and
+        # a local copy of the validator's score.  Off restores A1.9.9.2's output exactly.
+        self.research_v500_analytics = self._as_bool(
+            getattr(self.config, "research_v500_analytics", True)
+        )
+        self._v500_analytics = TradeAnalytics() if self.research_v500_analytics else None
+        self._v500_universe_key: tuple | None = None
+        self._v500_last_score: dict[str, Any] | None = None
+        self._v500_service_errors = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1150,6 +1173,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         finally:
             if book_id is not None:
                 self._direct_event_pnl_before.pop(int(book_id), None)
+        # v5.0.0: who took the other side of our own trade, for concentration telemetry.
+        if own:
+            analytics = getattr(self, "_v500_analytics", None)
+            if analytics is not None:
+                try:
+                    analytics.note_trade(
+                        uid=getattr(self, "uid", None), maker_agent=getattr(event, "makerAgentId", None),
+                        taker_agent=getattr(event, "takerAgentId", None), ts=getattr(event, "timestamp", None),
+                    )
+                except Exception:
+                    pass
 
 
     def _log_notices(self, state, tick: int) -> None:
@@ -5628,6 +5662,108 @@ class Strategy1_Research_Simple(Strategy1_Research):
             close_price=close_price, maker_net_bps=maker_net_bps,
         )
 
+    def _emit(self, event_type: str, force: bool = False, **payload: Any) -> None:
+        # v5.0.0: the analytics ledger reads a row as it is written.  The row goes on unchanged,
+        # and nothing the ledger holds is read by a decision.
+        analytics = getattr(self, "_v500_analytics", None)
+        if analytics is not None and event_type in V500_TAPPED_ROWS:
+            try:
+                analytics.observe(event_type, payload)
+            except Exception:
+                pass
+        return super()._emit(event_type, force=force, **payload)
+
+    def _v500_service(self, state) -> None:
+        """v5.0.0, once per request: closed round trips, taker counterfactuals, score mirror, rollups."""
+        analytics = getattr(self, "_v500_analytics", None)
+        if analytics is None:
+            return
+        tick = int(getattr(self, "_tick", 0) or 0)
+        now_ts = int(getattr(state, "timestamp", 0) or 0)
+        analytics.note_round(now_ts)
+        self._v500_note_universe(state, tick)
+        for event_type, row in analytics.flush(tick=tick, now_ts=now_ts, books=getattr(state, "books", None) or {}):
+            self._emit(event_type, force=True, tick=tick, **row)
+        if tick > 0 and tick % V500_SCORE_EVERY_TICKS == 0:
+            self._v500_emit_score(state, tick, now_ts)
+        if tick > 0 and tick % V500_ROLLUP_EVERY_TICKS == 0:
+            for event_type, row in analytics.rollup(now_ts=now_ts):
+                self._emit(event_type, force=True, tick=tick, **row)
+
+    def _v500_note_universe(self, state, tick: int) -> None:
+        """The books the validator scores: in simulation mode, every book 0..book_count-1."""
+        cfg = getattr(state, "config", None)
+        books = getattr(state, "books", None) or {}
+        book_count = int(getattr(cfg, "book_count", 0) or 0) or len(books)
+        key = (book_count, len(books), getattr(cfg, "miner_wealth", None), getattr(cfg, "grace_period", None))
+        if key == getattr(self, "_v500_universe_key", None):
+            return
+        self._v500_universe_key = key
+        ids = set()
+        for raw in books.keys():
+            try:
+                ids.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+        max_inactive = int(float(VALIDATOR_SCORING_DEFAULTS["max_inactive_books_ratio"]) * book_count)
+        self._emit(
+            "V500_UNIVERSE", force=True, tick=tick,
+            v500_analytics_version=V500_ANALYTICS_VERSION,
+            v500_score_mirror_version=V500_SCORE_MIRROR_VERSION,
+            engine_mode="simulation", book_count=book_count, books_in_state=len(books),
+            missing_book_ids=[b for b in range(book_count) if b not in ids][:64],
+            extra_book_ids=sorted(b for b in ids if b >= book_count)[:64],
+            miner_wealth=getattr(cfg, "miner_wealth", None),
+            publish_interval=getattr(cfg, "publish_interval", None),
+            grace_period=getattr(cfg, "grace_period", None),
+            volume_decimals=getattr(cfg, "volumeDecimals", None),
+            max_inactive_books=max_inactive, min_scored_books=book_count - max_inactive,
+            scoring_defaults=dict(VALIDATOR_SCORING_DEFAULTS),
+        )
+
+    def _v500_emit_score(self, state, tick: int, now_ts: int) -> None:
+        analytics = self._v500_analytics
+        cfg = getattr(state, "config", None)
+        books = getattr(state, "books", None) or {}
+        book_count = int(getattr(cfg, "book_count", 0) or 0) or len(books)
+        if book_count <= 0:
+            return
+        decimals = getattr(cfg, "volumeDecimals", None)
+        started = time.perf_counter()
+        mirror = mirror_score(
+            getattr(self, "realized_pnl_history", {}) or {}, analytics.rounds, now_ts=now_ts,
+            book_count=book_count, miner_wealth=float(getattr(cfg, "miner_wealth", 0.0) or 0.0),
+            grace_period_ns=int(getattr(cfg, "grace_period", 0) or 0),
+            volume_decimals=None if decimals is None else int(decimals),
+        )
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        lookback = int(VALIDATOR_SCORING_DEFAULTS["kappa_lookback_ns"])
+        min_obs = int(VALIDATOR_SCORING_DEFAULTS["kappa_min_realized_observations"])
+        rows = mirror.books
+        expiring = sum(
+            1 for r in rows.values()
+            if r.get("status") == "SCORED" and r.get("obs") == min_obs and r.get("oldest_ts") is not None
+            and int(r["oldest_ts"]) + lookback - now_ts <= 600_000_000_000
+        )
+        marginal = sorted((r["marginal_kappa"], b) for b, r in rows.items() if "marginal_kappa" in r)
+        pnl_books = sorted(r["pnl_window"] for r in rows.values() if r.get("pnl_window") is not None)
+        mid = len(pnl_books) // 2
+        median_pnl = (None if not pnl_books else
+                      pnl_books[mid] if len(pnl_books) % 2 else 0.5 * (pnl_books[mid - 1] + pnl_books[mid]))
+        first_round = min(analytics.rounds) if analytics.rounds else now_ts
+        row = mirror.as_log()
+        row.update(
+            mirror_ms=round(elapsed_ms, 3),
+            history_complete=int(now_ts - first_round >= lookback),
+            one_away_books=sum(1 for r in rows.values() if r.get("obs") == min_obs - 1),
+            expiring_scored_books_10m=expiring,
+            median_book_pnl=None if median_pnl is None else round(median_pnl, 6),
+            lowest_marginal=[[b, round(v, 6)] for v, b in marginal[:5]],
+            highest_marginal=[[b, round(v, 6)] for v, b in marginal[-5:]],
+        )
+        self._v500_last_score = row
+        self._emit("V500_SCORE", force=True, tick=tick, **row)
+
     def handle(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
         # A1.9.9.2: the collector's full pass is scheduled on the miner's event loop
         # after this request returns, so it runs in the gap before the next one.
@@ -5752,6 +5888,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a199_note_exit_stalls(response)
         except Exception:
             pass
+        # v5.0.0 analytics: after every A1.x post-pass, so the rows it reads are final.
+        try:
+            self._v500_service(state)
+        except Exception:
+            self._v500_service_errors = int(getattr(self, "_v500_service_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -8853,6 +8994,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a1992_idle_passes"] = int(a1992_snap.get("idle_passes", 0) or 0)
         stats["direct_a1992_idle_cancelled"] = int(a1992_snap.get("idle_cancelled", 0) or 0)
         stats["direct_a1992_idle_max_ms"] = float(a1992_snap.get("idle_max_ms", 0.0) or 0.0)
+        stats["direct_v500_analytics_version"] = V500_ANALYTICS_VERSION
+        stats["direct_v500_score_mirror_version"] = V500_SCORE_MIRROR_VERSION
+        stats["direct_v500_analytics"] = int(bool(getattr(self, "research_v500_analytics", True)))
+        v500 = getattr(self, "_v500_analytics", None)
+        stats["direct_v500_rt_rows"] = int(getattr(v500, "rt_rows", 0) or 0)
+        stats["direct_v500_counterfactual_rows"] = int(getattr(v500, "counterfactual_rows", 0) or 0)
+        stats["direct_v500_observe_errors"] = int(getattr(v500, "observe_errors", 0) or 0)
+        stats["direct_v500_service_errors"] = int(getattr(self, "_v500_service_errors", 0) or 0)
+        v500_score = getattr(self, "_v500_last_score", None) or {}
+        stats["direct_v500_trading_score"] = v500_score.get("trading_score")
+        stats["direct_v500_scored_books"] = v500_score.get("scored_books")
         stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
         stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
         stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)

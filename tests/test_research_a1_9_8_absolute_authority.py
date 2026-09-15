@@ -232,8 +232,8 @@ def test_the_module_is_limited_to_absolute_and_names_both_arms():
 
 
 def test_stats_version_and_launcher():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_9_2"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_9_2"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_0"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_0"' in SIMPLE
     assert A198_ABSOLUTE_AUTHORITY_VERSION.endswith("a1_9_8")
     for key in ("direct_a198_version", "direct_a198_absolute_taker_authority", "direct_a198_restores",
                 "direct_a198_restored_recovery", "direct_a198_restored_relative",
