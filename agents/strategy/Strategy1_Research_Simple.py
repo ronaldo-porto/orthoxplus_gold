@@ -317,6 +317,12 @@ from research_direct_absolute_authority import (
     ARM_RELATIVE_VETO,
     restore_absolute_taker,
 )
+from research_direct_idle_gc import (
+    A1992_IDLE_DELAY_MS,
+    A1992_IDLE_GC_VERSION,
+    IdleCollector,
+    running_loop,
+)
 from research_direct_risk_state import (
     A1991_PENDING_OWNER_VERSION,
     A199_RISK_STATE_VERSION,
@@ -440,8 +446,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_9_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_9_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_9_9_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v4_16_2_a1_9_9_2"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -738,6 +744,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
             getattr(self.config, "research_a1991_pending_owns_book", True)
         )
         self._a1991_rule_positive_maker = 0
+        # A1.9.9.2: CPython's full collection runs in the idle gap after a response,
+        # not inside whichever request allocated.  Off restores A1.9.9.1.
+        self.research_a1992_idle_gc = self._as_bool(
+            getattr(self.config, "research_a1992_idle_gc", True)
+        )
+        try:
+            a1992_delay_ms = float(getattr(self.config, "research_a1992_idle_gc_delay_ms", A1992_IDLE_DELAY_MS))
+        except (TypeError, ValueError):
+            a1992_delay_ms = A1992_IDLE_DELAY_MS
+        self._a1992_idle_gc = (
+            IdleCollector(delay_s=max(0.0, a1992_delay_ms) / 1000.0)
+            if self.research_a1992_idle_gc else None
+        )
+        self._a1992_reported: tuple[int, str, str] | None = None
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -5608,6 +5628,50 @@ class Strategy1_Research_Simple(Strategy1_Research):
             close_price=close_price, maker_net_bps=maker_net_bps,
         )
 
+    def handle(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
+        # A1.9.9.2: the collector's full pass is scheduled on the miner's event loop
+        # after this request returns, so it runs in the gap before the next one.
+        # Nothing here reads or changes what the strategy decides.
+        collector = getattr(self, "_a1992_idle_gc", None)
+        loop = running_loop() if collector is not None else None
+        if collector is not None:
+            try:
+                collector.begin_request(loop)
+            except Exception:
+                pass
+        try:
+            return super().handle(state)
+        finally:
+            if collector is not None:
+                try:
+                    collector.end_request(loop)
+                    self._a1992_note_request(collector)
+                except Exception:
+                    pass
+
+    def _a1992_note_request(self, collector) -> None:
+        """One A1992_GC_TICK row per request, and A1992_IDLE_GC_STATE when the mode changes."""
+        snap = collector.snapshot()
+        tick = int(getattr(self, "_tick", 0) or 0)
+        mode = (int(snap["installed"]), str(snap["fallback_reason"]), str(snap["skip_reason"]))
+        if mode != getattr(self, "_a1992_reported", None):
+            self._a1992_reported = mode
+            self._emit(
+                "A1992_IDLE_GC_STATE", force=True, tick=tick,
+                a1992_idle_gc_version=A1992_IDLE_GC_VERSION,
+                installed=mode[0], fallback_reason=mode[1], skip_reason=mode[2],
+                saved_threshold=snap["saved_threshold"], delay_ms=snap["delay_ms"],
+                python=snap["python"],
+            )
+        self._emit(
+            "A1992_GC_TICK", force=True, tick=tick, installed=mode[0],
+            request_gen0=snap["request_gen0"], request_gen1=snap["request_gen1"],
+            request_gen2=snap["request_gen2"], idle_passes=snap["idle_passes"],
+            idle_last_ms=snap["idle_last_ms"], idle_last_unreachable=snap["idle_last_unreachable"],
+            idle_cancelled=snap["idle_cancelled"], responses_since_idle=snap["responses_since_idle"],
+            tracked_objects=snap["tracked_objects"],
+        )
+
     def respond(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
         # A1.7 preserves A1.6.3 freshness protection.  Slow-request telemetry is
         # diagnostic only and does not gate trading.
@@ -8779,6 +8843,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_a1991_version"] = A1991_PENDING_OWNER_VERSION
         stats["direct_a1991_pending_owns_book"] = int(bool(getattr(self, "research_a1991_pending_owns_book", True)))
         stats["direct_a1991_rule_positive_maker"] = int(getattr(self, "_a1991_rule_positive_maker", 0) or 0)
+        stats["direct_a1992_version"] = A1992_IDLE_GC_VERSION
+        stats["direct_a1992_idle_gc"] = int(bool(getattr(self, "research_a1992_idle_gc", True)))
+        a1992 = getattr(self, "_a1992_idle_gc", None)
+        a1992_snap = a1992.snapshot() if a1992 is not None else {}
+        stats["direct_a1992_installed"] = int(a1992_snap.get("installed", 0) or 0)
+        stats["direct_a1992_fallback_reason"] = str(a1992_snap.get("fallback_reason", "") or "")
+        stats["direct_a1992_request_full_passes"] = int(a1992_snap.get("request_full_total", 0) or 0)
+        stats["direct_a1992_idle_passes"] = int(a1992_snap.get("idle_passes", 0) or 0)
+        stats["direct_a1992_idle_cancelled"] = int(a1992_snap.get("idle_cancelled", 0) or 0)
+        stats["direct_a1992_idle_max_ms"] = float(a1992_snap.get("idle_max_ms", 0.0) or 0.0)
         stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
         stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
         stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)

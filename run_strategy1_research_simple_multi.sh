@@ -68,7 +68,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -78,6 +78,7 @@ case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_8) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_9) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_9_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1 ;;
+  strategy1_direct_v4_16_2_a1_9_9_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -187,7 +188,8 @@ research_a1961_seed_quote_guard=1 research_a1961_fee_residue_ledger=1 \
 research_a197_postfill_protect=1 \
 research_a198_absolute_taker_authority=1 \
 research_a199_exit_pending_authority=1 research_a199_epoch_resync=1 \
-research_a1991_pending_owns_book=1"
+research_a1991_pending_owns_book=1 \
+research_a1992_idle_gc=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -797,6 +799,34 @@ if [[ "$A1991_BUILD" == "1" ]]; then
   echo "[preflight] A1.9.9.1 pending position owns its book PASS"
 fi
 
+# A1.9.9.2.  Measured on the A1.9.9.1 run (log 20260914_141324, ticks 1-8,778).  p95 was 173.3 ms
+# over ticks 8,001-8,500.  A slow tick carries one excess of about the same size in whichever
+# phase it lands (124 ms in full_predict, 107 ms in the screen, 98 ms in logging) and it lands by
+# allocation, not by time: CPython's full collection.  Without it p95 is 54.9 ms.  Responses were
+# at least 3,853 ms apart, so the pass runs in that gap.  Trading logic is unchanged; the 100 ms
+# entry freshness gate and Score-EV's latency cost see a faster agent.
+if [[ "$A1992_BUILD" == "1" ]]; then
+  grep -qF 'set_threshold(saved[0], saved[1], A1992_FULL_THRESHOLD_OFF)' "$AGENT_PATH/research_direct_idle_gc.py" || {
+    echo "ERROR: A1.9.9.2 never stops CPython's automatic full collection inside a request." >&2
+    exit 1
+  }
+  # Without the scheduled pass the heap is only collected once the fallback gives up.
+  grep -qF 'self._timer = loop.call_later(self.delay_s, self.collect_idle)' "$AGENT_PATH/research_direct_idle_gc.py" || {
+    echo "ERROR: A1.9.9.2 never schedules the idle full pass." >&2
+    exit 1
+  }
+  grep -qF 'collector.begin_request(loop)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: A1.9.9.2 idle collector never wraps a request." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_a1992_idle_gc=1"* ]] || {
+    echo "ERROR: A1.9.9.2 build without research_a1992_idle_gc=1 in PARAMS. The" >&2
+    echo "       engine would report a1_9_9_2 while full collections still run inside requests." >&2
+    exit 1
+  }
+  echo "[preflight] A1.9.9.2 idle-gap garbage collection PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -841,6 +871,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_a1_9_8_absolute_authority.py \
       tests/test_research_a1_9_9_controllers.py \
       tests/test_research_a1_9_9_1_pending_owner.py \
+      tests/test_research_a1_9_9_2_idle_gc.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
