@@ -336,7 +336,9 @@ from research_v5_score_mirror import (
 from research_v5_activity import (
     EVIDENCE_FIRST_STATE,
     EVIDENCE_OBSERVATION,
+    KAPPA_MIN_LOOKBACK_NS,
     REBASE_MIN_JUMP_NS,
+    SCORING_INTERVAL_NS,
     STATE_ACTIVATED,
     STATE_COLD,
     STATE_GATE_CLOSED,
@@ -356,6 +358,28 @@ from research_v5_dust_liveness import (
     flat_residue,
     refusal_cooldown_ticks,
     unique_market_reservation,
+)
+from research_v5_newcomer_gate import (
+    V503_NEWCOMER_GATE_VERSION,
+    arm_decision,
+    effective_anchor,
+    exposure_abs,
+    gate_state,
+    gate_timestamp,
+    prior_evidence,
+    restored_session,
+    seconds_to_gate,
+    session_state,
+    should_open,
+)
+from research_v5_observatory import (
+    V503_DEPTH_EVERY,
+    V503_OBSERVATORY_VERSION,
+    StateRecorder,
+)
+from research_v5_validator_fifo import (
+    V503_VALIDATOR_FIFO_VERSION,
+    match_trade_fifo as v503_match_trade_fifo,
 )
 from research_direct_risk_state import (
     A1991_PENDING_OWNER_VERSION,
@@ -481,8 +505,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_2"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_2"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_3"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_3"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -492,6 +516,13 @@ V500_ROLLUP_EVERY_TICKS = 500
 # _research_score_ev_for_book.  The state row goes out on the score mirror's cadence.
 V501_ACTIVATION_VALUE = 0.20
 V501_STATE_EVERY_TICKS = 100
+# v5.0.3 G1.  While the quiet gate holds instructions it reports on this cadence, and on every
+# change of state, so a held agent is never silent about why.
+V503_GATE_EVERY_TICKS = 100
+# v5.0.3 G2/G4.  The observatory's own telemetry row, and the per-book Kappa table the offline
+# comparison against the validator's published per-book gauges reads.
+V503_OBSERVATORY_EVERY_TICKS = 500
+V503_BOOK_KAPPA_EVERY_TICKS = 500
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -847,6 +878,51 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v502_compaction_seen: set[int] = set()
         self._v502_counts: dict[str, int] = {}
         self._v502_errors = 0
+        # v5.0.3 G1: the validator seeds a uid's track-record standing at its FIRST NON-ZERO trading
+        # score, and the PnL leg goes non-zero ~5,140 sim-s before the Kappa leg can.  A newcomer
+        # therefore sends no instructions until its Kappa gate is open, while still answering every
+        # request.  Off restores v5.0.2: trade at once and seed the standing on a PnL-only score.
+        self.research_v503_newcomer_gate = self._as_bool(
+            getattr(self.config, "research_v503_newcomer_gate", True)
+        )
+        self._v503_gate_armed: bool | None = None
+        self._v503_gate_open_reason: str | None = None
+        self._v503_gate_evidence: str | None = None
+        self._v503_gate_anchor_ts: int | None = None
+        self._v503_gate_ts: int | None = None
+        self._v503_gate_quiet_requests = 0
+        self._v503_gate_reported: tuple | None = None
+        self._v503_gate_errors = 0
+        # v5.0.3 G2: record every state's per-book trades (with both counterparties' uids) and its
+        # depth, from the raw lazy dicts, on a writer thread.  Telemetry only; nothing reads it.
+        self.research_v503_state_recorder = self._as_bool(
+            getattr(self.config, "research_v503_state_recorder", True)
+        )
+        try:
+            v503_depth_every = int(getattr(self.config, "research_v503_recorder_depth_every", V503_DEPTH_EVERY))
+        except (TypeError, ValueError):
+            v503_depth_every = V503_DEPTH_EVERY
+        try:
+            v503_max_mb = int(getattr(self.config, "research_v503_recorder_max_mb", 2048))
+        except (TypeError, ValueError):
+            v503_max_mb = 2048
+        self._v503_recorder_depth_every = max(0, v503_depth_every)
+        self._v503_recorder_max_bytes = max(0, v503_max_mb) * 1024 * 1024
+        self._v503_recorder = None
+        self._v503_recorder_started = False
+        self._v503_recorder_errors = 0
+        # v5.0.3 G3: the validator prorates a fill's fee to the part of it that closes a lot; this
+        # agent's copy charged the whole fill's fee there, which at a maker rebate overstates
+        # realized PnL on every partial close.  Off restores the agent's own arithmetic.
+        self.research_v503_fifo_fee_exact = self._as_bool(
+            getattr(self.config, "research_v503_fifo_fee_exact", True)
+        )
+        self._v503_fifo_calls = 0
+        # v5.0.3 G4: the mirror's per-book Kappa table, for an exact offline comparison against the
+        # validator's published per-book gauges.  Telemetry only.
+        self.research_v503_book_kappa_rows = self._as_bool(
+            getattr(self.config, "research_v503_book_kappa_rows", True)
+        )
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -5876,6 +5952,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             highest_marginal=[[b, round(v, 6)] for v, b in marginal[-5:]],
         )
         self._v500_last_score = row
+        # v5.0.3 G4: the per-book rows, kept for the comparison row against the validator's own
+        # per-book gauges.  The score row itself stays exactly as v5.0.0 wrote it.
+        self._v500_last_books = rows
         self._emit("V500_SCORE", force=True, tick=tick, **row)
 
     def _v501_refresh(self) -> None:
@@ -6224,6 +6303,198 @@ class Strategy1_Research_Simple(Strategy1_Research):
             errors=int(getattr(self, "_v502_errors", 0) or 0),
         )
 
+    # ---- v5.0.3 G1: the newcomer quiet gate ---------------------------------------------------
+
+    def _v503_gate_evaluate(self, state) -> None:
+        """Decide ONCE whether this registration is a newcomer whose first score must be a full one."""
+        try:
+            self._v501_refresh()
+        except Exception:
+            pass
+        belief = getattr(self, "_v501_belief", None)
+        opened, anchor_restored = False, None
+        identity = getattr(self, "_research_session_identity", None)
+        if identity is not None:
+            try:
+                opened, anchor_restored = restored_session(
+                    (self._research_read_session(identity) or {}).get(V503_NEWCOMER_GATE_VERSION)
+                )
+            except Exception:
+                opened, anchor_restored = False, None
+        evidence = prior_evidence(
+            observations=getattr(self, "_research_realized_observations_by_book", {}),
+            pnl_history=getattr(self, "realized_pnl_history", {}),
+            pnl_events=getattr(self, "_research_realized_pnl_events_by_book", {}),
+            round_trip_closes=getattr(self, "_research_round_trip_closes", 0),
+            start_source=None if belief is None else getattr(belief, "history_start_source", None),
+            first_state_source=EVIDENCE_FIRST_STATE,
+        )
+        anchor = effective_anchor(
+            anchor_restored,
+            getattr(self, "_research_sim_start_ts", None) or int(getattr(state, "timestamp", 0) or 0),
+        )
+        self._v503_gate_anchor_ts = anchor
+        self._v503_gate_ts = gate_timestamp(
+            anchor, min_lookback_ns=KAPPA_MIN_LOOKBACK_NS, scoring_interval_ns=SCORING_INTERVAL_NS,
+        )
+        armed, reason = arm_decision(
+            switch_on=bool(getattr(self, "research_v503_newcomer_gate", True)),
+            restored_open=opened, evidence=evidence, gate_ts=self._v503_gate_ts,
+        )
+        self._v503_gate_armed = bool(armed)
+        self._v503_gate_evidence = evidence
+        self._v503_gate_open_reason = reason
+
+    def _v503_gate_exposure(self, state) -> float:
+        """Venue truth, not the tracker: a held agent must never sit on an unmanaged position."""
+        try:
+            nets = self._a195_venue_net_by_book(getattr(state, "books", None) or {})
+        except Exception:
+            return 0.0
+        return exposure_abs(nets, eps=self._execution_flat_epsilon())
+
+    def _v503_gate_response(self, state):
+        """An empty response while the gate holds instructions, or None to run the frozen chain."""
+        if getattr(self, "_v503_gate_armed", None) is None:
+            self._v503_gate_evaluate(state)
+        if not self._v503_gate_armed:
+            self._v503_gate_report(state, held=False)
+            return None
+        now = int(getattr(state, "timestamp", 0) or 0)
+        reason = should_open(
+            now=now, gate_ts=self._v503_gate_ts, exposure=self._v503_gate_exposure(state),
+        )
+        if reason is not None:
+            self._v503_gate_armed = False
+            self._v503_gate_open_reason = reason
+            try:
+                self._research_save_session(force=True)
+            except Exception:
+                pass
+            self._v503_gate_report(state, held=False)
+            return None
+        self._v503_gate_quiet_requests = int(getattr(self, "_v503_gate_quiet_requests", 0) or 0) + 1
+        self._v503_gate_report(state, held=True)
+        return FinanceAgentResponse(agent_id=int(getattr(self, "uid", 0) or 0))
+
+    def _v503_gate_report(self, state, *, held: bool) -> None:
+        tick = int(getattr(self, "_tick", 0) or 0)
+        armed = bool(getattr(self, "_v503_gate_armed", False))
+        state_name = gate_state(armed=armed, open_reason=getattr(self, "_v503_gate_open_reason", None))
+        key = (state_name, str(getattr(self, "_v503_gate_open_reason", "") or ""))
+        due = key != getattr(self, "_v503_gate_reported", None)
+        if not due and not (held and tick > 0 and tick % V503_GATE_EVERY_TICKS == 0):
+            return
+        self._v503_gate_reported = key
+        now = int(getattr(state, "timestamp", 0) or 0)
+        self._emit(
+            "V503_QUIET_GATE", force=True, tick=tick,
+            v503_newcomer_gate_version=V503_NEWCOMER_GATE_VERSION,
+            newcomer_gate=int(bool(getattr(self, "research_v503_newcomer_gate", True))),
+            gate_state=state_name, held=int(bool(held)),
+            open_reason=getattr(self, "_v503_gate_open_reason", None),
+            prior_evidence=getattr(self, "_v503_gate_evidence", None),
+            anchor_ts=getattr(self, "_v503_gate_anchor_ts", None),
+            gate_ts=getattr(self, "_v503_gate_ts", None),
+            s_to_gate=seconds_to_gate(now=now, gate_ts=getattr(self, "_v503_gate_ts", None)),
+            quiet_requests=int(getattr(self, "_v503_gate_quiet_requests", 0) or 0),
+            errors=int(getattr(self, "_v503_gate_errors", 0) or 0),
+        )
+
+    def _v503_gate_session_state(self) -> dict[str, Any]:
+        return session_state(
+            opened=not bool(getattr(self, "_v503_gate_armed", False)),
+            anchor=getattr(self, "_v503_gate_anchor_ts", None),
+            open_reason=getattr(self, "_v503_gate_open_reason", None),
+        )
+
+    # ---- v5.0.3 G3: the validator's FIFO -------------------------------------------------------
+
+    def _match_trade_fifo(self, book_id, is_buy, quantity, price, fee, timestamp):
+        """v5.0.3 G3: the validator's matcher, which prorates a fill's fee on a PARTIAL close.
+
+        The inherited copy charged the whole fill's fee to the closing part, which at this venue's
+        maker rebate overstates realized PnL -- the number Kappa, the PnL score and this agent's own
+        rolling Kappa authority are all built on.  Off restores the inherited arithmetic.
+        """
+        if not bool(getattr(self, "research_v503_fifo_fee_exact", True)):
+            return super()._match_trade_fifo(book_id, is_buy, quantity, price, fee, timestamp)
+        self._v503_fifo_calls = int(getattr(self, "_v503_fifo_calls", 0) or 0) + 1
+        return v503_match_trade_fifo(
+            self._open_positions[int(book_id)],
+            is_buy=bool(is_buy), quantity=float(quantity), price=float(price),
+            fee=float(fee), timestamp=timestamp,
+        )
+
+    # ---- v5.0.3 G2/G4: the observatory ---------------------------------------------------------
+
+    def _v503_recorder_handle(self):
+        """The recorder, built on first use so it can name its files after the run."""
+        if not bool(getattr(self, "research_v503_state_recorder", True)):
+            return None
+        recorder = getattr(self, "_v503_recorder", None)
+        if recorder is None and not getattr(self, "_v503_recorder_started", False):
+            self._v503_recorder_started = True
+            directory = os.path.join(
+                str(getattr(self, "research_output_dir", None) or self.output_dir), "observatory",
+            )
+            recorder = StateRecorder(
+                directory, uid=getattr(self, "uid", None),
+                depth_every=int(getattr(self, "_v503_recorder_depth_every", V503_DEPTH_EVERY)),
+                max_bytes=int(getattr(self, "_v503_recorder_max_bytes", 0) or 0),
+            )
+            self._v503_recorder = recorder
+        return recorder
+
+    def _v503_service(self, state) -> None:
+        """v5.0.3, once per request: capture the state, then the observatory and Kappa rows."""
+        tick = int(getattr(self, "_tick", 0) or 0)
+        recorder = self._v503_recorder_handle()
+        if recorder is not None:
+            recorder.capture(
+                getattr(state, "books", None), tick=tick,
+                ts=int(getattr(state, "timestamp", 0) or 0),
+            )
+            if tick > 0 and tick % V503_OBSERVATORY_EVERY_TICKS == 0:
+                self._emit("V503_OBSERVATORY", force=True, tick=tick, **recorder.snapshot())
+        if (
+            bool(getattr(self, "research_v503_book_kappa_rows", True))
+            and tick > 0 and tick % V503_BOOK_KAPPA_EVERY_TICKS == 0
+        ):
+            self._v503_emit_book_kappa(tick)
+
+    def _v503_emit_book_kappa(self, tick: int) -> None:
+        """Every scored book's Kappa, normalization and activity, as the mirror computed them.
+
+        The validator publishes the same per-book numbers on its own metrics page, so this row is
+        what makes the comparison exact instead of aggregate.
+        """
+        row = getattr(self, "_v500_last_score", None)
+        if not row:
+            return
+        mirror = getattr(self, "_v500_last_books", None) or {}
+        if not mirror:
+            return
+        books = []
+        for book, values in sorted(mirror.items()):
+            kappa = values.get("kappa")
+            if kappa is None:
+                continue
+            books.append([
+                int(book), round(float(kappa), 6),
+                None if values.get("norm") is None else round(float(values["norm"]), 6),
+                float(values.get("activity", 0.0) or 0.0), int(values.get("obs", 0) or 0),
+            ])
+        if not books:
+            return
+        self._emit(
+            "V503_BOOK_KAPPA", force=True, tick=tick,
+            v503_observatory_version=V503_OBSERVATORY_VERSION,
+            kappa_score=row.get("kappa_score"), kappa_median=row.get("kappa_median"),
+            scored_books=row.get("scored_books"), n_rounds=row.get("n_rounds"),
+            books=books,
+        )
+
     def handle(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
         # A1.9.9.2: the collector's full pass is scheduled on the miner's event loop
         # after this request returns, so it runs in the gap before the next one.
@@ -6320,7 +6591,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v502_release_market_terminal()
         except Exception:
             self._v502_errors = int(getattr(self, "_v502_errors", 0) or 0) + 1
-        response = super().respond(state)
+        # v5.0.3 G1: while the newcomer quiet gate holds, this request is answered with no
+        # instructions.  Every observer, the venue seed and the epoch resync above have already
+        # run, so the agent's own state stays current; the frozen chain below -- which is what
+        # reserves ownership and places orders -- does not run at all.  The post-passes still run
+        # on the empty response: they only ever add cancels, which realize nothing.
+        quiet = None
+        try:
+            quiet = self._v503_gate_response(state)
+        except Exception:
+            self._v503_gate_errors = int(getattr(self, "_v503_gate_errors", 0) or 0) + 1
+        response = super().respond(state) if quiet is None else quiet
         # A1.9.6 F11.  The venue truncates volume to its grid and the final
         # validator leaves sub-1e-12 noise in place, so 0.25009999999999827
         # shipped and executed as 0.2500, leaving one unit behind on every
@@ -6369,6 +6650,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v502_service(state)
         except Exception:
             self._v502_errors = int(getattr(self, "_v502_errors", 0) or 0) + 1
+        # v5.0.3 telemetry: the observatory capture and its rows.  Runs while the gate holds too --
+        # the quiet window is the most valuable one to record, and the least costly to record in.
+        try:
+            self._v503_service(state)
+        except Exception:
+            self._v503_recorder_errors = int(getattr(self, "_v503_recorder_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -7477,6 +7764,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         try:
             with open(path, encoding="utf-8") as handle:
                 payload = json.load(handle)
+            # v5.0.3 G1: once the quiet gate has opened it stays open for this registration, and
+            # its anchor is the earliest first state seen, so a restart cannot restart the clock.
+            payload[V503_NEWCOMER_GATE_VERSION] = self._v503_gate_session_state()
             payload["direct_maker_quality_a1_5_1"] = {
                 "version": DIRECT_QUALITY_VERSION,
                 "global": getattr(self, "_direct_maker_quality_global", MakerLifecycleStats()).as_state(),
@@ -9514,6 +9804,30 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_v502_refusal_turns"] = int(v502_counts.get("compactor_refusal_turns", 0) or 0)
         stats["direct_v502_market_released"] = int(v502_counts.get("market_terminal_released", 0) or 0)
         stats["direct_v502_errors"] = int(getattr(self, "_v502_errors", 0) or 0)
+        stats["direct_v503_newcomer_gate_version"] = V503_NEWCOMER_GATE_VERSION
+        stats["direct_v503_newcomer_gate"] = int(bool(getattr(self, "research_v503_newcomer_gate", True)))
+        stats["direct_v503_gate_state"] = gate_state(
+            armed=bool(getattr(self, "_v503_gate_armed", False)),
+            open_reason=getattr(self, "_v503_gate_open_reason", None),
+        )
+        stats["direct_v503_gate_open_reason"] = getattr(self, "_v503_gate_open_reason", None)
+        stats["direct_v503_gate_ts"] = getattr(self, "_v503_gate_ts", None)
+        stats["direct_v503_gate_quiet_requests"] = int(getattr(self, "_v503_gate_quiet_requests", 0) or 0)
+        stats["direct_v503_gate_errors"] = int(getattr(self, "_v503_gate_errors", 0) or 0)
+        stats["direct_v503_validator_fifo_version"] = V503_VALIDATOR_FIFO_VERSION
+        stats["direct_v503_fifo_fee_exact"] = int(bool(getattr(self, "research_v503_fifo_fee_exact", True)))
+        stats["direct_v503_fifo_calls"] = int(getattr(self, "_v503_fifo_calls", 0) or 0)
+        stats["direct_v503_observatory_version"] = V503_OBSERVATORY_VERSION
+        stats["direct_v503_state_recorder"] = int(bool(getattr(self, "research_v503_state_recorder", True)))
+        stats["direct_v503_book_kappa_rows"] = int(bool(getattr(self, "research_v503_book_kappa_rows", True)))
+        v503_recorder = getattr(self, "_v503_recorder", None)
+        v503_snap = v503_recorder.snapshot() if v503_recorder is not None else {}
+        stats["direct_v503_states_written"] = int(v503_snap.get("states_written", 0) or 0)
+        stats["direct_v503_trades_written"] = int(v503_snap.get("trades_written", 0) or 0)
+        stats["direct_v503_bytes_written"] = int(v503_snap.get("bytes_written", 0) or 0)
+        stats["direct_v503_recorder_dropped"] = int(v503_snap.get("dropped", 0) or 0)
+        stats["direct_v503_recorder_stopped"] = str(v503_snap.get("stopped_reason", "") or "")
+        stats["direct_v503_recorder_errors"] = int(getattr(self, "_v503_recorder_errors", 0) or 0)
         stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
         stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
         stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)

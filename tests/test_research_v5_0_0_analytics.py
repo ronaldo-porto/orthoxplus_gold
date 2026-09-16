@@ -441,7 +441,11 @@ def test_the_service_logs_the_universe_round_trips_score_and_rollups():
 # ---- nothing the strategy decides can read it ---------------------------------------------------
 
 def test_no_decision_path_reads_the_analytics():
-    allowed = {"_emit", "_v500_service", "_v500_note_universe", "_v500_emit_score", "onTrade", "respond"}
+    # v5.0.3 adds one more READER of the mirror, and it is an emitter: _v503_emit_book_kappa writes
+    # the per-book Kappa table the offline comparison against the validator's own per-book gauges
+    # reads.  The rule this test enforces is unchanged -- no DECISION path may read the analytics.
+    allowed = {"_emit", "_v500_service", "_v500_note_universe", "_v500_emit_score", "onTrade", "respond",
+               "_v503_emit_book_kappa"}
     for node in ast.walk(ast.parse(SIMPLE)):
         if isinstance(node, ast.ClassDef) and node.name == "Strategy1_Research_Simple":
             for fn in node.body:
@@ -468,8 +472,8 @@ def test_v5_0_0_is_wired_and_launched():
     assert "analytics.note_trade(" in _method_source("onTrade")
     assert "analytics.observe(event_type, payload)" in _method_source("_emit")
     assert "self.research_v500_analytics = self._as_bool(" in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_2"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_2"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_3"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_3"' in SIMPLE
     assert va.V500_ANALYTICS_VERSION.endswith("v5_0_0") and sm.V500_SCORE_MIRROR_VERSION.endswith("v5_0_0")
     for key in ("direct_v500_analytics_version", "direct_v500_score_mirror_version", "direct_v500_analytics",
                 "direct_v500_rt_rows", "direct_v500_counterfactual_rows", "direct_v500_observe_errors",

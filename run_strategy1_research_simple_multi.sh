@@ -68,7 +68,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -82,6 +82,7 @@ case "$POLICY_VER" in
   strategy1_direct_v5_0_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1 ;;
   strategy1_direct_v5_0_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1 ;;
   strategy1_direct_v5_0_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1 ;;
+  strategy1_direct_v5_0_3) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -196,7 +197,9 @@ research_a1992_idle_gc=1 \
 research_v500_analytics=1 \
 research_v501_activity_alignment=1 \
 research_v502_flat_residue=1 research_v502_clip_recognition=1 \
-research_v502_compactor_turn=1 research_v502_market_terminal=1"
+research_v502_compactor_turn=1 research_v502_market_terminal=1 \
+research_v503_newcomer_gate=1 research_v503_state_recorder=1 \
+research_v503_fifo_fee_exact=1 research_v503_book_kappa_rows=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -930,6 +933,70 @@ if [[ "$V502_BUILD" == "1" ]]; then
   echo "[preflight] v5.0.2 dust liveness PASS"
 fi
 
+# v5.0.3.  Phase 0 + Phase 1 of the top-20 roadmap.
+# G1, the newcomer quiet gate: reward.py seeds a uid's track-record standing at its FIRST NON-ZERO
+# trading score, and trading = 0.79*kappa + 0.21*pnl.  The PnL leg turns non-zero once 41 books
+# carry realized PnL -- tick 203 on UID 18's own run -- while kappa cannot be non-zero until the
+# stored rounds span 5,400 sim-s.  Trading from registration therefore seeds the standing at ~0.0001
+# and it crawls up at 1/k: UID 18's weight and emission were exactly 0 for its whole immunity
+# window.  A newcomer now answers every request with no instructions until its kappa gate is open.
+# G2, the state recorder: every book's trades carry both counterparties' uids, so the field is
+# measurable rather than guessable.  It needs the lazy raw books to cost nothing.
+# G3, the validator's FIFO: a partial close must prorate the fill's fee, or a maker rebate is
+# counted twice.  That branch fired on 247 of 2,247 reducing fills (11.0%) and is worth about +114
+# at the median fill fee, roughly half of the 212 by which this agent's ledger (+1,803) ran ahead
+# of the validator's FIFO (+1,591); the rest of that gap is not yet explained.
+if [[ "$V503_BUILD" == "1" ]]; then
+  grep -qF 'quiet = self._v503_gate_response(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.3 G1 missing: the newcomer gate never runs, so the first scored round would" >&2
+    echo "       seed the track-record standing on a PnL-only score, as v5.0.0 did on UID 18." >&2
+    exit 1
+  }
+  grep -qF 'response = super().respond(state) if quiet is None else quiet' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.3 G1 missing: the frozen chain still runs while the gate holds, so orders" >&2
+    echo "       would be placed and ownership reserved during the quiet window." >&2
+    exit 1
+  }
+  grep -qF 'armed, reason = arm_decision(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.3 G1 missing: the gate arms without checking for prior evidence, so it could" >&2
+    echo "       hold an established miner that already has a track record." >&2
+    exit 1
+  }
+  grep -qF 'reason = should_open(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.3 G1 missing: the gate never opens on exposure, so a position could sit" >&2
+    echo "       unmanaged through the quiet window." >&2
+    exit 1
+  }
+  grep -qF 'close_fee = fee * remaining_qty * quantity_inv' "$AGENT_PATH/research_v5_validator_fifo.py" || {
+    echo "ERROR: v5.0.3 G3 missing: the partial close does not prorate the fill fee, so a maker" >&2
+    echo "       rebate is counted twice and realized PnL is overstated." >&2
+    exit 1
+  }
+  grep -qF 'def _match_trade_fifo(self, book_id, is_buy, quantity, price, fee, timestamp):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.3 G3 not wired: the agent still scores itself with the inherited matcher." >&2
+    exit 1
+  }
+  grep -qF 'recorder.capture(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.3 G2 not wired: the observatory records nothing." >&2
+    exit 1
+  }
+  for v503_switch in research_v503_newcomer_gate research_v503_state_recorder \
+                     research_v503_fifo_fee_exact research_v503_book_kappa_rows; do
+    [[ "$PARAMS" == *"${v503_switch}=1"* ]] || {
+      echo "ERROR: v5.0.3 build without ${v503_switch}=1 in PARAMS." >&2
+      exit 1
+    }
+  done
+  if [[ "$PARAMS" == *"research_v503_state_recorder=1"* ]]; then
+    [[ "$PARAMS" == *"lazy_load=1"* ]] || {
+      echo "ERROR: v5.0.3 G2 needs lazy_load=1: without the lazy raw books the recorder would have" >&2
+      echo "       to parse 128 books on the request path, or record nothing at all." >&2
+      exit 1
+    }
+  fi
+  echo "[preflight] v5.0.3 newcomer gate + observatory PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -978,6 +1045,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v5_0_0_analytics.py \
       tests/test_research_v5_0_1_activity.py \
       tests/test_research_v5_0_2_dust_liveness.py \
+      tests/test_research_v5_0_3_newcomer_observatory.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py

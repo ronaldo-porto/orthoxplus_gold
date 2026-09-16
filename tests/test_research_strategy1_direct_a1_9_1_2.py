@@ -47,8 +47,8 @@ OID = 95959
 
 
 def test_version_advances_to_a1_9_1_2():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_2"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_2"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_3"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_3"' in SRC
 
 
 def test_release_is_attempted_before_the_stale_refusal():
