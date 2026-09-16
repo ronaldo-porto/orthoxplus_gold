@@ -472,8 +472,8 @@ def test_v5_0_0_is_wired_and_launched():
     assert "analytics.note_trade(" in _method_source("onTrade")
     assert "analytics.observe(event_type, payload)" in _method_source("_emit")
     assert "self.research_v500_analytics = self._as_bool(" in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_3"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_3"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_4"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_4"' in SIMPLE
     assert va.V500_ANALYTICS_VERSION.endswith("v5_0_0") and sm.V500_SCORE_MIRROR_VERSION.endswith("v5_0_0")
     for key in ("direct_v500_analytics_version", "direct_v500_score_mirror_version", "direct_v500_analytics",
                 "direct_v500_rt_rows", "direct_v500_counterfactual_rows", "direct_v500_observe_errors",

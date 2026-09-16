@@ -24,6 +24,13 @@ Depth is context, so the touch is kept on every state and the full ladder only e
 states.  On UID 18's own cadence that is about 2 MB an hour compressed against roughly 25 for whole
 states.  A byte budget stops the recorder rather than the disk stopping the miner.
 
+v5.0.4 H3: THE BUDGET COUNTS WHAT IS ON DISK.  v5.0.3 counted the uncompressed JSON it handed to gzip.
+On UID 125 that is about 197 KB a state against about 37 KB written (5,499 states by 2026-09-16
+16:00), so its 2 GiB budget ends the recording at roughly 10,900 states with about 385 MB on disk, a
+fifth of what it was meant to allow.
+With ``budget_basis=DISK`` the budget is compared with the compressed bytes of every closed part plus
+the position of the open one; the payload count is still reported.  ``PAYLOAD`` restores v5.0.3.
+
 NOTHING HERE IS READ BY A DECISION.  The recorder is write-only: no strategy path consumes its
 output, and a recorder fault is contained to the recorder.
 """
@@ -38,6 +45,7 @@ import time
 from typing import Any, Mapping
 
 V503_OBSERVATORY_VERSION = "direct_observatory_v5_0_3"
+V504_DISK_BUDGET_VERSION = "direct_observatory_disk_budget_v5_0_4"
 
 # Raw wire keys, from taos/im/protocol/models.py.  Only these are assumed; every value is copied
 # verbatim, so a field added upstream is recorded without a change here.
@@ -53,6 +61,11 @@ V503_DEPTH_EVERY = 100
 V503_QUEUE_SIZE = 8
 V503_MAX_BYTES = 2 * 1024 * 1024 * 1024
 V503_ROTATE_BYTES = 256 * 1024 * 1024
+# v5.0.4 H3: about two weeks of one miner's recording at today's ~0.58 GB a day.
+V504_DISK_BUDGET_MB = 8192
+
+BUDGET_DISK = "DISK"
+BUDGET_PAYLOAD = "PAYLOAD"
 
 STOP_BUDGET = "BYTE_BUDGET"
 STOP_ERROR = "WRITE_ERROR"
@@ -120,6 +133,28 @@ def depth_due(tick: Any, every: Any) -> bool:
     return step > 0 and n > 0 and n % step == 0
 
 
+def disk_position(handle: Any) -> int:
+    """Bytes the open part holds on disk so far: the compressed stream's position, not the payload's.
+
+    ``gzip.GzipFile`` keeps the file it writes to as ``fileobj``.  A writer without one falls back to
+    the file's size, then to its own position (a plain sink, where the two are the same thing).
+    """
+    target = getattr(handle, "fileobj", None)
+    if target is not None:
+        try:
+            return int(target.tell())
+        except (AttributeError, OSError, ValueError):
+            pass
+    try:
+        return int(os.fstat(handle.fileno()).st_size)
+    except (AttributeError, OSError, ValueError):
+        pass
+    try:
+        return int(handle.tell())
+    except (AttributeError, OSError, ValueError):
+        return 0
+
+
 class StateRecorder:
     """Owns the recorder's queue, writer thread and files for one agent process."""
 
@@ -135,6 +170,7 @@ class StateRecorder:
         queue_size: int = V503_QUEUE_SIZE,
         opener: Any = gzip.open,
         clock: Any = time.time,
+        budget_basis: str = BUDGET_PAYLOAD,
     ) -> None:
         self.directory = str(directory)
         self.uid = uid
@@ -142,12 +178,17 @@ class StateRecorder:
         self.depth_every = max(0, int(depth_every))
         self.max_bytes = max(0, int(max_bytes))
         self.rotate_bytes = max(1, int(rotate_bytes))
+        self.budget_basis = BUDGET_DISK if str(budget_basis) == BUDGET_DISK else BUDGET_PAYLOAD
         self._opener = opener
         self._clock = clock
         self._queue: queue.Queue = queue.Queue(maxsize=max(1, int(queue_size)))
         self._thread: threading.Thread | None = None
         self._handle: Any = None
         self._part = 0
+        self._path: str | None = None
+        self._part_position = 0
+        self._disk_closed = 0
+        self.disk_bytes = 0
         self.bytes_written = 0
         self.states_captured = 0
         self.states_written = 0
@@ -209,7 +250,10 @@ class StateRecorder:
         self.bytes_written += len(payload)
         self.states_written += 1
         self.trades_written += int(row.get("n_trades", 0) or 0)
-        if self.max_bytes and self.bytes_written >= self.max_bytes:
+        self._part_position = disk_position(handle)
+        self.disk_bytes = self._disk_closed + self._part_position
+        spent = self.disk_bytes if self.budget_basis == BUDGET_DISK else self.bytes_written
+        if self.max_bytes and spent >= self.max_bytes:
             self.stopped_reason = STOP_BUDGET
             self._close()
             return
@@ -221,7 +265,9 @@ class StateRecorder:
             os.makedirs(self.directory, exist_ok=True)
             self._part += 1
             name = f"observatory_uid{self.uid}_{self.run_id}_{self._part:04d}.jsonl.gz"
-            self._handle = self._opener(os.path.join(self.directory, name), "ab")
+            self._path = os.path.join(self.directory, name)
+            self._part_position = 0
+            self._handle = self._opener(self._path, "ab")
         return self._handle
 
     def _close(self) -> None:
@@ -231,6 +277,14 @@ class StateRecorder:
                 handle.close()
             except Exception:
                 self.errors += 1
+            # The trailer is written at close, so the file's own size is the part's final count.
+            try:
+                closed = int(os.path.getsize(self._path)) if self._path else self._part_position
+            except OSError:
+                closed = self._part_position
+            self._disk_closed += max(closed, self._part_position)
+            self._part_position = 0
+            self.disk_bytes = self._disk_closed
 
     def close(self) -> None:
         self.stopped_reason = self.stopped_reason or STOP_CLOSED
@@ -245,6 +299,9 @@ class StateRecorder:
             "states_written": self.states_written,
             "trades_written": self.trades_written,
             "bytes_written": self.bytes_written,
+            "disk_bytes": self.disk_bytes,
+            "budget_basis": self.budget_basis,
+            "max_bytes": self.max_bytes,
             "parts": self._part,
             "dropped": self.dropped,
             "errors": self.errors,

@@ -17,6 +17,13 @@ RESEARCH_JSONL="${RESEARCH_JSONL:-1}"
 RESEARCH_CONSOLE="${RESEARCH_CONSOLE:-1}"
 RESEARCH_QUEUE="${RESEARCH_QUEUE:-65536}"
 RESEARCH_DIR="${RESEARCH_DIR:-$SCRIPT_DIR/logs/m1_strategy1_research_simple}"
+# v5.0.4 operator settings; see the v5.0.4 preflight block below for what each one means.
+#   HISTORY_ANCHOR  auto | established | <simulation id>@<sim seconds>   (H2)
+#   LEGACY_SESSION  ignore | adopt                                       (H1)
+#   RECORDER_MAX_MB compressed MB the state recorder may write           (H3)
+HISTORY_ANCHOR="${HISTORY_ANCHOR:-auto}"
+LEGACY_SESSION="${LEGACY_SESSION:-ignore}"
+RECORDER_MAX_MB="${RECORDER_MAX_MB:-8192}"
 
 EXTRA=()
 
@@ -68,7 +75,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -83,6 +90,7 @@ case "$POLICY_VER" in
   strategy1_direct_v5_0_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1 ;;
   strategy1_direct_v5_0_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1 ;;
   strategy1_direct_v5_0_3) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1 ;;
+  strategy1_direct_v5_0_4) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -199,7 +207,11 @@ research_v501_activity_alignment=1 \
 research_v502_flat_residue=1 research_v502_clip_recognition=1 \
 research_v502_compactor_turn=1 research_v502_market_terminal=1 \
 research_v503_newcomer_gate=1 research_v503_state_recorder=1 \
-research_v503_fifo_fee_exact=1 research_v503_book_kappa_rows=1"
+research_v503_fifo_fee_exact=1 research_v503_book_kappa_rows=1 \
+research_v504_session_per_uid=1 research_v504_legacy_session=${LEGACY_SESSION} \
+research_v504_history_anchor=${HISTORY_ANCHOR} \
+research_v504_disk_budget=1 research_v503_recorder_max_mb=${RECORDER_MAX_MB} \
+research_v504_mirror_rounds=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -997,6 +1009,71 @@ if [[ "$V503_BUILD" == "1" ]]; then
   echo "[preflight] v5.0.3 newcomer gate + observatory PASS"
 fi
 
+# v5.0.4.  Registration identity and the observatory budget.
+# H1: the session file was named after network, subnet and simulation, not the miner, so UID 125,
+# launched from UID 18's tree on 2026-09-16, restored UID 18's evidence: the quiet gate never armed
+# and the activity belief took UID 18's history start.  The file now carries the UID.
+# H2: the validator starts a UID's history at registration and writes a round on every state; the
+# agent can only infer that start.  HISTORY_ANCHOR states it:
+#   auto         a fresh registration, or a restart that finds this UID's own session file;
+#   established  a UID whose Kappa gate opened more than 3 sim-h ago (every restart of an
+#                established miner, and every restart at a new simulation);
+#   <sim>@<s>    the simulation id and sim second of the registration block, e.g.
+#                20260913_0722@47405 for UID 125.  Declare LATER when unsure: an earlier value
+#                opens the quiet gate early.
+# H3: the recorder budget counted uncompressed JSON (5x the disk it protects); it now counts disk.
+# H4: the score copy runs over every round the validator holds, not only the ones this process saw.
+if [[ "$V504_BUILD" == "1" ]]; then
+  if ! [[ "$HISTORY_ANCHOR" == "auto" || "$HISTORY_ANCHOR" == "established" \
+          || "$HISTORY_ANCHOR" =~ ^[A-Za-z0-9_.-]+@[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "ERROR: v5.0.4 HISTORY_ANCHOR='${HISTORY_ANCHOR}' is not auto, established or <sim>@<seconds>." >&2
+    exit 1
+  fi
+  if ! [[ "$LEGACY_SESSION" == "ignore" || "$LEGACY_SESSION" == "adopt" ]]; then
+    echo "ERROR: v5.0.4 LEGACY_SESSION='${LEGACY_SESSION}' is not ignore or adopt." >&2
+    exit 1
+  fi
+  if ! [[ "$RECORDER_MAX_MB" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: v5.0.4 RECORDER_MAX_MB='${RECORDER_MAX_MB}' is not a whole number of MB (0 = unlimited)." >&2
+    exit 1
+  fi
+  grep -qF 'return uid_session_path(path, getattr(self, "uid", None))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.4 H1 missing: the session file is still shared by every UID launched from this tree." >&2
+    exit 1
+  }
+  grep -qF 'raw = self._v504_read_session(identity)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.4 H1 not wired: the session read does not check whose payload it restores." >&2
+    exit 1
+  }
+  grep -qF 'belief.pin(pin.start_ns, pin.source)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.4 H2 not wired: a declared history start never reaches the activity belief." >&2
+    exit 1
+  }
+  grep -qF 'self._v504_service(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.4 H2/H4 not wired: the declared start is not pinned before the quiet gate." >&2
+    exit 1
+  }
+  grep -qF 'spent = self.disk_bytes if self.budget_basis == BUDGET_DISK else self.bytes_written' "$AGENT_PATH/research_v5_observatory.py" || {
+    echo "ERROR: v5.0.4 H3 missing: the recorder budget still counts uncompressed payload." >&2
+    exit 1
+  }
+  grep -qF 'provider = getattr(self, "_v504_mirror_inputs", None)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v5.0.4 H4 not wired: the score copy still counts only this process's rounds." >&2
+    exit 1
+  }
+  for v504_switch in research_v504_session_per_uid research_v504_disk_budget research_v504_mirror_rounds; do
+    [[ "$PARAMS" == *"${v504_switch}=1"* ]] || {
+      echo "ERROR: v5.0.4 build without ${v504_switch}=1 in PARAMS." >&2
+      exit 1
+    }
+  done
+  if [[ "$NETUID" == "79" && "$HISTORY_ANCHOR" == "auto" ]]; then
+    echo "[preflight] v5.0.4 NOTE: mainnet with HISTORY_ANCHOR=auto.  Right for a fresh registration only;" >&2
+    echo "            an established UID restarted without its own session file would be held quiet." >&2
+  fi
+  echo "[preflight] v5.0.4 registration identity + disk budget PASS (anchor=${HISTORY_ANCHOR} legacy=${LEGACY_SESSION} recorder_mb=${RECORDER_MAX_MB})"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -1046,6 +1123,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v5_0_1_activity.py \
       tests/test_research_v5_0_2_dust_liveness.py \
       tests/test_research_v5_0_3_newcomer_observatory.py \
+      tests/test_research_v5_0_4_registration_identity.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py

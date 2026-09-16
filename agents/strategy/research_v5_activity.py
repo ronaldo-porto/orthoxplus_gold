@@ -86,8 +86,22 @@ class ActivityBelief:
         self.history_start_ts: int | None = None
         self.history_start_source: str | None = None
         self.rebases = 0
+        # v5.0.4 H2: a declared start.  Evidence no longer moves it; a new simulation's rebase still does.
+        self.pinned = False
+
+    def pin(self, ts: Any, source: str) -> bool:
+        try:
+            value = int(ts)
+        except (TypeError, ValueError):
+            return False
+        self.history_start_ts = value
+        self.history_start_source = str(source)
+        self.pinned = True
+        return True
 
     def note_evidence(self, ts: Any, source: str) -> bool:
+        if self.pinned:
+            return False
         try:
             value = int(ts)
         except (TypeError, ValueError):

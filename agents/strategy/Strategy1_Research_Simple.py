@@ -376,9 +376,43 @@ from research_v5_newcomer_gate import (
     should_open,
 )
 from research_v5_observatory import (
+    BUDGET_DISK,
+    BUDGET_PAYLOAD,
     V503_DEPTH_EVERY,
     V503_OBSERVATORY_VERSION,
+    V504_DISK_BUDGET_MB,
+    V504_DISK_BUDGET_VERSION,
     StateRecorder,
+)
+from research_v5_session_identity import (
+    ANCHOR_AUTO,
+    KAPPA_LOOKBACK_NS,
+    LEGACY_ADOPT,
+    LEGACY_IGNORE,
+    MODE_INVALID,
+    OWNER_KEY,
+    V504_REGISTRATION_IDENTITY_VERSION,
+    choose_session,
+    legacy_mode,
+    owner_record,
+    parse_history_anchor,
+    resolve_history_pin,
+    uid_session_path,
+)
+from research_v5_mirror_rounds import (
+    BASIS_OBSERVED,
+    BASIS_VALIDATOR_GRID,
+    SESSION_KEY as V504_MIRROR_SESSION_KEY,
+    V504_MIRROR_ROUNDS_VERSION,
+    merge_history,
+    new_mirror_state,
+    positive_step,
+    rebase_keys,
+    rebuild_history,
+    resolve_start,
+    restored_start as mirror_restored_start,
+    session_state as mirror_session_state,
+    validator_rounds,
 )
 from research_v5_validator_fifo import (
     V503_VALIDATOR_FIFO_VERSION,
@@ -508,8 +542,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_3"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_3"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_4"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_4"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -526,6 +560,10 @@ V503_GATE_EVERY_TICKS = 100
 # comparison against the validator's published per-book gauges reads.
 V503_OBSERVATORY_EVERY_TICKS = 500
 V503_BOOK_KAPPA_EVERY_TICKS = 500
+# v5.0.4.  The identity state row: on the first request, then on this cadence.
+V504_STATE_EVERY_TICKS = 500
+# v5.0.4 H2.  The gate's reason for not arming when the operator declares an established UID.
+V504_EVIDENCE_DECLARED_ESTABLISHED = "DECLARED_ESTABLISHED"
 
 # A1.7.5 bounded hold.  Consecutive vetoed ticks allowed per book before the
 # base risk decision is restored.  Sized from the A1.7.4.5 runtime, where an
@@ -907,10 +945,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
             v503_depth_every = int(getattr(self.config, "research_v503_recorder_depth_every", V503_DEPTH_EVERY))
         except (TypeError, ValueError):
             v503_depth_every = V503_DEPTH_EVERY
+        # v5.0.4 H3: the budget counts compressed bytes on disk, and its default is sized for that.
+        # Off restores v5.0.3: the uncompressed payload is counted against a 2,048 MB default.
+        self.research_v504_disk_budget = self._as_bool(
+            getattr(self.config, "research_v504_disk_budget", True)
+        )
+        v503_default_mb = V504_DISK_BUDGET_MB if self.research_v504_disk_budget else 2048
         try:
-            v503_max_mb = int(getattr(self.config, "research_v503_recorder_max_mb", 2048))
+            v503_max_mb = int(getattr(self.config, "research_v503_recorder_max_mb", v503_default_mb))
         except (TypeError, ValueError):
-            v503_max_mb = 2048
+            v503_max_mb = v503_default_mb
         self._v503_recorder_depth_every = max(0, v503_depth_every)
         self._v503_recorder_max_bytes = max(0, v503_max_mb) * 1024 * 1024
         self._v503_recorder = None
@@ -928,6 +972,34 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self.research_v503_book_kappa_rows = self._as_bool(
             getattr(self.config, "research_v503_book_kappa_rows", True)
         )
+        # v5.0.4 H1: the session file carries the miner UID in its name and an owner record inside,
+        # and a payload another UID wrote is refused.  A legacy file (no owner) is read only when the
+        # operator says it is this UID's (``adopt``).  Off restores v5.0.3's shared file.
+        self.research_v504_session_per_uid = self._as_bool(
+            getattr(self.config, "research_v504_session_per_uid", True)
+        )
+        v504_legacy = legacy_mode(getattr(self.config, "research_v504_legacy_session", LEGACY_IGNORE))
+        self._v504_legacy_invalid = v504_legacy is None
+        self.research_v504_legacy_session = v504_legacy or LEGACY_IGNORE
+        # v5.0.4 H2: the start of this UID's validator history, declared by the operator.  ``auto``
+        # keeps v5.0.3's inference from evidence.
+        self._v504_history_anchor = parse_history_anchor(
+            getattr(self.config, "research_v504_history_anchor", ANCHOR_AUTO)
+        )
+        self.research_v504_history_anchor = self._v504_history_anchor.raw or ANCHOR_AUTO
+        self._v504_history_pin = None
+        # v5.0.4 H4: the copy of the score runs over the validator's round grid, from the start of this
+        # UID's history, with the PnL of rounds before this process rebuilt from the session file.
+        # Off restores v5.0.3: only the rounds this process was sent.
+        self.research_v504_mirror_rounds = self._as_bool(
+            getattr(self.config, "research_v504_mirror_rounds", True)
+        )
+        self._v504_mirror = new_mirror_state()
+        self._v504_session_choice = None
+        self._v504_session_reported = None
+        self._v504_state_reported = False
+        self._v504_stop_reported = False
+        self._v504_errors = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -5923,9 +5995,24 @@ class Strategy1_Research_Simple(Strategy1_Research):
             factors = belief.factors(
                 getattr(self, "_research_kappa_roll_ts_cache", {}) or {}, book_count=book_count, now=now_ts,
             )
+        # v5.0.4 H4: the rounds the validator holds for this UID, when they are known.
+        history = getattr(self, "realized_pnl_history", {}) or {}
+        rounds = analytics.rounds
+        extra: dict[str, Any] = {}
+        provider = getattr(self, "_v504_mirror_inputs", None)
+        if provider is not None:
+            try:
+                chosen = provider(now_ts)
+            except Exception:
+                chosen = None
+                self._v504_errors = int(getattr(self, "_v504_errors", 0) or 0) + 1
+            if chosen is not None:
+                grid_history, grid_rounds, extra = chosen
+                if grid_rounds:
+                    history, rounds = grid_history, grid_rounds
         started = time.perf_counter()
         mirror = mirror_score(
-            getattr(self, "realized_pnl_history", {}) or {}, analytics.rounds, now_ts=now_ts,
+            history, rounds, now_ts=now_ts,
             book_count=book_count, miner_wealth=float(getattr(cfg, "miner_wealth", 0.0) or 0.0),
             grace_period_ns=int(getattr(cfg, "grace_period", 0) or 0),
             volume_decimals=None if decimals is None else int(decimals),
@@ -5945,7 +6032,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         mid = len(pnl_books) // 2
         median_pnl = (None if not pnl_books else
                       pnl_books[mid] if len(pnl_books) % 2 else 0.5 * (pnl_books[mid - 1] + pnl_books[mid]))
-        first_round = min(analytics.rounds) if analytics.rounds else now_ts
+        first_round = min(rounds) if rounds else now_ts
         row = mirror.as_log()
         row.update(
             mirror_ms=round(elapsed_ms, 3),
@@ -5956,6 +6043,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             lowest_marginal=[[b, round(v, 6)] for v, b in marginal[:5]],
             highest_marginal=[[b, round(v, 6)] for v, b in marginal[-5:]],
         )
+        row.update(extra)
         self._v500_last_score = row
         # v5.0.3 G4: the per-book rows, kept for the comparison row against the validator's own
         # per-book gauges.  The score row itself stays exactly as v5.0.0 wrote it.
@@ -6326,18 +6414,29 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 )
             except Exception:
                 opened, anchor_restored = False, None
+        # v5.0.4 H2: a declared start is the operator's statement, not a sign of a track record, so it
+        # is not passed as the belief's evidence; it replaces the inferred anchor instead.
+        pin = getattr(self, "_v504_history_pin", None)
+        pinned = pin is not None and getattr(pin, "start_ns", None) is not None
         evidence = prior_evidence(
             observations=getattr(self, "_research_realized_observations_by_book", {}),
             pnl_history=getattr(self, "realized_pnl_history", {}),
             pnl_events=getattr(self, "_research_realized_pnl_events_by_book", {}),
             round_trip_closes=getattr(self, "_research_round_trip_closes", 0),
-            start_source=None if belief is None else getattr(belief, "history_start_source", None),
+            start_source=(
+                None if belief is None or pinned else getattr(belief, "history_start_source", None)
+            ),
             first_state_source=EVIDENCE_FIRST_STATE,
         )
-        anchor = effective_anchor(
-            anchor_restored,
-            getattr(self, "_research_sim_start_ts", None) or int(getattr(state, "timestamp", 0) or 0),
-        )
+        if pinned and bool(getattr(pin, "established", False)) and evidence is None:
+            evidence = V504_EVIDENCE_DECLARED_ESTABLISHED
+        if pinned:
+            anchor = int(pin.start_ns)
+        else:
+            anchor = effective_anchor(
+                anchor_restored,
+                getattr(self, "_research_sim_start_ts", None) or int(getattr(state, "timestamp", 0) or 0),
+            )
         self._v503_gate_anchor_ts = anchor
         self._v503_gate_ts = gate_timestamp(
             anchor, min_lookback_ns=KAPPA_MIN_LOOKBACK_NS, scoring_interval_ns=SCORING_INTERVAL_NS,
@@ -6472,6 +6571,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 directory, uid=getattr(self, "uid", None),
                 depth_every=int(getattr(self, "_v503_recorder_depth_every", V503_DEPTH_EVERY)),
                 max_bytes=int(getattr(self, "_v503_recorder_max_bytes", 0) or 0),
+                budget_basis=(
+                    BUDGET_DISK if bool(getattr(self, "research_v504_disk_budget", True)) else BUDGET_PAYLOAD
+                ),
             )
             self._v503_recorder = recorder
         return recorder
@@ -6523,6 +6625,186 @@ class Strategy1_Research_Simple(Strategy1_Research):
             kappa_score=row.get("kappa_score"), kappa_median=row.get("kappa_median"),
             scored_books=row.get("scored_books"), n_rounds=row.get("n_rounds"),
             books=books,
+        )
+
+    # ---- v5.0.4 H1: one session file per UID ---------------------------------------------------
+
+    def _research_session_path(self, identity) -> str:
+        path = super()._research_session_path(identity)
+        if not bool(getattr(self, "research_v504_session_per_uid", True)):
+            return path
+        return uid_session_path(path, getattr(self, "uid", None))
+
+    def _v504_read_session(self, identity):
+        """The payload this UID restores from: its own file, or a legacy one the operator adopted."""
+        if not bool(getattr(self, "research_v504_session_per_uid", True)):
+            return super()._research_read_session(identity)
+        uid = getattr(self, "uid", None)
+        own = super()._research_read_session(identity)
+        legacy_path = super()._research_session_path(identity)
+        legacy_exists = os.path.isfile(legacy_path)
+        mode = str(getattr(self, "research_v504_legacy_session", LEGACY_IGNORE) or LEGACY_IGNORE)
+        legacy = None
+        if mode == LEGACY_ADOPT and legacy_exists:
+            try:
+                with open(legacy_path, encoding="utf-8") as handle:
+                    legacy = json.loads(handle.read())
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                legacy = {"schema": "invalid"}
+        choice = choose_session(own, uid=uid, legacy=legacy, legacy_exists=legacy_exists, mode=mode)
+        payload = choice.payload
+        state = getattr(self, "_v504_mirror", None)
+        if state is None:
+            state = self._v504_mirror = new_mirror_state()
+        if isinstance(payload, dict):
+            kept = [
+                value for value in (
+                    mirror_restored_start(payload.get(V504_MIRROR_SESSION_KEY)),
+                    restored_session(payload.get(V503_NEWCOMER_GATE_VERSION))[1],
+                ) if value is not None
+            ]
+            state["restored_start"] = min(kept) if kept else None
+        self._v504_session_choice = choice
+        key = (choice.source, choice.own_verdict, choice.legacy_verdict, choice.owner_uid)
+        if key != getattr(self, "_v504_session_reported", None):
+            self._v504_session_reported = key
+            self._emit(
+                "V504_SESSION_OWNER", force=True, tick=int(getattr(self, "_tick", 0) or 0),
+                v504_registration_identity_version=V504_REGISTRATION_IDENTITY_VERSION,
+                uid=uid, source=choice.source, own_verdict=choice.own_verdict,
+                legacy_verdict=choice.legacy_verdict, owner_uid=choice.owner_uid,
+                own_file=os.path.basename(self._research_session_path(identity)),
+                legacy_file=os.path.basename(legacy_path), legacy_exists=int(legacy_exists),
+                legacy_mode=mode, legacy_mode_invalid=int(bool(getattr(self, "_v504_legacy_invalid", False))),
+                restored_start_ts=state.get("restored_start"),
+            )
+        return payload
+
+    # ---- v5.0.4 H2/H4: the history start and the score copy's rounds ---------------------------
+
+    def _v504_resolve_pin(self, state, now: int) -> None:
+        anchor = getattr(self, "_v504_history_anchor", None)
+        if anchor is None or anchor.mode == MODE_INVALID:
+            return
+        pin = resolve_history_pin(
+            anchor, simulation_id=extract_simulation_id(state), first_state_ns=now,
+        )
+        self._v504_history_pin = pin
+        belief = getattr(self, "_v501_belief", None)
+        if pin is not None and pin.start_ns is not None and belief is not None:
+            belief.pin(pin.start_ns, pin.source)
+
+    def _v504_service(self, state) -> None:
+        """Once per request, before the gate: pin the declared start, then follow the state clock."""
+        raw_now = getattr(state, "timestamp", None)
+        if raw_now is None:
+            return
+        now = int(raw_now)
+        mirror = self._v504_mirror
+        if mirror["live_since"] is None:
+            mirror["live_since"] = now
+            mirror["last_now"] = now
+            self._v504_resolve_pin(state, now)
+            pin = getattr(self, "_v504_history_pin", None)
+            start, source = resolve_start(
+                declared=None if pin is None else pin.start_ns,
+                restored=mirror["restored_start"], first_state=now,
+            )
+            mirror["start_ts"], mirror["start_source"] = start, source
+            step = positive_step(getattr(getattr(state, "config", None), "publish_interval", None))
+            mirror["step_ns"] = step
+            # PnL is known from this process's first state, or from where this UID's own session file
+            # began when it restored fills.  Rounds before that are scored as flat, and the row says so.
+            mirror["pnl_known_from"] = now
+            if bool(getattr(self, "research_v504_mirror_rounds", True)) and step is not None:
+                events = getattr(self, "_research_realized_pnl_events_by_book", {}) or {}
+                restored = rebuild_history(events, step_ns=step, phase_ns=now, before_ns=now)
+                mirror["history"] = {
+                    ts: books for ts, books in restored.items() if start is None or ts >= start
+                }
+                if any(events.values()) and mirror["restored_start"] is not None:
+                    mirror["pnl_known_from"] = min(now, int(mirror["restored_start"]))
+            return
+        last = mirror["last_now"]
+        if last is not None and now <= last - REBASE_MIN_JUMP_NS:
+            # A new simulation: the validator moves this UID's rounds onto the new clock and keeps them.
+            shift = now - last
+            for key in ("start_ts", "live_since", "pnl_known_from"):
+                if mirror[key] is not None:
+                    mirror[key] += shift
+            if mirror["history"]:
+                mirror["history"] = rebase_keys(mirror["history"], shift, keep_from=now - KAPPA_LOOKBACK_NS)
+            mirror["rebases"] += 1
+        mirror["last_now"] = now
+
+    def _v504_mirror_inputs(self, now_ts: int):
+        """``(history, rounds, row fields)`` for the score copy; None with the switch off."""
+        if not bool(getattr(self, "research_v504_mirror_rounds", True)):
+            return None
+        mirror = self._v504_mirror
+        step, start = mirror.get("step_ns"), mirror.get("start_ts")
+        if step is None or start is None:
+            mirror["fallbacks"] += 1
+            return None, None, {"mirror_rounds_basis": BASIS_OBSERVED}
+        rounds = validator_rounds(start, now_ts, step_ns=step, lookback_ns=KAPPA_LOOKBACK_NS)
+        restored = mirror.get("history") or {}
+        if restored:
+            floor = int(now_ts) - KAPPA_LOOKBACK_NS
+            if min(restored) < floor:
+                restored = {ts: books for ts, books in restored.items() if ts >= floor}
+                mirror["history"] = restored
+        history = merge_history(restored, getattr(self, "realized_pnl_history", {}) or {})
+        return history, rounds, {
+            "mirror_rounds_basis": BASIS_VALIDATOR_GRID,
+            "mirror_start_ts": start,
+            "mirror_start_source": mirror.get("start_source"),
+            "mirror_restored_states": len(restored),
+            "mirror_pnl_known_from": mirror.get("pnl_known_from"),
+            "mirror_pnl_complete": int(mirror.get("pnl_known_from") is not None
+                                       and int(mirror["pnl_known_from"]) <= max(int(start), int(rounds[0]))),
+        }
+
+    def _v504_telemetry(self, state) -> None:
+        tick = int(getattr(self, "_tick", 0) or 0)
+        recorder = getattr(self, "_v503_recorder", None)
+        if recorder is not None and recorder.stopped_reason and not self._v504_stop_reported:
+            self._v504_stop_reported = True
+            self._emit(
+                "V504_RECORDER_STOP", force=True, tick=tick,
+                v504_disk_budget_version=V504_DISK_BUDGET_VERSION, **recorder.snapshot(),
+            )
+        if self._v504_state_reported and not (tick > 0 and tick % V504_STATE_EVERY_TICKS == 0):
+            return
+        self._v504_state_reported = True
+        anchor = getattr(self, "_v504_history_anchor", None)
+        pin = getattr(self, "_v504_history_pin", None)
+        choice = getattr(self, "_v504_session_choice", None)
+        mirror = self._v504_mirror
+        belief = getattr(self, "_v501_belief", None)
+        self._emit(
+            "V504_IDENTITY_STATE", force=True, tick=tick,
+            v504_registration_identity_version=V504_REGISTRATION_IDENTITY_VERSION,
+            v504_mirror_rounds_version=V504_MIRROR_ROUNDS_VERSION,
+            uid=getattr(self, "uid", None),
+            session_per_uid=int(bool(getattr(self, "research_v504_session_per_uid", True))),
+            session_source=None if choice is None else choice.source,
+            legacy_mode=getattr(self, "research_v504_legacy_session", LEGACY_IGNORE),
+            anchor_mode=None if anchor is None else anchor.mode,
+            anchor_raw=None if anchor is None else anchor.raw,
+            pin_source=None if pin is None else pin.source,
+            pin_start_ts=None if pin is None else pin.start_ns,
+            pin_established=None if pin is None else int(bool(pin.established)),
+            belief_start_ts=None if belief is None else belief.history_start_ts,
+            belief_start_source=None if belief is None else belief.history_start_source,
+            mirror_rounds=int(bool(getattr(self, "research_v504_mirror_rounds", True))),
+            mirror_start_ts=mirror.get("start_ts"), mirror_start_source=mirror.get("start_source"),
+            mirror_restored_states=len(mirror.get("history") or {}),
+            mirror_pnl_known_from=mirror.get("pnl_known_from"),
+            mirror_step_ns=mirror.get("step_ns"), mirror_rebases=mirror.get("rebases"),
+            mirror_fallbacks=mirror.get("fallbacks"),
+            disk_budget=int(bool(getattr(self, "research_v504_disk_budget", True))),
+            recorder_max_bytes=int(getattr(self, "_v503_recorder_max_bytes", 0) or 0),
+            errors=int(getattr(self, "_v504_errors", 0) or 0),
         )
 
     def handle(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
@@ -6626,6 +6908,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # run, so the agent's own state stays current; the frozen chain below -- which is what
         # reserves ownership and places orders -- does not run at all.  The post-passes still run
         # on the empty response: they only ever add cancels, which realize nothing.
+        # v5.0.4 H2/H4: the declared history start is pinned before the gate and the activity belief
+        # read it, and the score copy's clock follows every state (a new simulation shifts it).
+        try:
+            self._v504_service(state)
+        except Exception:
+            self._v504_errors = int(getattr(self, "_v504_errors", 0) or 0) + 1
         quiet = None
         try:
             quiet = self._v503_gate_response(state)
@@ -6686,6 +6974,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v503_service(state)
         except Exception:
             self._v503_recorder_errors = int(getattr(self, "_v503_recorder_errors", 0) or 0) + 1
+        # v5.0.4 telemetry: the identity row and the recorder's stop, the request it is seen.
+        try:
+            self._v504_telemetry(state)
+        except Exception:
+            self._v504_errors = int(getattr(self, "_v504_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -7721,7 +8014,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self.research_max_total_open_books = base_cap
 
     def _research_read_session(self, identity):
-        raw = super()._research_read_session(identity)
+        # v5.0.4 H1: only this UID's own payload, or a legacy one the operator adopted.
+        raw = self._v504_read_session(identity)
         if not isinstance(raw, dict):
             return raw
         direct = raw.get("direct_maker_quality_a1_5_1")
@@ -7797,6 +8091,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # v5.0.3 G1: once the quiet gate has opened it stays open for this registration, and
             # its anchor is the earliest first state seen, so a restart cannot restart the clock.
             payload[V503_NEWCOMER_GATE_VERSION] = self._v503_gate_session_state()
+            # v5.0.4 H1: whose evidence this is.  H4: where this UID's rounds begin.
+            if bool(getattr(self, "research_v504_session_per_uid", True)):
+                payload[OWNER_KEY] = owner_record(getattr(self, "uid", None))
+            v504_start = (getattr(self, "_v504_mirror", None) or {}).get("start_ts")
+            if bool(getattr(self, "research_v504_mirror_rounds", True)) and v504_start is not None:
+                payload[V504_MIRROR_SESSION_KEY] = mirror_session_state(v504_start)
             payload["direct_maker_quality_a1_5_1"] = {
                 "version": DIRECT_QUALITY_VERSION,
                 "global": getattr(self, "_direct_maker_quality_global", MakerLifecycleStats()).as_state(),
@@ -9858,6 +10158,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_v503_recorder_dropped"] = int(v503_snap.get("dropped", 0) or 0)
         stats["direct_v503_recorder_stopped"] = str(v503_snap.get("stopped_reason", "") or "")
         stats["direct_v503_recorder_errors"] = int(getattr(self, "_v503_recorder_errors", 0) or 0)
+        stats["direct_v504_registration_identity_version"] = V504_REGISTRATION_IDENTITY_VERSION
+        stats["direct_v504_session_per_uid"] = int(bool(getattr(self, "research_v504_session_per_uid", True)))
+        v504_choice = getattr(self, "_v504_session_choice", None)
+        stats["direct_v504_session_source"] = None if v504_choice is None else v504_choice.source
+        stats["direct_v504_legacy_session"] = getattr(self, "research_v504_legacy_session", LEGACY_IGNORE)
+        stats["direct_v504_history_anchor"] = getattr(self, "research_v504_history_anchor", ANCHOR_AUTO)
+        v504_pin = getattr(self, "_v504_history_pin", None)
+        stats["direct_v504_pin_source"] = None if v504_pin is None else v504_pin.source
+        stats["direct_v504_disk_budget_version"] = V504_DISK_BUDGET_VERSION
+        stats["direct_v504_disk_budget"] = int(bool(getattr(self, "research_v504_disk_budget", True)))
+        stats["direct_v504_recorder_disk_bytes"] = int(v503_snap.get("disk_bytes", 0) or 0)
+        stats["direct_v504_mirror_rounds_version"] = V504_MIRROR_ROUNDS_VERSION
+        stats["direct_v504_mirror_rounds"] = int(bool(getattr(self, "research_v504_mirror_rounds", True)))
+        v504_mirror = getattr(self, "_v504_mirror", None) or {}
+        stats["direct_v504_mirror_start_source"] = v504_mirror.get("start_source")
+        stats["direct_v504_mirror_restored_states"] = len(v504_mirror.get("history") or {})
+        stats["direct_v504_errors"] = int(getattr(self, "_v504_errors", 0) or 0)
         stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
         stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
         stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)
