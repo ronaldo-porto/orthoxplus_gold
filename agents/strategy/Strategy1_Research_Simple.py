@@ -360,6 +360,9 @@ from research_v5_dust_liveness import (
     unique_market_reservation,
 )
 from research_v5_newcomer_gate import (
+    OPEN_EXPOSURE,
+    OPEN_GATE_REACHED,
+    OPEN_RESTORED,
     V503_NEWCOMER_GATE_VERSION,
     arm_decision,
     effective_anchor,
@@ -892,6 +895,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v503_gate_ts: int | None = None
         self._v503_gate_quiet_requests = 0
         self._v503_gate_reported: tuple | None = None
+        self._v503_gate_last_now: int | None = None
+        self._v503_gate_rebases = 0
         self._v503_gate_errors = 0
         # v5.0.3 G2: record every state's per-book trades (with both counterparties' uids) and its
         # depth, from the raw lazy dicts, on a writer thread.  Telemetry only; nothing reads it.
@@ -6361,6 +6366,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v503_gate_report(state, held=False)
             return None
         now = int(getattr(state, "timestamp", 0) or 0)
+        # A new simulation resets the clock to ~0 while the validator rebases the rounds it keeps
+        # onto that clock (trade.shift_simulation_histories), so the gate moves by the same shift,
+        # as the activity belief does.  A checkpoint rewind is shorter than REBASE_MIN_JUMP_NS and
+        # simply delays the gate by its length.
+        last = getattr(self, "_v503_gate_last_now", None)
+        if last is not None and now <= last - REBASE_MIN_JUMP_NS:
+            shift = now - last
+            if self._v503_gate_ts is not None:
+                self._v503_gate_ts += shift
+            if self._v503_gate_anchor_ts is not None:
+                self._v503_gate_anchor_ts += shift
+            self._v503_gate_rebases = int(getattr(self, "_v503_gate_rebases", 0) or 0) + 1
+        self._v503_gate_last_now = now
         reason = should_open(
             now=now, gate_ts=self._v503_gate_ts, exposure=self._v503_gate_exposure(state),
         )
@@ -6398,14 +6416,26 @@ class Strategy1_Research_Simple(Strategy1_Research):
             gate_ts=getattr(self, "_v503_gate_ts", None),
             s_to_gate=seconds_to_gate(now=now, gate_ts=getattr(self, "_v503_gate_ts", None)),
             quiet_requests=int(getattr(self, "_v503_gate_quiet_requests", 0) or 0),
+            rebases=int(getattr(self, "_v503_gate_rebases", 0) or 0),
             errors=int(getattr(self, "_v503_gate_errors", 0) or 0),
         )
 
     def _v503_gate_session_state(self) -> dict[str, Any]:
+        """What the session file carries across a restart.
+
+        Only an EVALUATED gate that genuinely opened -- on its clock, on exposure, or because it
+        was restored open -- is persisted as open.  A save that lands before the first request has
+        evaluated the gate, or a gate held off by the switch or a missing estimate, is persisted as
+        not open, so a later restart can still arm it.  Prior evidence needs no persistence: the
+        evidence itself persists.
+        """
+        armed = getattr(self, "_v503_gate_armed", None)
+        reason = getattr(self, "_v503_gate_open_reason", None)
+        opened = armed is False and reason in (OPEN_GATE_REACHED, OPEN_EXPOSURE, OPEN_RESTORED)
         return session_state(
-            opened=not bool(getattr(self, "_v503_gate_armed", False)),
-            anchor=getattr(self, "_v503_gate_anchor_ts", None),
-            open_reason=getattr(self, "_v503_gate_open_reason", None),
+            opened=opened,
+            anchor=None if armed is None else getattr(self, "_v503_gate_anchor_ts", None),
+            open_reason=reason,
         )
 
     # ---- v5.0.3 G3: the validator's FIFO -------------------------------------------------------

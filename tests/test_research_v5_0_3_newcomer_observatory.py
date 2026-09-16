@@ -147,6 +147,29 @@ def test_a_restart_inside_the_window_cannot_restart_the_clock():
     assert ng.restored_session({"opened": "nonsense"}) == (False, None)
 
 
+def test_a_save_before_the_first_decision_cannot_persist_the_gate_as_open():
+    """The session file is written on the base's own cadence, possibly before the first request has
+    evaluated the gate.  Persisting 'opened' from an unevaluated gate would stop a restart from ever
+    arming it, which is the one failure that costs a registration."""
+    source = _method_source("_v503_gate_session_state")
+    assert "opened = armed is False and reason in (OPEN_GATE_REACHED, OPEN_EXPOSURE, OPEN_RESTORED)" in source
+    assert "anchor=None if armed is None else" in source
+    # The pure helper does what the method relies on.
+    assert ng.restored_session(ng.session_state(opened=False, anchor=None, open_reason=None)) == (False, None)
+    assert ng.restored_session(ng.session_state(opened=True, anchor=5, open_reason=ng.OPEN_GATE_REACHED)) == (True, 5)
+
+
+def test_a_new_simulation_moves_the_gate_and_a_checkpoint_rewind_only_delays_it():
+    """The state clock resets to ~0 at a simulation boundary while the validator rebases its stored
+    rounds onto the new clock, so a gate fixed at evaluation would otherwise hold forever."""
+    source = _method_source("_v503_gate_response")
+    assert "if last is not None and now <= last - REBASE_MIN_JUMP_NS:" in source
+    assert "self._v503_gate_ts += shift" in source and "self._v503_gate_anchor_ts += shift" in source
+    assert "self._v503_gate_last_now = now" in source
+    # The same threshold the activity belief uses, so both move together.
+    assert "REBASE_MIN_JUMP_NS" in _method_source("_v501_refresh")
+
+
 def test_the_reported_state_names_what_the_gate_is_doing():
     assert ng.gate_state(armed=True, open_reason=None) == ng.GATE_QUIET
     assert ng.gate_state(armed=False, open_reason=ng.OPEN_GATE_REACHED) == ng.GATE_OPEN
