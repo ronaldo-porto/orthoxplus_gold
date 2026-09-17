@@ -441,8 +441,8 @@ def test_t10_the_arm_settings_params_and_guards():
             "A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; "
             "V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1 ;;") in LAUNCHER
     assert "  strategy1_direct_v5_0_4) A19X_BUILD=1" in LAUNCHER, "earlier arms stay"
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_0"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_0"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_1"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_1"' in SIMPLE
     assert sl.V600_SHORT_LOTS_VERSION.endswith("v6_0_0")
     for default in ('HISTORY_ANCHOR="${HISTORY_ANCHOR:-auto}"', 'LEGACY_SESSION="${LEGACY_SESSION:-ignore}"',
                     'RECORDER_MAX_MB="${RECORDER_MAX_MB:-8192}"', 'SHORT_LOT_FRACTION="${SHORT_LOT_FRACTION:-0.6667}"',

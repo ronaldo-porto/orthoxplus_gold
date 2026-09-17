@@ -384,6 +384,14 @@ from research_v5_observatory import (
     V504_DISK_BUDGET_VERSION,
     StateRecorder,
 )
+from research_v601_capacity import (
+    LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
+    V601_CAPACITY_VERSION,
+    V601_STATE_EVERY_TICKS,
+    is_workable_dust as v601_is_workable_dust,
+    live_trading_ex_debeta as v601_live_trading_ex_debeta,
+    reserve_dust_count as v601_reserve_dust_count,
+)
 from research_v600_short_lots import (
     CLASS_DUST as V600_CLASS_DUST,
     CLASS_FLAT as V600_CLASS_FLAT,
@@ -564,8 +572,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_0"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_0"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_1"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1047,6 +1055,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v600_realized_quote = 0.0
         self._v600_state_reported = False
         self._v600_errors = 0
+        # v6.0.1 C1: the dust recovery reserve is held only for dust the normalizer can work
+        # (under half a lot, not a parked inherited lot).  Off restores v6.0.0: any dust holds it.
+        self.research_v601_workable_dust_reserve = self._as_bool(
+            getattr(self.config, "research_v601_workable_dust_reserve", True)
+        )
+        self._v601_counts: dict[str, int] = {}
+        self._v601_last: dict[str, int] = {}
+        self._v601_state_reported = False
+        self._v601_errors = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -2995,6 +3012,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a196_inherited_capped_samples = int(
                 getattr(self, "_a196_inherited_capped_samples", 0) or 0
             ) + 1
+        payload.update(getattr(self, "_v601_last", None) or {})
         self._a196_admission_last = payload
         self._emit("A196_ADMISSION", force=True, tick=int(tick), **payload)
 
@@ -6129,6 +6147,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
             highest_marginal=[[b, round(v, 6)] for v, b in marginal[-5:]],
         )
         row.update(extra)
+        # v6.0.1 T1: the score on the validator's live blend, without the de-beta leg the agent
+        # cannot compute.  trading_score above stays on the v5.0.0 blend for comparison.
+        try:
+            live = v601_live_trading_ex_debeta(mirror.kappa_score, mirror.pnl_score)
+            row["trading_score_live_ex_debeta"] = None if live is None else round(live, 6)
+            row["live_blend"] = dict(V601_LIVE_BLEND_WEIGHTS)
+        except Exception:
+            self._v601_errors = int(getattr(self, "_v601_errors", 0) or 0) + 1
         self._v500_last_score = row
         # v5.0.3 G4: the per-book rows, kept for the comparison row against the validator's own
         # per-book gauges.  The score row itself stays exactly as v5.0.0 wrote it.
@@ -7117,6 +7143,67 @@ class Strategy1_Research_Simple(Strategy1_Research):
             errors=int(getattr(self, "_v600_errors", 0) or 0),
         )
 
+    # ---- v6.0.1: workable-dust reserve ------------------------------------------------------
+    def _v601_on(self) -> bool:
+        return bool(getattr(self, "research_v601_workable_dust_reserve", True))
+
+    def _v601_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v601_counts", None)
+        if counts is None:
+            counts = {}
+            self._v601_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v601_is_workable(self, book_id: int, qty: float, *, min_order: float) -> bool:
+        """A dust book the normalizer can work.  Called only for books already counted as dust."""
+        try:
+            parked = int(book_id) in (getattr(self, "_v600_inherited_parked", None) or {})
+            return v601_is_workable_dust(qty, is_dust=True, parked=parked, min_order=min_order)
+        except Exception:
+            self._v601_errors = int(getattr(self, "_v601_errors", 0) or 0) + 1
+            return True
+
+    def _v601_reserve_dust(self, diag, dust_count: int) -> int:
+        """The dust count the admission reserve uses this request."""
+        dust = max(0, int(dust_count or 0))
+        workable = (diag or {}).get("v601_workable_dust_inventory")
+        if workable is None:
+            # No count from the screen: hold the reserve as v6.0.0 did.
+            workable = dust
+        n = v601_reserve_dust_count(enabled=self._v601_on(), dust_count=dust, workable_count=workable)
+        self._v601_count("samples")
+        if dust > 0:
+            self._v601_count("dust_present")
+        if n > 0:
+            self._v601_count("reserve_held")
+        elif dust > 0:
+            self._v601_count("reserve_released")
+        self._v601_last = {
+            "v601_dust_books": int(dust),
+            "v601_workable_dust_books": int(workable),
+            "v601_reserve_dust_books": int(n),
+        }
+        return int(n)
+
+    def _v601_telemetry(self, state) -> None:
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if getattr(self, "_v601_state_reported", False) and not (tick > 0 and tick % V601_STATE_EVERY_TICKS == 0):
+            return
+        self._v601_state_reported = True
+        counts = dict(getattr(self, "_v601_counts", {}) or {})
+        last = dict(getattr(self, "_v601_last", {}) or {})
+        self._emit(
+            "V601_RESERVE_STATE", force=True, tick=tick,
+            v601_capacity_version=V601_CAPACITY_VERSION,
+            enabled=int(self._v601_on()),
+            dust_books=int(last.get("v601_dust_books", 0)),
+            workable_dust_books=int(last.get("v601_workable_dust_books", 0)),
+            reserve_dust_books=int(last.get("v601_reserve_dust_books", 0)),
+            inherited_parked=len(getattr(self, "_v600_inherited_parked", {}) or {}),
+            counts=counts,
+            errors=int(getattr(self, "_v601_errors", 0) or 0),
+        )
+
     def _v504_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         recorder = getattr(self, "_v503_recorder", None)
@@ -7337,6 +7424,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v600_telemetry(state)
         except Exception:
             self._v600_errors = int(getattr(self, "_v600_errors", 0) or 0) + 1
+        # v6.0.1 telemetry: the reserve state row.
+        try:
+            self._v601_telemetry(state)
+        except Exception:
+            self._v601_errors = int(getattr(self, "_v601_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -8157,6 +8249,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         actual_nonflat = 0
         active_nonflat = 0
         dust_nonflat = 0
+        # v6.0.1 C1: the dust the normalizer can work; only these hold the recovery reserve.
+        workable_dust = 0
+        v601_workable = getattr(self, "_v601_is_workable", None)
         total_abs_base = 0.0
         # A1.9.5 F3 needs dust BASE separated from productive BASE, and this
         # is the only loop that already classifies every book.
@@ -8181,6 +8276,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if is_dust:
                     dust_nonflat += 1
                     dust_abs_base += qty
+                    if v601_workable is None or v601_workable(bid, qty, min_order=min_size):
+                        workable_dust += 1
                 else:
                     active_nonflat += 1
 
@@ -8291,6 +8388,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "actual_nonflat_inventory": int(actual_nonflat),
             "active_nonflat_inventory": int(active_nonflat),
             "dust_nonflat_inventory": int(dust_nonflat),
+            "v601_workable_dust_inventory": int(workable_dust),
             "total_abs_base_inventory": float(total_abs_base),
             "dust_abs_base_inventory": float(dust_abs_base),
             # A1.6.1: every sub-minimum dust book is excluded from productive
@@ -10037,6 +10135,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_dust_normalize_instructions": 0,
             "direct_liveness_blocked_ticks": 0,
             "direct_dust_recovery_reserve_abs": 0.0,
+            "direct_v601_reserve_dust_books": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -10218,15 +10317,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         effective_active_now = active_now + int(reserved_open)
         stats["direct_reserved_abs_base"] = float(reserved_abs)
         stats["direct_reserved_open_books"] = int(reserved_open)
+        # v6.0.1 C1: the reserve's dust count is the dust the normalizer can work.  The dust
+        # count itself still drives open-book and BASE accounting unchanged.
+        v601_reserve = getattr(self, "_v601_reserve_dust", None)
+        reserve_dust_now = dust_now if v601_reserve is None else int(v601_reserve(diag, dust_now))
+        stats["direct_v601_reserve_dust_books"] = int(reserve_dust_now)
         recovery_reserve_abs = dust_recovery_reserve_abs(
-            dust_count=dust_now, min_order=min_size,
+            dust_count=reserve_dust_now, min_order=min_size,
         )
         stats["direct_dust_recovery_reserve_abs"] = float(recovery_reserve_abs)
         portfolio_slots = direct_liveness_admission_slots(
             effective_abs=effective_abs_now,
             active_books=effective_active_now,
             effective_open_books=effective_open_now,
-            dust_count=dust_now,
+            dust_count=reserve_dust_now,
             max_abs=max_abs,
             max_active=max_active,
             max_open=max_open,
@@ -10246,7 +10350,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     effective_abs=abs_now - float(a196_inherited.exempt_abs) + float(reserved_abs),
                     active_books=effective_active_now,
                     effective_open_books=effective_open_now,
-                    dust_count=dust_now,
+                    dust_count=reserve_dust_now,
                     max_abs=max_abs,
                     max_active=max_active,
                     max_open=max_open,
@@ -10304,7 +10408,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     reserved_abs=float(reserved_abs),
                     active_books=effective_active_now,
                     effective_open_books=effective_open_now,
-                    dust_count=dust_now,
+                    dust_count=reserve_dust_now,
                     max_abs=max_abs,
                     max_active=max_active,
                     max_open=max_open,

@@ -21,6 +21,10 @@ RESEARCH_DIR="${RESEARCH_DIR:-$SCRIPT_DIR/logs/m1_strategy1_research_simple}"
 #   HISTORY_ANCHOR  auto | established | <simulation id>@<sim seconds>   (H2)
 #   LEGACY_SESSION  ignore | adopt                                       (H1)
 #   RECORDER_MAX_MB compressed MB the state recorder may write           (H3)
+# Prefer the --history_anchor flag (parsed below); it overrides the environment variable.
+# With neither, the anchor is auto.
+HISTORY_ANCHOR_SOURCE="default"
+[[ -n "${HISTORY_ANCHOR:-}" ]] && HISTORY_ANCHOR_SOURCE="env"
 HISTORY_ANCHOR="${HISTORY_ANCHOR:-auto}"
 LEGACY_SESSION="${LEGACY_SESSION:-ignore}"
 RECORDER_MAX_MB="${RECORDER_MAX_MB:-8192}"
@@ -37,6 +41,10 @@ EXTRA=()
 # Examples:
 #   ./run_strategy1_research_simple_multi.sh --pm2_name sn79-a17-m1 ...
 #   ./run_strategy1_research_simple_multi.sh --pm2_name=sn79-a17-m1 ...
+# --history_anchor auto | established | <sim>@<seconds>  (v5.0.4 H2; omitted = auto)
+#   established  every restart of a UID that already has a score history
+#   auto         a fresh registration only
+#   ./run_strategy1_research_simple_multi.sh --pm2_name sn79-m67 --history_anchor established ...
 _normalized_args=()
 while (($#)); do
   case "$1" in
@@ -49,6 +57,16 @@ while (($#)); do
       _pm2_value="${1#*=}"
       [[ -n "$_pm2_value" ]] || { echo "ERROR: --pm2_name requires a value" >&2; exit 2; }
       _normalized_args+=(-i "$_pm2_value")
+      shift
+      ;;
+    --history_anchor)
+      [[ $# -ge 2 && -n "${2:-}" ]] || { echo "ERROR: --history_anchor requires auto, established or <sim>@<seconds>" >&2; exit 2; }
+      HISTORY_ANCHOR="$2"; HISTORY_ANCHOR_SOURCE="flag"
+      shift 2
+      ;;
+    --history_anchor=*)
+      [[ -n "${1#*=}" ]] || { echo "ERROR: --history_anchor requires auto, established or <sim>@<seconds>" >&2; exit 2; }
+      HISTORY_ANCHOR="${1#*=}"; HISTORY_ANCHOR_SOURCE="flag"
       shift
       ;;
     *)
@@ -73,6 +91,18 @@ while getopts "w:h:u:a:e:p:i:" flag; do
   esac
 done
 
+# v6.0.1 O2: the endpoint defaults to testnet, so a mainnet launch without -e would run on the
+# wrong network.  Refuse a netuid and endpoint that belong to different networks.
+if [[ "$NETUID" == "79" && "$ENDPOINT" == *"test."* ]]; then
+  echo "ERROR: netuid 79 is mainnet but the endpoint is testnet (${ENDPOINT})." >&2
+  echo "       Pass -e wss://entrypoint-finney.opentensor.ai:443" >&2
+  exit 2
+fi
+if [[ "$NETUID" != "79" && "$ENDPOINT" == *"entrypoint-finney"* ]]; then
+  echo "ERROR: netuid ${NETUID} is not mainnet SN79 but the endpoint is mainnet (${ENDPOINT})." >&2
+  exit 2
+fi
+
 [[ -f "$SCRIPT_DIR/run_miner_multi.sh" ]] || { echo "ERROR: run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research_Simple.py" ]] || { echo "ERROR: Strategy1_Research_Simple.py missing" >&2; exit 1; }
 POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1)"
@@ -80,7 +110,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -97,6 +127,7 @@ case "$POLICY_VER" in
   strategy1_direct_v5_0_3) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1 ;;
   strategy1_direct_v5_0_4) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1 ;;
   strategy1_direct_v6_0_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1 ;;
+  strategy1_direct_v6_0_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -219,7 +250,8 @@ research_v504_history_anchor=${HISTORY_ANCHOR} \
 research_v504_disk_budget=1 research_v503_recorder_max_mb=${RECORDER_MAX_MB} \
 research_v504_mirror_rounds=1 \
 research_v600_short_lots=1 research_v600_short_lot_min_fraction=${SHORT_LOT_FRACTION} \
-research_v600_inherited_short_lots=${INHERITED_SHORT_LOTS}"
+research_v600_inherited_short_lots=${INHERITED_SHORT_LOTS} \
+research_v601_workable_dust_reserve=1"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -1078,6 +1110,7 @@ if [[ "$V504_BUILD" == "1" ]]; then
   if [[ "$NETUID" == "79" && "$HISTORY_ANCHOR" == "auto" ]]; then
     echo "[preflight] v5.0.4 NOTE: mainnet with HISTORY_ANCHOR=auto.  Right for a fresh registration only;" >&2
     echo "            an established UID restarted without its own session file would be held quiet." >&2
+    echo "            Restarting an established UID?  Pass --history_anchor established." >&2
   fi
   echo "[preflight] v5.0.4 registration identity + disk budget PASS (anchor=${HISTORY_ANCHOR} legacy=${LEGACY_SESSION} recorder_mb=${RECORDER_MAX_MB})"
 fi
@@ -1138,6 +1171,33 @@ if [[ "$V600_BUILD" == "1" ]]; then
   echo "[preflight] v6.0.0 short lots PASS (fraction=${SHORT_LOT_FRACTION} inherited=${INHERITED_SHORT_LOTS})"
 fi
 
+# v6.0.1.  The dust recovery reserve (one active slot, one open book, one clip of BASE) is held
+# only for dust the normalizer can work: under half a lot and not a parked inherited lot.  In the
+# v6.0.0 testnet run five parked full lots held it in every admission row.
+if [[ "$V601_BUILD" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_v601_capacity.py" ]] || {
+    echo "ERROR: v6.0.1 research_v601_capacity.py missing." >&2
+    exit 1
+  }
+  grep -qF 'reserve_dust_now = dust_now if v601_reserve is None else int(v601_reserve(diag, dust_now))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.0.1 C1 missing: admission still reserves for every dust book." >&2
+    exit 1
+  }
+  [[ "$(grep -cF 'dust_count=reserve_dust_now,' "$AGENT_PATH/Strategy1_Research_Simple.py")" == "4" ]] || {
+    echo "ERROR: v6.0.1 C1 not wired: the reserve, the gate, its counterfactual and the admission row must all use the reserve count." >&2
+    exit 1
+  }
+  grep -qF '"v601_workable_dust_inventory": int(workable_dust),' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.0.1 C1 not wired: the fast screen does not count workable dust." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v601_workable_dust_reserve=1"* ]] || {
+    echo "ERROR: v6.0.1 build without research_v601_workable_dust_reserve=1 in PARAMS." >&2
+    exit 1
+  }
+  echo "[preflight] v6.0.1 workable-dust reserve PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -1189,6 +1249,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v5_0_3_newcomer_observatory.py \
       tests/test_research_v5_0_4_registration_identity.py \
       tests/test_research_v6_0_0_short_lots.py \
+      tests/test_research_v6_0_1_capacity.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
@@ -1198,6 +1259,7 @@ fi
 
 echo "[Strategy1_Research_Simple] version=${POLICY_VER}"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
+echo "[Strategy1_Research_Simple] history_anchor=$HISTORY_ANCHOR (from $HISTORY_ANCHOR_SOURCE)"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 
 # Keep the strategy directory importable in the actual PM2/miner process, not
