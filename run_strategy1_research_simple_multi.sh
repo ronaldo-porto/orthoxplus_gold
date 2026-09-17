@@ -24,6 +24,11 @@ RESEARCH_DIR="${RESEARCH_DIR:-$SCRIPT_DIR/logs/m1_strategy1_research_simple}"
 HISTORY_ANCHOR="${HISTORY_ANCHOR:-auto}"
 LEGACY_SESSION="${LEGACY_SESSION:-ignore}"
 RECORDER_MAX_MB="${RECORDER_MAX_MB:-8192}"
+# v6.0.0 operator settings; see the v6.0.0 preflight block below.
+#   SHORT_LOT_FRACTION   short-lot boundary as a fraction of the minimum order, above 0.5 and below 1.0
+#   INHERITED_SHORT_LOTS park | exit   what a restart does with a single lot the seed rebuilt
+SHORT_LOT_FRACTION="${SHORT_LOT_FRACTION:-0.6667}"
+INHERITED_SHORT_LOTS="${INHERITED_SHORT_LOTS:-park}"
 
 EXTRA=()
 
@@ -75,7 +80,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -91,6 +96,7 @@ case "$POLICY_VER" in
   strategy1_direct_v5_0_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1 ;;
   strategy1_direct_v5_0_3) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1 ;;
   strategy1_direct_v5_0_4) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1 ;;
+  strategy1_direct_v6_0_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -211,7 +217,9 @@ research_v503_fifo_fee_exact=1 research_v503_book_kappa_rows=1 \
 research_v504_session_per_uid=1 research_v504_legacy_session=${LEGACY_SESSION} \
 research_v504_history_anchor=${HISTORY_ANCHOR} \
 research_v504_disk_budget=1 research_v503_recorder_max_mb=${RECORDER_MAX_MB} \
-research_v504_mirror_rounds=1"
+research_v504_mirror_rounds=1 \
+research_v600_short_lots=1 research_v600_short_lot_min_fraction=${SHORT_LOT_FRACTION} \
+research_v600_inherited_short_lots=${INHERITED_SHORT_LOTS}"
 
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
@@ -1074,6 +1082,62 @@ if [[ "$V504_BUILD" == "1" ]]; then
   echo "[preflight] v5.0.4 registration identity + disk budget PASS (anchor=${HISTORY_ANCHOR} legacy=${LEGACY_SESSION} recorder_mb=${RECORDER_MAX_MB})"
 fi
 
+# v6.0.0.  Short lots.
+# On UID 125 every position that stayed parked for hours was 0.19-0.24999 BASE: off-grid entry fills,
+# short entry fills and partial exits.  The build loop skipped anything under the minimum order before
+# exit handling, so they lost their exits and their protection.  A position between the boundary
+# (SHORT_LOT_FRACTION x minimum order) and the minimum order is now exited like a full lot; the exit
+# clip is the minimum order, which is legal because it leaves a strictly smaller opposite leftover.
+# INHERITED_SHORT_LOTS=park keeps every single lot a restart inherits (the seed prices it at today's
+# quote, so its real loss is invisible) parked until its position changes; exit lets it trade like any lot.
+if [[ "$V600_BUILD" == "1" ]]; then
+  if ! python3 -c 'import sys; f=float(sys.argv[1]); sys.exit(0 if 0.5 < f < 1.0 else 1)' "$SHORT_LOT_FRACTION" 2>/dev/null; then
+    echo "ERROR: v6.0.0 SHORT_LOT_FRACTION='${SHORT_LOT_FRACTION}' is not a number above 0.5 and below 1.0." >&2
+    exit 1
+  fi
+  if ! [[ "$INHERITED_SHORT_LOTS" == "park" || "$INHERITED_SHORT_LOTS" == "exit" ]]; then
+    echo "ERROR: v6.0.0 INHERITED_SHORT_LOTS='${INHERITED_SHORT_LOTS}' is not park or exit." >&2
+    exit 1
+  fi
+  grep -qF 'dust_skip = self._v600_skip_management(book_id, qty_abs, eps=eps, min_order=min_size_local)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.0.0 S1 missing: the build loop still skips every position under the minimum order." >&2
+    exit 1
+  }
+  grep -qF 'is_dust = bool(has_inv and self._v600_counts_as_dust(bid, qty, eps=eps, min_order=min_size))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.0.0 S1 not wired: admission does not use the short-lot predicate." >&2
+    exit 1
+  }
+  grep -qF 'and not self._v600_counts_as_dust(bid, abs(float(net)), eps=eps, min_order=min_size)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.0.0 S1 not wired: the live validator does not count short lots as active books." >&2
+    exit 1
+  }
+  grep -qF 'inventory_qty = executable(inventory_qty, exit_kwargs.get("min_order", 0.25))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.0.0 S1 not wired: the position risk state never sees a short lot as executable." >&2
+    exit 1
+  }
+  grep -qF 'v600_chooser(exit_kwargs)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.0.0 S1 not wired: the exit chooser still judges a short lot as unexecutable." >&2
+    exit 1
+  }
+  grep -qF 'self._v600_settle_leftover(int(book_id))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.0.0 S1 not wired: a short-lot exit's leftover is not settled." >&2
+    exit 1
+  }
+  grep -qF 'self._v600_note_inherited_clip(int(clip_book), float(min_order))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.0.0 S1 not wired: rebuilt clips are not parked at startup." >&2
+    exit 1
+  }
+  grep -qF 'v600_park(int(inherited_book), abs(float(inherited_net)))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.0.0 S1 not wired: inherited single lots are not parked at startup." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v600_short_lots=1"* ]] || {
+    echo "ERROR: v6.0.0 build without research_v600_short_lots=1 in PARAMS." >&2
+    exit 1
+  }
+  echo "[preflight] v6.0.0 short lots PASS (fraction=${SHORT_LOT_FRACTION} inherited=${INHERITED_SHORT_LOTS})"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -1124,6 +1188,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v5_0_2_dust_liveness.py \
       tests/test_research_v5_0_3_newcomer_observatory.py \
       tests/test_research_v5_0_4_registration_identity.py \
+      tests/test_research_v6_0_0_short_lots.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py

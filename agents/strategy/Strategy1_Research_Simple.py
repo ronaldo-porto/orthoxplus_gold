@@ -384,6 +384,28 @@ from research_v5_observatory import (
     V504_DISK_BUDGET_VERSION,
     StateRecorder,
 )
+from research_v600_short_lots import (
+    CLASS_DUST as V600_CLASS_DUST,
+    CLASS_FLAT as V600_CLASS_FLAT,
+    CLASS_PARKED as V600_CLASS_PARKED,
+    CLASS_SHORT_LOT as V600_CLASS_SHORT_LOT,
+    INHERITED_EXIT as V600_INHERITED_EXIT,
+    INHERITED_PARK as V600_INHERITED_PARK,
+    SOURCE_INHERITED as V600_SOURCE_INHERITED,
+    SOURCE_LIVE as V600_SOURCE_LIVE,
+    SOURCE_OFF_GRID as V600_SOURCE_OFF_GRID,
+    V600_SHORT_LOT_FRACTION_DEFAULT,
+    V600_SHORT_LOTS_VERSION,
+    V600_STATE_EVERY_TICKS,
+    classify_position as v600_classify_position,
+    exit_from_fill as v600_exit_from_fill,
+    inherited_mode as v600_inherited_mode,
+    leftover_to_residue as v600_leftover_to_residue,
+    leftover_tolerance as v600_leftover_tolerance,
+    median as v600_median,
+    parse_fraction as v600_parse_fraction,
+    short_lot_boundary as v600_short_lot_boundary,
+)
 from research_v5_session_identity import (
     ANCHOR_AUTO,
     KAPPA_LOOKBACK_NS,
@@ -542,8 +564,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v5_0_4"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v5_0_4"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_0"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_0"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1000,6 +1022,31 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v504_state_reported = False
         self._v504_stop_reported = False
         self._v504_errors = 0
+        # v6.0.0 S1: a position between the boundary and the minimum order is a short lot and is
+        # exited like a full lot instead of being parked as dust.  Off restores v5.0.4.
+        self.research_v600_short_lots = self._as_bool(
+            getattr(self.config, "research_v600_short_lots", True)
+        )
+        v600_fraction = v600_parse_fraction(
+            getattr(self.config, "research_v600_short_lot_min_fraction", V600_SHORT_LOT_FRACTION_DEFAULT)
+        )
+        self._v600_fraction_invalid = v600_fraction is None
+        self.research_v600_short_lot_min_fraction = (
+            V600_SHORT_LOT_FRACTION_DEFAULT if v600_fraction is None else v600_fraction
+        )
+        v600_inherited = v600_inherited_mode(
+            getattr(self.config, "research_v600_inherited_short_lots", V600_INHERITED_PARK)
+        )
+        self._v600_inherited_invalid = v600_inherited is None
+        self.research_v600_inherited_short_lots = v600_inherited or V600_INHERITED_PARK
+        self._v600_inherited_parked: dict[int, float] = {}
+        self._v600_class: dict[int, str] = {}
+        self._v600_fill_before: dict[int, float] = {}
+        self._v600_exit_bps: list[float] = []
+        self._v600_counts: dict[str, int] = {}
+        self._v600_realized_quote = 0.0
+        self._v600_state_reported = False
+        self._v600_errors = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1398,6 +1445,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 self._v502_settle_flat_residue(int(book_id))
             except Exception:
                 self._v502_errors = int(getattr(self, "_v502_errors", 0) or 0) + 1
+            # v6.0.0: a short-lot exit's overshoot of two base units or less is residue, not dust.
+            try:
+                self._v600_settle_leftover(int(book_id))
+            except Exception:
+                self._v600_errors = int(getattr(self, "_v600_errors", 0) or 0) + 1
         # v5.0.0: who took the other side of our own trade, for concentration telemetry.
         if own:
             analytics = getattr(self, "_v500_analytics", None)
@@ -1474,6 +1526,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a199_note_own_fill(book_id=int(book_id), before=float(before), after=float(after))
         except Exception:
             pass
+        # v6.0.0: a short-lot exit is counted, and its leftover is settled once the trade is booked.
+        try:
+            self._v600_note_own_fill(event, book_id=int(book_id), before=float(before), after=float(after))
+        except Exception:
+            self._v600_errors = int(getattr(self, "_v600_errors", 0) or 0) + 1
         try:
             bid = int(book_id)
             eps = float(self._execution_flat_epsilon())
@@ -1876,6 +1933,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         def a172_direct_chooser(**exit_kwargs):
             caller_unrealized = exit_kwargs.get("unrealized_bps")
             exit_kwargs["unrealized_bps"] = true_unrealized
+            # v6.0.0: a short lot exits with a minimum-order clip; the frozen caller judged it by its size.
+            v600_chooser = getattr(self, "_v600_chooser_kwargs", None)
+            if v600_chooser is not None:
+                v600_chooser(exit_kwargs)
             exit_kwargs["hard_escape_min_age_ticks"] = float(
                 getattr(self, "research_bounded_loss_escape_min_age_ticks", 2.0)
             )
@@ -3176,11 +3237,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a199_note_transition(
                 bid, transition, state, position_risk_bps=position_risk_bps, net_base=net_base,
             )
+        inventory_qty = exit_kwargs.get("inventory_qty", 0.0)
+        # v6.0.0: a short lot exits at the minimum order, so the risk state sees an executable size.
+        executable = getattr(self, "_v600_executable_qty", None)
+        if executable is not None:
+            inventory_qty = executable(inventory_qty, exit_kwargs.get("min_order", 0.25))
         final, rule, arm = authorize_exit(
             pending=pending, base_decision=base_decision, decision=decision,
             maker_net_bps=exit_kwargs.get("maker_net_bps", 0.0),
             taker_net_bps=exit_kwargs.get("taker_net_bps", 0.0),
-            inventory_qty=exit_kwargs.get("inventory_qty", 0.0),
+            inventory_qty=inventory_qty,
             min_order=exit_kwargs.get("min_order", 0.25),
             taker_clip=exit_kwargs.get("taker_clip", 0.25),
             is_dust=bool(exit_kwargs.get("is_dust", False)),
@@ -3286,7 +3352,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 net = float(self._position_tracker_snapshot(int(bid)).net_qty)
             except Exception:
                 net = 0.0
-            if abs(net) + 1e-12 < min_order:
+            v600_dust = getattr(self, "_v600_counts_as_dust", None)
+            if v600_dust is None:
+                not_executable = abs(net) + 1e-12 < min_order
+            else:
+                not_executable = abs(net) + 1e-12 < min_order and v600_dust(
+                    int(bid), abs(net), eps=float(self._execution_flat_epsilon()), min_order=min_order,
+                )
+            if not_executable:
                 rows.append(end_exit_stall(stalls, bid, tick=tick, ended_by="NOT_EXECUTABLE"))
             else:
                 rows.append(note_exit_stall(stalls, bid, tick=tick, has_instruction=int(bid) in touched))
@@ -3687,6 +3760,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                             inherited = {}
                             self._a196_inherited_real = inherited
                         inherited[int(book_id)] = net
+                        v600_park = getattr(self, "_v600_note_inherited_clip", None)
+                        if v600_park is not None and abs(net) + 1e-12 < 2.0 * min_order:
+                            v600_park(int(book_id), abs(net))
                     outcome["routed"] = "TRACKER"
                 else:
                     ledger = getattr(self, "_a196_legacy_dust_ledger", None)
@@ -4004,7 +4080,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         for clip_book, clip_rest in sorted(split.clip_residue.items()):
             self._v502_add_residue(int(clip_book), float(clip_rest))
             self._v502_count("clip_seed")
+            # v6.0.0: a rebuilt clip is priced at today's quote, so its real loss is invisible; park it
+            # unless the operator asked for inherited lots to exit.
+            self._v600_note_inherited_clip(int(clip_book), float(min_order))
         self._a196_inherited_real = inherited
+        # v6.0.0: so is every single lot the venue still holds (the dry run on UID 125 seeded books 76
+        # and 116 whole at -0.2716 and -0.2515, because buy fees are charged in base).
+        v600_park = getattr(self, "_v600_note_inherited_clip", None)
+        for inherited_book, inherited_net in sorted(inherited.items()):
+            if v600_park is not None and abs(float(inherited_net)) + 1e-12 < 2.0 * float(min_order):
+                v600_park(int(inherited_book), abs(float(inherited_net)))
         # A1.9.6.1: books the seed could not price.  Dust needs no price, so it
         # joins the ledger; a REAL lot needs a cost basis, so it waits for a quote
         # that is a market -- charged to exposure, covered by F10, meanwhile.
@@ -6764,6 +6849,274 @@ class Strategy1_Research_Simple(Strategy1_Research):
                                        and int(mirror["pnl_known_from"]) <= max(int(start), int(rounds[0]))),
         }
 
+    # ---- v6.0.0: short lots --------------------------------------------------------------------------
+    def _v600_on(self) -> bool:
+        return bool(getattr(self, "research_v600_short_lots", True))
+
+    def _v600_tolerance(self) -> float:
+        decimals = getattr(self, "_a1961_base_decimals", None)
+        if decimals is None:
+            decimals = getattr(self, "_research_volume_decimals", None)
+        return float(v600_leftover_tolerance(decimals))
+
+    def _v600_classify_qty(self, qty: float, *, eps: float, min_order: float) -> str:
+        return v600_classify_position(
+            qty, min_order=min_order, eps=eps,
+            fraction=getattr(self, "research_v600_short_lot_min_fraction", V600_SHORT_LOT_FRACTION_DEFAULT),
+            tolerance=self._v600_tolerance(), enabled=self._v600_on(),
+        )
+
+    def _v600_is_inherited_parked(self, book_id: int, qty: float) -> bool:
+        """An inherited clip stays parked while the position is the one the seed rebuilt."""
+        table = getattr(self, "_v600_inherited_parked", None) or {}
+        size = table.get(int(book_id))
+        if size is None:
+            return False
+        if abs(abs(float(qty)) - float(size)) <= self._v600_tolerance() + 1e-12:
+            return True
+        table.pop(int(book_id), None)
+        self._v600_count("inherited_released")
+        return False
+
+    def _v600_counts_as_dust(self, book_id: int, qty: float, *, eps: float, min_order: float) -> bool:
+        """The one dust test: admission, the live validator and the build loop all use it."""
+        q = abs(float(qty))
+        if not self._v600_on():
+            return q > float(eps) and q + 1e-12 < float(min_order)
+        if self._v600_is_inherited_parked(int(book_id), q):
+            return True
+        return self._v600_classify_qty(q, eps=float(eps), min_order=float(min_order)) == V600_CLASS_DUST
+
+    def _v600_skip_management(self, book_id: int, qty_abs: float, *, eps: float, min_order: float) -> bool:
+        skip = qty_abs > eps and self._v600_counts_as_dust(book_id, qty_abs, eps=eps, min_order=min_order)
+        if self._v600_on() and not skip and qty_abs + 1e-12 < float(min_order) and qty_abs > eps:
+            self._v600_count("short_lot_evaluations")
+        return skip
+
+    def _is_dust_qty(self, net_base: float) -> bool:
+        if not self._v600_on():
+            return super()._is_dust_qty(net_base)
+        min_size = max(0.0, float(self._research_exchange_min_order_size))
+        abs_base = abs(float(net_base))
+        eps = float(self._execution_flat_epsilon())
+        return (
+            bool(self.research_dust_safe_close)
+            and min_size > 0.0
+            and abs_base >= eps
+            and abs_base + 1e-12 < min_size
+            and self._v600_classify_qty(abs_base, eps=0.0, min_order=min_size) == V600_CLASS_DUST
+        )
+
+    def _dust_compaction_safe_for_any_fill(self, net_base: float) -> bool:
+        """A short lot is never compacted; the proof condition is unchanged below the boundary."""
+        if not super()._dust_compaction_safe_for_any_fill(net_base):
+            return False
+        if not self._v600_on():
+            return True
+        min_size = max(0.0, float(self._research_exchange_min_order_size))
+        return self._v600_classify_qty(abs(float(net_base)), eps=0.0, min_order=min_size) == V600_CLASS_DUST
+
+    def _v600_executable_qty(self, qty, min_order):
+        """A short lot's exit clip is the minimum order, so the risk state sees an executable size."""
+        try:
+            q = abs(float(qty))
+            m = abs(float(min_order))
+        except (TypeError, ValueError):
+            return qty
+        if not self._v600_on() or q + 1e-12 >= m:
+            return qty
+        if self._v600_classify_qty(q, eps=float(self._execution_flat_epsilon()), min_order=m) != V600_CLASS_SHORT_LOT:
+            return qty
+        return m
+
+    def _v600_chooser_kwargs(self, exit_kwargs: dict) -> None:
+        """Size a short lot as its exit clip for the exit chooser, in place.
+
+        The frozen caller sets ``reduction_executable`` from ``qty >= min_order`` and the chooser
+        refuses any size under the minimum, so a short lot would never get a taker exit or
+        protection.  Its real exit is one minimum-order clip (``choose_reduce_quantity``).
+        """
+        if not self._v600_on():
+            return
+        try:
+            qty = abs(float(exit_kwargs.get("inventory_qty", 0.0) or 0.0))
+            min_order = abs(float(exit_kwargs.get("min_order", 0.25) or 0.25))
+        except (TypeError, ValueError):
+            return
+        if qty + 1e-12 >= min_order:
+            return
+        cls = self._v600_classify_qty(qty, eps=float(self._execution_flat_epsilon()), min_order=min_order)
+        if cls != V600_CLASS_SHORT_LOT:
+            return
+        exit_kwargs["inventory_qty"] = min_order
+        exit_kwargs["is_dust"] = False
+        exit_kwargs["reduction_executable"] = bool(exit_kwargs.get("valid_opposite_touch", True))
+        self._v600_count("chooser_short_lot")
+
+    def _v600_count(self, name: str, n: int = 1) -> None:
+        counts = getattr(self, "_v600_counts", None)
+        if not isinstance(counts, dict):
+            counts = {}
+            self._v600_counts = counts
+        counts[str(name)] = int(counts.get(str(name), 0) or 0) + int(n)
+
+    def _v600_note_inherited_clip(self, book_id: int, size: float) -> None:
+        if not self._v600_on():
+            return
+        if getattr(self, "research_v600_inherited_short_lots", V600_INHERITED_PARK) == V600_INHERITED_EXIT:
+            self._v600_count("inherited_exit")
+            return
+        table = getattr(self, "_v600_inherited_parked", None)
+        if not isinstance(table, dict):
+            table = {}
+            self._v600_inherited_parked = table
+        table[int(book_id)] = abs(float(size))
+        self._v600_count("inherited_parked")
+        self._v600_note_class(int(book_id), abs(float(size)), force_class=V600_CLASS_PARKED,
+                              source=V600_SOURCE_INHERITED)
+
+    def _v600_note_class(self, book_id: int, qty: float, *, force_class: str | None = None,
+                         source: str | None = None) -> None:
+        """Log a book's classification when it changes (sub-minimum positions only)."""
+        if not self._v600_on():
+            return
+        bid = int(book_id)
+        q = abs(float(qty))
+        min_size = max(1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25))
+        eps = float(self._execution_flat_epsilon())
+        parked = getattr(self, "_v600_inherited_parked", None) or {}
+        if force_class is not None:
+            cls = force_class
+        elif q <= eps:
+            cls = V600_CLASS_FLAT
+            # A flat book ends an inherited position (a new simulation resets every balance).
+            if bid in parked:
+                parked.pop(bid, None)
+                self._v600_count("inherited_released")
+        elif self._v600_is_inherited_parked(bid, q):
+            cls = V600_CLASS_PARKED
+        elif q + 1e-12 >= min_size:
+            cls = V600_CLASS_FLAT
+        else:
+            cls = self._v600_classify_qty(q, eps=eps, min_order=min_size)
+        table = getattr(self, "_v600_class", None)
+        if not isinstance(table, dict):
+            table = {}
+            self._v600_class = table
+        prior = table.get(bid, V600_CLASS_FLAT)
+        if cls == prior:
+            return
+        if cls == V600_CLASS_FLAT:
+            table.pop(bid, None)
+        else:
+            table[bid] = cls
+        if cls == V600_CLASS_SHORT_LOT:
+            self._v600_count("short_lot_births")
+        if source is None:
+            source = (V600_SOURCE_OFF_GRID if cls == V600_CLASS_SHORT_LOT
+                      and min_size - q <= self._v600_tolerance() + 1e-12 else V600_SOURCE_LIVE)
+        action = {V600_CLASS_SHORT_LOT: "EXIT_AS_LOT", V600_CLASS_DUST: "DUST_PATH",
+                  V600_CLASS_PARKED: "PARKED", V600_CLASS_FLAT: "NONE"}.get(cls, "NONE")
+        self._emit(
+            "V600_SHORT_LOT", force=True, tick=int(getattr(self, "_tick", 0) or 0), book=bid,
+            qty=round(q, 10), fraction=round(q / min_size, 6), prior=prior, cls=cls, source=source,
+            action=action, v600_short_lots_version=V600_SHORT_LOTS_VERSION,
+        )
+
+    def _v600_note_own_fill(self, event, *, book_id: int, before: float, after: float) -> None:
+        if not self._v600_on():
+            return
+        bid = int(book_id)
+        fill_before = getattr(self, "_v600_fill_before", None)
+        if not isinstance(fill_before, dict):
+            fill_before = {}
+            self._v600_fill_before = fill_before
+        fill_before[bid] = float(before)
+        min_size = max(1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25))
+        pnl_before = float((getattr(self, "_direct_event_pnl_before", {}) or {}).get(bid, 0.0) or 0.0)
+        pnl_after = float((getattr(self, "_pnl_tick_buffer", {}) or {}).get(bid, 0.0) or 0.0)
+        done = v600_exit_from_fill(
+            bid, before=before, after=after, price=getattr(event, "price", 0.0),
+            realized_quote=pnl_after - pnl_before, min_order=min_size,
+            eps=float(self._execution_flat_epsilon()),
+            fraction=getattr(self, "research_v600_short_lot_min_fraction", V600_SHORT_LOT_FRACTION_DEFAULT),
+            tolerance=self._v600_tolerance(),
+        )
+        if done is None:
+            return
+        self._v600_count("exits_filled")
+        self._v600_realized_quote = float(getattr(self, "_v600_realized_quote", 0.0) or 0.0) + done.realized_quote
+        bps = done.realized_bps
+        if bps is not None:
+            exit_bps = getattr(self, "_v600_exit_bps", None)
+            if not isinstance(exit_bps, list):
+                exit_bps = []
+                self._v600_exit_bps = exit_bps
+            exit_bps.append(float(bps))
+            del exit_bps[:-500]
+
+    def _v600_settle_leftover(self, book_id: int) -> None:
+        """Move a short-lot exit's overshoot of at most two base units to the v5.0.2 residue ledger."""
+        bid = int(book_id)
+        before = (getattr(self, "_v600_fill_before", {}) or {}).pop(bid, None)
+        if before is None or not self._v600_on():
+            return
+        table = getattr(self, "_open_positions", None)
+        positions = table.get(bid) if hasattr(table, "get") else None
+        if not positions:
+            return
+        net = float(self._position_tracker_snapshot(bid).net_qty)
+        min_size = max(1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25))
+        eps = float(self._execution_flat_epsilon())
+        if self._v600_classify_qty(before, eps=eps, min_order=min_size) != V600_CLASS_SHORT_LOT:
+            return
+        amount = v600_leftover_to_residue(net, before=before, flat_eps=eps, tolerance=self._v600_tolerance())
+        if amount is None:
+            if abs(net) > eps and float(before) * net < 0.0:
+                self._v600_count("leftover_dust")
+            return
+        positions["longs"].clear()
+        positions["shorts"].clear()
+        total = self._v502_add_residue(bid, amount)
+        self._v600_count("leftover_residue")
+        self._emit(
+            "V600_LEFTOVER_RESIDUE", force=True, tick=int(getattr(self, "_tick", 0) or 0), book=bid,
+            residue=float(amount), book_residue=float(total), before=float(before),
+            v600_short_lots_version=V600_SHORT_LOTS_VERSION,
+        )
+
+    def _v600_telemetry(self, state) -> None:
+        if not self._v600_on():
+            return
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if getattr(self, "_v600_state_reported", False) and not (tick > 0 and tick % V600_STATE_EVERY_TICKS == 0):
+            return
+        self._v600_state_reported = True
+        classes = list((getattr(self, "_v600_class", {}) or {}).values())
+        counts = dict(getattr(self, "_v600_counts", {}) or {})
+        bps = list(getattr(self, "_v600_exit_bps", []) or [])
+        min_size = max(1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25))
+        self._emit(
+            "V600_SHORT_LOT_STATE", force=True, tick=tick,
+            v600_short_lots_version=V600_SHORT_LOTS_VERSION,
+            fraction=float(getattr(self, "research_v600_short_lot_min_fraction", V600_SHORT_LOT_FRACTION_DEFAULT)),
+            boundary=round(v600_short_lot_boundary(
+                min_size, getattr(self, "research_v600_short_lot_min_fraction", V600_SHORT_LOT_FRACTION_DEFAULT),
+            ), 8),
+            inherited_mode=getattr(self, "research_v600_inherited_short_lots", V600_INHERITED_PARK),
+            short_lots=sum(1 for c in classes if c == V600_CLASS_SHORT_LOT),
+            dust_books=sum(1 for c in classes if c == V600_CLASS_DUST),
+            inherited_parked=len(getattr(self, "_v600_inherited_parked", {}) or {}),
+            counts=counts,
+            exits_filled=int(counts.get("exits_filled", 0)),
+            realized_quote=round(float(getattr(self, "_v600_realized_quote", 0.0) or 0.0), 6),
+            exit_bps_median=None if not bps else round(v600_median(bps), 3),
+            exit_bps_worst=None if not bps else round(min(bps), 3),
+            invalid_fraction=int(bool(getattr(self, "_v600_fraction_invalid", False))),
+            invalid_inherited=int(bool(getattr(self, "_v600_inherited_invalid", False))),
+            errors=int(getattr(self, "_v600_errors", 0) or 0),
+        )
+
     def _v504_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         recorder = getattr(self, "_v503_recorder", None)
@@ -6979,6 +7332,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v504_telemetry(state)
         except Exception:
             self._v504_errors = int(getattr(self, "_v504_errors", 0) or 0) + 1
+        # v6.0.0 telemetry: the short-lot state row.
+        try:
+            self._v600_telemetry(state)
+        except Exception:
+            self._v600_errors = int(getattr(self, "_v600_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -7009,6 +7367,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         min_size = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
         # A1.3: sub-minimum residuals are real absolute exposure but cannot be
         # legally reduced.  Do not repeatedly send them to PositionExitController.
+        # v6.0.0: a short lot can (one minimum-order clip), so only dust stays out.
+        v600_dust = getattr(self, "_v600_counts_as_dust", None)
+        if v600_dust is not None:
+            book_id = getattr(inventory, "_research_book_id", None)
+            return not (qty > eps and v600_dust(-1 if book_id is None else int(book_id), qty,
+                                                eps=eps, min_order=min_size))
         return not (qty > eps and qty + 1e-12 < min_size)
 
     # ------------------------------------------------------------------
@@ -7760,7 +8124,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 qty = float(self._research_abs_inventory(int(raw_id)))
             except Exception:
                 continue
-            if qty > eps and qty + 1e-12 < min_size:
+            v600_dust = getattr(self, "_v600_counts_as_dust", None)
+            if v600_dust is None:
+                is_dust = qty > eps and qty + 1e-12 < min_size
+            else:
+                is_dust = qty > eps and v600_dust(int(raw_id), qty, eps=eps, min_order=min_size)
+            if is_dust:
                 count += 1
         return int(count)
 
@@ -7799,7 +8168,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 qty = 0.0
             has_inv = qty > eps
-            is_dust = bool(has_inv and qty + 1e-12 < min_size)
+            is_dust = bool(has_inv and self._v600_counts_as_dust(bid, qty, eps=eps, min_order=min_size))
+            if (has_inv or bid in (getattr(self, "_v600_class", None) or {})
+                    or bid in (getattr(self, "_v600_inherited_parked", None) or {})):
+                try:
+                    self._v600_note_class(bid, qty)
+                except Exception:
+                    self._v600_errors = int(getattr(self, "_v600_errors", 0) or 0) + 1
             if has_inv:
                 actual_nonflat += 1
                 total_abs_base += qty
@@ -9381,7 +9756,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
         shadow_net = {int(bid): self._direct_signed_inventory(int(bid)) for bid in books.keys()}
         filled_abs = sum(abs(float(net)) for net in shadow_net.values())
-        filled_active = sum(1 for net in shadow_net.values() if abs(float(net)) + eps >= min_size)
+        if self._v600_on():
+            # v6.0.0: the same predicate admission uses; a short lot is an active book.
+            filled_active = sum(
+                1 for bid, net in shadow_net.items()
+                if abs(float(net)) > eps
+                and not self._v600_counts_as_dust(bid, abs(float(net)), eps=eps, min_order=min_size)
+            )
+        else:
+            filled_active = sum(1 for net in shadow_net.values() if abs(float(net)) + eps >= min_size)
         # A1.9.5 F3, gate B.  `filled_active` already excludes dust from the
         # BOOK count; `filled_abs` still charges it to the BASE budget, so this
         # validator becomes the next binding gate as soon as admission is
@@ -9389,10 +9772,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # only because admission never let anything reach here -- that silence
         # was not headroom, and relaxing one gate without the other would move
         # the block rather than remove it.
-        filled_dust_abs = sum(
-            abs(float(net)) for net in shadow_net.values()
-            if eps < abs(float(net)) + 1e-12 < min_size
-        )
+        if self._v600_on():
+            filled_dust_abs = sum(
+                abs(float(net)) for bid, net in shadow_net.items()
+                if abs(float(net)) > eps
+                and self._v600_counts_as_dust(bid, abs(float(net)), eps=eps, min_order=min_size)
+            )
+        else:
+            filled_dust_abs = sum(
+                abs(float(net)) for net in shadow_net.values()
+                if eps < abs(float(net)) + 1e-12 < min_size
+            )
         # A1.9.6 F9: charge the legacy ledger here exactly as admission does.
         a196_ledger_abs_now = self._a196_ledger_abs()
         filled_abs += a196_ledger_abs_now
@@ -9702,7 +10092,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 qty_abs = abs(float(getattr(inventory, "net_base", 0.0) or 0.0))
                 eps = float(self._execution_flat_epsilon())
                 min_size_local = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
-                if qty_abs > eps and qty_abs + 1e-12 < min_size_local:
+                if self._v600_on():
+                    # v6.0.0: only dust (and a parked inherited clip) skips; a short lot is managed.
+                    dust_skip = self._v600_skip_management(book_id, qty_abs, eps=eps, min_order=min_size_local)
+                else:
+                    dust_skip = qty_abs > eps and qty_abs + 1e-12 < min_size_local
+                if dust_skip:
                     stats["direct_dust_skipped_management"] += 1
                     continue
                 # Persistent entry quotes must be canceled as soon as inventory
@@ -10175,6 +10570,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_v504_mirror_start_source"] = v504_mirror.get("start_source")
         stats["direct_v504_mirror_restored_states"] = len(v504_mirror.get("history") or {})
         stats["direct_v504_errors"] = int(getattr(self, "_v504_errors", 0) or 0)
+        stats["direct_v600_short_lots_version"] = V600_SHORT_LOTS_VERSION
+        stats["direct_v600_short_lots"] = int(self._v600_on())
+        stats["direct_v600_short_lot_min_fraction"] = float(
+            getattr(self, "research_v600_short_lot_min_fraction", V600_SHORT_LOT_FRACTION_DEFAULT)
+        )
+        stats["direct_v600_inherited_short_lots"] = getattr(
+            self, "research_v600_inherited_short_lots", V600_INHERITED_PARK
+        )
+        stats["direct_v600_short_lot_books"] = sum(
+            1 for c in (getattr(self, "_v600_class", {}) or {}).values() if c == V600_CLASS_SHORT_LOT
+        )
+        stats["direct_v600_inherited_parked"] = len(getattr(self, "_v600_inherited_parked", {}) or {})
+        stats["direct_v600_errors"] = int(getattr(self, "_v600_errors", 0) or 0)
         stats["direct_positive_maker_kappa_version"] = DIRECT_POSITIVE_MAKER_KAPPA_VERSION
         stats["direct_a1744_strong_maker_floor_bps"] = float(DIRECT_A1744_STRONG_MAKER_FLOOR_BPS)
         stats["direct_a1744_veto_count"] = int(getattr(self, "_direct_a1744_veto_count", 0) or 0)
