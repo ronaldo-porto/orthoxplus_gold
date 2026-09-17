@@ -384,6 +384,14 @@ from research_v5_observatory import (
     V504_DISK_BUDGET_VERSION,
     StateRecorder,
 )
+from research_v603_recovery import (
+    DISPOSITION_HOLD as V603_DISPOSITION_HOLD,
+    DISPOSITION_LEGACY as V603_DISPOSITION_LEGACY,
+    DISPOSITION_RELEASE as V603_DISPOSITION_RELEASE,
+    V603_RECOVERY_VERSION,
+    V603_STATE_EVERY_TICKS,
+    row_disposition as v603_row_disposition,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -572,8 +580,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_2"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_2"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_3"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_3"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1064,6 +1072,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v601_last: dict[str, int] = {}
         self._v601_state_reported = False
         self._v601_errors = 0
+        # v6.0.3 D1: once its bounded hold is gone, the partial-fill recovery releases a short lot
+        # instead of cancelling the v6.0.0 lot exit at every request.  Off restores v6.0.2.
+        self.research_v603_short_lot_release = self._as_bool(
+            getattr(self.config, "research_v603_short_lot_release", True)
+        )
+        self._v603_counts: dict[str, int] = {}
+        self._v603_last: dict[str, float | int] = {}
+        self._v603_cancels_reported = 0
+        self._v603_state_reported = False
+        self._v603_errors = 0
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1141,6 +1159,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_partial_recovery: dict[int, dict[str, Any]] = {}
         self._direct_partial_hold_live = 0
         self._direct_partial_hold_releases = 0
+        # v6.0.3: short lots handed back to the v6.0.0 lot exit, cancelling nothing.
+        self._direct_v603_short_lot_releases = 0
         self._direct_partial_wrong_side_cancels = 0
         self._direct_partial_bound_holds = 0
         self._direct_partial_bound_pending = 0
@@ -7214,6 +7234,122 @@ class Strategy1_Research_Simple(Strategy1_Research):
             max_abs_base=float(getattr(self, "research_max_total_abs_base", 0.0) or 0.0),
         )
 
+    # ---- v6.0.3: the recovery handler releases a short lot after its hold -------------------
+    def _v603_on(self) -> bool:
+        return bool(getattr(self, "research_v603_short_lot_release", True))
+
+    def _v603_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v603_counts", None)
+        if counts is None:
+            counts = {}
+            self._v603_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v603_is_short_lot(self, book_id: int, qty: float, *, eps: float, min_order: float) -> bool:
+        """The v6.0.0 predicate, read the way this handler needs it: a lot, not dust."""
+        return not self._v600_counts_as_dust(
+            int(book_id), abs(float(qty)), eps=float(eps), min_order=float(min_order)
+        )
+
+    def _v603_disposition(
+        self, book_id: int, net: float, *, eps: float, min_order: float,
+        hold_active: bool, bound: bool,
+    ) -> str:
+        """What this request does with one recovery row.  Any failure keeps v6.0.2 behaviour."""
+        try:
+            counts_as_dust = self._v600_counts_as_dust(
+                int(book_id), abs(float(net)), eps=float(eps), min_order=float(min_order)
+            )
+            disposition = v603_row_disposition(
+                enabled=self._v603_on(), hold_active=bool(hold_active), bound=bool(bound),
+                counts_as_dust=bool(counts_as_dust),
+            )
+        except Exception:
+            self._v603_errors = int(getattr(self, "_v603_errors", 0) or 0) + 1
+            return V603_DISPOSITION_LEGACY
+        self._v603_count("rows_seen")
+        self._v603_count("disposition_%s" % str(disposition).lower())
+        return disposition
+
+    def _v603_note_release(
+        self, book_id: int, net: float, *, mode: str, desired_side: str, hold_active: bool,
+    ) -> None:
+        """One short lot handed back to the v6.0.0 lot exit.  No cancel is sent with it."""
+        try:
+            self._direct_partial_hold_releases = int(
+                getattr(self, "_direct_partial_hold_releases", 0) or 0
+            ) + 1
+            self._direct_v603_short_lot_releases = int(
+                getattr(self, "_direct_v603_short_lot_releases", 0) or 0
+            ) + 1
+            self._v603_count("short_lot_releases")
+            self._v603_last = {
+                "book": int(book_id),
+                "net_base": float(net),
+                "tick": int(getattr(self, "_tick", 0) or 0),
+            }
+            self._emit(
+                "V603_PARTIAL_RELEASE", force=True,
+                tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
+                mode=str(mode), desired_side=str(desired_side), net_base=float(net),
+                hold_expired=int(not bool(hold_active)), cancelled_orders=0,
+            )
+        except Exception:
+            self._v603_errors = int(getattr(self, "_v603_errors", 0) or 0) + 1
+
+    def _v603_note_cancel(
+        self, book_id: int, net: float, *, eps: float, min_order: float, disposition: str,
+    ) -> None:
+        """Count a remainder cancel that landed on a short lot (gate R1 reads this as 0)."""
+        try:
+            if str(disposition) == V603_DISPOSITION_HOLD:
+                return
+            if self._v603_is_short_lot(int(book_id), net, eps=eps, min_order=min_order):
+                self._v603_count("short_lot_cancels")
+        except Exception:
+            self._v603_errors = int(getattr(self, "_v603_errors", 0) or 0) + 1
+
+    def _v603_open_short_lot_rows(self) -> int:
+        """Recovery rows still owning a short lot.  Outside a live bound hold this must be 0."""
+        rows = getattr(self, "_direct_partial_recovery", None) or {}
+        if not rows:
+            return 0
+        eps = float(self._execution_flat_epsilon())
+        min_size = max(
+            1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        )
+        held = 0
+        for book_id in list(rows.keys()):
+            net = float(self._direct_signed_inventory(int(book_id)))
+            if abs(net) <= eps:
+                continue
+            if self._v603_is_short_lot(int(book_id), net, eps=eps, min_order=min_size):
+                held += 1
+        return int(held)
+
+    def _v603_telemetry(self, state) -> None:
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if getattr(self, "_v603_state_reported", False) and not (tick > 0 and tick % V603_STATE_EVERY_TICKS == 0):
+            return
+        self._v603_state_reported = True
+        counts = dict(getattr(self, "_v603_counts", {}) or {})
+        cancels_total = int(counts.get("short_lot_cancels", 0) or 0)
+        since = cancels_total - int(getattr(self, "_v603_cancels_reported", 0) or 0)
+        self._v603_cancels_reported = cancels_total
+        self._emit(
+            "V603_STATE", force=True, tick=tick,
+            v603_recovery_version=V603_RECOVERY_VERSION,
+            enabled=int(self._v603_on()),
+            releases=int(getattr(self, "_direct_v603_short_lot_releases", 0) or 0),
+            short_lot_rows_open=self._v603_open_short_lot_rows(),
+            recovery_rows_open=len(getattr(self, "_direct_partial_recovery", {}) or {}),
+            short_lot_cancels_since=int(max(0, since)),
+            short_lot_cancels_total=cancels_total,
+            last_release=dict(getattr(self, "_v603_last", {}) or {}),
+            counts=counts,
+            errors=int(getattr(self, "_v603_errors", 0) or 0),
+        )
+
     def _v504_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         recorder = getattr(self, "_v503_recorder", None)
@@ -7439,6 +7575,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v601_telemetry(state)
         except Exception:
             self._v601_errors = int(getattr(self, "_v601_errors", 0) or 0) + 1
+        # v6.0.3 telemetry: the short-lot release row.
+        try:
+            self._v603_telemetry(state)
+        except Exception:
+            self._v603_errors = int(getattr(self, "_v603_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -8870,6 +9011,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except (TypeError, ValueError):
                 bound_id = None
 
+            # v6.0.3 D1: once the bounded hold is gone, a short lot is not this handler's to own.
+            # v6.0.0 exits it like a full lot, and keeping the row here cancels that exit at the
+            # next request -- 121 such cancels in the v6.0.2 run, 9 of 19 episodes forced out.
+            disposition = self._v603_disposition(
+                int(book_id), net, eps=eps, min_order=min_size,
+                hold_active=bool(active), bound=bool(active and bound_id is not None),
+            )
+            if disposition == V603_DISPOSITION_RELEASE:
+                self._direct_partial_recovery.pop(int(book_id), None)
+                self._v603_note_release(
+                    int(book_id), net, mode=str(row.get("mode") or "UNKNOWN"),
+                    desired_side=desired, hold_active=bool(active),
+                )
+                continue
+
             account_orders = []
             order_rows = []
             order_by_id = {}
@@ -8911,12 +9067,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         )
                     except Exception:
                         pass
+                    # v6.0.3: the disposition says which branch sent this cancel, so a short-lot
+                    # cancel (gate R1) is read from the row rather than inferred from a null id.
+                    self._v603_note_cancel(
+                        int(book_id), net, eps=eps, min_order=min_size, disposition=disposition,
+                    )
                     self._emit(
                         "A173_PARTIAL_REMAINDER_CANCEL", force=True,
                         tick=int(getattr(self, "_tick", 0) or 0), book=int(book_id),
                         mode=str(row.get("mode") or "UNKNOWN"), desired_side=desired,
                         bound_order_id=bound_id, cancelled_orders=len(conflicting_ids),
-                        net_base=float(net),
+                        net_base=float(net), v603_disposition=str(disposition),
                     )
                 except Exception:
                     pass
@@ -10146,6 +10307,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_liveness_blocked_ticks": 0,
             "direct_dust_recovery_reserve_abs": 0.0,
             "direct_v601_reserve_dust_books": 0,
+            "direct_v603_short_lot_releases": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -10332,6 +10494,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         v601_reserve = getattr(self, "_v601_reserve_dust", None)
         reserve_dust_now = dust_now if v601_reserve is None else int(v601_reserve(diag, dust_now))
         stats["direct_v601_reserve_dust_books"] = int(reserve_dust_now)
+        stats["direct_v603_short_lot_releases"] = int(
+            getattr(self, "_direct_v603_short_lot_releases", 0) or 0
+        )
         recovery_reserve_abs = dust_recovery_reserve_abs(
             dust_count=reserve_dust_now, min_order=min_size,
         )
