@@ -572,8 +572,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_2"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -3013,6 +3013,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 getattr(self, "_a196_inherited_capped_samples", 0) or 0
             ) + 1
         payload.update(getattr(self, "_v601_last", None) or {})
+        # v6.0.2: the caps this row was judged against, so a cap change is read, never inferred.
+        payload.update(
+            cap_max_active=int(terms.get("max_active", 0) or 0),
+            cap_max_open=int(terms.get("max_open", 0) or 0),
+            cap_max_abs=float(terms.get("max_abs", 0.0) or 0.0),
+        )
         self._a196_admission_last = payload
         self._emit("A196_ADMISSION", force=True, tick=int(tick), **payload)
 
@@ -7202,6 +7208,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             inherited_parked=len(getattr(self, "_v600_inherited_parked", {}) or {}),
             counts=counts,
             errors=int(getattr(self, "_v601_errors", 0) or 0),
+            # v6.0.2: the effective caps after the frozen Research clamps.
+            max_active_books=int(getattr(self, "research_max_active_open_books", 0) or 0),
+            max_open_books=int(getattr(self, "research_max_total_open_books", 0) or 0),
+            max_abs_base=float(getattr(self, "research_max_total_abs_base", 0.0) or 0.0),
         )
 
     def _v504_telemetry(self, state) -> None:

@@ -62,8 +62,8 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_1"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_1"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_2"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_2"' in SRC
     # A1.9.1.1: derived from runtime state, not a literal.
     assert 'stats["direct_a19_phase"] = self._a19_runtime_phase()' in SRC
     assert 'stats["direct_a19_behaviour_change"] = self._a19_behaviour_change()' in SRC
@@ -96,8 +96,9 @@ def test_ttl_target_is_cadence_derived():
 
 def test_launcher_keeps_every_frozen_knob():
     for frozen in (
-        "mm_base_size=0.25", "research_max_active_open_books=6",
-        "research_max_open_books=6", "research_max_total_abs_base=2.0",
+        # v6.0.2 made the active-book cap a launcher setting (6 to 8); older builds are pinned to 6.
+        "mm_base_size=0.25", "research_max_active_open_books=${MAX_ACTIVE_BOOKS}",
+        "research_max_open_books=${MAX_ACTIVE_BOOKS}", "research_max_total_abs_base=2.0",
     ):
         assert frozen in LAUNCHER_SRC, frozen
 

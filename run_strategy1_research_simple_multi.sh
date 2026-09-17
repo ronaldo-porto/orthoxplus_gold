@@ -33,6 +33,10 @@ RECORDER_MAX_MB="${RECORDER_MAX_MB:-8192}"
 #   INHERITED_SHORT_LOTS park | exit   what a restart does with a single lot the seed rebuilt
 SHORT_LOT_FRACTION="${SHORT_LOT_FRACTION:-0.6667}"
 INHERITED_SHORT_LOTS="${INHERITED_SHORT_LOTS:-park}"
+# v6.0.2 operator setting; see the v6.0.2 preflight block below.  --max_active_books overrides it.
+#   MAX_ACTIVE_BOOKS  productive books held at once, 6 to 8 (the frozen Research clamp is 8, and
+#                     8 x 0.25 is exactly the 2.0 BASE cap).  6 restores v6.0.1.
+MAX_ACTIVE_BOOKS="${MAX_ACTIVE_BOOKS:-8}"
 
 EXTRA=()
 
@@ -57,6 +61,16 @@ while (($#)); do
       _pm2_value="${1#*=}"
       [[ -n "$_pm2_value" ]] || { echo "ERROR: --pm2_name requires a value" >&2; exit 2; }
       _normalized_args+=(-i "$_pm2_value")
+      shift
+      ;;
+    --max_active_books)
+      [[ $# -ge 2 && -n "${2:-}" ]] || { echo "ERROR: --max_active_books requires 6, 7 or 8" >&2; exit 2; }
+      MAX_ACTIVE_BOOKS="$2"
+      shift 2
+      ;;
+    --max_active_books=*)
+      [[ -n "${1#*=}" ]] || { echo "ERROR: --max_active_books requires 6, 7 or 8" >&2; exit 2; }
+      MAX_ACTIVE_BOOKS="${1#*=}"
       shift
       ;;
     --history_anchor)
@@ -110,7 +124,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -128,6 +142,7 @@ case "$POLICY_VER" in
   strategy1_direct_v5_0_4) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1 ;;
   strategy1_direct_v6_0_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1 ;;
   strategy1_direct_v6_0_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1 ;;
+  strategy1_direct_v6_0_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -207,8 +222,12 @@ mkdir -p "$RESEARCH_DIR"
 #      visible in a later state (the A1.7.4.3.1 ownership rule).
 # HOLD is the ABSENCE of an action -- it leaves the resting order untouched -- so
 # every new risk lives in the reprice cancels. Everything else stays frozen:
-# size 0.25, 6 active books, 2.0 BASE cap, QUIET gate, Taker and tail authority.
+# size 0.25, 6 active books (v6.0.2: MAX_ACTIVE_BOOKS), 2.0 BASE cap, QUIET gate, Taker and tail authority.
 # Legacy Research knobs keep their source defaults but do not own the direct hot path.
+# v6.0.2: only a v6.0.2 build may change the active-book cap; earlier builds keep 6.
+if [[ "$V602_BUILD" != "1" ]]; then
+  MAX_ACTIVE_BOOKS=6
+fi
 PARAMS="enable_mm_strategy=1 lazy_load=1 fast_update=1 sync_event_csv=0 history_len=0 \
 mm_base_size=0.25 max_inventory_base=1.20 max_mm_books_per_tick=6 max_managed_books_per_tick=10 \
 min_expected_alpha=0.18 mm_expiry_period_ns=500000000 \
@@ -217,7 +236,7 @@ debug_enabled=1 debug_every_n=${RESEARCH_EVERY_N} debug_jsonl=0 debug_book_id=${
 research_enabled=1 research_every_n=${RESEARCH_EVERY_N} research_book_id=${RESEARCH_BOOK} research_jsonl=${RESEARCH_JSONL} research_console=${RESEARCH_CONSOLE} research_compact_console=1 research_queue_size=${RESEARCH_QUEUE} \
 research_neutral_fallback=1 research_sync_min_order=1 research_fix_inventory_util=1 research_fix_quote_reservation=1 \
 research_enable_fast_candidate_screen=1 research_candidate_count=20 research_cheap_shortlist_count=24 \
-research_max_open_books=6 research_max_active_open_books=6 research_max_total_open_books=8 research_max_total_abs_base=2.0 \
+research_max_open_books=${MAX_ACTIVE_BOOKS} research_max_active_open_books=${MAX_ACTIVE_BOOKS} research_max_total_open_books=8 research_max_total_abs_base=2.0 \
 research_post_only_safety_ticks=2 research_local_kappa_refresh_ticks=10 research_score_target_books=80 research_total_score_ignition_books=41 research_total_score_full_breadth_books=80 \
 research_lifecycle_taker_exit_prob=0.30 research_lifecycle_slippage_bps=0.75 research_lifecycle_holding_bps=0.50 \
 research_positive_maker_veto_enabled=1 research_positive_maker_veto_floor_bps=1.0 research_positive_maker_veto_max_failed_exits=4 research_bounded_loss_escape_min_age_ticks=2.0 \
@@ -1198,6 +1217,34 @@ if [[ "$V601_BUILD" == "1" ]]; then
   echo "[preflight] v6.0.1 workable-dust reserve PASS"
 fi
 
+# v6.0.2.  Active-book cap 6 -> 8.  On v6.0.1 (UID 68 testnet, ticks 0-2,622) every zero-slot
+# admission row was ACTIVE-bound, 62% of rows with all 6 books held.  The frozen Research clamp
+# allows 8, the total-open cap is already 8, and 8 x 0.25 BASE is exactly the 2.0 BASE cap, so no
+# other limit moves.
+if [[ "$V602_BUILD" == "1" ]]; then
+  [[ "$MAX_ACTIVE_BOOKS" =~ ^[678]$ ]] || {
+    echo "ERROR: v6.0.2 MAX_ACTIVE_BOOKS='${MAX_ACTIVE_BOOKS}' is not 6, 7 or 8." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_max_active_open_books=${MAX_ACTIVE_BOOKS} "* && "$PARAMS" == *"research_max_open_books=${MAX_ACTIVE_BOOKS} "* ]] || {
+    echo "ERROR: v6.0.2 PARAMS does not carry the active-book cap ${MAX_ACTIVE_BOOKS}." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_max_total_open_books=8 research_max_total_abs_base=2.0"* ]] || {
+    echo "ERROR: v6.0.2 must keep the total-open cap 8 and the 2.0 BASE cap." >&2
+    exit 1
+  }
+  grep -qF 'min(8, int(getattr(' "$AGENT_PATH/Strategy1_Research.py" || {
+    echo "ERROR: v6.0.2 expects the frozen Research active-book clamp of 8." >&2
+    exit 1
+  }
+  grep -qF 'cap_max_active=int(terms.get("max_active", 0) or 0),' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.0.2 admission rows do not report the active-book cap." >&2
+    exit 1
+  }
+  echo "[preflight] v6.0.2 active-book cap PASS (max_active_books=${MAX_ACTIVE_BOOKS})"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
@@ -1250,6 +1297,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v5_0_4_registration_identity.py \
       tests/test_research_v6_0_0_short_lots.py \
       tests/test_research_v6_0_1_capacity.py \
+      tests/test_research_v6_0_2_active_cap.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py
@@ -1260,6 +1308,7 @@ fi
 echo "[Strategy1_Research_Simple] version=${POLICY_VER}"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] history_anchor=$HISTORY_ANCHOR (from $HISTORY_ANCHOR_SOURCE)"
+echo "[Strategy1_Research_Simple] max_active_books=$MAX_ACTIVE_BOOKS"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 
 # Keep the strategy directory importable in the actual PM2/miner process, not

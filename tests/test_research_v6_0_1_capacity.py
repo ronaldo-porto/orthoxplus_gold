@@ -220,12 +220,12 @@ def test_t5_arm_params_and_guards():
             "A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; "
             "V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1 ;;") in LAUNCHER
     assert "  strategy1_direct_v6_0_0) A19X_BUILD=1" in LAUNCHER, "earlier arms stay"
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_1"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_1"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_2"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_2"' in SIMPLE
     start = LAUNCHER.index('PARAMS="')
     params = LAUNCHER[start:LAUNCHER.index('"', start + len('PARAMS="'))]
     assert "research_v601_workable_dust_reserve=1" in params
-    assert "research_max_active_open_books=6" in params and "research_max_total_abs_base=2.0" in params
+    assert "research_max_active_open_books=${MAX_ACTIVE_BOOKS}" in params and "research_max_total_abs_base=2.0" in params
     assert 'getattr(self.config, "research_v601_workable_dust_reserve"' in SIMPLE
     assert "[preflight] v6.0.1 workable-dust reserve PASS" in LAUNCHER
     assert "tests/test_research_v6_0_1_capacity.py" in LAUNCHER
