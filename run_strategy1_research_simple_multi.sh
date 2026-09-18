@@ -124,7 +124,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -145,6 +145,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_0_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1 ;;
   strategy1_direct_v6_0_3) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1 ;;
   strategy1_direct_v6_1_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1 ;;
+  strategy1_direct_v6_1_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -275,7 +276,8 @@ research_v600_inherited_short_lots=${INHERITED_SHORT_LOTS} \
 research_v601_workable_dust_reserve=1 \
 research_v603_short_lot_release=1 \
 research_v61_no_loss=1 \
-research_v61_state_gap_repair=1 research_v61_request_memo=1"
+research_v61_state_gap_repair=1 research_v61_request_memo=1 \
+research_v611_floor_reprice=1 research_v611_price_lift=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -1399,6 +1401,52 @@ if [[ "$V610_BUILD" == "1" ]]; then
   echo "[preflight] v6.1 request memo PASS"
 fi
 
+# v6.1.1.  Two defects from the v6.1.0 testnet read (UID 82, ticks 1-1,014, 2026-09-18).
+# (1) The A1.9.1.1 reprice seed judged a held lot's floored exit against the bare passive touch --
+# ~1,100 ticks away by design -- and cancelled it one request after it was placed: 2,265 cancels.
+# The seed now compares against the touch floored at the lot's break-even, the price the placement
+# path itself sends.  (2) The venue truncates a price's binary expansion: 1,838 of 3,915 testnet
+# and 1,804 of 3,573 mainnet placements landed one tick below the price sent.  Each outgoing limit
+# price is lifted one ulp when its double sits below its decimal.
+if [[ "$V611_BUILD" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_v611_wire.py" ]] || {
+    echo "ERROR: v6.1.1 research_v611_wire.py missing." >&2
+    exit 1
+  }
+  grep -qF 'desired_price = self._v611_seed_comparand(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.1.1 reprice seed still compares floored exits with the bare touch." >&2
+    exit 1
+  }
+  # The comparand must be floored inside _a191_decide, before the classifier reads it.
+  V611_SEED_LINE="$(grep -nF 'desired_price = self._v611_seed_comparand(' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  V611_CLASSIFY_LINE="$(grep -nF 'decision, reason = classify_resting_maker_exit(' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  [[ -n "$V611_SEED_LINE" && -n "$V611_CLASSIFY_LINE" && "$V611_SEED_LINE" -lt "$V611_CLASSIFY_LINE" ]] || {
+    echo "ERROR: v6.1.1 seed comparand floored after the A1.9.1 classifier." >&2
+    exit 1
+  }
+  grep -qF 'self._v611_lift_outgoing_prices(response, state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.1.1 price lift not wired: half of all limit orders land one tick low." >&2
+    exit 1
+  }
+  # The lift must see the final placement set: after the frozen chain has built it.
+  V611_SUPER_LINE="$(grep -nF 'response = super().respond(state) if quiet is None else quiet' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  V611_LIFT_LINE="$(grep -nF 'self._v611_lift_outgoing_prices(response, state)' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  [[ -n "$V611_SUPER_LINE" && -n "$V611_LIFT_LINE" && "$V611_SUPER_LINE" -lt "$V611_LIFT_LINE" ]] || {
+    echo "ERROR: v6.1.1 price lift runs before the placement set is built." >&2
+    exit 1
+  }
+  grep -qF 'def _v611_telemetry' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.1.1 V611_STATE telemetry missing." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v611_floor_reprice=1"* && "$PARAMS" == *"research_v611_price_lift=1"* ]] || {
+    echo "ERROR: v6.1.1 build without research_v611_floor_reprice=1 / research_v611_price_lift=1 in PARAMS." >&2
+    exit 1
+  }
+  echo "[preflight] v6.1.1 floor-aware reprice seed PASS"
+  echo "[preflight] v6.1.1 price lift PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -1461,6 +1509,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_1_0_no_loss.py \
       tests/test_research_v6_1_0_state_gap.py \
       tests/test_research_v6_1_0_request_memo.py \
+      tests/test_research_v6_1_1_wire.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
       tests/test_wiring_integrity.py \

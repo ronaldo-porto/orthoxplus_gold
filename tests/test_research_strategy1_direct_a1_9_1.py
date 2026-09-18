@@ -63,8 +63,8 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_1_0"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_1_0"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_1_1"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_1_1"' in SRC
     # A1.9.1.1: derived from runtime state, not a literal.
     assert 'stats["direct_a19_phase"] = self._a19_runtime_phase()' in SRC
     assert 'stats["direct_a19_behaviour_change"] = self._a19_behaviour_change()' in SRC
@@ -115,7 +115,7 @@ WANTED = {
     "_a191_enabled", "_a191_verdict_store", "_a191_live_exit_row",
     "_a191_decide", "_a191_service_reprice_cancels",
     "_a19_is_entry_quote_row", "_direct_entry_quote_client_ids",
-    "_a19_resting_net_bps", "_v61_on", "_v61_positions", "_a19_tick_size", "_a19_ledger_ref",
+    "_a19_resting_net_bps", "_v61_on", "_v61_positions", "_v61_floor_for", "_v611_floor_reprice_on", "_v611_seed_comparand", "_a19_tick_size", "_a19_ledger_ref",
     "_a19_note_exit_cancel", "_direct_account_orders",
     "_a191_check_activation", "_a19_runtime_phase", "_a19_behaviour_change",
 }

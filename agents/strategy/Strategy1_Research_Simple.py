@@ -416,6 +416,11 @@ from research_v61_state_gap import (
     confirmed_divergence as v61_confirmed_divergence,
     diverged_books as v61_diverged_books,
 )
+from research_v611_wire import (
+    V611_STATE_EVERY_TICKS,
+    V611_VERSION,
+    lift_instruction_prices as v611_lift_instruction_prices,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -604,8 +609,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_1_0"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_1_0"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_1_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_1_1"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1155,6 +1160,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v61_memo_hits = 0
         self._v61_memo_misses = 0
         self._v61_pnl_memo_builds = 0
+        # v6.1.1 floor-aware reprice: the A1.9.1.1 seed judges a resting exit against the passive
+        # touch floored at the lot's break-even -- the price the placement path itself sends -- so a
+        # held lot's floored exit is no longer cancelled as STALE_BEHIND_TOUCH one request after it
+        # is placed.  Off restores v6.1.0 exactly.
+        self.research_v611_floor_reprice = self._as_bool(
+            getattr(self.config, "research_v611_floor_reprice", True)
+        )
+        # v6.1.1 price lift: the venue truncates a price's binary expansion, so ~half of all limit
+        # orders were placed one tick below the price decided.  Each outgoing limit price is lifted
+        # one ulp when its double sits below its decimal, so it lands on its own tick.  Off
+        # restores v6.1.0 exactly.
+        self.research_v611_price_lift = self._as_bool(
+            getattr(self.config, "research_v611_price_lift", True)
+        )
+        self._v611_counts: dict[str, int] = {}
+        self._v611_state_reported = False
+        self._v611_errors = 0
 
     def _init_direct_overlay_state(self) -> None:
         """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
@@ -5275,6 +5297,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 desired_price = float(levels[0].price) if levels else None
             except (AttributeError, IndexError, TypeError, ValueError):
                 desired_price = None
+            # v6.1.1: the comparand is the price the placement path would send, and v6.1 floors
+            # every maker exit at its lot's break-even.  Against the bare touch a held lot's floored
+            # exit read ~1,100 ticks stale and was cancelled one request after it was placed.
+            if desired_price is not None:
+                desired_price = self._v611_seed_comparand(
+                    bid, state, desired_price, long_position=net_base > 0.0,
+                )
         if desired_price is None:
             return None
 
@@ -7995,6 +8024,65 @@ class Strategy1_Research_Simple(Strategy1_Research):
         _counts, sums = self._v61_pnl_window(current_ts)
         return sums.get(book_id, 0.0)
 
+    # ---- v6.1.1: the reprice seed sees the floor; every price lands on its own tick ----------------
+    def _v611_floor_reprice_on(self) -> bool:
+        return bool(getattr(self, "research_v611_floor_reprice", True))
+
+    def _v611_price_lift_on(self) -> bool:
+        return bool(getattr(self, "research_v611_price_lift", True))
+
+    def _v611_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v611_counts", None)
+        if counts is None:
+            counts = {}
+            self._v611_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v611_seed_comparand(self, book_id: int, state, touch: float, *, long_position: bool) -> float:
+        """The passive touch, floored at the head lot's break-even when v6.1 floors this book's exits.
+
+        ``_v61_apply_floor`` floors every maker exit the placement path sends, so the A1.9.1.1 seed
+        must judge a resting exit against that same price.  Against the bare touch, UID 82's held
+        lots had their floored exits cancelled as STALE_BEHIND_TOUCH 2,265 times in 1,014 ticks.
+        """
+        if not (self._v611_floor_reprice_on() and self._v61_on()):
+            return touch
+        floor = self._v61_floor_for(int(book_id), bool(long_position), state=state)
+        if floor is None:
+            return touch
+        placed = float(v61_floored_close_price(touch, floor, long_position=bool(long_position)))
+        if placed != float(touch):
+            self._v611_count("seed_floored")
+        return placed
+
+    def _v611_lift_outgoing_prices(self, response, state) -> int:
+        """Lift each queued limit price whose double sits below its decimal by one ulp."""
+        if not self._v611_price_lift_on():
+            return 0
+        instructions = getattr(response, "instructions", None)
+        if not instructions:
+            return 0
+        moved = v611_lift_instruction_prices(instructions, self._v61_price_decimals(state))
+        total = 0
+        for side, n in moved.items():
+            if n:
+                self._v611_count(f"lifted_{side}", n)
+                total += int(n)
+        return total
+
+    def _v611_telemetry(self, state) -> None:
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if getattr(self, "_v611_state_reported", False) and not (tick > 0 and tick % V611_STATE_EVERY_TICKS == 0):
+            return
+        self._v611_state_reported = True
+        self._emit(
+            "V611_STATE", force=True, tick=tick, v611_version=V611_VERSION,
+            floor_reprice=int(self._v611_floor_reprice_on()),
+            price_lift=int(self._v611_price_lift_on()),
+            counts=dict(getattr(self, "_v611_counts", {}) or {}),
+            errors=int(getattr(self, "_v611_errors", 0) or 0),
+        )
+
     def _v504_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         recorder = getattr(self, "_v503_recorder", None)
@@ -8169,6 +8257,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a196_snap_outgoing_quantities(response, state)
         except Exception:
             pass
+        # v6.1.1: the venue truncates prices the same way, so a price whose double sits below its
+        # decimal was placed one tick low -- ~half of all limit orders on both nets.  Every pass
+        # after this one removes placements or adds cancels, never a price, so it runs once here.
+        try:
+            self._v611_lift_outgoing_prices(response, state)
+        except Exception:
+            self._v611_errors = int(getattr(self, "_v611_errors", 0) or 0) + 1
         # A1.9.9: nothing opens or adds exposure during a resync, whichever path
         # built the order.  Runs on the wire quantities, after the grid snap.
         try:
@@ -8245,6 +8340,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v61_gap_telemetry(state)
         except Exception:
             self._v61_gap_errors = int(getattr(self, "_v61_gap_errors", 0) or 0) + 1
+        # v6.1.1 telemetry: the reprice seed and the price lift.
+        try:
+            self._v611_telemetry(state)
+        except Exception:
+            self._v611_errors = int(getattr(self, "_v611_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -10978,6 +11078,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_v61_standing_reseeds": 0,
             "direct_v61_request_memo": 0,
             "direct_v61_memo_hits": 0,
+            "direct_v611_floor_reprice": 0,
+            "direct_v611_price_lift": 0,
+            "direct_v611_seed_floored": 0,
+            "direct_v611_prices_lifted": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -11178,6 +11282,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_v61_standing_reseeds"] = int(getattr(self, "_direct_v61_standing_reseeds", 0) or 0)
         stats["direct_v61_request_memo"] = int(self._v61_memo_on())
         stats["direct_v61_memo_hits"] = int(getattr(self, "_v61_memo_hits", 0) or 0)
+        v611_counts = dict(getattr(self, "_v611_counts", {}) or {})
+        stats["direct_v611_floor_reprice"] = int(self._v611_floor_reprice_on())
+        stats["direct_v611_price_lift"] = int(self._v611_price_lift_on())
+        stats["direct_v611_seed_floored"] = int(v611_counts.get("seed_floored", 0))
+        stats["direct_v611_prices_lifted"] = int(sum(
+            n for key, n in v611_counts.items() if key.startswith("lifted_")
+        ))
         recovery_reserve_abs = dust_recovery_reserve_abs(
             dust_count=reserve_dust_now, min_order=min_size,
         )
