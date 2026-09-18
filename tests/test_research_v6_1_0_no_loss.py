@@ -408,8 +408,8 @@ def test_t6_the_state_row_is_emitted_once_then_on_the_cadence():
 
 
 def test_t6_source_wiring():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_0"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_0"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
     assert "from research_v61_lot_floor import (" in SIMPLE
     # the choke point precedes the frozen market order
     assert SIMPLE.index("ok, detail = self._v61_taker_verdict(") < SIMPLE.index(

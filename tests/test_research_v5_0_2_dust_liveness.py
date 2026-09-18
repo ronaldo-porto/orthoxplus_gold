@@ -523,8 +523,8 @@ def test_v5_0_2_is_wired_and_launched():
     for switch in ("research_v502_flat_residue", "research_v502_clip_recognition",
                    "research_v502_compactor_turn", "research_v502_market_terminal"):
         assert f'self.{switch} = self._as_bool(\n            getattr(self.config, "{switch}", True)' in SIMPLE, switch
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_0"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_0"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
     assert dl.V502_DUST_LIVENESS_VERSION.endswith("v5_0_2")
     for key in ("direct_v502_dust_liveness_version", "direct_v502_flat_residue", "direct_v502_clip_recognition",
                 "direct_v502_compactor_turn", "direct_v502_market_terminal", "direct_v502_residue_abs",

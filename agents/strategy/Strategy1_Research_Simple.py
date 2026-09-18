@@ -625,8 +625,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_0"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_0"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_1"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_1"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1205,6 +1205,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v62_state_reported = False
         self._v62_errors = 0
         self._v62_mirror = None
+        # v6.2.1: at breadth every book with inventory reaches the managed set.  The A1.6.1 fast-path
+        # screen truncates its forced-inventory list to the candidate clamp (20, hard limit 24), so
+        # once more than ~20 books held a lot the rest had no profile and therefore no exit (tick-500
+        # read of v6.2.0 on UID 82: 118 books holding, 20 managed, exit liveness 14%, making 0).
+        # Off restores v6.2.0 exactly.
+        self.research_v621_managed_universe = self._as_bool(
+            getattr(self.config, "research_v621_managed_universe", True)
+        )
+        self._v621_last: dict[str, int] = {}
 
     def _init_direct_overlay_state(self) -> None:
         """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
@@ -8127,6 +8136,22 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v62_counts = counts
         counts[key] = int(counts.get(key, 0)) + int(n)
 
+    def _v621_on(self) -> bool:
+        return bool(self._v62_on() and getattr(self, "research_v621_managed_universe", True))
+
+    def _v621_cap_override(self, universe):
+        """The fast-path screen's bound at breadth: the universe, so no inventory book is dropped.
+
+        None (the frozen clamp) whenever the switch is off or the universe is not a positive count.
+        """
+        if not self._v621_on():
+            return None
+        try:
+            n = int(universe)
+        except (TypeError, ValueError):
+            return None
+        return n if n > 0 else None
+
     def _v62_apply_caps(self, state) -> None:
         """The portfolio caps are the universe's: every book may hold its one lot in flight.
 
@@ -8316,6 +8341,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "V62_STATE", force=True, tick=tick, v62_version=V62_VERSION,
             enabled=int(self._v62_on()),
             caps_applied=int(bool(getattr(self, "_v62_caps_applied", False))),
+            managed_universe_on=int(self._v621_on()),
+            managed_universe=dict(getattr(self, "_v621_last", {}) or {}),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
             making=(mirror.snapshot() if mirror is not None else {}),
@@ -9499,8 +9526,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             DIRECT_FASTPATH_CANDIDATE_COUNT,
             int(getattr(self, "research_candidate_count", DIRECT_FASTPATH_CANDIDATE_COUNT) or DIRECT_FASTPATH_CANDIDATE_COUNT),
         ))
+        v621_cap = self._v621_cap_override(len(rows))
         selected = select_fastpath_rows(
             rows, candidate_count=configured, score_deficit=score_deficit, tick=tick,
+            cap_override=v621_cap,
         )
         selected_set = {int(x) for x in selected}
         for bid in selected_set:
@@ -9508,6 +9537,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_fastpath_last_selected_tick = last_selected
 
         forced_inventory = [r.book_id for r in rows if r.has_inventory and r.book_id in selected_set]
+        self._v621_last = {
+            "universe": int(len(rows)), "cap": int(v621_cap or 0), "selected": int(len(selected)),
+            "inventory_rows": int(sum(1 for r in rows if r.has_inventory)),
+            "forced_inventory": int(len(forced_inventory)),
+        }
         forced_dust = [r.book_id for r in rows if r.is_dust and r.book_id in selected_set]
         forced_kappa = [
             r.book_id for r in rows
@@ -11335,6 +11369,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_v62_quoted_books": 0,
             "direct_v62_placements": 0,
             "direct_v62_making": 0.0,
+            "direct_v621_managed_universe": 0,
+            "direct_v621_forced_inventory": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -11551,6 +11587,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_v62_placements"] = int(v62_request.get("placements", 0))
         v62_mirror = getattr(self, "_v62_mirror", None)
         stats["direct_v62_making"] = float(v62_mirror.making()) if v62_mirror is not None else 0.0
+        v621_last = dict(getattr(self, "_v621_last", {}) or {})
+        stats["direct_v621_managed_universe"] = int(self._v621_on())
+        stats["direct_v621_forced_inventory"] = int(v621_last.get("forced_inventory", 0))
         recovery_reserve_abs = dust_recovery_reserve_abs(
             dust_count=reserve_dust_now, min_order=min_size,
         )

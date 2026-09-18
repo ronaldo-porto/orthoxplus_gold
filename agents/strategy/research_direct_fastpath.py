@@ -118,6 +118,7 @@ def select_fastpath_rows(
     tick: int,
     qualified_cadence: int = DIRECT_QUALIFIED_CADENCE,
     max_qualified_share: float = DIRECT_MAX_QUALIFIED_SHARE,
+    cap_override: int | None = None,
 ) -> list[int]:
     """Return bounded top-K ids while reserving room for economic qualified books.
 
@@ -125,8 +126,19 @@ def select_fastpath_rows(
     score deficit, most acquisition slots go to incomplete books but up to 25%
     remain available to already-qualified books when their current economics are
     stronger. This prevents completion pressure from destroying productivity.
+
+    v6.2.1 ``cap_override``: the caller's own bound on the selected set, used in place of the
+    A1.6.1 clamp (16..24).  At breadth every book with inventory must reach the managed set --
+    the forced list is truncated to ``cap`` below -- so the caller passes the universe.  ``None``
+    keeps the clamp exactly as before.
     """
-    cap = clamp_candidate_count(candidate_count)
+    if cap_override is None:
+        cap = clamp_candidate_count(candidate_count)
+    else:
+        try:
+            cap = max(1, int(cap_override))
+        except (TypeError, ValueError):
+            cap = clamp_candidate_count(candidate_count)
     forced: list[FastPathRow] = []
     incomplete: list[FastPathRow] = []
     qualified: list[FastPathRow] = []

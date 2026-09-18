@@ -34,6 +34,7 @@ _method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 METHODS = [
     "_v62_on", "_v62_count", "_v62_apply_caps", "_v62_entry_ttl_ns", "_v62_book_facts",
     "_v62_place_touch_quotes", "_v62_acquire", "_v62_feed_mirror", "_v62_telemetry",
+    "_v621_on", "_v621_cap_override",          # v6.2.1: the telemetry reports the managed universe
 ]
 LOT = 0.25
 UNIVERSE = 128
@@ -507,12 +508,12 @@ def test_mirror_and_telemetry_wired():
 def test_switch_defaults_on_and_version():
     init = ast.get_source_segment(SIMPLE, _method("_init_build_switches"))
     assert 'getattr(self.config, "research_v62_breadth", True)' in init
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_0"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_0"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
 
 
 def test_launcher_arm_params_guards_and_gate():
-    arm = next(line for line in LAUNCHER.splitlines() if line.strip().startswith("strategy1_direct_v6_2_0)"))
+    arm = next(line for line in LAUNCHER.splitlines() if line.strip().startswith("strategy1_direct_v6_2_1)"))
     assert "V611_BUILD=1" in arm and "V620_BUILD=1" in arm
     assert "strategy1_direct_v6_1_1)" in LAUNCHER and "V620_BUILD=0" in LAUNCHER
     assert "research_v62_breadth=1" in LAUNCHER
