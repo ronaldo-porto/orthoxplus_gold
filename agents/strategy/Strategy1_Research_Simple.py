@@ -421,6 +421,22 @@ from research_v611_wire import (
     V611_VERSION,
     lift_instruction_prices as v611_lift_instruction_prices,
 )
+from research_v62_breadth import (
+    REASON_OK as V62_REASON_OK,
+    SKIP_REASONS as V62_SKIP_REASONS,
+    V62_STATE_EVERY_TICKS,
+    V62_VERSION,
+    BookFacts as V62BookFacts,
+    entry_client_ids as v62_entry_client_ids,
+    lot_quantity as v62_lot_quantity,
+    touch_prices as v62_touch_prices,
+    universe_caps as v62_universe_caps,
+    universe_verdict as v62_universe_verdict,
+)
+from research_v62_making_mirror import (
+    DEFAULT_LOOKBACK_NS as V62_DEFAULT_LOOKBACK_NS,
+    MakingMirror as V62MakingMirror,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -609,8 +625,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_1_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_1_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_0"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_0"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1177,6 +1193,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v611_counts: dict[str, int] = {}
         self._v611_state_reported = False
         self._v611_errors = 0
+        # v6.2.0 breadth: every valid flat book gets a symmetric bid + ask at the touch, one lot each.
+        # The ranker, the score-EV eligibility and the 8-slot admission no longer gate acquisition,
+        # and the portfolio caps are the universe's (books × lot).  Off restores v6.1.1 exactly.
+        self.research_v62_breadth = self._as_bool(
+            getattr(self.config, "research_v62_breadth", True)
+        )
+        self._v62_counts: dict[str, int] = {}
+        self._v62_request: dict[str, int] = {}
+        self._v62_caps_applied = False
+        self._v62_state_reported = False
+        self._v62_errors = 0
+        self._v62_mirror = None
 
     def _init_direct_overlay_state(self) -> None:
         """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
@@ -1497,6 +1525,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a199_observe_epoch(state)
         except Exception:
             pass
+        # v6.2 telemetry: the validator's making term, from this state's prints.
+        try:
+            self._v62_feed_mirror(state)
+        except Exception:
+            self._v62_errors = int(getattr(self, "_v62_errors", 0) or 0) + 1
         return super().update(state)
 
     # ------------------------------------------------------------------
@@ -8083,6 +8116,212 @@ class Strategy1_Research_Simple(Strategy1_Research):
             errors=int(getattr(self, "_v611_errors", 0) or 0),
         )
 
+    # ---- v6.2.0: symmetric touch quotes on every valid flat book --------------------------------------
+    def _v62_on(self) -> bool:
+        return bool(getattr(self, "research_v62_breadth", True))
+
+    def _v62_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v62_counts", None)
+        if counts is None:
+            counts = {}
+            self._v62_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v62_apply_caps(self, state) -> None:
+        """The portfolio caps are the universe's: every book may hold its one lot in flight.
+
+        The frozen init clamps total open books at 8 and the launcher carries 2.0 BASE; both were
+        the slot model.  Derived here from the state's book count and the lot, once per run, so the
+        number is the universe's and not an observed one.
+        """
+        if not self._v62_on() or getattr(self, "_v62_caps_applied", False):
+            return
+        books = getattr(state, "books", None) or {}
+        n = len(books)
+        if n <= 0:
+            return
+        lot = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+        caps = v62_universe_caps(n, lot)
+        before = {key: getattr(self, key, None) for key in caps}
+        for key, value in caps.items():
+            setattr(self, key, value)
+        self._v62_caps_applied = True
+        self._emit(
+            "V62_CAPS", force=True, tick=int(getattr(self, "_tick", 0) or 0),
+            v62_version=V62_VERSION, universe=int(n), lot=lot, before=before, after=dict(caps),
+        )
+
+    def _v62_entry_ttl_ns(self, book_id: int, state) -> int:
+        """The entry TTL the frozen placement path would choose for this book (parity with v6.1.1)."""
+        baseline = int(getattr(self, "mm_expiry_period", 500_000_000) or 500_000_000)
+        if not bool(getattr(self, "research_enable_adaptive_ttl", False)):
+            return baseline
+        try:
+            chosen, _reason, _hazard = self._research_choose_ttl(
+                int(book_id), None, state, baseline_ns=baseline,
+            )
+        except Exception:
+            return baseline
+        if chosen is None:
+            return baseline
+        lo = float(getattr(self, "research_ttl_min_ms", 250.0) or 250.0)
+        hi = float(getattr(self, "research_ttl_max_ms", 3000.0) or 3000.0)
+        return int(max(lo, min(hi, float(chosen))) * 1_000_000)
+
+    def _v62_book_facts(self, book_id: int, book, state, response, lot: float):
+        """Gather the per-book facts from the frozen views; no decision here."""
+        best_bid = best_ask = None
+        try:
+            bids = getattr(book, "bids", None) or []
+            asks = getattr(book, "asks", None) or []
+            if bids:
+                best_bid = float(bids[0].price)
+            if asks:
+                best_ask = float(asks[0].price)
+        except (TypeError, ValueError, AttributeError, IndexError):
+            best_bid = best_ask = None
+        try:
+            net = float(self._direct_signed_inventory(int(book_id)))
+        except Exception:
+            net = 0.0
+        try:
+            live = bool(self._direct_book_has_live_order(int(book_id)))
+        except Exception:
+            live = True
+        cap_ok = False
+        if best_bid is not None and best_ask is not None and best_bid > 0.0 and best_ask > 0.0:
+            mid = 0.5 * (best_bid + best_ask)
+            try:
+                cap_ok = bool(self._research_can_add_volume(state, int(book_id), float(lot) * mid * 2.0))
+            except Exception:
+                cap_ok = False
+        quote_free = base_free = 0.0
+        acct = (getattr(self, "accounts", None) or {}).get(int(book_id))
+        if acct is not None:
+            try:
+                quote_free = float(acct.quote_balance.free)
+                base_free = float(acct.base_balance.free)
+            except (AttributeError, TypeError, ValueError):
+                quote_free = base_free = 0.0
+        return V62BookFacts(
+            book_id=int(book_id), best_bid=best_bid, best_ask=best_ask, net_base=net,
+            live_order=live, cap_ok=cap_ok, quote_free=quote_free, base_free=base_free,
+            instructions_used=int(self._count_book_instructions(response, int(book_id))),
+            max_instructions=int(getattr(self, "max_instructions_per_book", 5) or 5),
+        )
+
+    def _v62_place_touch_quotes(self, response, state, book_id: int, book, lot: float) -> int:
+        """One lot at the best bid and one at the best ask, post-only, the frozen client ids."""
+        try:
+            best_bid = float(book.bids[0].price)
+            best_ask = float(book.asks[0].price)
+        except (TypeError, ValueError, AttributeError, IndexError):
+            return 0
+        prices = v62_touch_prices(best_bid, best_ask, self._v61_price_decimals(state))
+        if prices is None:
+            return 0
+        bid_px, ask_px = prices
+        cfg = getattr(state, "config", None)
+        qty = v62_lot_quantity(lot, getattr(cfg, "volumeDecimals", 4))
+        if qty <= 0.0:
+            return 0
+        expiry = self._v62_entry_ttl_ns(int(book_id), state)
+        buy_cid, sell_cid = v62_entry_client_ids(int(book_id))
+        post_only = bool(self._prefer_maker(int(book_id)))
+        mem = self._mem(int(book_id))
+        budget = int(getattr(self, "max_instructions_per_book", 5) or 5)
+        placed = 0
+        for direction, price, client_id, side in (
+            (OrderDirection.BUY, bid_px, buy_cid, "buy"),
+            (OrderDirection.SELL, ask_px, sell_cid, "sell"),
+        ):
+            if self._count_book_instructions(response, int(book_id)) >= budget:
+                break
+            response.limit_order(
+                book_id=int(book_id),
+                direction=direction,
+                quantity=qty,
+                price=price,
+                clientOrderId=client_id,
+                stp=STP.CANCEL_BOTH,
+                postOnly=post_only,
+                timeInForce=TimeInForce.GTT,
+                expiryPeriod=expiry,
+                leverage=0.0,
+                settlement_option=LoanSettlementOption.NONE,
+                delay=0,
+            )
+            try:
+                self._record_fill_quote(mem, side, 0.0)
+                mem.quote_count += 1
+            except Exception:
+                pass
+            placed += 1
+        return placed
+
+    def _v62_acquire(self, response, state, stats: dict) -> int:
+        """v6.2: the acquisition pass over EVERY book.  Returns the instructions it added."""
+        books = getattr(state, "books", None) or {}
+        lot = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+        eps = float(self._execution_flat_epsilon())
+        request: dict[str, int] = {"books": len(books), "eligible": 0, "quoted_books": 0, "placements": 0}
+        for reason in V62_SKIP_REASONS:
+            request[reason] = 0
+        placed_total = 0
+        for raw_id in sorted(books, key=lambda x: int(x)):
+            book_id = int(raw_id)
+            book = books[raw_id]
+            facts = self._v62_book_facts(book_id, book, state, response, lot)
+            verdict = v62_universe_verdict(facts, lot=lot, flat_eps=eps)
+            if verdict != V62_REASON_OK:
+                request[verdict] = request.get(verdict, 0) + 1
+                continue
+            request["eligible"] += 1
+            n = self._v62_place_touch_quotes(response, state, book_id, book, lot)
+            if n:
+                request["quoted_books"] += 1
+                request["placements"] += int(n)
+                placed_total += int(n)
+        for key, value in request.items():
+            if key != "books":
+                self._v62_count(key, value)
+        self._v62_count("requests")
+        self._v62_request = request
+        stats["candidates"] = int(request["eligible"])
+        stats["quoted"] = int(request["quoted_books"])
+        return placed_total
+
+    def _v62_feed_mirror(self, state) -> None:
+        """Telemetry: the validator's making term from this state's prints, for our uid."""
+        if not self._v62_on():
+            return
+        mirror = getattr(self, "_v62_mirror", None)
+        if mirror is None:
+            lookback = int(getattr(self, "research_kappa_lookback_ns", 0) or 0) or V62_DEFAULT_LOOKBACK_NS
+            mirror = V62MakingMirror(int(getattr(self, "uid", 0) or 0), lookback_ns=lookback)
+            self._v62_mirror = mirror
+        books = getattr(state, "books", None) or {}
+        mirror.ingest_state(
+            int(getattr(state, "timestamp", 0) or 0),
+            ((int(raw_id), getattr(book, "events", None)) for raw_id, book in books.items()),
+        )
+
+    def _v62_telemetry(self, state) -> None:
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if getattr(self, "_v62_state_reported", False) and not (tick > 0 and tick % V62_STATE_EVERY_TICKS == 0):
+            return
+        self._v62_state_reported = True
+        mirror = getattr(self, "_v62_mirror", None)
+        self._emit(
+            "V62_STATE", force=True, tick=tick, v62_version=V62_VERSION,
+            enabled=int(self._v62_on()),
+            caps_applied=int(bool(getattr(self, "_v62_caps_applied", False))),
+            counts=dict(getattr(self, "_v62_counts", {}) or {}),
+            last_request=dict(getattr(self, "_v62_request", {}) or {}),
+            making=(mirror.snapshot() if mirror is not None else {}),
+            errors=int(getattr(self, "_v62_errors", 0) or 0),
+        )
+
     def _v504_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         recorder = getattr(self, "_v503_recorder", None)
@@ -8345,6 +8584,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v611_telemetry(state)
         except Exception:
             self._v611_errors = int(getattr(self, "_v611_errors", 0) or 0) + 1
+        # v6.2 telemetry: the breadth state and the making mirror.
+        try:
+            self._v62_telemetry(state)
+        except Exception:
+            self._v62_errors = int(getattr(self, "_v62_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -11047,6 +11291,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._research_bind_volume_state(state)
         self._research_score_ev_last = {}
         self._direct_forced_recovery_books_this_tick = set()
+        # v6.2: the caps are the universe's, applied once the universe is known.
+        try:
+            self._v62_apply_caps(state)
+        except Exception:
+            self._v62_errors = int(getattr(self, "_v62_errors", 0) or 0) + 1
 
         stats: dict[str, Any] = {
             "direct_mode": 1,
@@ -11082,6 +11331,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_v611_price_lift": 0,
             "direct_v611_seed_floored": 0,
             "direct_v611_prices_lifted": 0,
+            "direct_v62_breadth": 0,
+            "direct_v62_quoted_books": 0,
+            "direct_v62_placements": 0,
+            "direct_v62_making": 0.0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -11089,6 +11342,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         selected_ids = {int(x) for x in (getattr(screen, "selected", None) or [])}
         if not selected_ids:
             selected_ids = {int(x) for x in (predictions or {}).keys()}
+        # v6.2: every book is selected, so no valid entry quote is torn down as UNSELECTED.
+        if self._v62_on():
+            selected_ids = {int(x) for x in (getattr(state, "books", None) or {})}
 
         # A1.7.3.1: service the exact bound partial-order remainder before generic quote
         # maintenance can cancel them. This path places no new sub-minimum order.
@@ -11289,6 +11545,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_v611_prices_lifted"] = int(sum(
             n for key, n in v611_counts.items() if key.startswith("lifted_")
         ))
+        v62_request = dict(getattr(self, "_v62_request", {}) or {})
+        stats["direct_v62_breadth"] = int(self._v62_on())
+        stats["direct_v62_quoted_books"] = int(v62_request.get("quoted_books", 0))
+        stats["direct_v62_placements"] = int(v62_request.get("placements", 0))
+        v62_mirror = getattr(self, "_v62_mirror", None)
+        stats["direct_v62_making"] = float(v62_mirror.making()) if v62_mirror is not None else 0.0
         recovery_reserve_abs = dust_recovery_reserve_abs(
             dust_count=reserve_dust_now, min_order=min_size,
         )
@@ -11385,94 +11647,104 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 pass
 
-        # One flat-entry path. No maintenance branch and no separate alpha branch.
-        if portfolio_slots > 0:
-            candidate_ids = selected_ids
+        # v6.2: every valid flat book gets its two touch quotes; the ranker, the score-EV eligibility
+        # and the slot count no longer gate acquisition.  Off, the frozen path below runs unchanged.
+        if self._v62_on():
+            try:
+                v62_placed = self._v62_acquire(response, state, stats)
+            except Exception:
+                self._v62_errors = int(getattr(self, "_v62_errors", 0) or 0) + 1
+                v62_placed = 0
+            stats["instructions"] += int(v62_placed)
         else:
-            candidate_ids = set()
-            stats["portfolio_headroom_stop"] = 1
-        for book_id in candidate_ids:
-            book = (getattr(state, "books", None) or {}).get(book_id)
-            profile = profile_by_id.get(book_id)
-            prediction = (predictions or {}).get(book_id)
-            if book is None or profile is None or prediction is None:
-                continue
-            if not getattr(book, "bids", None) or not getattr(book, "asks", None):
-                continue
-            mid = 0.5 * (float(book.bids[0].price) + float(book.asks[0].price))
-            inventory = self._net_inventory(book_id, mid)
-            if str(getattr(inventory, "band", "FLAT") or "FLAT").upper() != "FLAT":
-                continue
+            # One flat-entry path. No maintenance branch and no separate alpha branch.
+            if portfolio_slots > 0:
+                candidate_ids = selected_ids
+            else:
+                candidate_ids = set()
+                stats["portfolio_headroom_stop"] = 1
+            for book_id in candidate_ids:
+                book = (getattr(state, "books", None) or {}).get(book_id)
+                profile = profile_by_id.get(book_id)
+                prediction = (predictions or {}).get(book_id)
+                if book is None or profile is None or prediction is None:
+                    continue
+                if not getattr(book, "bids", None) or not getattr(book, "asks", None):
+                    continue
+                mid = 0.5 * (float(book.bids[0].price) + float(book.asks[0].price))
+                inventory = self._net_inventory(book_id, mid)
+                if str(getattr(inventory, "band", "FLAT") or "FLAT").upper() != "FLAT":
+                    continue
 
-            archetype = self.classify_book_archetype(profile, regime)
-            params = self.merge_regime_and_archetype_params(regime_params, archetype)
-            edge_bias = self.get_archetype_edge_bias(archetype)
-            fill_est = self.estimate_fill_probability(
-                book,
-                mid,
-                float(book.asks[0].price) - float(book.bids[0].price),
-                float(getattr(profile, "trade_rate", 0.0) or 0.0),
-                float(book.bids[0].price),
-                float(book.asks[0].price),
-                book_id=book_id,
+                archetype = self.classify_book_archetype(profile, regime)
+                params = self.merge_regime_and_archetype_params(regime_params, archetype)
+                edge_bias = self.get_archetype_edge_bias(archetype)
+                fill_est = self.estimate_fill_probability(
+                    book,
+                    mid,
+                    float(book.asks[0].price) - float(book.bids[0].price),
+                    float(getattr(profile, "trade_rate", 0.0) or 0.0),
+                    float(book.bids[0].price),
+                    float(book.asks[0].price),
+                    book_id=book_id,
+                )
+                mem = self._mem(book_id)
+                expected_alpha = self.expected_alpha_score(
+                    profile, prediction, fill_est, mem, book_id, state.timestamp,
+                )
+                rank = self._global_book_rank(expected_alpha, mem)
+                ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(book_id)
+                if ev is None or not bool(getattr(ev, "eligible", False)) or rank <= -1e8:
+                    stats["skipped_negative_lifecycle"] += 1
+                    continue
+                candidates.append(
+                    (
+                        float(rank),
+                        book_id,
+                        book,
+                        profile,
+                        prediction,
+                        inventory,
+                        params,
+                        edge_bias,
+                    )
+                )
+
+            candidates.sort(key=lambda row: row[0], reverse=True)
+            stats["candidates"] = len(candidates)
+            attempt_cap = max(
+                int(getattr(self, "max_mm_books_per_tick", 4) or 4),
+                int(getattr(self, "research_candidate_count", 11) or 11),
             )
-            mem = self._mem(book_id)
-            expected_alpha = self.expected_alpha_score(
-                profile, prediction, fill_est, mem, book_id, state.timestamp,
-            )
-            rank = self._global_book_rank(expected_alpha, mem)
-            ev = (getattr(self, "_research_score_ev_last", {}) or {}).get(book_id)
-            if ev is None or not bool(getattr(ev, "eligible", False)) or rank <= -1e8:
-                stats["skipped_negative_lifecycle"] += 1
-                continue
-            candidates.append(
-                (
-                    float(rank),
+            success_cap = min(
+                max(1, int(getattr(self, "max_mm_books_per_tick", 4) or 4)),
+                int(portfolio_slots),
+            ) if portfolio_slots > 0 else 0
+            successful_books = 0
+
+            for row in candidates[:attempt_cap]:
+                if successful_books >= success_cap:
+                    break
+                _rank, book_id, book, profile, prediction, inventory, params, edge_bias = row
+                before = len(getattr(response, "instructions", None) or [])
+                n = self._place_skewed_quotes(
+                    response,
+                    state,
                     book_id,
                     book,
                     profile,
                     prediction,
                     inventory,
                     params,
+                    float(getattr(self, "mm_base_size", 0.25) or 0.25),
                     edge_bias,
+                    stats=stats,
                 )
-            )
-
-        candidates.sort(key=lambda row: row[0], reverse=True)
-        stats["candidates"] = len(candidates)
-        attempt_cap = max(
-            int(getattr(self, "max_mm_books_per_tick", 4) or 4),
-            int(getattr(self, "research_candidate_count", 11) or 11),
-        )
-        success_cap = min(
-            max(1, int(getattr(self, "max_mm_books_per_tick", 4) or 4)),
-            int(portfolio_slots),
-        ) if portfolio_slots > 0 else 0
-        successful_books = 0
-
-        for row in candidates[:attempt_cap]:
-            if successful_books >= success_cap:
-                break
-            _rank, book_id, book, profile, prediction, inventory, params, edge_bias = row
-            before = len(getattr(response, "instructions", None) or [])
-            n = self._place_skewed_quotes(
-                response,
-                state,
-                book_id,
-                book,
-                profile,
-                prediction,
-                inventory,
-                params,
-                float(getattr(self, "mm_base_size", 0.25) or 0.25),
-                edge_bias,
-                stats=stats,
-            )
-            after = len(getattr(response, "instructions", None) or [])
-            if n or after > before:
-                successful_books += 1
-                stats["quoted"] += int(bool(n))
-                stats["instructions"] += max(int(n or 0), after - before)
+                after = len(getattr(response, "instructions", None) or [])
+                if n or after > before:
+                    successful_books += 1
+                    stats["quoted"] += int(bool(n))
+                    stats["instructions"] += max(int(n or 0), after - before)
 
         # Only contract/risk safety may veto the already-decided actions here.
         self._research_sanitize_maker_instructions(response, state)

@@ -124,7 +124,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -146,6 +146,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_0_3) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1 ;;
   strategy1_direct_v6_1_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1 ;;
   strategy1_direct_v6_1_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1 ;;
+  strategy1_direct_v6_2_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -277,7 +278,8 @@ research_v601_workable_dust_reserve=1 \
 research_v603_short_lot_release=1 \
 research_v61_no_loss=1 \
 research_v61_state_gap_repair=1 research_v61_request_memo=1 \
-research_v611_floor_reprice=1 research_v611_price_lift=1"
+research_v611_floor_reprice=1 research_v611_price_lift=1 \
+research_v62_breadth=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -1447,6 +1449,49 @@ if [[ "$V611_BUILD" == "1" ]]; then
   echo "[preflight] v6.1.1 price lift PASS"
 fi
 
+# v6.2.0 breadth.  The de-beta making term (validator 0.6.1 rung 2, live since 2026-09-18) is a sum
+# over books of two-sided centred-mid capture, ranked among makers, and every (uid, book) is capped at
+# 500k quote per 24 h -- so the lever is the number of books quoted, not lot size.  The engine quoted
+# ~8 books (the ranker's top-20 admitted into 8 slots at 2.0 BASE): making 199.5, rank 0.07.  v6.2
+# quotes a symmetric bid + ask at the touch on every valid flat book, one lot each, and derives the
+# portfolio caps from the universe.  The exit path, the floors and the reprice rules are unchanged.
+if [[ "$V620_BUILD" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_v62_breadth.py" && -f "$AGENT_PATH/research_v62_making_mirror.py" ]] || {
+    echo "ERROR: v6.2 research_v62_breadth.py / research_v62_making_mirror.py missing." >&2
+    exit 1
+  }
+  grep -qF 'v62_placed = self._v62_acquire(response, state, stats)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2 acquisition pass not wired into build_mm_strategy_instructions." >&2
+    exit 1
+  }
+  # The breadth pass must replace the ranked candidate loop, not run beside it: it sits before the
+  # frozen loop's first line inside the same method.
+  V62_ACQ_LINE="$(grep -nF 'v62_placed = self._v62_acquire(response, state, stats)' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  V62_FROZEN_LINE="$(grep -nF '# One flat-entry path. No maintenance branch and no separate alpha branch.' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  V62_VETO_LINE="$(grep -nF '# Only contract/risk safety may veto the already-decided actions here.' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  [[ -n "$V62_ACQ_LINE" && -n "$V62_FROZEN_LINE" && -n "$V62_VETO_LINE" && "$V62_ACQ_LINE" -lt "$V62_FROZEN_LINE" && "$V62_FROZEN_LINE" -lt "$V62_VETO_LINE" ]] || {
+    echo "ERROR: v6.2 acquisition pass is not in place of the ranked candidate loop." >&2
+    exit 1
+  }
+  grep -qF 'self._v62_apply_caps(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2 universe caps not applied: the 8-slot / 2.0 BASE model would still bind." >&2
+    exit 1
+  }
+  grep -qF 'self._v62_feed_mirror(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2 making mirror not fed from update()." >&2
+    exit 1
+  }
+  grep -qF 'def _v62_telemetry' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2 V62_STATE telemetry missing." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v62_breadth=1"* ]] || {
+    echo "ERROR: v6.2 build without research_v62_breadth=1 in PARAMS." >&2
+    exit 1
+  }
+  echo "[preflight] v6.2 breadth PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -1510,6 +1555,8 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_1_0_state_gap.py \
       tests/test_research_v6_1_0_request_memo.py \
       tests/test_research_v6_1_1_wire.py \
+      tests/test_research_v6_2_0_breadth.py \
+      tests/test_research_v6_2_0_making_mirror.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
       tests/test_wiring_integrity.py \
