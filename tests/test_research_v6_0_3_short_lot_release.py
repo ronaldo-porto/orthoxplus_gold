@@ -380,8 +380,8 @@ def test_t5_disposition_table():
 
 
 def test_t5_source_wiring():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_3"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_3"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_1_0"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_1_0"' in SIMPLE
     assert "if disposition == V603_DISPOSITION_RELEASE:" in SIMPLE
     assert 'getattr(self.config, "research_v603_short_lot_release", True)' in SIMPLE
     assert '"direct_v603_short_lot_releases": 0,' in SIMPLE
@@ -401,6 +401,9 @@ def test_t5_launcher():
             "V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; "
             "V603_BUILD=1 ;;") in LAUNCHER
     assert "  strategy1_direct_v6_0_2) A19X_BUILD=1" in LAUNCHER, "earlier arms stay"
+    # v6.1 layers on top: its own arm sets every v6.0.3 flag and V610_BUILD as well.
+    assert "  strategy1_direct_v6_1_0) A19X_BUILD=1" in LAUNCHER
+    assert "V603_BUILD=1; V610_BUILD=1 ;;" in LAUNCHER
     assert "research_v603_short_lot_release=1" in LAUNCHER
     assert '[[ "$V603_BUILD" == "1" ]]; then' in LAUNCHER
     assert "[preflight] v6.0.3 short-lot release PASS" in LAUNCHER

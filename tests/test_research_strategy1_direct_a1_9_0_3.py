@@ -64,6 +64,7 @@ from research_direct_exit_refresh import (  # noqa: E402
     forgone_edge_bps,
 )
 from research_unified_exit import completion_net_bps as unified_completion_net_bps  # noqa: E402
+from research_v61_lot_floor import fifo_close_net_bps as v61_fifo_close_net_bps, head_lot as v61_head_lot
 
 MS = 1_000_000
 PUBLISH_NS = 1000 * MS
@@ -75,8 +76,8 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_0_3():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_3"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_3"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_1_0"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_1_0"' in SRC
     assert DIRECT_EXIT_LEDGER_VERSION == "direct_exit_ledger_v4_16_2_a1_9_0_3"
     assert DIRECT_EXIT_REFRESH_VERSION == "direct_exit_refresh_v4_16_2_a1_9_2"
 
@@ -204,6 +205,10 @@ def _load(names):
         "classify_resting_maker_exit": classify_resting_maker_exit,
         "exit_eval_class": exit_eval_class, "forgone_edge_bps": forgone_edge_bps,
         "unified_completion_net_bps": unified_completion_net_bps,
+        # v6.1: _a19_resting_net_bps prefers the validator's FIFO arithmetic when the book has
+        # lots; with no _open_positions on the harness it falls through to the A1.9.1 path below.
+        "v61_head_lot": v61_head_lot,
+        "v61_fifo_close_net_bps": v61_fifo_close_net_bps,
         "DIRECT_MAKER_EXIT_TARGET_BPS": 2.0,
     }
     exec(compile(ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[])),
@@ -215,7 +220,7 @@ WANTED = {
     "_a19_observe_tick_resting_exits", "_a19_emit_tick_lifecycle",
     "_a19_resolve_disposition", "_a19_is_entry_quote_row",
     "_direct_entry_quote_client_ids",
-    "_a19_resting_net_bps", "_a19_close_side_orders", "_a19_tick_size",
+    "_a19_resting_net_bps", "_v61_on", "_v61_positions", "_a19_close_side_orders", "_a19_tick_size",
     "_a19_ledger_ref", "_direct_account_orders", "_a191_enabled", "_a19_note_exit_cancel",
 }
 

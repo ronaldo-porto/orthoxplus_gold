@@ -82,12 +82,18 @@ class _MonkeyPatch:
             self._undo.pop()()
 
 
-def _fixtures(fn, stack):
-    """Build kwargs for the builtin fixtures this suite uses; unknown ones are an error."""
+def _fixtures(fn, stack, supplied=()):
+    """Build kwargs for the builtin fixtures this suite uses; unknown ones are an error.
+
+    ``supplied`` names the arguments a ``parametrize`` case already provides: they are not
+    fixtures.  Without it every parametrized test read as an unsupported fixture.
+    """
     import tempfile
 
     kwargs = {}
     for name in inspect.signature(fn).parameters:
+        if name in supplied:
+            continue
         if name == "tmp_path":
             tmp = tempfile.TemporaryDirectory()
             stack.append(tmp.cleanup)
@@ -197,7 +203,7 @@ def main(argv):
                     continue
                 stack = []
                 try:
-                    fn(**{**_fixtures(fn, stack), **params})
+                    fn(**{**_fixtures(fn, stack, supplied=params), **params})
                     passed += 1
                 except _skipped_exception():
                     skipped += 1

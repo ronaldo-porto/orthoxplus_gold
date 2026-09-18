@@ -124,7 +124,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -144,6 +144,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_0_1) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1 ;;
   strategy1_direct_v6_0_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1 ;;
   strategy1_direct_v6_0_3) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1 ;;
+  strategy1_direct_v6_1_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -272,7 +273,8 @@ research_v504_mirror_rounds=1 \
 research_v600_short_lots=1 research_v600_short_lot_min_fraction=${SHORT_LOT_FRACTION} \
 research_v600_inherited_short_lots=${INHERITED_SHORT_LOTS} \
 research_v601_workable_dust_reserve=1 \
-research_v603_short_lot_release=1"
+research_v603_short_lot_release=1 \
+research_v61_no_loss=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -1304,6 +1306,56 @@ if [[ "$V603_BUILD" == "1" ]]; then
   echo "[preflight] v6.0.3 short-lot release PASS"
 fi
 
+# v6.1.  The A1.7.1 risk band reads a mid MTM that excludes fees, while the validator's FIFO
+# charges BOTH legs' fees when a lot closes -- and on mainnet both are rebates.  On UID 34
+# (v6.0.2, ticks 0-3,647) all 349 ABSOLUTE evaluations chose the taker while the agent's own
+# fee-inclusive maker close read +120 bps median, and 148 of 149 of those takers realized a loss.
+# v6.1 prices every close against the lot the validator would actually close: no market order
+# leaves below its fee-inclusive break-even, a maker exit rests AT that break-even, and the
+# A1.9.1 classifier judges it by the same arithmetic.
+if [[ "$V610_BUILD" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_v61_lot_floor.py" ]] || {
+    echo "ERROR: v6.1 research_v61_lot_floor.py missing." >&2
+    exit 1
+  }
+  grep -qF 'ok, detail = self._v61_taker_verdict(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.1 executor choke point missing: takers are not priced against the FIFO lot." >&2
+    exit 1
+  }
+  grep -qF 'decision, v61_rewrite = self._v61_rewrite_exit(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.1 exit rewrite not wired into the chooser." >&2
+    exit 1
+  }
+  grep -qF 'close_price, v61_net, v61_floored = self._v61_apply_floor(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.1 placement floor missing: maker exits are not floored." >&2
+    exit 1
+  }
+  # The refusal must precede the frozen market order, or the loss is already on the wire.
+  V61_REFUSE_LINE="$(grep -nF 'ok, detail = self._v61_taker_verdict(' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  V61_SUPER_LINE="$(grep -nF 'placed = super()._execute_aggressive_close(' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  [[ -n "$V61_REFUSE_LINE" && -n "$V61_SUPER_LINE" && "$V61_REFUSE_LINE" -lt "$V61_SUPER_LINE" ]] || {
+    echo "ERROR: v6.1 choke point out of order: the refusal must precede the market order." >&2
+    exit 1
+  }
+  # The floor must be applied before the A1.9.1 classifier reads desired_price, or every
+  # floored order is cancelled as STALE_BEHIND_TOUCH at the next request.
+  V61_FLOOR_LINE="$(grep -nF 'close_price, v61_net, v61_floored = self._v61_apply_floor(' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  V61_DECIDE_LINE="$(grep -nF 'verdict = self._a191_decide(' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  [[ -n "$V61_FLOOR_LINE" && -n "$V61_DECIDE_LINE" && "$V61_FLOOR_LINE" -lt "$V61_DECIDE_LINE" ]] || {
+    echo "ERROR: v6.1 floor applied after the A1.9.1 classifier." >&2
+    exit 1
+  }
+  grep -qF 'def _v61_telemetry' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.1 V61_STATE telemetry missing." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v61_no_loss=1"* ]] || {
+    echo "ERROR: v6.1 build without research_v61_no_loss=1 in PARAMS." >&2
+    exit 1
+  }
+  echo "[preflight] v6.1 no-loss FIFO floor PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -1362,6 +1414,8 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_0_1_capacity.py \
       tests/test_research_v6_0_2_active_cap.py \
       tests/test_research_v6_0_3_short_lot_release.py \
+      tests/test_research_v6_1_0_lot_floor.py \
+      tests/test_research_v6_1_0_no_loss.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
       tests/test_wiring_integrity.py \

@@ -112,7 +112,7 @@ def test_every_key_the_launcher_ships_today_resolves():
     end = LAUNCHER.index('"\n', LAUNCHER.index("research_v603_short_lot_release=1", start))
     params = LAUNCHER[start + len('PARAMS="'):end].replace("\\\n", " ")
     keys = [tok.split("=", 1)[0] for tok in params.split() if "=" in tok]
-    assert len(keys) == 100, len(keys)
+    assert len(keys) == 101, len(keys)
     out = _run_guard(" ".join(f"{k}=x" for k in keys))
     assert out.returncode == 0, out.stderr
-    assert "(100 keys)" in out.stdout
+    assert "(101 keys)" in out.stdout

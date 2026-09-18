@@ -392,6 +392,19 @@ from research_v603_recovery import (
     V603_STATE_EVERY_TICKS,
     row_disposition as v603_row_disposition,
 )
+from research_v61_lot_floor import (
+    REWRITE_IDLE_TO_MAKER as V61_REWRITE_IDLE,
+    fifo_close_net_bps as v61_fifo_close_net_bps,
+    REWRITE_NONE as V61_REWRITE_NONE,
+    REWRITE_TAKER_TO_MAKER as V61_REWRITE_TAKER,
+    V61_LOT_FLOOR_VERSION,
+    V61_STATE_EVERY_TICKS,
+    floor_price as v61_floor_price,
+    floored_close_price as v61_floored_close_price,
+    head_lot as v61_head_lot,
+    rewrite_exit_action as v61_rewrite_exit_action,
+    taker_close_pnl as v61_taker_close_pnl,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -580,8 +593,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_3"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_3"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_1_0"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_1_0"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1092,6 +1105,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v603_cancels_reported = 0
         self._v603_state_reported = False
         self._v603_errors = 0
+        # v6.1: no order may realize a negative FIFO PnL by the validator's arithmetic.  A market
+        # close is refused below its fee-inclusive break-even; the dust-compaction clip likewise;
+        # the lot deques persist across a restart so the floor is the validator's, not a reseed's.
+        # Off restores v6.0.3 exactly.
+        self.research_v61_no_loss = self._as_bool(
+            getattr(self.config, "research_v61_no_loss", True)
+        )
+        self._v61_counts: dict[str, int] = {}
+        self._v61_last: dict[str, Any] = {}
+        self._v61_state_reported = False
+        self._v61_restored_lots: dict[int, dict[str, list]] = {}
+        self._v61_errors = 0
 
     def _init_direct_overlay_state(self) -> None:
         """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
@@ -1178,6 +1203,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_partial_hold_releases = 0
         # v6.0.3: short lots handed back to the v6.0.0 lot exit, cancelling nothing.
         self._direct_v603_short_lot_releases = 0
+        self._direct_v61_taker_refusals = 0
+        self._direct_v61_compaction_refusals = 0
         self._direct_partial_wrong_side_cancels = 0
         self._direct_partial_bound_holds = 0
         self._direct_partial_bound_pending = 0
@@ -2081,6 +2108,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
             captured["a199_replaced"] = (
                 a198_replaced if a199_rule in (RULE_LOSS_MAKER, RULE_NOT_EXITING, RULE_POSITIVE_MAKER) else None
             )
+            # v6.1: last word on the action.  A taker the validator would book at a loss is
+            # refused at the executor, so leaving it as TAKER rests nothing and the lot just ages;
+            # WAIT and PARK on a full lot are idle for the same reason.  Both become the floor.
+            try:
+                decision, v61_rewrite = self._v61_rewrite_exit(
+                    book_id_outer, decision, book=kwargs.get("book"),
+                    inventory=inventory, exit_kwargs=exit_kwargs,
+                )
+            except Exception:
+                self._v61_errors = int(getattr(self, "_v61_errors", 0) or 0) + 1
+                v61_rewrite = V61_REWRITE_NONE
+            captured["v61_rewrite"] = v61_rewrite
             captured["pre_a1744_decision"] = pre_a1744_decision
             captured["a175_tail_budget_exhausted"] = budget_exhausted
             captured.update(exit_kwargs)
@@ -3595,7 +3634,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             stalls.pop(bid, None)
         if plan.action == RESEED_REAL:
             side = "longs" if float(plan.target) > 0.0 else "shorts"
-            positions[side].append((int(tick), abs(float(plan.target)), float(plan.price), 0.0))
+            # v6.1: the saved lots, when they still add up to the venue's position.
+            restored = self._v61_restored_side(bid, side, abs(float(plan.target)))
+            if restored:
+                positions[side].extend(restored)
+            else:
+                positions[side].append((int(tick), abs(float(plan.target)), float(plan.price), 0.0))
             deferred.pop(bid, None)
         elif plan.action == RESEED_CLIP:
             # v5.0.2 F2: one clip of exactly min_order; the venue's shortfall joins the residue ledger.
@@ -4004,6 +4048,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         -25 bps floor, worst -213.9 bps, and that trigger alone carried 97.2%
         of the run's cubic downside.
         """
+        # v6.1: a market close may leave only if the validator realizes >= 0 on it (FIFO, both
+        # legs' fees at the close).  On mainnet 148 of 149 ABSOLUTE takers realized a loss while
+        # a fee-inclusive positive maker close was available on 128 of them.
+        if self._v61_on():
+            try:
+                ok, detail = self._v61_taker_verdict(int(book_id), book, float(qty), bool(long_pos))
+            except Exception:
+                self._v61_errors = int(getattr(self, "_v61_errors", 0) or 0) + 1
+                ok, detail = True, {}
+            if not ok:
+                self._v61_note_refusal(int(book_id), float(qty), bool(long_pos), detail)
+                return False
         before = len(getattr(response, "instructions", None) or ())
         placed = super()._execute_aggressive_close(
             response, book_id, book, qty, long_pos,
@@ -4968,6 +5024,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if entry <= 0.0 or price is None:
             return float("nan")
         fee = float(self._research_live_fee_bps(int(book_id), is_maker=True) or 0.0)
+        # v6.1: the lot the close would actually hit carries its own entry price and the opening
+        # fee the validator will charge at the close; vwap_entry with today's fee on both legs is
+        # a different number, and NET_BELOW_FLOOR reprices against it.
+        if self._v61_on():
+            long_pos = float(getattr(inventory, "net_base", 0.0) or 0.0) > 0.0
+            lot = v61_head_lot(self._v61_positions(int(book_id)), long_position=long_pos)
+            if lot is not None:
+                net = v61_fifo_close_net_bps(
+                    lot, close_price=float(price), close_fee_bps=fee, long_position=long_pos,
+                )
+                if net == net:
+                    return float(net)
         try:
             return float(unified_completion_net_bps(
                 entry_price=entry, exit_price=float(price),
@@ -5914,6 +5982,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if self._direct_partial_hold_active(int(book_id), state):
             self._direct_emit_partial_replacement_block(int(book_id), path="MAKER_EXIT")
             return 0
+
+        # v6.1: the price this exit may rest at is the lot's fee-inclusive FIFO break-even, and
+        # everything below -- the classifier's desired_price, the A1.7.4 guards, the placement --
+        # reads the floored price, not the requested one.
+        if self._v61_on():
+            try:
+                close_price, v61_net, v61_floored = self._v61_apply_floor(
+                    int(book_id), state, inventory, qty, close_price, action,
+                )
+                if v61_floored and v61_net is not None:
+                    maker_net_bps = v61_net
+            except Exception:
+                self._v61_errors = int(getattr(self, "_v61_errors", 0) or 0) + 1
 
         # A1.9 Phase A shadow measurement.  The classifier's decision is
         # computed, logged, and deliberately discarded: nothing below reads it.
@@ -7355,6 +7436,267 @@ class Strategy1_Research_Simple(Strategy1_Research):
             errors=int(getattr(self, "_v603_errors", 0) or 0),
         )
 
+    # ---- v6.1: no realized loss ----------------------------------------------------------------
+    def _v61_on(self) -> bool:
+        return bool(getattr(self, "research_v61_no_loss", True))
+
+    def _v61_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v61_counts", None)
+        if counts is None:
+            counts = {}
+            self._v61_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v61_price_decimals(self, state) -> int:
+        return int(getattr(getattr(state, "config", None), "priceDecimals", 2) or 2)
+
+    def _v61_positions(self, book_id: int):
+        """This book's FIFO deques, the validator's own structure; None when there are none."""
+        table = getattr(self, "_open_positions", None)
+        if table is None:
+            return None
+        try:
+            return table.get(int(book_id))
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    def _v61_taker_verdict(self, book_id: int, book, qty: float, long_pos: bool) -> tuple[bool, dict]:
+        """Whether a market close of ``qty`` at the touch the frozen path crosses realizes >= 0."""
+        try:
+            touch = float(book.bids[0].price if long_pos else book.asks[0].price)
+        except (TypeError, ValueError, IndexError, AttributeError):
+            return True, {}
+        if touch <= 0.0:
+            return True, {}
+        fee = float(self._research_live_fee_bps(int(book_id), is_maker=False) or 0.0)
+        pnl, closed = v61_taker_close_pnl(
+            self._v61_positions(book_id), qty=float(qty), touch_price=touch,
+            taker_fee_bps=fee, long_position=bool(long_pos),
+        )
+        ok = closed <= 0.0 or pnl >= 0.0
+        return ok, {
+            "touch": touch, "taker_fee_bps": fee, "fifo_pnl": round(float(pnl), 8),
+            "closed_qty": round(float(closed), 8),
+        }
+
+    def _v61_note_refusal(self, book_id: int, qty: float, long_pos: bool, detail: dict) -> None:
+        self._v61_count("taker_refused")
+        self._direct_v61_taker_refusals = int(getattr(self, "_direct_v61_taker_refusals", 0) or 0) + 1
+        tick = int(getattr(self, "_tick", 0) or 0)
+        row = dict(detail)
+        row.update(book=int(book_id), qty=float(qty), long_position=int(bool(long_pos)), tick=tick)
+        self._v61_last = row
+        self._emit(
+            "V61_TAKER_REFUSED", force=True, tick=tick, book=int(book_id),
+            v61_lot_floor_version=V61_LOT_FLOOR_VERSION,
+            qty=float(qty), long_position=int(bool(long_pos)),
+            **{k: v for k, v in detail.items()},
+        )
+
+    def _v61_compaction_price_ok(self, book_id: int, net_base: float, price: float, state) -> bool:
+        """The compaction clip FIFO-closes the head lot: refuse it below the break-even."""
+        long_pos = float(net_base) > 0.0
+        lot = v61_head_lot(self._v61_positions(book_id), long_position=long_pos)
+        if lot is None:
+            return True
+        fee = float(self._research_live_fee_bps(int(book_id), is_maker=True) or 0.0)
+        floor = v61_floor_price(
+            lot, close_fee_bps=fee, long_position=long_pos, target_bps=0.0,
+            price_decimals=self._v61_price_decimals(state),
+        )
+        if floor is None:
+            return True
+        ok = (float(price) + 1e-12 >= floor) if long_pos else (float(price) - 1e-12 <= floor)
+        if not ok:
+            self._v61_count("compaction_refused")
+            self._direct_v61_compaction_refusals = int(
+                getattr(self, "_direct_v61_compaction_refusals", 0) or 0
+            ) + 1
+            self._emit(
+                "V61_COMPACTION_REFUSED", force=True, tick=int(getattr(self, "_tick", 0) or 0),
+                book=int(book_id), v61_lot_floor_version=V61_LOT_FLOOR_VERSION,
+                net_base=float(net_base), clip_price=float(price), floor_price=float(floor),
+                maker_fee_bps=fee, lot_price=float(lot[2]), lot_qty=float(lot[1]), lot_fee=float(lot[3]),
+            )
+        return ok
+
+    def _v61_floor_for(self, book_id: int, long_pos: bool, *, state=None, target_bps=None):
+        """The fee-inclusive FIFO break-even of the lot a close would hit, on the price grid."""
+        lot = v61_head_lot(self._v61_positions(book_id), long_position=bool(long_pos))
+        if lot is None:
+            return None
+        fee = float(self._research_live_fee_bps(int(book_id), is_maker=True) or 0.0)
+        decimals = 2 if state is None else self._v61_price_decimals(state)
+        target = DIRECT_MAKER_EXIT_TARGET_BPS if target_bps is None else float(target_bps)
+        return v61_floor_price(
+            lot, close_fee_bps=fee, long_position=bool(long_pos), target_bps=target,
+            price_decimals=decimals,
+        )
+
+    def _v61_apply_floor(self, book_id: int, state, inventory, qty, close_price, action):
+        """Floor a maker exit at the lot's fee-inclusive break-even; return (price, net_bps).
+
+        The A1.9.1 classifier compares a resting order against `desired_price` and cancels it as
+        STALE_BEHIND_TOUCH once it drifts three ticks, so the floor has to be applied here --
+        before the classifier sees the price -- or a floored order is cancelled every request
+        (1,998 such cancels in one mainnet run).  `maker_net_bps` is recomputed at the floored
+        price so the A1.7.4 negative-aggressive guard judges the order actually being sent.
+        """
+        long_pos = float(getattr(inventory, "net_base", 0.0) or 0.0) > 0.0
+        lot = v61_head_lot(self._v61_positions(book_id), long_position=long_pos)
+        if lot is None:
+            return close_price, None, False
+        floor = self._v61_floor_for(int(book_id), long_pos, state=state)
+        if floor is None:
+            return close_price, None, False
+        priced = v61_floored_close_price(close_price, floor, long_position=long_pos)
+        if close_price is not None and abs(float(priced) - float(close_price)) <= 1e-12:
+            return close_price, None, False
+        fee = float(self._research_live_fee_bps(int(book_id), is_maker=True) or 0.0)
+        net = v61_fifo_close_net_bps(
+            lot, close_price=priced, close_fee_bps=fee, long_position=long_pos,
+            qty=abs(float(qty or 0.0)) or None,
+        )
+        self._v61_count("floored_placements")
+        self._emit(
+            "V61_EXIT_FLOORED", force=True, tick=int(getattr(self, "_tick", 0) or 0),
+            book=int(book_id), v61_lot_floor_version=V61_LOT_FLOOR_VERSION,
+            action=str(action or ""), requested_price=(None if close_price is None else float(close_price)),
+            floor_price=float(floor), placed_price=float(priced),
+            maker_fee_bps=fee, floored_net_bps=(None if net != net else round(float(net), 4)),
+            lot_price=float(lot[2]), lot_qty=float(lot[1]), lot_open_fee=float(lot[3]),
+            long_position=int(bool(long_pos)),
+        )
+        return float(priced), (None if net != net else float(net)), True
+
+    def _v61_rewrite_exit(self, book_id: int, decision, *, book, inventory, exit_kwargs):
+        """v6.1: nothing that would realize a FIFO loss, and never an idle full lot."""
+        if not self._v61_on() or decision is None or book_id < 0:
+            return decision, V61_REWRITE_NONE
+        qty = float(exit_kwargs.get("inventory_qty", 0.0) or 0.0)
+        if qty == 0.0:
+            qty = float(getattr(inventory, "net_base", 0.0) or 0.0)
+        long_pos = float(getattr(inventory, "net_base", qty) or qty) > 0.0
+        floor = self._v61_floor_for(int(book_id), long_pos)
+        action = str(getattr(decision, "action", "") or "")
+        acceptable = True
+        if action == ACTION_TAKER_EXIT and book is not None:
+            acceptable, _detail = self._v61_taker_verdict(
+                int(book_id), book, abs(float(getattr(decision, "selected_qty", qty) or qty)), long_pos,
+            )
+        rewrite = v61_rewrite_exit_action(
+            enabled=True, action=action, taker_acceptable=bool(acceptable),
+            floor_available=floor is not None, inventory_qty=qty,
+            min_order=float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25),
+        )
+        if rewrite == V61_REWRITE_NONE:
+            return decision, rewrite
+        self._v61_count("rewrite_" + rewrite.lower())
+        rewritten = replace(
+            decision, action=ACTION_MAKER_EXIT,
+            selected_qty=abs(float(qty)) or float(getattr(decision, "selected_qty", 0.0) or 0.0),
+            reason="V61_FLOOR_MAKER",
+        )
+        self._emit(
+            "V61_EXIT_REWRITE", force=True, tick=int(getattr(self, "_tick", 0) or 0),
+            book=int(book_id), v61_lot_floor_version=V61_LOT_FLOOR_VERSION,
+            rewrite=rewrite, from_action=action, to_action=ACTION_MAKER_EXIT,
+            floor_price=float(floor), inventory_qty=float(qty),
+            taker_acceptable=int(bool(acceptable)),
+            maker_net_bps=float(exit_kwargs.get("maker_net_bps", 0.0) or 0.0),
+            taker_net_bps=float(exit_kwargs.get("taker_net_bps", 0.0) or 0.0),
+            prior_reason=str(getattr(decision, "reason", "") or ""),
+        )
+        return rewritten, rewrite
+
+    def _v61_lots_session_state(self) -> dict:
+        """The FIFO deques as the session file stores them: ``{book: {side: [[ts, qty, price, fee]]}}``."""
+        table = getattr(self, "_open_positions", None) or {}
+        books: dict[str, dict[str, list]] = {}
+        for raw_id, pos in table.items():
+            row: dict[str, list] = {}
+            for side in ("longs", "shorts"):
+                lots = []
+                for lot in (pos or {}).get(side, ()) or ():
+                    try:
+                        ts, qty, price, fee = lot
+                    except (TypeError, ValueError):
+                        continue
+                    if float(qty) > 0.0:
+                        lots.append([int(ts), float(qty), float(price), float(fee)])
+                if lots:
+                    row[side] = lots
+            if row:
+                try:
+                    books[str(int(raw_id))] = row
+                except (TypeError, ValueError):
+                    continue
+        return {
+            "version": V61_LOT_FLOOR_VERSION, "tick": int(getattr(self, "_tick", 0) or 0), "books": books,
+        }
+
+    def _v61_lots_from_session(self, raw) -> dict[int, dict[str, list]]:
+        out: dict[int, dict[str, list]] = {}
+        books = raw.get("books") if isinstance(raw, dict) else None
+        if not isinstance(books, dict):
+            return out
+        for key, row in books.items():
+            try:
+                bid = int(key)
+            except (TypeError, ValueError):
+                continue
+            sides: dict[str, list] = {}
+            for side in ("longs", "shorts"):
+                lots = []
+                for lot in (row or {}).get(side) or ():
+                    try:
+                        ts, qty, price, fee = lot
+                        lots.append((int(ts), float(qty), float(price), float(fee)))
+                    except (TypeError, ValueError):
+                        continue
+                if lots:
+                    sides[side] = lots
+            if sides:
+                out[bid] = sides
+        return out
+
+    def _v61_restored_side(self, book_id: int, side: str, target_qty: float) -> list:
+        """The restored lots for this side while they still add up to the venue's position; else []."""
+        if not self._v61_on():
+            return []
+        table = getattr(self, "_v61_restored_lots", None)
+        if not isinstance(table, dict):
+            return []
+        lots = (table.get(int(book_id)) or {}).get(side) or []
+        if not lots:
+            return []
+        table.pop(int(book_id), None)
+        total = sum(float(q) for _ts, q, _p, _f in lots)
+        tolerance = max(float(self._v600_tolerance()), 1e-9)
+        if abs(total - float(target_qty)) > tolerance:
+            self._v61_count("lots_restore_mismatch")
+            return []
+        self._v61_count("lots_restored", len(lots))
+        return [tuple(lot) for lot in lots]
+
+    def _v61_telemetry(self, state) -> None:
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if getattr(self, "_v61_state_reported", False) and not (tick > 0 and tick % V61_STATE_EVERY_TICKS == 0):
+            return
+        self._v61_state_reported = True
+        counts = dict(getattr(self, "_v61_counts", {}) or {})
+        self._emit(
+            "V61_STATE", force=True, tick=tick,
+            v61_lot_floor_version=V61_LOT_FLOOR_VERSION,
+            enabled=int(self._v61_on()),
+            taker_refusals=int(getattr(self, "_direct_v61_taker_refusals", 0) or 0),
+            compaction_refusals=int(getattr(self, "_direct_v61_compaction_refusals", 0) or 0),
+            restored_lots_pending=len(getattr(self, "_v61_restored_lots", {}) or {}),
+            last_refusal=dict(getattr(self, "_v61_last", {}) or {}),
+            counts=counts,
+            errors=int(getattr(self, "_v61_errors", 0) or 0),
+        )
+
     def _v504_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         recorder = getattr(self, "_v503_recorder", None)
@@ -7585,6 +7927,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v603_telemetry(state)
         except Exception:
             self._v603_errors = int(getattr(self, "_v603_errors", 0) or 0) + 1
+        # v6.1 telemetry: the no-loss state row.
+        try:
+            self._v61_telemetry(state)
+        except Exception:
+            self._v61_errors = int(getattr(self, "_v61_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -8630,6 +8977,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         raw = self._v504_read_session(identity)
         if not isinstance(raw, dict):
             return raw
+        # v6.1: the lot deques this UID saved; the A1.9.5 seed consumes them when they still match.
+        self._v61_restored_lots = self._v61_lots_from_session(raw.get("direct_v61_lots"))
         direct = raw.get("direct_maker_quality_a1_5_1")
         same_version = isinstance(direct, dict)
         if not isinstance(direct, dict):
@@ -8709,6 +9058,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             v504_start = (getattr(self, "_v504_mirror", None) or {}).get("start_ts")
             if bool(getattr(self, "research_v504_mirror_rounds", True)) and v504_start is not None:
                 payload[V504_MIRROR_SESSION_KEY] = mirror_session_state(v504_start)
+            # v6.1: the FIFO deques, so a restart floors against the validator's lots, not a reseed's.
+            if self._v61_on():
+                payload["direct_v61_lots"] = self._v61_lots_session_state()
             payload["direct_maker_quality_a1_5_1"] = {
                 "version": DIRECT_QUALITY_VERSION,
                 "global": getattr(self, "_direct_maker_quality_global", MakerLifecycleStats()).as_state(),
@@ -9368,6 +9720,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 pass
 
+            # v6.1: the clip FIFO-closes the head lot, so refuse it below the fee-inclusive
+            # break-even.  The kappa gate above is a -60 bps loss budget; this one is zero.
+            if self._v61_on() and not self._v61_compaction_price_ok(
+                int(book_id), net_base, maker_close_price, state,
+            ):
+                self._v502_note_compaction_refusal(int(book_id))
+                continue
             self._research_dust_compact_attempts = int(
                 getattr(self, "_research_dust_compact_attempts", 0) or 0
             ) + 1
@@ -10296,6 +10655,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_dust_recovery_reserve_abs": 0.0,
             "direct_v601_reserve_dust_books": 0,
             "direct_v603_short_lot_releases": 0,
+            "direct_v61_no_loss": 0,
+            "direct_v61_taker_refusals": 0,
+            "direct_v61_compaction_refusals": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -10483,6 +10845,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_v601_reserve_dust_books"] = int(reserve_dust_now)
         stats["direct_v603_short_lot_releases"] = int(
             getattr(self, "_direct_v603_short_lot_releases", 0) or 0
+        )
+        stats["direct_v61_no_loss"] = int(self._v61_on())
+        stats["direct_v61_taker_refusals"] = int(getattr(self, "_direct_v61_taker_refusals", 0) or 0)
+        stats["direct_v61_compaction_refusals"] = int(
+            getattr(self, "_direct_v61_compaction_refusals", 0) or 0
         )
         recovery_reserve_abs = dust_recovery_reserve_abs(
             dust_count=reserve_dust_now, min_order=min_size,

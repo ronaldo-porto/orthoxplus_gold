@@ -51,6 +51,7 @@ from research_direct_exit_refresh import (  # noqa: E402
     behind_ticks, classify_resting_maker_exit, exit_eval_class, forgone_edge_bps,
 )
 from research_unified_exit import completion_net_bps as unified_completion_net_bps  # noqa: E402
+from research_v61_lot_floor import fifo_close_net_bps as v61_fifo_close_net_bps, head_lot as v61_head_lot
 
 MS = 1_000_000
 PUBLISH_NS = 1000 * MS
@@ -62,8 +63,8 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_3"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_3"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_1_0"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_1_0"' in SRC
     # A1.9.1.1: derived from runtime state, not a literal.
     assert 'stats["direct_a19_phase"] = self._a19_runtime_phase()' in SRC
     assert 'stats["direct_a19_behaviour_change"] = self._a19_behaviour_change()' in SRC
@@ -114,7 +115,7 @@ WANTED = {
     "_a191_enabled", "_a191_verdict_store", "_a191_live_exit_row",
     "_a191_decide", "_a191_service_reprice_cancels",
     "_a19_is_entry_quote_row", "_direct_entry_quote_client_ids",
-    "_a19_resting_net_bps", "_a19_tick_size", "_a19_ledger_ref",
+    "_a19_resting_net_bps", "_v61_on", "_v61_positions", "_a19_tick_size", "_a19_ledger_ref",
     "_a19_note_exit_cancel", "_direct_account_orders",
     "_a191_check_activation", "_a19_runtime_phase", "_a19_behaviour_change",
 }
@@ -136,6 +137,10 @@ def _load():
         "behind_ticks": behind_ticks, "forgone_edge_bps": forgone_edge_bps,
         "classify_resting_maker_exit": classify_resting_maker_exit,
         "unified_completion_net_bps": unified_completion_net_bps,
+        # v6.1: _a19_resting_net_bps prefers the validator's FIFO arithmetic when the book has
+        # lots; with no _open_positions on the harness it falls through to the A1.9.1 path below.
+        "v61_head_lot": v61_head_lot,
+        "v61_fifo_close_net_bps": v61_fifo_close_net_bps,
         "DIRECT_MAKER_EXIT_TARGET_BPS": 2.0,
         "DIRECT_A19_PHASE_BEHAVIOURAL": "B_QUEUE_PRESERVING_EXIT",
         "DIRECT_A19_PHASE_SHADOW": "A_SHADOW_MEASUREMENT",

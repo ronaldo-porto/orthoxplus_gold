@@ -507,7 +507,9 @@ def test_a_new_simulation_and_the_switch_leave_order_state_alone():
 RESYNC = ("_a199_service_resync", "_a199_apply_reseed", "_a199_close_resync", "_a199_pending_table",
           "_a199_note_transition", "_a199_resync_active", "_a199_entry_blocked", "_a199_strip_resync_exposure",
           # v5.0.2: the reseed keeps the residue ledger and recognizes a clip.
-          "_v502_clip_tolerance", "_v502_add_residue", "_v502_count", "_v502_residue_abs")
+          "_v502_clip_tolerance", "_v502_add_residue", "_v502_count", "_v502_residue_abs",
+          # v6.1: a RESEED_REAL restores this UID's saved FIFO lots when they still match.
+          "_v600_tolerance", "_v61_on", "_v61_count", "_v61_restored_side")
 
 
 def _open(agent, since=2467):
@@ -641,8 +643,8 @@ def test_the_controllers_are_wired_where_they_hold_authority():
 
 
 def test_stats_version_switches_and_launcher():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_0_3"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_0_3"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_1_0"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_1_0"' in SIMPLE
     assert rs.A199_RISK_STATE_VERSION.endswith("a1_9_9") and se.A199_SESSION_EPOCH_VERSION.endswith("a1_9_9")
     for key in ("direct_a199_version", "direct_a199_session_epoch_version", "direct_a199_exit_pending_authority",
                 "direct_a199_epoch_resync", "direct_a199_pending_books", "direct_a199_pending_entered",
