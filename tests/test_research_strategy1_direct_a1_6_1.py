@@ -52,13 +52,15 @@ from research_direct_execution_quality import (
 )
 
 
-@pytest.mark.skip(reason="superseded by A1.6.2 final liveness closure")
 def test_a161_version_contract():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_1"' in SRC
+    # The policy-version line this test also carried pinned this build's era and went stale at
+    # the next bump, which is why the whole test was skipped -- taking the frozen module
+    # contracts below with it.  The live policy version is pinned in 39 current suites.
     assert DIRECT_ECONOMICS_VERSION == 'direct_economics_v4_16_2_a1_6_0'
     assert DIRECT_EXECUTION_CONTROLLER_VERSION == 'direct_execution_controller_v4_16_2_a1_6_0'
     assert DIRECT_FASTPATH_VERSION == 'direct_fastpath_v4_16_2_a1_6_1'
-    assert DIRECT_OBSERVABLE_EXIT_VERSION == 'direct_observable_exit_v4_16_2_a1_6_0'
+    # DIRECT_OBSERVABLE_EXIT_VERSION legitimately advanced to ..._a1_7_2 and is pinned at its
+    # current value by a1_7_1, a1_7_2 and a1_7_3; only this era's value is superseded.
 
 
 def test_a160_keeps_proven_execution_safety_constants():

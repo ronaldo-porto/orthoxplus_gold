@@ -31,6 +31,7 @@ import research_v5_newcomer_gate as ng
 import research_v5_observatory as obs
 import research_v5_session_identity as si
 from research_v5_score_mirror import mirror_score
+from _harness import extractor
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -45,14 +46,7 @@ SECOND = 1_000_000_000
 SIM = "20260913_0722"
 
 
-def _method_source(name):
-    for node in ast.walk(ast.parse(SIMPLE)):
-        if isinstance(node, ast.ClassDef) and node.name == "Strategy1_Research_Simple":
-            defs = [ast.get_source_segment(SIMPLE, n) for n in node.body
-                    if isinstance(n, ast.FunctionDef) and n.name == name]
-            assert defs, name
-            return defs[-1]
-    raise AssertionError(name)
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 def _constant(name):
@@ -550,7 +544,7 @@ def test_the_switch_off_and_the_unknown_cadence_keep_v5_0_3s_rounds():
     invalid._v504_service(_state(100 * SECOND))
     assert invalid._v504_history_pin is None and not invalid._v501_belief.pinned
     score = _method_source("_v500_emit_score")
-    assert "if grid_rounds:\n                    history, rounds = grid_history, grid_rounds" in score
+    assert "if grid_rounds:\n                history, rounds = grid_history, grid_rounds" in score
     assert "first_round = min(rounds) if rounds else now_ts" in score
 
 
@@ -599,7 +593,7 @@ def test_v5_0_4_is_wired_and_launched():
         "belief.pin(pin.start_ns, pin.source)": SIMPLE,
         "self._v504_service(state)": SIMPLE,
         "spent = self.disk_bytes if self.budget_basis == BUDGET_DISK else self.bytes_written": OBSERVATORY,
-        'provider = getattr(self, "_v504_mirror_inputs", None)': SIMPLE,
+        'chosen = self._v504_mirror_inputs(now_ts)': SIMPLE,
     }
     for literal, source in guards.items():
         assert literal in source and literal in LAUNCHER, literal
@@ -628,10 +622,12 @@ def test_nothing_the_strategy_decides_reads_the_score_copy_or_the_recorder():
                 if "_v504_mirror_inputs" in src:
                     assert fn.name in {"_v504_mirror_inputs", "_v500_emit_score"}, fn.name
                 if "_v504_mirror[" in src or 'getattr(self, "_v504_mirror"' in src:
-                    # build_mm_strategy_instructions only copies two values into its stats block.
+                    # _direct_build_mm_stats only copies two values into the stats block.  It held
+                    # build_mm_strategy_instructions' place until the v6.0.3 refactor moved that
+                    # block out verbatim; the order-building method may not read the copy at all.
                     assert fn.name in {"_v504_read_session", "_v504_service", "_v504_mirror_inputs",
                                        "_v504_telemetry", "_research_save_session",
-                                       "build_mm_strategy_instructions"}, fn.name
-                    if fn.name == "build_mm_strategy_instructions":
+                                       "_direct_build_mm_stats"}, fn.name
+                    if fn.name == "_direct_build_mm_stats":
                         uses = [line for line in src.splitlines() if "v504_mirror" in line]
                         assert all("stats[" in line or "v504_mirror = getattr(" in line for line in uses), uses

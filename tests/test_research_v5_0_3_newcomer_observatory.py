@@ -30,6 +30,7 @@ import research_v5_validator_fifo as vf
 from collections import deque
 from research_v5_activity import EVIDENCE_FIRST_STATE, EVIDENCE_OBSERVATION, KAPPA_MIN_LOOKBACK_NS, SCORING_INTERVAL_NS
 from research_v5_score_mirror import mirror_score
+from _harness import extractor
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -44,16 +45,9 @@ SECOND = 1_000_000_000
 _TREES = {}
 
 
-def _method_source(name, text=SIMPLE):
-    tree = _TREES.get(id(text))
-    if tree is None:
-        tree = _TREES[id(text)] = ast.parse(text)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef) and item.name == name:
-                    return ast.get_source_segment(text, item)
-    raise AssertionError(f"no method {name}")
+# This suite also extracts from other agent files, so the class name is not pinned --
+# the same "any class in the text handed to it" rule its own copy used.
+_method_source = extractor(SIMPLE)
 
 
 def _positions(longs=(), shorts=()):

@@ -274,6 +274,27 @@ research_v600_inherited_short_lots=${INHERITED_SHORT_LOTS} \
 research_v601_workable_dust_reserve=1 \
 research_v603_short_lot_release=1"
 
+# Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
+# otherwise completely silent: the agent takes its source default, the launcher still reports the
+# build, and the feature is simply off.  Only 41 of the 100 keys had a hand-written guard, so 59
+# were typo-exposed -- research_a195_taker_floor_bps is the sharpest of them, since losing it
+# restores the unbounded taker exit A1.9.5 exists to prevent.  One corpus pass, ~1.2 s, no
+# allow-list: all 100 keys resolve as of 2026-09-18.
+PARAM_IDENTIFIERS="$(grep -rhoE '[A-Za-z_][A-Za-z0-9_]*' --include=*.py "$AGENT_PATH" "$SCRIPT_DIR/taos" | sort -u)"
+PARAM_UNKNOWN=""
+PARAM_COUNT=0
+for _tok in $PARAMS; do
+  _key="${_tok%%=*}"
+  [[ "$_key" == "$_tok" || -z "$_key" ]] && continue
+  PARAM_COUNT=$((PARAM_COUNT + 1))
+  grep -qxF "$_key" <<< "$PARAM_IDENTIFIERS" || PARAM_UNKNOWN="$PARAM_UNKNOWN $_key"
+done
+if [[ -n "$PARAM_UNKNOWN" ]]; then
+  echo "ERROR: PARAMS key read by no agent code (typo?):$PARAM_UNKNOWN" >&2
+  exit 1
+fi
+echo "[preflight] PARAMS keys resolve to agent code PASS (${PARAM_COUNT} keys)"
+
 # Checked against the PARAMS VALUE, not the script text: grepping the file would
 # match this guard's own source line and always pass.
 if [[ "${A191_BUILD:-0}" == "1" ]]; then
@@ -1118,7 +1139,7 @@ if [[ "$V504_BUILD" == "1" ]]; then
     echo "ERROR: v5.0.4 H3 missing: the recorder budget still counts uncompressed payload." >&2
     exit 1
   }
-  grep -qF 'provider = getattr(self, "_v504_mirror_inputs", None)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'chosen = self._v504_mirror_inputs(now_ts)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v5.0.4 H4 not wired: the score copy still counts only this process's rounds." >&2
     exit 1
   }
@@ -1165,11 +1186,11 @@ if [[ "$V600_BUILD" == "1" ]]; then
     echo "ERROR: v6.0.0 S1 not wired: the live validator does not count short lots as active books." >&2
     exit 1
   }
-  grep -qF 'inventory_qty = executable(inventory_qty, exit_kwargs.get("min_order", 0.25))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'inventory_qty = self._v600_executable_qty(inventory_qty, exit_kwargs.get("min_order", 0.25))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.0.0 S1 not wired: the position risk state never sees a short lot as executable." >&2
     exit 1
   }
-  grep -qF 'v600_chooser(exit_kwargs)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'self._v600_chooser_kwargs(exit_kwargs)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.0.0 S1 not wired: the exit chooser still judges a short lot as unexecutable." >&2
     exit 1
   }
@@ -1181,7 +1202,7 @@ if [[ "$V600_BUILD" == "1" ]]; then
     echo "ERROR: v6.0.0 S1 not wired: rebuilt clips are not parked at startup." >&2
     exit 1
   }
-  grep -qF 'v600_park(int(inherited_book), abs(float(inherited_net)))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'self._v600_note_inherited_clip(int(inherited_book), abs(float(inherited_net)))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.0.0 S1 not wired: inherited single lots are not parked at startup." >&2
     exit 1
   }
@@ -1200,7 +1221,7 @@ if [[ "$V601_BUILD" == "1" ]]; then
     echo "ERROR: v6.0.1 research_v601_capacity.py missing." >&2
     exit 1
   }
-  grep -qF 'reserve_dust_now = dust_now if v601_reserve is None else int(v601_reserve(diag, dust_now))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'reserve_dust_now = int(self._v601_reserve_dust(diag, dust_now))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.0.1 C1 missing: admission still reserves for every dust book." >&2
     exit 1
   }
@@ -1285,8 +1306,12 @@ fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
+  # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
+  # bundled stub otherwise.  It used to call `python -m pytest` directly: this host has no pytest,
+  # so under `set -e` the gate aborted before its PASS line and no test has gated a launch since
+  # the v4.16 series.  The same 53 files, run this way, are green (2026-09-18).
   PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
-    python -m pytest -q \
+    python "$SCRIPT_DIR/tests/run_tests.py" \
       tests/test_research_strategy1_direct_a1_5.py \
       tests/test_research_strategy1_direct_a1_5_1.py \
       tests/test_research_strategy1_direct_a1_6_0.py \
@@ -1337,6 +1362,9 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_0_1_capacity.py \
       tests/test_research_v6_0_2_active_cap.py \
       tests/test_research_v6_0_3_short_lot_release.py \
+      tests/test_version_pins.py \
+      tests/test_preflight_gate.py \
+      tests/test_wiring_integrity.py \
       tests/test_research_v4_16_2_economics_contract.py \
       tests/test_research_v4_16_1_p0_runtime.py \
       tests/test_research_v4_16_0_simplified_authority.py

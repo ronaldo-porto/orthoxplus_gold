@@ -15,6 +15,7 @@ from research_direct_taker_bound import (
     slippage_fraction_for_floor,
     taker_bound_report,
 )
+from _harness import extractor
 
 ROOT = Path(__file__).parents[1]
 SIMPLE = (ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
@@ -22,20 +23,7 @@ MODULE = (ROOT / "agents" / "strategy" / "research_direct_taker_bound.py").read_
 BASE = (ROOT / "agents" / "strategy" / "Strategy1_Research.py").read_text()
 
 
-def _method_source(name: str) -> str:
-    """Last definition of `name` in the Simple class body.
-
-    Resolved by position, not by name: this class defines
-    `_research_final_validate_instructions` twice and Python keeps the second,
-    so a name->node dict silently reads the dead one.
-    """
-    tree = ast.parse(SIMPLE)
-    cls = next(n for n in tree.body
-               if isinstance(n, ast.ClassDef) and n.name == "Strategy1_Research_Simple")
-    defs = [n for n in cls.body
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name]
-    assert defs, f"{name} is not defined in Strategy1_Research_Simple"
-    return ast.get_source_segment(SIMPLE, defs[-1])
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 # ---- the zero-floor inversion --------------------------------------------

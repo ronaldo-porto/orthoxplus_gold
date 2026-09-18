@@ -664,6 +664,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # is visible in the run manifest.
         self._a19_reset_exit_observation()
         self._a192_reset_admission()
+        self._init_build_switches()
+        self._init_direct_overlay_state()
+
+    def _init_build_switches(self) -> None:
+        """Read every research_* switch this overlay owns, one contiguous block per build.
+
+        Split out of initialize() verbatim (v6.0.3 refactor).  It reads nothing but ``self`` and
+        no local crosses its boundary, so adding the next build's switch touches this method and
+        nothing else, instead of a 698-line constructor every build edits in the same place.
+        """
         # A1.9.1 Phase B master switch, so the behavioural half can be turned
         # off without reverting to an older build during an abort.
         self.research_a191_queue_preservation_enabled = self._as_bool(
@@ -1082,6 +1092,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v603_cancels_reported = 0
         self._v603_state_reported = False
         self._v603_errors = 0
+
+    def _init_direct_overlay_state(self) -> None:
+        """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
+
+        Split out of initialize() verbatim (v6.0.3 refactor) at the point where switch parsing
+        ends and state construction begins.
+        """
         # A1.7.4.1 correctness guard. This cache is intentionally owned by the
         # Direct overlay and is NOT session-scoped: simulator timestamp/session
         # rebases must not make a just-delivered TradeEvent process twice.
@@ -1971,9 +1988,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             caller_unrealized = exit_kwargs.get("unrealized_bps")
             exit_kwargs["unrealized_bps"] = true_unrealized
             # v6.0.0: a short lot exits with a minimum-order clip; the frozen caller judged it by its size.
-            v600_chooser = getattr(self, "_v600_chooser_kwargs", None)
-            if v600_chooser is not None:
-                v600_chooser(exit_kwargs)
+            self._v600_chooser_kwargs(exit_kwargs)
             exit_kwargs["hard_escape_min_age_ticks"] = float(
                 getattr(self, "research_bounded_loss_escape_min_age_ticks", 2.0)
             )
@@ -3283,9 +3298,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             )
         inventory_qty = exit_kwargs.get("inventory_qty", 0.0)
         # v6.0.0: a short lot exits at the minimum order, so the risk state sees an executable size.
-        executable = getattr(self, "_v600_executable_qty", None)
-        if executable is not None:
-            inventory_qty = executable(inventory_qty, exit_kwargs.get("min_order", 0.25))
+        inventory_qty = self._v600_executable_qty(inventory_qty, exit_kwargs.get("min_order", 0.25))
         final, rule, arm = authorize_exit(
             pending=pending, base_decision=base_decision, decision=decision,
             maker_net_bps=exit_kwargs.get("maker_net_bps", 0.0),
@@ -3396,13 +3409,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 net = float(self._position_tracker_snapshot(int(bid)).net_qty)
             except Exception:
                 net = 0.0
-            v600_dust = getattr(self, "_v600_counts_as_dust", None)
-            if v600_dust is None:
-                not_executable = abs(net) + 1e-12 < min_order
-            else:
-                not_executable = abs(net) + 1e-12 < min_order and v600_dust(
-                    int(bid), abs(net), eps=float(self._execution_flat_epsilon()), min_order=min_order,
-                )
+            not_executable = abs(net) + 1e-12 < min_order and self._v600_counts_as_dust(
+                int(bid), abs(net), eps=float(self._execution_flat_epsilon()), min_order=min_order,
+            )
             if not_executable:
                 rows.append(end_exit_stall(stalls, bid, tick=tick, ended_by="NOT_EXECUTABLE"))
             else:
@@ -3804,9 +3813,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                             inherited = {}
                             self._a196_inherited_real = inherited
                         inherited[int(book_id)] = net
-                        v600_park = getattr(self, "_v600_note_inherited_clip", None)
-                        if v600_park is not None and abs(net) + 1e-12 < 2.0 * min_order:
-                            v600_park(int(book_id), abs(net))
+                        if abs(net) + 1e-12 < 2.0 * min_order:
+                            self._v600_note_inherited_clip(int(book_id), abs(net))
                     outcome["routed"] = "TRACKER"
                 else:
                     ledger = getattr(self, "_a196_legacy_dust_ledger", None)
@@ -4130,10 +4138,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a196_inherited_real = inherited
         # v6.0.0: so is every single lot the venue still holds (the dry run on UID 125 seeded books 76
         # and 116 whole at -0.2716 and -0.2515, because buy fees are charged in base).
-        v600_park = getattr(self, "_v600_note_inherited_clip", None)
         for inherited_book, inherited_net in sorted(inherited.items()):
-            if v600_park is not None and abs(float(inherited_net)) + 1e-12 < 2.0 * float(min_order):
-                v600_park(int(inherited_book), abs(float(inherited_net)))
+            if abs(float(inherited_net)) + 1e-12 < 2.0 * float(min_order):
+                self._v600_note_inherited_clip(int(inherited_book), abs(float(inherited_net)))
         # A1.9.6.1: books the seed could not price.  Dust needs no price, so it
         # joins the ledger; a REAL lot needs a cost basis, so it waits for a quote
         # that is a market -- charged to exposure, covered by F10, meanwhile.
@@ -6128,17 +6135,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         history = getattr(self, "realized_pnl_history", {}) or {}
         rounds = analytics.rounds
         extra: dict[str, Any] = {}
-        provider = getattr(self, "_v504_mirror_inputs", None)
-        if provider is not None:
-            try:
-                chosen = provider(now_ts)
-            except Exception:
-                chosen = None
-                self._v504_errors = int(getattr(self, "_v504_errors", 0) or 0) + 1
-            if chosen is not None:
-                grid_history, grid_rounds, extra = chosen
-                if grid_rounds:
-                    history, rounds = grid_history, grid_rounds
+        try:
+            chosen = self._v504_mirror_inputs(now_ts)
+        except Exception:
+            chosen = None
+            self._v504_errors = int(getattr(self, "_v504_errors", 0) or 0) + 1
+        if chosen is not None:
+            grid_history, grid_rounds, extra = chosen
+            if grid_rounds:
+                history, rounds = grid_history, grid_rounds
         started = time.perf_counter()
         mirror = mirror_score(
             history, rounds, now_ts=now_ts,
@@ -7611,25 +7616,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # A1.3: sub-minimum residuals are real absolute exposure but cannot be
         # legally reduced.  Do not repeatedly send them to PositionExitController.
         # v6.0.0: a short lot can (one minimum-order clip), so only dust stays out.
-        v600_dust = getattr(self, "_v600_counts_as_dust", None)
-        if v600_dust is not None:
-            book_id = getattr(inventory, "_research_book_id", None)
-            return not (qty > eps and v600_dust(-1 if book_id is None else int(book_id), qty,
-                                                eps=eps, min_order=min_size))
-        return not (qty > eps and qty + 1e-12 < min_size)
+        book_id = getattr(inventory, "_research_book_id", None)
+        return not (qty > eps and self._v600_counts_as_dust(
+            -1 if book_id is None else int(book_id), qty, eps=eps, min_order=min_size))
 
     # ------------------------------------------------------------------
     # A1.7 deterministic persistent-Maker quote ownership.
     # ------------------------------------------------------------------
-    def _direct_order_client_id(self, order):
-        value = getattr(order, "clientOrderId", None)
-        if value is None:
-            value = getattr(order, "client_order_id", None)
-        try:
-            return int(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None
-
     @staticmethod
     def _direct_entry_quote_client_ids(book_id: int) -> set[int]:
         """The two client ids the skewed entry quotes are placed under.
@@ -8367,11 +8360,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 qty = float(self._research_abs_inventory(int(raw_id)))
             except Exception:
                 continue
-            v600_dust = getattr(self, "_v600_counts_as_dust", None)
-            if v600_dust is None:
-                is_dust = qty > eps and qty + 1e-12 < min_size
-            else:
-                is_dust = qty > eps and v600_dust(int(raw_id), qty, eps=eps, min_order=min_size)
+            is_dust = qty > eps and self._v600_counts_as_dust(int(raw_id), qty, eps=eps, min_order=min_size)
             if is_dust:
                 count += 1
         return int(count)
@@ -8402,7 +8391,6 @@ class Strategy1_Research_Simple(Strategy1_Research):
         dust_nonflat = 0
         # v6.0.1 C1: the dust the normalizer can work; only these hold the recovery reserve.
         workable_dust = 0
-        v601_workable = getattr(self, "_v601_is_workable", None)
         total_abs_base = 0.0
         # A1.9.5 F3 needs dust BASE separated from productive BASE, and this
         # is the only loop that already classifies every book.
@@ -8427,7 +8415,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if is_dust:
                     dust_nonflat += 1
                     dust_abs_base += qty
-                    if v601_workable is None or v601_workable(bid, qty, min_order=min_size):
+                    if self._v601_is_workable(bid, qty, min_order=min_size):
                         workable_dust += 1
                 else:
                     active_nonflat += 1
@@ -10491,8 +10479,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_reserved_open_books"] = int(reserved_open)
         # v6.0.1 C1: the reserve's dust count is the dust the normalizer can work.  The dust
         # count itself still drives open-book and BASE accounting unchanged.
-        v601_reserve = getattr(self, "_v601_reserve_dust", None)
-        reserve_dust_now = dust_now if v601_reserve is None else int(v601_reserve(diag, dust_now))
+        reserve_dust_now = int(self._v601_reserve_dust(diag, dust_now))
         stats["direct_v601_reserve_dust_books"] = int(reserve_dust_now)
         stats["direct_v603_short_lot_releases"] = int(
             getattr(self, "_direct_v603_short_lot_releases", 0) or 0
@@ -10689,6 +10676,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # the final authoritative placement set has been frozen.
         self._direct_record_pending_placements(response, state)
 
+        self._direct_build_mm_stats(stats)
+        self._last_mm_stats = stats
+        self._research_timing["build_orders_ms"] = (time.perf_counter() - started) * 1000.0
+        return stats
+
+    def _direct_build_mm_stats(self, stats: dict[str, Any]) -> None:
+        """Fill the request's telemetry dict, after every placement decision is frozen.
+
+        Moved out of build_mm_strategy_instructions verbatim (v6.0.3 refactor): 472 of that
+        method's 893 lines were this block, so a build that added a telemetry key and a build that
+        changed admission produced the same shape of diff.  It runs after
+        _direct_record_pending_placements, reads only ``self`` and ``stats``, and mutates ``stats``
+        in place, so the split is a move and nothing more.
+        """
         stats["direct_quote_keeps"] = int(getattr(self, "_direct_quote_keeps", 0) or 0)
         stats["direct_quote_cancels"] = int(getattr(self, "_direct_quote_cancels", 0) or 0)
         stats["direct_quote_reprices"] = int(getattr(self, "_direct_quote_reprices", 0) or 0)
@@ -11161,9 +11162,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
         deduper = getattr(self, "_direct_trade_deduper", None)
         stats["direct_trade_dedup_cache_size"] = len(deduper) if isinstance(deduper, DirectTradeEventDeduper) else 0
-        self._last_mm_stats = stats
-        self._research_timing["build_orders_ms"] = (time.perf_counter() - started) * 1000.0
-        return stats
+
+
 
 
 if __name__ == "__main__":

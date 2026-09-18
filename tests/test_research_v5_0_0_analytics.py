@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import research_v5_analytics as va
 import research_v5_score_mirror as sm
+from _harness import extractor
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -355,14 +356,7 @@ def test_everything_the_ledger_keeps_is_bounded():
 
 # ---- runtime: the Simple methods, executed from source ------------------------------------------
 
-def _method_source(name):
-    for node in ast.walk(ast.parse(SIMPLE)):
-        if isinstance(node, ast.ClassDef) and node.name == "Strategy1_Research_Simple":
-            defs = [ast.get_source_segment(SIMPLE, n) for n in node.body
-                    if isinstance(n, ast.FunctionDef) and n.name == name]
-            assert defs, name
-            return defs[-1]
-    raise AssertionError(name)
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 class _Parent:

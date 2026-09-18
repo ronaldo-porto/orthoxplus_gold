@@ -57,7 +57,7 @@ STRATEGY = (ROOT / "agents/strategy/Strategy1_Research.py").read_text()
 BASE = ROOT / "agents/strategy/BaseStrategy.py"
 ADAPTIVE = ROOT / "agents/strategy/AdaptiveAgent.py"
 VALIDATOR_TRADE = ROOT / "taos/im/validator/trade.py"
-VALIDATOR_TRADE_SHA256 = "137a4a7f26de9395a0028539a95411992c6ed0fa16ddd21682c04838121af0b8"
+VALIDATOR_TRADE_SHA256 = "d9b3b00c5c9e43c12008ab2b25b1d2a389026d787351bcdd72ee299b60fd811f"
 
 
 def _ev(**kwargs):
@@ -341,8 +341,6 @@ def test_dust_and_parked_inventory_do_not_consume_productive_capacity():
 
 
 def test_validator_and_frozen_agents_are_unchanged():
-    digest = sha256(VALIDATOR_TRADE.read_bytes()).hexdigest()
-    assert digest == VALIDATOR_TRADE_SHA256
     assert "Preserve EVERY timestamp" in VALIDATOR_TRADE.read_text(encoding="utf-8")
     base_src = BASE.read_text(encoding="utf-8")
     adaptive_src = ADAPTIVE.read_text(encoding="utf-8")
@@ -491,3 +489,11 @@ def test_shortlist_keeps_infeasible_one_away():
     ids = {row.book_id for row in kept}
     assert 4 in ids
     assert 5 in ids
+def test_validator_trade_is_frozen():
+    """The scored validator file must not change under us.
+
+    Its own test, not a line inside a longer one: from 2026-09-02 to 2026-09-18 the pinned digest
+    matched no revision this file has ever had, so every assertion after it in the enclosing test
+    was dark.  tests/test_version_pins.py keeps the five copies of the pin honest.
+    """
+    assert sha256(VALIDATOR_TRADE.read_bytes()).hexdigest() == VALIDATOR_TRADE_SHA256

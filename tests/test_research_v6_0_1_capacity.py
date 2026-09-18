@@ -14,6 +14,7 @@ from pathlib import Path
 import research_v601_capacity as cap
 from research_direct_legacy_baseline import admission_decomposition
 from research_direct_liveness import admission_slots, dust_recovery_reserve_abs, normalization_allowed
+from _harness import extractor
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -24,14 +25,7 @@ MIN = 0.25
 EPS = 0.00005
 
 
-def _method_source(name):
-    for node in ast.walk(ast.parse(SIMPLE)):
-        if isinstance(node, ast.ClassDef) and node.name == "Strategy1_Research_Simple":
-            defs = [ast.get_source_segment(SIMPLE, n) for n in node.body
-                    if isinstance(n, ast.FunctionDef) and n.name == name]
-            assert defs, name
-            return defs[-1]
-    raise AssertionError(name)
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 V601_METHODS = ["_v601_on", "_v601_count", "_v601_is_workable", "_v601_reserve_dust", "_v601_telemetry"]
@@ -175,12 +169,12 @@ def test_t4_every_reserve_site_uses_the_reserve_count_and_nothing_else_moved():
     build = _method_source("build_mm_strategy_instructions")
     assert build.count("dust_count=reserve_dust_now,") == 4
     assert "dust_count=dust_now" not in build
-    assert "reserve_dust_now = dust_now if v601_reserve is None else int(v601_reserve(diag, dust_now))" in build
+    assert "reserve_dust_now = int(self._v601_reserve_dust(diag, dust_now))" in build
     # Open and active counting still use the plain dust count's screen.
     assert 'dust_now = int(diag.get("dust_nonflat_inventory", 0) or 0)' in build
     screen = _method_source("_research_fast_screen")
     assert '"v601_workable_dust_inventory": int(workable_dust),' in screen
-    assert "if v601_workable is None or v601_workable(bid, qty, min_order=min_size):" in screen
+    assert "if self._v601_is_workable(bid, qty, min_order=min_size):" in screen
     emit = _method_source("_a196_emit_admission")
     assert 'payload.update(getattr(self, "_v601_last", None) or {})' in emit
     normalizer = _method_source("_direct_normalize_irreducible_dust")

@@ -33,6 +33,7 @@ from research_direct_postfill_protection import (
     sign_flipped,
     strip_book_limit_orders,
 )
+from _harness import extractor
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -42,15 +43,7 @@ OWNERSHIP = (STRATEGY / "research_direct_book_ownership.py").read_text()
 LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
 
 
-def _method_source(name):
-    tree = ast.parse(SIMPLE)
-    defs = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "Strategy1_Research_Simple":
-            defs += [ast.get_source_segment(SIMPLE, n) for n in node.body
-                     if isinstance(n, ast.FunctionDef) and n.name == name]
-    assert defs, name
-    return defs[-1]
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 class _Base:

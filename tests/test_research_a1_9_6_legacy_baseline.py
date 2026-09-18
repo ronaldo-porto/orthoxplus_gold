@@ -25,6 +25,7 @@ from research_direct_legacy_baseline import (
     wire_quantity,
 )
 from research_direct_liveness import admission_slots
+from _harness import defs_extractor, extractor
 
 ROOT = Path(__file__).parents[1]
 SIMPLE = (ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
@@ -47,18 +48,10 @@ def _plan(venue, **kw):
     )
 
 
-def _class_defs(name):
-    tree = ast.parse(SIMPLE)
-    cls = next(n for n in tree.body
-               if isinstance(n, ast.ClassDef) and n.name == "Strategy1_Research_Simple")
-    return [ast.get_source_segment(SIMPLE, n) for n in cls.body
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name]
+_class_defs = defs_extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
-def _method_source(name):
-    defs = _class_defs(name)
-    assert defs, name
-    return defs[-1]
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 # ---- F11: the grid ----------------------------------------------------------

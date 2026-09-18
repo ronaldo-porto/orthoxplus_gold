@@ -30,6 +30,7 @@ from research_position_exit import (
     BAND_NORMAL,
 )
 from research_session_state import extract_simulation_id
+from _harness import extractor, legacy_capability_attrs
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -40,15 +41,7 @@ LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
 EPS = 5e-05
 
 
-def _method_source(name):
-    tree = ast.parse(SIMPLE)
-    defs = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "Strategy1_Research_Simple":
-            defs += [ast.get_source_segment(SIMPLE, n) for n in node.body
-                     if isinstance(n, ast.FunctionDef) and n.name == name]
-    assert defs, name
-    return defs[-1]
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 def _level(price):
@@ -399,6 +392,9 @@ def _harness(*names):
         local = dict(NAMESPACE)
         exec("from __future__ import annotations\n" + textwrap.dedent(_method_source(name)), local)
         attrs[name] = local[name]
+    # Pre-v6 contract: the overlay now calls the v6 capability methods directly, and this
+    # suite pins its own build's behaviour, so it takes the fallbacks the probes used to.
+    attrs.update(legacy_capability_attrs(skip=set(attrs)))
     return type("Harness", (_Agent,), attrs)
 
 

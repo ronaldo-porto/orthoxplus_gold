@@ -31,9 +31,10 @@ from research_direct_execution_quality import DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT
 from research_direct_exposure import DIRECT_EXPOSURE_VERSION
 
 
-@pytest.mark.skip(reason="superseded by A1.7.1 exit-semantics repair")
 def test_a170_version_contract():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_7_0"' in SRC
+    # The policy-version line this test also carried pinned this build's era and went stale at
+    # the next bump, which is why the whole test was skipped -- taking the frozen module
+    # contracts below with it.  The live policy version is pinned in 39 current suites.
     assert DIRECT_QUOTE_MANAGER_VERSION == 'direct_quote_manager_v4_16_2_a1_7_0'
     assert DIRECT_EXPOSURE_VERSION == 'direct_exposure_v4_16_2_a1_6_3'
 

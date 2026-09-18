@@ -24,9 +24,10 @@ from research_direct_economics import DIRECT_TAKER_ENTRY_ENABLED
 from research_direct_execution_quality import DIRECT_MAKER_MAX_TTL_MS, DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT_BPS
 
 
-@pytest.mark.skip(reason="superseded by A1.7 persistent-Maker execution")
 def test_a163_version_contract():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_6_3"' in SRC
+    # The policy-version line this test also carried pinned this build's era and went stale at
+    # the next bump, which is why the whole test was skipped -- taking the frozen module
+    # contracts below with it.  The live policy version is pinned in 39 current suites.
     assert DIRECT_EXPOSURE_VERSION == 'direct_exposure_v4_16_2_a1_6_3'
 
 

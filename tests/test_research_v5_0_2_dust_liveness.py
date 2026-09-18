@@ -20,6 +20,7 @@ import research_v5_dust_liveness as dl
 from research_direct_book_ownership import DIRECT_BOOK_OWNERSHIP_VERSION, canonical_order_side
 from research_direct_inflight_reservation import PendingExposureOrder, pending_order_live
 from research_direct_inventory_truth import build_seed_plan
+from _harness import extractor
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -40,16 +41,9 @@ TOL = 2e-4        # two base units at 4 base decimals
 _TREES = {}
 
 
-def _method_source(name, text=SIMPLE):
-    tree = _TREES.get(id(text))
-    if tree is None:
-        tree = _TREES[id(text)] = ast.parse(text)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef) and item.name == name:
-                    return ast.get_source_segment(text, item)
-    raise AssertionError(f"method {name} not found")
+# This suite also extracts from other agent files, so the class name is not pinned --
+# the same "any class in the text handed to it" rule its own copy used.
+_method_source = extractor(SIMPLE)
 
 
 # Frozen methods come from the frozen files, so the tests run the code that runs live.

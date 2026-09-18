@@ -20,6 +20,7 @@ import research_v600_short_lots as sl
 import research_v603_recovery as rec
 from research_direct_exit_refresh import ABSENT_PARTIAL_REMAINDER_CANCEL
 from research_direct_liveness import is_dust_inventory, partition_bound_remainder_orders
+from _harness import extractor
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -36,14 +37,7 @@ BOOK_107_NET = 0.1996
 BOOK_107_BOUND = 946119
 
 
-def _method_source(name):
-    for node in ast.walk(ast.parse(SIMPLE)):
-        if isinstance(node, ast.ClassDef) and node.name == "Strategy1_Research_Simple":
-            defs = [ast.get_source_segment(SIMPLE, n) for n in node.body
-                    if isinstance(n, ast.FunctionDef) and n.name == name]
-            if defs:
-                return defs[-1]
-    raise AssertionError(name)
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 METHODS = [

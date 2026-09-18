@@ -39,7 +39,7 @@ STRATEGY = (ROOT / "agents/strategy/Strategy1_Research.py").read_text(encoding="
 BASE = ROOT / "agents/strategy/BaseStrategy.py"
 ADAPTIVE = ROOT / "agents/strategy/AdaptiveAgent.py"
 VALIDATOR_TRADE = ROOT / "taos/im/validator/trade.py"
-VALIDATOR_TRADE_SHA256 = "137a4a7f26de9395a0028539a95411992c6ed0fa16ddd21682c04838121af0b8"
+VALIDATOR_TRADE_SHA256 = "d9b3b00c5c9e43c12008ab2b25b1d2a389026d787351bcdd72ee299b60fd811f"
 
 
 def _ev(**kwargs):
@@ -60,8 +60,6 @@ def test_versions_and_frozen_surfaces():
     assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_2"' in STRATEGY
     assert 'RESEARCH_ENGINE_VERSION = "simplified_hybrid_authority_v4_16_2"' in STRATEGY
     assert 'RESEARCH_ENGINE_REVISION = "simplified_hybrid_authority_v4_16_2"' in STRATEGY
-    digest = sha256(VALIDATOR_TRADE.read_bytes()).hexdigest()
-    assert digest == VALIDATOR_TRADE_SHA256
     base_src = BASE.read_text(encoding="utf-8")
     adaptive_src = ADAPTIVE.read_text(encoding="utf-8")
     assert "simplified_hybrid_authority_v4_16_2" not in base_src
@@ -427,3 +425,11 @@ def test_maker_rebate_excluded_from_lifecycle_base_cost():
     assert abs(rebate.base_cost_bps - taxed.base_cost_bps) < 1e-12
     assert rebate.maker_entry_fee_bps < 0.0
     assert taxed.maker_entry_fee_bps > 0.0
+def test_validator_trade_is_frozen():
+    """The scored validator file must not change under us.
+
+    Its own test, not a line inside a longer one: from 2026-09-02 to 2026-09-18 the pinned digest
+    matched no revision this file has ever had, so every assertion after it in the enclosing test
+    was dark.  tests/test_version_pins.py keeps the five copies of the pin honest.
+    """
+    assert sha256(VALIDATOR_TRADE.read_bytes()).hexdigest() == VALIDATOR_TRADE_SHA256

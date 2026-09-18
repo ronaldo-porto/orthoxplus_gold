@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import research_v600_short_lots as sl
 from research_direct_risk_state import ExitPending, authorize_exit
 from research_exit_quantity import REASON_EXACT, REASON_SAFER_RESIDUAL, choose_reduce_quantity
+from _harness import defs_extractor, extractor
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -41,18 +42,10 @@ UID125 = {
 }
 
 
-def _class_defs(name):
-    for node in ast.walk(ast.parse(SIMPLE)):
-        if isinstance(node, ast.ClassDef) and node.name == "Strategy1_Research_Simple":
-            return [ast.get_source_segment(SIMPLE, n) for n in node.body
-                    if isinstance(n, ast.FunctionDef) and n.name == name]
-    raise AssertionError(name)
+_class_defs = defs_extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
-def _method_source(name):
-    defs = _class_defs(name)
-    assert defs, name
-    return defs[-1]
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 V600_METHODS = [
@@ -305,9 +298,9 @@ def test_t5_an_adverse_short_lot_reaches_the_same_protection_as_a_full_lot():
 
 def test_t5_the_hooks_sit_where_the_frozen_caller_decides():
     chooser = _method_source("_research_apply_unified_exit")
-    assert chooser.index("v600_chooser(exit_kwargs)") < chooser.index("choose_observable_position_exit(**exit_kwargs)")
+    assert chooser.index("self._v600_chooser_kwargs(exit_kwargs)") < chooser.index("choose_observable_position_exit(**exit_kwargs)")
     auth = _method_source("_a199_authorize_exit")
-    assert "inventory_qty = executable(inventory_qty, exit_kwargs.get(\"min_order\", 0.25))" in auth
+    assert "inventory_qty = self._v600_executable_qty(inventory_qty, exit_kwargs.get(\"min_order\", 0.25))" in auth
     assert "inventory_qty=inventory_qty," in auth
     # The A1.9.5 taker bound and the Research exit path are the frozen ones.
     assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_2"' in RESEARCH
@@ -346,7 +339,7 @@ def test_t6_every_inherited_single_lot_is_parked_not_only_rebuilt_clips():
     hook = seed[:seed.index("# A1.9.6.1: books the seed could not price.")]
     assert "abs(float(inherited_net)) + 1e-12 < 2.0 * float(min_order)" in hook
     deferred = SIMPLE[SIMPLE.index("inherited[int(book_id)] = net\n"):][:400]
-    assert "v600_park(int(book_id), abs(net))" in deferred
+    assert "self._v600_note_inherited_clip(int(book_id), abs(net))" in deferred
     agent = _agent()
     for book, net in ((36, 0.2501), (76, -0.2716), (116, -0.2515)):
         agent._v600_note_inherited_clip(book, abs(net))
@@ -462,11 +455,11 @@ def test_t10_the_arm_settings_params_and_guards():
         "dust_skip = self._v600_skip_management(book_id, qty_abs, eps=eps, min_order=min_size_local)",
         "is_dust = bool(has_inv and self._v600_counts_as_dust(bid, qty, eps=eps, min_order=min_size))",
         "and not self._v600_counts_as_dust(bid, abs(float(net)), eps=eps, min_order=min_size)",
-        'inventory_qty = executable(inventory_qty, exit_kwargs.get("min_order", 0.25))',
-        "v600_chooser(exit_kwargs)",
+        'inventory_qty = self._v600_executable_qty(inventory_qty, exit_kwargs.get("min_order", 0.25))',
+        "self._v600_chooser_kwargs(exit_kwargs)",
         "self._v600_settle_leftover(int(book_id))",
         "self._v600_note_inherited_clip(int(clip_book), float(min_order))",
-        "v600_park(int(inherited_book), abs(float(inherited_net)))",
+        "self._v600_note_inherited_clip(int(inherited_book), abs(float(inherited_net)))",
     )
     for literal in guards:
         assert literal in SIMPLE and literal in LAUNCHER, literal

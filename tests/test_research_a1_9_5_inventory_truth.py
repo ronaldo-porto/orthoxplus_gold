@@ -17,6 +17,7 @@ from research_direct_inventory_truth import (
     legacy_dust_ceiling_bonus,
 )
 from research_direct_reconcile import reconcile_books
+from _harness import extractor
 
 ROOT = Path(__file__).parents[1]
 SIMPLE = (ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
@@ -31,14 +32,7 @@ LIVE_RESIDUE = {
 MID = 274.13
 
 
-def _method_source(name: str) -> str:
-    tree = ast.parse(SIMPLE)
-    cls = next(n for n in tree.body
-               if isinstance(n, ast.ClassDef) and n.name == "Strategy1_Research_Simple")
-    defs = [n for n in cls.body
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name]
-    assert defs, name
-    return ast.get_source_segment(SIMPLE, defs[-1])
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 def _plan(venue, local=None, mid=None, **kw):

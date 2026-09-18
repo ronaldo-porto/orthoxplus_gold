@@ -27,6 +27,7 @@ from research_direct_venue_integrity import (
     touch_mid,
     valid_touch,
 )
+from _harness import class_defs, extractor, legacy_capability_stubs
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -42,19 +43,11 @@ def _levels(*prices):
 
 
 def _class_defs(src, cls_name, name):
-    tree = ast.parse(src)
-    out = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and (cls_name is None or node.name == cls_name):
-            out += [ast.get_source_segment(src, n) for n in node.body
-                    if isinstance(n, ast.FunctionDef) and n.name == name]
-    return out
+    """Kept for this suite's (src, cls_name, name) call shape; the body is shared."""
+    return class_defs(src, name, cls_name=cls_name)
 
 
-def _method_source(name):
-    defs = _class_defs(SIMPLE, "Strategy1_Research_Simple", name)
-    assert defs, name
-    return defs[-1]
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 # ---- the quote the seed may price from -------------------------------------------
@@ -259,6 +252,9 @@ def _harness():
     methods["_position_tracker_snapshot"] = "    " + _class_defs(BASE, None, "_position_tracker_snapshot")[0]
     exec(compile("class Harness:\n" + "\n\n".join(methods.values()) + "\n", "<harness>", "exec"), ns)
     agent = ns["Harness"]()
+    # Pre-v6 contract: the overlay now calls the v6 capability methods directly, and this
+    # suite pins its own build's behaviour, so it takes the fallbacks the probes used to.
+    legacy_capability_stubs(agent)
     agent.events = []
     agent._emit = lambda typ, **kw: agent.events.append((typ, kw))
     agent._open_positions = collections.defaultdict(lambda: {"longs": collections.deque(), "shorts": collections.deque()})

@@ -23,6 +23,7 @@ from research_direct_breadth_lane import (
     RELIEF_GRANTED,
     evaluate_breadth_relief,
 )
+from _harness import extractor
 
 ROOT = Path(__file__).parents[1]
 SIMPLE = (ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
@@ -41,14 +42,7 @@ def _ev(**kw):
     return evaluate_breadth_relief(**{**LIVE, **kw})
 
 
-def _method_source(name: str) -> str:
-    tree = ast.parse(SIMPLE)
-    cls = next(n for n in tree.body
-               if isinstance(n, ast.ClassDef) and n.name == "Strategy1_Research_Simple")
-    defs = [n for n in cls.body
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name]
-    assert defs, name
-    return ast.get_source_segment(SIMPLE, defs[-1])
+_method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 
 # ---- the live case this exists for ---------------------------------------
