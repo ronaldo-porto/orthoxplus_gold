@@ -274,7 +274,8 @@ research_v600_short_lots=1 research_v600_short_lot_min_fraction=${SHORT_LOT_FRAC
 research_v600_inherited_short_lots=${INHERITED_SHORT_LOTS} \
 research_v601_workable_dust_reserve=1 \
 research_v603_short_lot_release=1 \
-research_v61_no_loss=1"
+research_v61_no_loss=1 \
+research_v61_state_gap_repair=1 research_v61_request_memo=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -1356,6 +1357,48 @@ if [[ "$V610_BUILD" == "1" ]]; then
   echo "[preflight] v6.1 no-loss FIFO floor PASS"
 fi
 
+# v6.1 state-gap repair.  From 09-18 06:35 the mainnet validator sent some states twice and skipped
+# the next; the fills inside a skipped state were never reported, and by tick 8,075 UID 34 held
+# 15.4 BASE on 39 books its tracker did not know about (the validator's own balances agree).  A
+# forward gap in the state clock now opens the A1.9.9 resync for one pass against venue truth, and
+# a book diverged by a lot at two consecutive checks goes to the A1.9.9 deferred reseed.
+# v6.1 request memo (behaviour-neutral): the rolling-kappa refresh and the two realized-PnL scans in
+# build_book_profile run once per request, not once per book (screen 7.4 -> 40.7 ms over a run).
+if [[ "$V610_BUILD" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_v61_state_gap.py" ]] || {
+    echo "ERROR: v6.1 research_v61_state_gap.py missing." >&2
+    exit 1
+  }
+  grep -qF 'self._v61_observe_state_step(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.1 state-gap observer not wired into update()." >&2
+    exit 1
+  }
+  # The clock step must be read before A1.9.9 moves its own last-timestamp mark.
+  V61_STEP_LINE="$(grep -nF 'self._v61_observe_state_step(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  V61_EPOCH_LINE="$(grep -nF 'self._a199_observe_epoch(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  [[ -n "$V61_STEP_LINE" && -n "$V61_EPOCH_LINE" && "$V61_STEP_LINE" -lt "$V61_EPOCH_LINE" ]] || {
+    echo "ERROR: v6.1 state-gap observer must run before the A1.9.9 epoch observer." >&2
+    exit 1
+  }
+  # The one-pass window must be open before the A1.9.9 resync is serviced, or it never runs.
+  V61_ARM_LINE="$(grep -nF 'self._v61_service_gap_repair(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  V61_SERVICE_LINE="$(grep -nF '            self._a199_service_resync(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1 | cut -d: -f1)"
+  [[ -n "$V61_ARM_LINE" && -n "$V61_SERVICE_LINE" && "$V61_ARM_LINE" -lt "$V61_SERVICE_LINE" ]] || {
+    echo "ERROR: v6.1 state-gap repair must be armed before the A1.9.9 resync is serviced." >&2
+    exit 1
+  }
+  grep -qF 'def _research_refresh_rolling_kappa_cache(self) -> None:' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.1 request memo missing: the kappa refresh still rescans the history per book." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v61_state_gap_repair=1"* && "$PARAMS" == *"research_v61_request_memo=1"* ]] || {
+    echo "ERROR: v6.1 build without research_v61_state_gap_repair=1 / research_v61_request_memo=1 in PARAMS." >&2
+    exit 1
+  }
+  echo "[preflight] v6.1 state-gap repair PASS"
+  echo "[preflight] v6.1 request memo PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -1416,6 +1459,8 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_0_3_short_lot_release.py \
       tests/test_research_v6_1_0_lot_floor.py \
       tests/test_research_v6_1_0_no_loss.py \
+      tests/test_research_v6_1_0_state_gap.py \
+      tests/test_research_v6_1_0_request_memo.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
       tests/test_wiring_integrity.py \

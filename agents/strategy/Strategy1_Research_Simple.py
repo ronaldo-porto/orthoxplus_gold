@@ -405,6 +405,17 @@ from research_v61_lot_floor import (
     rewrite_exit_action as v61_rewrite_exit_action,
     taker_close_pnl as v61_taker_close_pnl,
 )
+from research_v61_state_gap import (
+    DEFAULT_STEP_NS as V61_DEFAULT_STEP_NS,
+    STEP_GAP as V61_STEP_GAP,
+    STEP_REPEAT as V61_STEP_REPEAT,
+    V61_DIVERGENCE_CHECK_EVERY_TICKS,
+    V61_GAP_STATE_EVERY_TICKS,
+    V61_STATE_GAP_VERSION,
+    classify_state_step as v61_classify_state_step,
+    confirmed_divergence as v61_confirmed_divergence,
+    diverged_books as v61_diverged_books,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -1117,6 +1128,33 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v61_state_reported = False
         self._v61_restored_lots: dict[int, dict[str, list]] = {}
         self._v61_errors = 0
+        # v6.1 gap repair: a state the validator skipped took its fills with it.  A forward gap in
+        # the state clock opens the A1.9.9 resync for one pass (every book planned against venue
+        # truth), and a book diverged by a lot at two consecutive checks goes to the deferred
+        # reseed.  Off restores v6.0.3 exactly; the step counters run either way.
+        self.research_v61_state_gap_repair = self._as_bool(
+            getattr(self.config, "research_v61_state_gap_repair", True)
+        )
+        self._v61_gap_counts: dict[str, int] = {}
+        self._v61_last_state_ts: int | None = None
+        self._v61_gap_pending: dict[str, int] | None = None
+        self._v61_gap_window: dict[str, int] | None = None
+        self._v61_diverged_prev: set[int] = set()
+        self._v61_standing_new: list[int] = []
+        self._v61_standing_before = 0
+        self._v61_last_gap: dict[str, int] = {}
+        self._v61_gap_state_reported = False
+        self._v61_gap_errors = 0
+        # v6.1 request memo (behaviour-neutral): the rolling-kappa refresh and the two realized-PnL
+        # scans in build_book_profile run once per request instead of once per book.
+        self.research_v61_request_memo = self._as_bool(
+            getattr(self.config, "research_v61_request_memo", True)
+        )
+        self._v61_kappa_memo = None
+        self._v61_pnl_memo = None
+        self._v61_memo_hits = 0
+        self._v61_memo_misses = 0
+        self._v61_pnl_memo_builds = 0
 
     def _init_direct_overlay_state(self) -> None:
         """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
@@ -1205,6 +1243,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._direct_v603_short_lot_releases = 0
         self._direct_v61_taker_refusals = 0
         self._direct_v61_compaction_refusals = 0
+        self._direct_v61_state_gaps = 0
+        self._direct_v61_state_repeats = 0
+        self._direct_v61_gap_reseeds = 0
+        self._direct_v61_standing_reseeds = 0
         self._direct_partial_wrong_side_cancels = 0
         self._direct_partial_bound_holds = 0
         self._direct_partial_bound_pending = 0
@@ -1424,6 +1466,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # A1.9.9: a clock rewind is detected before this state's trades are
         # ingested, so every order registry is cleared before a replayed or
         # resurrected event can be matched against it.
+        # v6.1: classify this state's clock step first; a gap arms a one-pass venue-truth repair.
+        try:
+            self._v61_observe_state_step(state)
+        except Exception:
+            self._v61_gap_errors = int(getattr(self, "_v61_gap_errors", 0) or 0) + 1
         try:
             self._a199_observe_epoch(state)
         except Exception:
@@ -7697,6 +7744,257 @@ class Strategy1_Research_Simple(Strategy1_Research):
             errors=int(getattr(self, "_v61_errors", 0) or 0),
         )
 
+    # ---- v6.1: a skipped state lost its fills ------------------------------------------------------
+    def _v61_gap_on(self) -> bool:
+        return bool(getattr(self, "research_v61_state_gap_repair", True))
+
+    def _v61_gap_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v61_gap_counts", None)
+        if counts is None:
+            counts = {}
+            self._v61_gap_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v61_observe_state_step(self, state) -> None:
+        """Classify this state's clock step against the last state's, before it is ingested.
+
+        A gap arms the repair; a repeat is only counted -- its notices are the last state's, which
+        the de-duplicator drops, and nothing is lost until the gap that follows it.  A rewind is
+        A1.9.9's (it clears the registries and opens its own resync).
+        """
+        try:
+            ts = int(getattr(state, "timestamp", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        if ts <= 0:
+            return
+        step_ns = getattr(getattr(state, "config", None), "publish_interval", None) or V61_DEFAULT_STEP_NS
+        prev = getattr(self, "_v61_last_state_ts", None)
+        step, missing = v61_classify_state_step(prev, ts, step_ns=step_ns)
+        self._v61_last_state_ts = ts
+        if step not in (V61_STEP_GAP, V61_STEP_REPEAT):
+            return
+        # `Strategy1.respond` increments _tick first: this state is tick + 1.
+        tick = int(getattr(self, "_tick", 0) or 0) + 1
+        armed = 0
+        if step == V61_STEP_REPEAT:
+            self._v61_gap_count("repeats")
+            self._direct_v61_state_repeats = int(getattr(self, "_direct_v61_state_repeats", 0) or 0) + 1
+        else:
+            self._v61_gap_count("gaps")
+            self._v61_gap_count("missing_states", int(missing))
+            self._direct_v61_state_gaps = int(getattr(self, "_direct_v61_state_gaps", 0) or 0) + 1
+            if self._v61_gap_on():
+                self._v61_gap_pending = {
+                    "tick": tick, "prev_ts": int(prev), "ts": int(ts), "missing": int(missing),
+                }
+                armed = 1
+            self._v61_last_gap = {"tick": tick, "prev_ts": int(prev), "ts": int(ts), "missing": int(missing)}
+        self._emit(
+            "V61_STATE_STEP", force=True, tick=tick, v61_state_gap_version=V61_STATE_GAP_VERSION,
+            step=step, prev_ts=int(prev), ts=int(ts), missing_states=int(missing), repair_armed=armed,
+        )
+
+    def _v61_service_gap_repair(self, state) -> None:
+        """Before the A1.9.9 resync is serviced: arm it for one pass, confirm standing divergences."""
+        self._v61_gap_window = None
+        self._v61_standing_new = []
+        if not self._v61_gap_on():
+            self._v61_gap_pending = None
+            return
+        # The same convention `_a199_service_resync` uses: this state is tick + 1.
+        tick = int(getattr(self, "_tick", 0) or 0) + 1
+        before = int(getattr(self, "_a199_epoch_reseeds", 0) or 0)
+        pending = getattr(self, "_v61_gap_pending", None)
+        if pending:
+            self._v61_gap_pending = None
+            if getattr(self, "_a199_resync", None):
+                # A rewind resync is already open and replans every book on its own.
+                self._v61_gap_count("gap_inside_resync")
+            else:
+                # min == max == this state: `_a199_service_resync` plans every book against venue
+                # truth, rebuilds the diverged ones and closes the window before any decision
+                # reads it -- a gap never blocks an entry.
+                self._a199_resync = {
+                    "since_tick": tick, "min_until_tick": tick, "max_until_tick": tick,
+                    "old_ts": int(pending["prev_ts"]), "new_ts": int(pending["ts"]),
+                    "reseeds": 0, "entries_blocked": 0, "placements_stripped": 0,
+                    "cause": "V61_STATE_GAP",
+                }
+                self._v61_gap_window = dict(pending, opened_tick=tick, reseeds_before=before)
+                self._v61_gap_count("repairs")
+        if tick % V61_DIVERGENCE_CHECK_EVERY_TICKS != 0:
+            return
+        books = getattr(state, "books", None) or {}
+        venue = self._a195_venue_net_by_book(books)
+        tracker: dict[int, float] = {}
+        for book_id in venue:
+            try:
+                tracker[int(book_id)] = float(self._position_tracker_snapshot(int(book_id)).net_qty)
+            except Exception:
+                continue
+        min_order = float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
+        current = v61_diverged_books(venue, tracker, min_order=min_order)
+        confirmed = v61_confirmed_divergence(getattr(self, "_v61_diverged_prev", None), current)
+        self._v61_diverged_prev = current
+        self._v61_gap_count("checks")
+        if not confirmed:
+            return
+        deferred = getattr(self, "_a199_deferred", None)
+        if not isinstance(deferred, dict):
+            deferred = {}
+            self._a199_deferred = deferred
+        added = []
+        for book_id in sorted(confirmed):
+            if book_id in deferred:
+                continue
+            deferred[book_id] = {
+                "since_tick": tick, "target": float(venue[book_id]), "venue_net": float(venue[book_id]),
+                "cause": "V61_PERSISTENT_DIVERGENCE",
+            }
+            added.append(int(book_id))
+        if added:
+            self._v61_standing_new = added
+            self._v61_gap_count("standing_books", len(added))
+            self._v61_standing_before = before
+            self._emit(
+                "V61_STANDING_DIVERGENCE", force=True, tick=tick,
+                v61_state_gap_version=V61_STATE_GAP_VERSION, books=added,
+                venue={int(b): round(float(venue[b]), 8) for b in added},
+                tracker={int(b): round(float(tracker.get(b, 0.0)), 8) for b in added},
+            )
+
+    def _v61_note_gap_repair(self) -> None:
+        """After the A1.9.9 service: how many books the gap pass or the standing check rebuilt."""
+        window = getattr(self, "_v61_gap_window", None)
+        added = getattr(self, "_v61_standing_new", None) or []
+        if not window and not added:
+            return
+        after = int(getattr(self, "_a199_epoch_reseeds", 0) or 0)
+        tick = int(getattr(self, "_tick", 0) or 0) + 1
+        if window:
+            reseeds = max(0, after - int(window.get("reseeds_before", after)))
+            self._direct_v61_gap_reseeds = int(getattr(self, "_direct_v61_gap_reseeds", 0) or 0) + reseeds
+            self._v61_gap_count("gap_reseeds", reseeds)
+            self._emit(
+                "V61_GAP_REPAIR", force=True, tick=tick, v61_state_gap_version=V61_STATE_GAP_VERSION,
+                prev_ts=int(window.get("prev_ts", 0)), ts=int(window.get("ts", 0)),
+                missing_states=int(window.get("missing", 0)), reseeds=int(reseeds),
+                window_closed=int(not bool(getattr(self, "_a199_resync", None))),
+            )
+        elif added:
+            # Not `before or after`: a count of 0 is a count, not a missing value.
+            before = getattr(self, "_v61_standing_before", None)
+            reseeds = max(0, after - int(before)) if before is not None else 0
+            self._direct_v61_standing_reseeds = int(
+                getattr(self, "_direct_v61_standing_reseeds", 0) or 0
+            ) + reseeds
+            self._v61_gap_count("standing_reseeds", reseeds)
+        self._v61_gap_window = None
+        self._v61_standing_new = []
+
+    def _v61_gap_telemetry(self, state) -> None:
+        tick = int(getattr(self, "_tick", 0) or 0)
+        if getattr(self, "_v61_gap_state_reported", False) and not (tick > 0 and tick % V61_GAP_STATE_EVERY_TICKS == 0):
+            return
+        self._v61_gap_state_reported = True
+        self._emit(
+            "V61_GAP_STATE", force=True, tick=tick, v61_state_gap_version=V61_STATE_GAP_VERSION,
+            enabled=int(self._v61_gap_on()),
+            gaps=int(getattr(self, "_direct_v61_state_gaps", 0) or 0),
+            repeats=int(getattr(self, "_direct_v61_state_repeats", 0) or 0),
+            gap_reseeds=int(getattr(self, "_direct_v61_gap_reseeds", 0) or 0),
+            standing_reseeds=int(getattr(self, "_direct_v61_standing_reseeds", 0) or 0),
+            deferred_books=len(getattr(self, "_a199_deferred", None) or {}),
+            last_gap=dict(getattr(self, "_v61_last_gap", {}) or {}),
+            counts=dict(getattr(self, "_v61_gap_counts", {}) or {}),
+            request_memo=int(self._v61_memo_on()),
+            memo_hits=int(getattr(self, "_v61_memo_hits", 0) or 0),
+            memo_misses=int(getattr(self, "_v61_memo_misses", 0) or 0),
+            pnl_memo_builds=int(getattr(self, "_v61_pnl_memo_builds", 0) or 0),
+            errors=int(getattr(self, "_v61_gap_errors", 0) or 0),
+        )
+
+    # ---- v6.1: request memo (behaviour-neutral) ---------------------------------------------------
+    def _v61_memo_on(self) -> bool:
+        return bool(getattr(self, "research_v61_request_memo", True))
+
+    def _research_refresh_rolling_kappa_cache(self) -> None:
+        """v6.1 request memo: the frozen refresh, once per request instead of once per book.
+
+        The frozen method rebuilds its cache key by scanning the whole realized history -- a sum
+        over every timestamp and a max over every key -- on EVERY call, hit or miss, and the fast
+        screen calls it for all 128 books on every request (the expiry and universe reads add
+        more).  Measured on UID 34 (v6.0.2): 2.4 ms per request at tick 1,000, 16.9 ms at tick
+        8,000, growing until the 3 sim-h window fills; screen time 7.4 -> 40.7 ms over the run.
+
+        Within one request neither object it reads can change.  `update()` replaces
+        `realized_pnl_history` wholesale on every state (the prune rebuilds the dict right after
+        the flush), and the persisted observation timestamps are only ever replaced, never
+        mutated in place.  So a second call with the same two objects, clock and tick is the first
+        call's early return, exactly.
+        """
+        if not self._v61_memo_on():
+            return super()._research_refresh_rolling_kappa_cache()
+        history = getattr(self, "realized_pnl_history", None)
+        persisted = getattr(self, "_research_persisted_observation_timestamps", None)
+        stamp = (
+            int(getattr(self, "_tick", 0) or 0),
+            getattr(self, "_research_last_sim_ts", None),
+            getattr(self, "research_kappa_lookback_ns", None),
+            len(history) if history is not None else -1,
+        )
+        memo = getattr(self, "_v61_kappa_memo", None)
+        if memo is not None and memo[0] == stamp and memo[1] is history and memo[2] is persisted:
+            self._v61_memo_hits = int(getattr(self, "_v61_memo_hits", 0) or 0) + 1
+            return None
+        super()._research_refresh_rolling_kappa_cache()
+        self._v61_memo_misses = int(getattr(self, "_v61_memo_misses", 0) or 0) + 1
+        self._v61_kappa_memo = (
+            stamp, history, getattr(self, "_research_persisted_observation_timestamps", None),
+        )
+        return None
+
+    def _v61_pnl_window(self, current_ts):
+        """Per-book (non-zero bucket count, realized sum) over the PnL lookback, one pass per request.
+
+        Same arithmetic as the two frozen scans: for each book the additions happen in the same
+        timestamp order, and the frozen sum's `+ 0.0` for an absent book is an identity.
+        """
+        history = getattr(self, "realized_pnl_history", None)
+        if history is None:
+            history = {}
+        lookback = getattr(self, "pnl_lookback_ns", 0)
+        key = (current_ts, lookback, len(history))
+        memo = getattr(self, "_v61_pnl_memo", None)
+        if memo is not None and memo[0] == key and memo[1] is history:
+            return memo[2], memo[3]
+        threshold = current_ts - lookback
+        counts: dict = {}
+        sums: dict = {}
+        for ts, books in history.items():
+            if ts < threshold:
+                continue
+            for book_id, pnl in books.items():
+                sums[book_id] = sums.get(book_id, 0.0) + pnl
+                if pnl != 0.0:
+                    counts[book_id] = counts.get(book_id, 0) + 1
+        self._v61_pnl_memo = (key, history, counts, sums)
+        self._v61_pnl_memo_builds = int(getattr(self, "_v61_pnl_memo_builds", 0) or 0) + 1
+        return counts, sums
+
+    def _pnl_observation_count(self, book_id: int, current_ts: int) -> int:
+        if not self._v61_memo_on():
+            return super()._pnl_observation_count(book_id, current_ts)
+        counts, _sums = self._v61_pnl_window(current_ts)
+        return int(counts.get(book_id, 0))
+
+    def _realized_pnl_lookback(self, book_id: int, current_ts: int) -> float:
+        if not self._v61_memo_on():
+            return super()._realized_pnl_lookback(book_id, current_ts)
+        _counts, sums = self._v61_pnl_window(current_ts)
+        return sums.get(book_id, 0.0)
+
     def _v504_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         recorder = getattr(self, "_v503_recorder", None)
@@ -7823,6 +8121,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a1961_service_pending_seed(state)
         except Exception:
             pass
+        # v6.1: after a skipped state, open the A1.9.9 resync for exactly one pass; every 25 ticks,
+        # hand a book diverged by a lot at two consecutive checks to the deferred reseed.
+        try:
+            self._v61_service_gap_repair(state)
+        except Exception:
+            self._v61_gap_errors = int(getattr(self, "_v61_gap_errors", 0) or 0) + 1
         # A1.9.9 session epoch: while a rewind resync is open, rebuild every
         # diverged book from venue truth before any exit or capacity decision
         # reads the tracker.
@@ -7830,6 +8134,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a199_service_resync(state)
         except Exception:
             pass
+        try:
+            self._v61_note_gap_repair()
+        except Exception:
+            self._v61_gap_errors = int(getattr(self, "_v61_gap_errors", 0) or 0) + 1
         # v5.0.2 F4: a market order the venue processed without closing its position frees the
         # book now -- update() has applied its fills -- so a pending exit resends on this request.
         try:
@@ -7932,6 +8240,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v61_telemetry(state)
         except Exception:
             self._v61_errors = int(getattr(self, "_v61_errors", 0) or 0) + 1
+        # v6.1 telemetry: the gap-repair and request-memo row.
+        try:
+            self._v61_gap_telemetry(state)
+        except Exception:
+            self._v61_gap_errors = int(getattr(self, "_v61_gap_errors", 0) or 0) + 1
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:
@@ -10658,6 +10971,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_v61_no_loss": 0,
             "direct_v61_taker_refusals": 0,
             "direct_v61_compaction_refusals": 0,
+            "direct_v61_state_gap_repair": 0,
+            "direct_v61_state_gaps": 0,
+            "direct_v61_state_repeats": 0,
+            "direct_v61_gap_reseeds": 0,
+            "direct_v61_standing_reseeds": 0,
+            "direct_v61_request_memo": 0,
+            "direct_v61_memo_hits": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -10851,6 +11171,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_v61_compaction_refusals"] = int(
             getattr(self, "_direct_v61_compaction_refusals", 0) or 0
         )
+        stats["direct_v61_state_gap_repair"] = int(self._v61_gap_on())
+        stats["direct_v61_state_gaps"] = int(getattr(self, "_direct_v61_state_gaps", 0) or 0)
+        stats["direct_v61_state_repeats"] = int(getattr(self, "_direct_v61_state_repeats", 0) or 0)
+        stats["direct_v61_gap_reseeds"] = int(getattr(self, "_direct_v61_gap_reseeds", 0) or 0)
+        stats["direct_v61_standing_reseeds"] = int(getattr(self, "_direct_v61_standing_reseeds", 0) or 0)
+        stats["direct_v61_request_memo"] = int(self._v61_memo_on())
+        stats["direct_v61_memo_hits"] = int(getattr(self, "_v61_memo_hits", 0) or 0)
         recovery_reserve_abs = dust_recovery_reserve_abs(
             dust_count=reserve_dust_now, min_order=min_size,
         )
