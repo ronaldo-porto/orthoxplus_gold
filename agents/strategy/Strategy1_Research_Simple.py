@@ -39,6 +39,7 @@ from collections import OrderedDict, deque
 from dataclasses import replace
 import json
 import math
+from contextlib import contextmanager
 import os
 import sys
 import time
@@ -635,8 +636,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_3"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_3"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_4"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_4"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1247,6 +1248,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v623_memo = None
         self._v623_noted: dict[int, Any] = {}
         self._v623_errors = 0
+        # v6.2.4: a release is the book's exit and gets the exit order life.  The frozen placement gives
+        # the persistent exit TTL (research_profitable_exit_ttl_ms) and the V4.13.8 queue hold only to an
+        # exit whose net clears research_profitable_exit_min_net_bps -- the no-loss floor restated.  v6.2.3
+        # lifted that floor at five sites but not this sixth, so its releases (negative net by design)
+        # went out with the base TTL and rested 35% of the holding time.  Off restores v6.2.3 exactly.
+        self.research_v624_release_life = self._as_bool(
+            getattr(self.config, "research_v624_release_life", True)
+        )
+        self._v624_counts: dict[str, int] = {}
 
     def _init_direct_overlay_state(self) -> None:
         """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
@@ -6299,10 +6309,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     pass
                 return 0
 
-        return super()._research_place_maker_exit(
-            response, state, book_id, book, inventory, qty, action,
-            close_price=close_price, maker_net_bps=maker_net_bps,
-        )
+        # v6.2.4: a v6.2.3 release takes the exit order life inside this one frozen call.
+        with self._v624_release_life(int(book_id), state):
+            return super()._research_place_maker_exit(
+                response, state, book_id, book, inventory, qty, action,
+                close_price=close_price, maker_net_bps=maker_net_bps,
+            )
 
     def _emit(self, event_type: str, force: bool = False, **payload: Any) -> None:
         # v5.0.0: the analytics ledger reads a row as it is written.  The row goes on unchanged,
@@ -8375,6 +8387,43 @@ class Strategy1_Research_Simple(Strategy1_Research):
             out["errors"] += 1
         return out
 
+
+    # ---- v6.2.4: a release takes the exit order life ----------------------------------------------
+    def _v624_on(self) -> bool:
+        return bool(self._v623_on() and getattr(self, "research_v624_release_life", True))
+
+    def _v624_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v624_counts", None)
+        if counts is None:
+            counts = {}
+            self._v624_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    @contextmanager
+    def _v624_release_life(self, book_id: int, state):
+        """The persistence threshold of the frozen placement, on a book v6.2.3 lifts.
+
+        The frozen base reads ``research_profitable_exit_min_net_bps`` twice, both in the call this
+        wraps: ``profitable_maker_exit_ttl_ms`` (persistent TTL) and
+        ``hold_existing_profitable_maker_exit`` (keep the queue).  On a book outside the Kappa-3
+        premium branch there is no floor for either to restate, so the threshold is -inf for the call
+        and restored after it, also on an exception.  The TTL value, its 5 s cap and the TOXIC /
+        STRESSED exclusions are the frozen ones.  Yields whether the release life applied.
+        """
+        if not (self._v624_on() and self._v623_lifted(int(book_id), state)[0]):
+            yield False
+            return
+        had = "research_profitable_exit_min_net_bps" in self.__dict__
+        saved = self.__dict__.get("research_profitable_exit_min_net_bps")
+        self.research_profitable_exit_min_net_bps = float("-inf")
+        self._v624_count("release_life")
+        try:
+            yield True
+        finally:
+            if had:
+                self.research_profitable_exit_min_net_bps = saved
+            else:
+                self.__dict__.pop("research_profitable_exit_min_net_bps", None)
     def _v62_apply_caps(self, state) -> None:
         """The portfolio caps are the universe's: every book may hold its one lot in flight.
 
@@ -8570,6 +8619,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             seed_at_breadth=dict(getattr(self, "_v622_counts", {}) or {}),
             premium_floor_on=int(self._v623_on()),
             premium_floor=self._v623_snapshot(state),
+            release_life_on=int(self._v624_on()),
+            release_life=dict(getattr(self, "_v624_counts", {}) or {}),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
             making=(mirror.snapshot() if mirror is not None else {}),
@@ -11602,6 +11653,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_v622_restored_books": 0,
             "direct_v623_premium_floor": 0,
             "direct_v623_releases": 0,
+            "direct_v624_release_life": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -11826,6 +11878,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_v622_restored_books"] = int(v622_counts.get("restored_books", 0))
         stats["direct_v623_premium_floor"] = int(self._v623_on())
         stats["direct_v623_releases"] = int(dict(getattr(self, "_v623_counts", {}) or {}).get("releases", 0))
+        stats["direct_v624_release_life"] = int(self._v624_on())
         recovery_reserve_abs = dust_recovery_reserve_abs(
             dust_count=reserve_dust_now, min_order=min_size,
         )

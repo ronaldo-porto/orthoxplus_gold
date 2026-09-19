@@ -328,8 +328,8 @@ def test_v5_0_3_is_wired_and_launched():
     for switch in ("research_v503_newcomer_gate", "research_v503_state_recorder",
                    "research_v503_fifo_fee_exact", "research_v503_book_kappa_rows"):
         assert f'self.{switch} = self._as_bool(\n            getattr(self.config, "{switch}", True)' in SIMPLE, switch
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_3"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_3"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_4"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_4"' in SIMPLE
     assert ng.V503_NEWCOMER_GATE_VERSION.endswith("v5_0_3")
     assert obs.V503_OBSERVATORY_VERSION.endswith("v5_0_3")
     assert vf.V503_VALIDATOR_FIFO_VERSION.endswith("v5_0_3")
