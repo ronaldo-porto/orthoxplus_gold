@@ -42,6 +42,7 @@ METHODS = [
     "_v61_note_refusal", "_v61_compaction_price_ok", "_v61_floor_for", "_v61_rewrite_exit",
     "_v61_apply_floor", "_v61_lots_session_state", "_v61_lots_from_session",
     "_v61_restored_side", "_v61_telemetry",
+    "_v62_on", "_v623_on", "_v623_count", "_v623_lifted", "_v623_release",   # v6.2.3, off here
 ]
 
 # The mainnet shape: 0.25 BASE at 400, entered maker at a 56 bps rebate; live maker fee -32.5 bps,
@@ -130,6 +131,7 @@ def _agent(*, v61=True, tick=3000, lots=((Q, P0, OPEN_FEE),), long=True):
     exec("from __future__ import annotations\nclass Harness(_Base):\n" + body, scope)
     agent = scope["Harness"]()
     agent.research_v61_no_loss = v61
+    agent.research_v623_premium_floor = False   # v6.2.3 has its own suite
     agent._tick = tick
     agent._v61_counts = {}
     agent._v61_last = {}
@@ -408,8 +410,8 @@ def test_t6_the_state_row_is_emitted_once_then_on_the_cadence():
 
 
 def test_t6_source_wiring():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_3"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_3"' in SIMPLE
     assert "from research_v61_lot_floor import (" in SIMPLE
     # the choke point precedes the frozen market order
     assert SIMPLE.index("ok, detail = self._v61_taker_verdict(") < SIMPLE.index(

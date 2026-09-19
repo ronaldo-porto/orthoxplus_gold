@@ -169,6 +169,7 @@ WANTED = {
     "_v61_on", "_v61_positions", "_v61_floor_for", "_v61_price_decimals",
     "_v611_floor_reprice_on", "_v611_price_lift_on", "_v611_count", "_v611_seed_comparand",
     "_v611_lift_outgoing_prices", "_v611_telemetry",
+    "_v62_on", "_v623_on", "_v623_count", "_v623_lifted", "_v623_resting_floor_bps",
 }
 
 
@@ -237,6 +238,7 @@ class _Response:
 
 class _Agent:
     research_profitable_exit_ttl_ms = 4000.0
+    research_v623_premium_floor = False   # v6.2.3 (the premium-scoped floor) has its own suite
     research_profitable_exit_min_net_bps = 0.0
     research_profitable_exit_reprice_ticks = 3.0
     research_a191_queue_preservation_enabled = True
@@ -505,8 +507,8 @@ def test_the_switches_default_on():
 
 
 def test_version_and_launcher_arm():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_2"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_2"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_3"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_3"' in SRC
     arm = next(line for line in LAUNCHER_SRC.splitlines() if line.strip().startswith("strategy1_direct_v6_1_1)"))
     assert "V610_BUILD=1" in arm and "V611_BUILD=1" in arm
     assert "strategy1_direct_v6_1_0)" in LAUNCHER_SRC

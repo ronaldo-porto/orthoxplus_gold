@@ -144,11 +144,11 @@ def test_switch_defaults_on_and_telemetry_and_stats():
     tele = _method_source("_v62_telemetry")
     assert "seed_at_breadth_on=int(self._v622_on())" in tele
     assert '"direct_v622_restored_books"' in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_3"' in SIMPLE
 
 
 def test_launcher_arm_params_guard_and_gate():
-    assert "strategy1_direct_v6_2_2)" in LAUNCHER and "V622_BUILD=1 ;;" in LAUNCHER
+    assert "strategy1_direct_v6_2_3)" in LAUNCHER and "V622_BUILD=1 ;;" in LAUNCHER
     assert "research_v622_seed_at_breadth=1" in LAUNCHER
     assert "[preflight] v6.2.2 seed at breadth PASS" in LAUNCHER
     assert "tests/test_research_v6_2_2_seed_at_breadth.py" in LAUNCHER

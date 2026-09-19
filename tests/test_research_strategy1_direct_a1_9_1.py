@@ -63,8 +63,8 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_2"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_2"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_3"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_3"' in SRC
     # A1.9.1.1: derived from runtime state, not a literal.
     assert 'stats["direct_a19_phase"] = self._a19_runtime_phase()' in SRC
     assert 'stats["direct_a19_behaviour_change"] = self._a19_behaviour_change()' in SRC
@@ -118,6 +118,7 @@ WANTED = {
     "_a19_resting_net_bps", "_v61_on", "_v61_positions", "_v61_floor_for", "_v611_floor_reprice_on", "_v611_seed_comparand", "_a19_tick_size", "_a19_ledger_ref",
     "_a19_note_exit_cancel", "_direct_account_orders",
     "_a191_check_activation", "_a19_runtime_phase", "_a19_behaviour_change",
+    "_v62_on", "_v623_on", "_v623_count", "_v623_lifted", "_v623_resting_floor_bps",
 }
 
 
@@ -182,6 +183,7 @@ class _Response:
 
 class _Agent:
     research_profitable_exit_ttl_ms = 4000.0
+    research_v623_premium_floor = False   # v6.2.3 (the premium-scoped floor) has its own suite
     research_profitable_exit_min_net_bps = 0.0
     research_profitable_exit_reprice_ticks = 3.0
     research_a191_queue_preservation_enabled = True

@@ -214,8 +214,8 @@ def test_t5_arm_params_and_guards():
             "A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; "
             "V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1 ;;") in LAUNCHER
     assert "  strategy1_direct_v6_0_0) A19X_BUILD=1" in LAUNCHER, "earlier arms stay"
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_3"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_3"' in SIMPLE
     start = LAUNCHER.index('PARAMS="')
     params = LAUNCHER[start:LAUNCHER.index('"', start + len('PARAMS="'))]
     assert "research_v601_workable_dust_reserve=1" in params

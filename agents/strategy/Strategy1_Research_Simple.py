@@ -437,6 +437,16 @@ from research_v62_making_mirror import (
     DEFAULT_LOOKBACK_NS as V62_DEFAULT_LOOKBACK_NS,
     MakingMirror as V62MakingMirror,
 )
+from research_v623_premium_floor import (
+    BOOK_PREMIUM as V623_BOOK_PREMIUM,
+    KAPPA_MIN_REALIZED_OBSERVATIONS as V623_MIN_OBSERVATIONS,
+    PUBLISH_STEP_NS as V623_PUBLISH_STEP_NS,
+    V623_PREMIUM_FLOOR_VERSION,
+    VOLUME_DECIMALS as V623_VOLUME_DECIMALS,
+    book_status as v623_book_status,
+    census_counts as v623_census_counts,
+    window_census as v623_window_census,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -625,8 +635,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_2"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_2"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_3"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_3"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1224,6 +1234,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
             getattr(self.config, "research_v622_seed_at_breadth", True)
         )
         self._v622_counts: dict[str, int] = {}
+        # v6.2.3: the v6.1 floor binds only on a book whose validator Kappa-3 carries the clean-record
+        # premium (>= 3 non-zero periods in the window, none below tau 0).  A book with fewer periods
+        # is not scored, and one with a loss in the window is at ~0.50 whatever its next close does,
+        # so the floor protected nothing there and locked the book (v6.2.1: quoted 51 -> 10; v6.2.2:
+        # 24 -> 15 in 500 ticks).  Maker exits only: the taker verdict stays strict.  Off restores
+        # v6.2.2 exactly.
+        self.research_v623_premium_floor = self._as_bool(
+            getattr(self.config, "research_v623_premium_floor", True)
+        )
+        self._v623_counts: dict[str, int] = {}
+        self._v623_memo = None
+        self._v623_noted: dict[int, Any] = {}
+        self._v623_errors = 0
 
     def _init_direct_overlay_state(self) -> None:
         """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
@@ -5382,7 +5405,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             existing_qty=float(row.remaining or row.quantity),
             desired_qty=abs(float(qty)) if qty else abs(net_base),
             existing_net_bps=self._a19_resting_net_bps(bid, inventory, row.price),
-            floor_net_bps=float(DIRECT_MAKER_EXIT_TARGET_BPS),
+            floor_net_bps=self._v623_resting_floor_bps(bid, state),
             existing_action=row.action, desired_action=desired_action,
             reprice_ticks=float(getattr(self, "research_profitable_exit_reprice_ticks", 3.0) or 3.0),
         )
@@ -6247,10 +6270,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # AGGRESSIVE_MAKER_EXIT. Never allow that rung to realize a negative
         # lifecycle merely because Taker authority was denied. A1.7.4 recovery
         # is the only bounded exception.
+        # v6.2.3: on a book outside the Kappa-3 premium branch a negative maker is the release itself.
         if (
             str(action or "") == "AGGRESSIVE_MAKER_EXIT"
             and maker_net_bps is not None
             and not recovery_maker_ok
+            and not self._v623_lifted(int(book_id), state)[0]
         ):
             try:
                 negative_aggressive = float(maker_net_bps) < -1e-12
@@ -7636,6 +7661,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _v61_compaction_price_ok(self, book_id: int, net_base: float, price: float, state) -> bool:
         """The compaction clip FIFO-closes the head lot: refuse it below the break-even."""
+        # v6.2.3: outside the Kappa-3 premium branch the zero floor is lifted (the frozen A1.7.4.2
+        # dust budget still applies upstream).
+        if self._v623_lifted(int(book_id), state)[0]:
+            self._v623_count("lifted_compaction")
+            return True
         long_pos = float(net_base) > 0.0
         lot = v61_head_lot(self._v61_positions(book_id), long_position=long_pos)
         if lot is None:
@@ -7692,6 +7722,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return close_price, None, False
         priced = v61_floored_close_price(close_price, floor, long_position=long_pos)
         if close_price is not None and abs(float(priced) - float(close_price)) <= 1e-12:
+            return close_price, None, False
+        # v6.2.3: the floor binds here.  On a book outside the Kappa-3 premium branch it is lifted and
+        # the exit keeps the price the chooser asked for.
+        if self._v623_release(
+            int(book_id), state, lot=lot, floor=floor, close_price=close_price,
+            long_pos=long_pos, qty=qty, action=action,
+        ):
             return close_price, None, False
         fee = float(self._research_live_fee_bps(int(book_id), is_maker=True) or 0.0)
         net = v61_fifo_close_net_bps(
@@ -8112,6 +8149,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         """
         if not (self._v611_floor_reprice_on() and self._v61_on()):
             return touch
+        # v6.2.3: a lifted book's exit rests at the touch, so that is what the classifier compares.
+        if self._v623_lifted(int(book_id), state)[0]:
+            self._v623_count("lifted_comparand")
+            return touch
         floor = self._v61_floor_for(int(book_id), bool(long_position), state=state)
         if floor is None:
             return touch
@@ -8205,6 +8246,134 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return [tuple(x) for x in restored], True
         self._v622_count("synthetic_books")
         return default, False
+
+    # ---- v6.2.3: the floor protects the validator's no-loss premium, and nothing else ------------
+    def _v623_on(self) -> bool:
+        return bool(
+            self._v62_on() and self._v61_on() and getattr(self, "research_v623_premium_floor", True)
+        )
+
+    def _v623_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v623_counts", None)
+        if counts is None:
+            counts = {}
+            self._v623_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v623_census(self, state=None):
+        """Every book's Kappa-3 window this state, from the session-persisted realized-PnL events.
+
+        The events survive restarts (``rolling_realized_pnl_events``), so a restart does not read
+        every book as empty.  One pass per request: memoized on the state timestamp, the realized
+        generation (bumped on every own realized fill) and the events object.  None when the state
+        carries no clock, which keeps every floor.
+        """
+        now = getattr(state, "timestamp", None) if state is not None else None
+        if now is None:
+            now = getattr(self, "_research_last_sim_ts", None)
+        try:
+            now = int(now or 0)
+        except (TypeError, ValueError):
+            now = 0
+        if now <= 0:
+            return None
+        events = getattr(self, "_research_realized_pnl_events_by_book", None) or {}
+        key = (now, int(getattr(self, "_research_realized_generation", 0) or 0), id(events))
+        memo = getattr(self, "_v623_memo", None)
+        if memo is not None and memo[0] == key:
+            return memo[1]
+        cfg = getattr(state, "config", None) if state is not None else None
+        step = getattr(cfg, "publish_interval", None) or V623_PUBLISH_STEP_NS
+        decimals = getattr(cfg, "volumeDecimals", None)
+        census = v623_window_census(
+            events, now=now,
+            lookback_ns=int(getattr(self, "research_kappa_lookback_ns", 10_800_000_000_000) or 10_800_000_000_000),
+            step_ns=step,
+            decimals=(V623_VOLUME_DECIMALS if decimals is None else decimals),
+        )
+        self._v623_memo = (key, census)
+        return census
+
+    def _v623_lifted(self, book_id: int, state=None) -> tuple[bool, str]:
+        """(lifted, window status).  The floor stays on a PREMIUM book and on any error."""
+        if not self._v623_on():
+            return False, ""
+        try:
+            census = self._v623_census(state)
+        except Exception:
+            self._v623_errors = int(getattr(self, "_v623_errors", 0) or 0) + 1
+            return False, ""
+        if census is None:
+            return False, ""
+        status = v623_book_status(census.get(int(book_id)), min_observations=V623_MIN_OBSERVATIONS)
+        return status != V623_BOOK_PREMIUM, status
+
+    def _v623_release(
+        self, book_id: int, state, *, lot, floor, close_price, long_pos: bool, qty, action,
+    ) -> bool:
+        """At the placement floor: True when the book is lifted and the exit keeps its own price.
+
+        One V623_RELEASE row per (book, head lot), so the read can tie every realized loss to the
+        window status that allowed it.
+        """
+        lifted, status = self._v623_lifted(int(book_id), state)
+        if not lifted:
+            return False
+        self._v623_count("lifted_placements")
+        self._v623_count("lifted_" + status.lower())
+        noted = getattr(self, "_v623_noted", None)
+        if noted is None:
+            noted = {}
+            self._v623_noted = noted
+        lot_key = (lot[0], round(float(lot[1]), 8), round(float(lot[2]), 8))
+        if noted.get(int(book_id)) != lot_key:
+            noted[int(book_id)] = lot_key
+            self._v623_count("releases")
+            window = (self._v623_census(state) or {}).get(int(book_id))
+            fee = float(self._research_live_fee_bps(int(book_id), is_maker=True) or 0.0)
+            net = float("nan")
+            if close_price is not None:
+                net = v61_fifo_close_net_bps(
+                    lot, close_price=float(close_price), close_fee_bps=fee, long_position=long_pos,
+                    qty=abs(float(qty or 0.0)) or None,
+                )
+            self._emit(
+                "V623_RELEASE", force=True, tick=int(getattr(self, "_tick", 0) or 0),
+                book=int(book_id), v623_version=V623_PREMIUM_FLOOR_VERSION, status=status,
+                action=str(action or ""), long_position=int(bool(long_pos)),
+                requested_price=(None if close_price is None else float(close_price)),
+                floor_price=float(floor), lot_price=float(lot[2]), lot_qty=float(lot[1]),
+                lot_open_fee=float(lot[3]), maker_fee_bps=fee,
+                requested_net_bps=(None if net != net else round(float(net), 4)),
+                window=(window.as_log() if window is not None else {}),
+            )
+        return True
+
+    def _v623_resting_floor_bps(self, book_id: int, state) -> float:
+        """The A1.9.1 classifier's NET_BELOW_FLOOR bound: the maker target, none on a lifted book.
+
+        A release rests below break-even by design; judged against the target it would be cancelled
+        one request after it was placed (the v6.1.1 churn).  It still reprices when the touch leaves.
+        """
+        if self._v623_lifted(int(book_id), state)[0]:
+            self._v623_count("lifted_classifier")
+            return float("-inf")
+        return float(DIRECT_MAKER_EXIT_TARGET_BPS)
+
+    def _v623_snapshot(self, state) -> dict:
+        """Counters plus the universe's Kappa-3 branches (coverage = PREMIUM + LOSS_IN_WINDOW)."""
+        out: dict[str, Any] = dict(getattr(self, "_v623_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v623_errors", 0) or 0)
+        if not self._v623_on():
+            return out
+        try:
+            census = self._v623_census(state)
+            books = list((getattr(state, "books", None) or {}).keys())
+            if census is not None and books:
+                out["books"] = v623_census_counts(census, books, min_observations=V623_MIN_OBSERVATIONS)
+        except Exception:
+            out["errors"] += 1
+        return out
 
     def _v62_apply_caps(self, state) -> None:
         """The portfolio caps are the universe's: every book may hold its one lot in flight.
@@ -8399,6 +8568,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             managed_universe=dict(getattr(self, "_v621_last", {}) or {}),
             seed_at_breadth_on=int(self._v622_on()),
             seed_at_breadth=dict(getattr(self, "_v622_counts", {}) or {}),
+            premium_floor_on=int(self._v623_on()),
+            premium_floor=self._v623_snapshot(state),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
             making=(mirror.snapshot() if mirror is not None else {}),
@@ -11429,6 +11600,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_v621_forced_inventory": 0,
             "direct_v622_seed_at_breadth": 0,
             "direct_v622_restored_books": 0,
+            "direct_v623_premium_floor": 0,
+            "direct_v623_releases": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -11651,6 +11824,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         v622_counts = dict(getattr(self, "_v622_counts", {}) or {})
         stats["direct_v622_seed_at_breadth"] = int(self._v622_on())
         stats["direct_v622_restored_books"] = int(v622_counts.get("restored_books", 0))
+        stats["direct_v623_premium_floor"] = int(self._v623_on())
+        stats["direct_v623_releases"] = int(dict(getattr(self, "_v623_counts", {}) or {}).get("releases", 0))
         recovery_reserve_abs = dust_recovery_reserve_abs(
             dust_count=reserve_dust_now, min_order=min_size,
         )
