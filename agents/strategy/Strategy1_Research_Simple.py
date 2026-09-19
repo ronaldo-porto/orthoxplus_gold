@@ -625,8 +625,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_1"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_1"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_2"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_2"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1214,6 +1214,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
             getattr(self.config, "research_v621_managed_universe", True)
         )
         self._v621_last: dict[str, int] = {}
+        # v6.2.2: the startup seed at breadth.  (1) Its size bound is the universe's (set with the
+        # caps from update(), before the first seed), so no venue position is left untracked (a
+        # restart on UID 82 skipped 36 books over the 24 BASE bound).  (2) A position whose lots the
+        # session remembers is OURS: the seed writes those lots (the validator's entry prices and
+        # fees) instead of a synthetic lot at the quote, and does not park it (the same restart parked
+        # 77 of our own held lots as inherited).  Off restores v6.2.1 exactly.
+        self.research_v622_seed_at_breadth = self._as_bool(
+            getattr(self.config, "research_v622_seed_at_breadth", True)
+        )
+        self._v622_counts: dict[str, int] = {}
 
     def _init_direct_overlay_state(self) -> None:
         """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
@@ -1522,6 +1532,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a1961_note_base_decimals(state)
         except Exception:
             pass
+        # v6.2.2: the universe's caps, including the seed bound, before the first seed (respond()).
+        if self._v622_on():
+            try:
+                self._v62_apply_caps(state)
+            except Exception:
+                self._v62_errors = int(getattr(self, "_v62_errors", 0) or 0) + 1
         # A1.9.9: a clock rewind is detected before this state's trades are
         # ingested, so every order registry is cleared before a replayed or
         # resurrected event can be matched against it.
@@ -4284,15 +4300,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
         seeded = 0
         inherited: dict[int, float] = {}
+        restored_books: set[int] = set()
         for lot in split.tracker_lots:
             try:
                 pos = self._open_positions[int(lot.book_id)]
                 side = "longs" if lot.is_long else "shorts"
-                pos[side].append(lot.as_tuple())
+                # v6.2.2: the session's own lots when they still add up to the venue's position.
+                seed_lots, restored = self._v622_seed_lots(int(lot.book_id), side, lot)
+                pos[side].extend(seed_lots)
+                if restored:
+                    restored_books.add(int(lot.book_id))
                 seeded += 1
             except Exception:
                 continue
-            if lot.residue_class == SEED_REAL:
+            if lot.residue_class == SEED_REAL and int(lot.book_id) not in restored_books:
                 inherited[int(lot.book_id)] = float(lot.net_base)
         self._a196_legacy_dust_ledger = dict(split.ledger)
         # v5.0.2 F2: an inherited clip a unit or two short is seeded whole; the shortfall is residue.
@@ -4348,6 +4369,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._a195_seed_dust_abs = float(plan.dust_abs_base)
         payload = plan.as_log()
         payload["seeded_applied"] = int(seeded)
+        payload["v622_restored_books"] = int(len(restored_books))
+        payload["v622_seed_abs_bound"] = float(getattr(self, "research_a195_max_seed_abs_base", 0.0) or 0.0)
         payload["legacy_ceiling_bonus_abs"] = float(self._a195_seed_legacy_ceiling_bonus)
         self._a196_seed_last = split.as_log()
         payload.update(self._a196_seed_last)
@@ -8152,6 +8175,37 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return None
         return n if n > 0 else None
 
+    def _v622_on(self) -> bool:
+        return bool(self._v62_on() and getattr(self, "research_v622_seed_at_breadth", True))
+
+    def _v622_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v622_counts", None)
+        if counts is None:
+            counts = {}
+            self._v622_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v622_seed_lots(self, book_id: int, side: str, lot) -> tuple[list, bool]:
+        """The tracker lots for one seeded position.
+
+        The session's own lots when they still add up to the venue's position (their entry prices
+        and fees are the ones the validator's FIFO holds), else the plan's synthetic lot at the quote
+        with fee 0, which is an inherited position and stays under the v6.0.0 park policy.
+        Returns (lots, restored).
+        """
+        default = [lot.as_tuple()]
+        if not self._v622_on():
+            return default, False
+        try:
+            restored = self._v61_restored_side(int(book_id), str(side), abs(float(lot.net_base)))
+        except Exception:
+            restored = []
+        if restored:
+            self._v622_count("restored_books")
+            return [tuple(x) for x in restored], True
+        self._v622_count("synthetic_books")
+        return default, False
+
     def _v62_apply_caps(self, state) -> None:
         """The portfolio caps are the universe's: every book may hold its one lot in flight.
 
@@ -8343,6 +8397,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             caps_applied=int(bool(getattr(self, "_v62_caps_applied", False))),
             managed_universe_on=int(self._v621_on()),
             managed_universe=dict(getattr(self, "_v621_last", {}) or {}),
+            seed_at_breadth_on=int(self._v622_on()),
+            seed_at_breadth=dict(getattr(self, "_v622_counts", {}) or {}),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
             making=(mirror.snapshot() if mirror is not None else {}),
@@ -11371,6 +11427,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_v62_making": 0.0,
             "direct_v621_managed_universe": 0,
             "direct_v621_forced_inventory": 0,
+            "direct_v622_seed_at_breadth": 0,
+            "direct_v622_restored_books": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -11590,6 +11648,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         v621_last = dict(getattr(self, "_v621_last", {}) or {})
         stats["direct_v621_managed_universe"] = int(self._v621_on())
         stats["direct_v621_forced_inventory"] = int(v621_last.get("forced_inventory", 0))
+        v622_counts = dict(getattr(self, "_v622_counts", {}) or {})
+        stats["direct_v622_seed_at_breadth"] = int(self._v622_on())
+        stats["direct_v622_restored_books"] = int(v622_counts.get("restored_books", 0))
         recovery_reserve_abs = dust_recovery_reserve_abs(
             dust_count=reserve_dust_now, min_order=min_size,
         )

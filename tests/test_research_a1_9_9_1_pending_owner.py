@@ -265,8 +265,8 @@ def test_the_rule_is_wired_counted_and_launched():
     assert "a199_rule in (RULE_LOSS_MAKER, RULE_NOT_EXITING, RULE_POSITIVE_MAKER)" in chooser
     assert "elif rule == RULE_POSITIVE_MAKER:" in _method_source("_a199_note_override")
     assert "self.research_a1991_pending_owns_book = self._as_bool(" in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
     assert rs.A1991_PENDING_OWNER_VERSION.endswith("a1_9_9_1") and rs.RULE_POSITIVE_MAKER == "POSITIVE_MAKER"
     for key in ("direct_a1991_version", "direct_a1991_pending_owns_book", "direct_a1991_rule_positive_maker"):
         assert f'stats["{key}"]' in SIMPLE, key

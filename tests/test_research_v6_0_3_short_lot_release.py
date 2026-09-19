@@ -380,8 +380,8 @@ def test_t5_disposition_table():
 
 
 def test_t5_source_wiring():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
     assert "if disposition == V603_DISPOSITION_RELEASE:" in SIMPLE
     assert 'getattr(self.config, "research_v603_short_lot_release", True)' in SIMPLE
     assert '"direct_v603_short_lot_releases": 0,' in SIMPLE

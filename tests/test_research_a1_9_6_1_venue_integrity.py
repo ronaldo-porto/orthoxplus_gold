@@ -231,6 +231,7 @@ def _harness():
     wanted = {
         "_a195_inventory_truth_enabled", "_a195_mid_by_book", "_a195_venue_net_by_book",
         "_a195_seed_inventory_from_venue", "_a195_local_base_by_book", "_a195_legacy_ceiling_bonus",
+        "_v62_on", "_v622_on", "_v622_count", "_v622_seed_lots",   # v6.2.2: the seed asks the session for its lots
         "_a196_ledger_enabled", "_a196_inherited_parked_enabled", "_a196_grid_snap_enabled",
         "_a196_volume_decimals", "_a196_ledger_abs", "_a196_inherited_parked_report",
         "_a196_inherited_parked_exempt", "_a1961_seed_quote_guard_enabled", "_a1961_fee_residue_enabled",
@@ -260,6 +261,7 @@ def _harness():
     agent._open_positions = collections.defaultdict(lambda: {"longs": collections.deque(), "shorts": collections.deque()})
     agent._research_volume_decimals = 8
     agent._research_exchange_min_order_size = 0.25
+    agent.research_v622_seed_at_breadth = False   # v6.2.2 off: this suite pins the synthetic seed
     agent._tick = 1
     agent._a195_seed_done = False
     agent._a196_inherited_retired = []
@@ -382,8 +384,8 @@ def test_taker_outcomes_are_matched_to_their_own_decision():
 # ---- wiring ---------------------------------------------------------------------------------------
 
 def test_the_version_names_a1961():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
 
 
 def test_switches_exist_and_default_on():

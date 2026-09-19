@@ -133,6 +133,10 @@ def universe_caps(book_count: int, lot: float) -> dict[str, float | int]:
         "research_max_open_books": n,
         "max_managed_books_per_tick": n,
         "max_mm_books_per_tick": n,
+        # v6.2.2: the startup seed's size bound.  A1.9.5 bounded the venue import at 24 BASE for the
+        # 8-slot model; at breadth the venue legitimately holds one lot per book plus partial-fill
+        # overhang, so the bound is two lots per book (a restart on UID 82 left 36 books unseeded).
+        "research_a195_max_seed_abs_base": 2.0 * float(n) * q,
     }
 
 

@@ -35,6 +35,7 @@ METHODS = [
     "_v62_on", "_v62_count", "_v62_apply_caps", "_v62_entry_ttl_ns", "_v62_book_facts",
     "_v62_place_touch_quotes", "_v62_acquire", "_v62_feed_mirror", "_v62_telemetry",
     "_v621_on", "_v621_cap_override",          # v6.2.1: the telemetry reports the managed universe
+    "_v622_on", "_v622_count",                 # v6.2.2: the telemetry reports the seed at breadth
 ]
 LOT = 0.25
 UNIVERSE = 128
@@ -100,6 +101,7 @@ def test_universe_caps_are_books_times_lot():
         "research_max_total_abs_base": 32.0, "research_max_total_open_books": 128,
         "research_max_active_open_books": 128, "research_max_open_books": 128,
         "max_managed_books_per_tick": 128, "max_mm_books_per_tick": 128,
+        "research_a195_max_seed_abs_base": 64.0,           # v6.2.2: two lots per book
     }
     assert br.universe_caps(0, LOT)["research_max_total_open_books"] == 1
 
@@ -508,19 +510,21 @@ def test_mirror_and_telemetry_wired():
 def test_switch_defaults_on_and_version():
     init = ast.get_source_segment(SIMPLE, _method("_init_build_switches"))
     assert 'getattr(self.config, "research_v62_breadth", True)' in init
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_1"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_2"' in SIMPLE
 
 
 def test_launcher_arm_params_guards_and_gate():
-    arm = next(line for line in LAUNCHER.splitlines() if line.strip().startswith("strategy1_direct_v6_2_1)"))
+    arm = next(line for line in LAUNCHER.splitlines() if line.strip().startswith("strategy1_direct_v6_2_2)"))
     assert "V611_BUILD=1" in arm and "V620_BUILD=1" in arm
     assert "strategy1_direct_v6_1_1)" in LAUNCHER and "V620_BUILD=0" in LAUNCHER
     assert "research_v62_breadth=1" in LAUNCHER
     for literal in ("v62_placed = self._v62_acquire(response, state, stats)", "self._v62_apply_caps(state)",
                     "self._v62_feed_mirror(state)", "def _v62_telemetry"):
         assert f"grep -qF '{literal}'" in LAUNCHER, literal
-        assert SIMPLE.count(literal) == 1, literal
+        # v6.2.2 applies the caps a second time from update(), before the first seed (idempotent).
+        expected = 2 if literal == "self._v62_apply_caps(state)" else 1
+        assert SIMPLE.count(literal) == expected, literal
     assert "[preflight] v6.2 breadth PASS" in LAUNCHER
     assert "tests/test_research_v6_2_0_breadth.py" in LAUNCHER
     assert "tests/test_research_v6_2_0_making_mirror.py" in LAUNCHER
