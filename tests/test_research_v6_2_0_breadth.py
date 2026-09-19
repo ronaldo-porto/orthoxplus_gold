@@ -38,6 +38,8 @@ METHODS = [
     "_v622_on", "_v622_count",                 # v6.2.2: the telemetry reports the seed at breadth
     "_v61_on", "_v623_on", "_v623_count", "_v623_snapshot",   # v6.2.3: and the premium floor
     "_v624_on",                                # v6.2.4: and the release life
+    "_v625_two_sided_on", "_v625_cap_pace_on", "_v625_on", "_v625_count",   # v6.2.5: both switches off
+    "_v625_snapshot", "_v625_apply_caps",
 ]
 LOT = 0.25
 UNIVERSE = 128
@@ -260,12 +262,22 @@ def _agent(*, v62=True, books=None, tick=10):
         "v62_lot_quantity": br.lot_quantity, "v62_touch_prices": br.touch_prices,
         "v62_universe_caps": br.universe_caps, "v62_universe_verdict": br.universe_verdict,
         "V62_DEFAULT_LOOKBACK_NS": DEFAULT_LOOKBACK_NS, "V62MakingMirror": V62MakingMirror,
+        "V625_REASON_OK": "OK", "V625_BAND_CLIPS": 2.0,
+        "v625_band_for": lambda clip: 2.0 * float(clip),
+        "v625_pace_snapshot": lambda paces, min_order=0.25: {"books": len(paces)},
+        "V625_CAP_PACED_VERSION": "cap_paced_maker_v6_2_5",
     }
     exec("from __future__ import annotations\nclass Harness(_Base):\n" + body, scope)
     agent = scope["Harness"]()
     agent.research_v62_breadth = v62
     agent._tick = tick
     agent.research_v623_premium_floor = False   # v6.2.3 has its own suite
+    agent.research_v625_two_sided = False       # v6.2.5 has its own suite: this one is v6.2.0
+    agent.research_v625_cap_pace = False
+    agent._v625_counts = {}
+    agent._v625_pace = {}
+    agent._v625_caps_lot = None
+    agent._v625_errors = 0
     agent._v62_counts = {}
     agent._v62_request = {}
     agent._v62_caps_applied = False
@@ -513,12 +525,12 @@ def test_mirror_and_telemetry_wired():
 def test_switch_defaults_on_and_version():
     init = ast.get_source_segment(SIMPLE, _method("_init_build_switches"))
     assert 'getattr(self.config, "research_v62_breadth", True)' in init
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_4"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_4"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_5"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_5"' in SIMPLE
 
 
 def test_launcher_arm_params_guards_and_gate():
-    arm = next(line for line in LAUNCHER.splitlines() if line.strip().startswith("strategy1_direct_v6_2_4)"))
+    arm = next(line for line in LAUNCHER.splitlines() if line.strip().startswith("strategy1_direct_v6_2_5)"))
     assert "V611_BUILD=1" in arm and "V620_BUILD=1" in arm
     assert "strategy1_direct_v6_1_1)" in LAUNCHER and "V620_BUILD=0" in LAUNCHER
     assert "research_v62_breadth=1" in LAUNCHER

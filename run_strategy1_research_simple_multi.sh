@@ -124,7 +124,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -151,6 +151,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_2) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1 ;;
   strategy1_direct_v6_2_3) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1 ;;
   strategy1_direct_v6_2_4) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1 ;;
+  strategy1_direct_v6_2_5) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -287,7 +288,9 @@ research_v62_breadth=1 \
 research_v621_managed_universe=1 \
 research_v622_seed_at_breadth=1 \
 research_v623_premium_floor=1 \
-research_v624_release_life=1"
+research_v624_release_life=1 \
+research_v625_two_sided=1 \
+research_v625_cap_pace=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -1587,6 +1590,39 @@ if [[ "$V624_BUILD" == "1" ]]; then
   echo "[preflight] v6.2.4 release life PASS"
 fi
 
+if [[ "$V625_BUILD" == "1" ]]; then
+  # v6.2.5: two sides on every book (rule A) and the clip paced to the validator turnover cap (rule B).
+  grep -qF 'sides = self._v625_sides(facts, clip=clip, flat_eps=eps, state=state, mid=mid)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.5 acquisition does not ask for the per-side verdict." >&2
+    exit 1
+  }
+  grep -qF 'if sides is not None and sides.get(side) != V625_REASON_OK:' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.5 placement ignores the per-side verdict." >&2
+    exit 1
+  }
+  grep -qF 'clip = self._v625_clip(book_id, state, facts, mid=mid)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.5 quotes are not sized by the pacing controller." >&2
+    exit 1
+  }
+  grep -qF 'PACE_PERIOD_NS = 86_400_000_000_000' "$AGENT_PATH/research_v625_cap_paced.py" || {
+    echo "ERROR: v6.2.5 pace period is not the validator 24 sim-h assessment period." >&2
+    exit 1
+  }
+  grep -qF 'BAND_CLIPS = 2.0' "$AGENT_PATH/research_v625_cap_paced.py" || {
+    echo "ERROR: v6.2.5 inventory band is not one held clip plus one opposite." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v625_two_sided=1"* ]] || {
+    echo "ERROR: v6.2.5 build without research_v625_two_sided=1 in PARAMS." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v625_cap_pace=1"* ]] || {
+    echo "ERROR: v6.2.5 build without research_v625_cap_pace=1 in PARAMS." >&2
+    exit 1
+  }
+  echo "[preflight] v6.2.5 cap-paced maker PASS"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -1656,6 +1692,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_2_2_seed_at_breadth.py \
       tests/test_research_v6_2_3_premium_floor.py \
       tests/test_research_v6_2_4_release_life.py \
+      tests/test_research_v6_2_5_cap_paced.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
       tests/test_wiring_integrity.py \

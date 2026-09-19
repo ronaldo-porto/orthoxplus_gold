@@ -448,6 +448,28 @@ from research_v623_premium_floor import (
     census_counts as v623_census_counts,
     window_census as v623_window_census,
 )
+from research_v625_cap_paced import (
+    BAND_CLIPS as V625_BAND_CLIPS,
+    PACE_SAMPLE_NS as V625_PACE_SAMPLE_NS,
+    REASON_BAND as V625_REASON_BAND,
+    REASON_CAP_RESERVE as V625_REASON_CAP_RESERVE,
+    REASON_EXIT_SIDE as V625_REASON_EXIT_SIDE,
+    REASON_OK as V625_REASON_OK,
+    SIDE_BUY as V625_SIDE_BUY,
+    SIDE_SELL as V625_SIDE_SELL,
+    V625_CAP_PACED_VERSION,
+    BookPace as V625BookPace,
+    band_for as v625_band_for,
+    cap_reserve_ok as v625_cap_reserve_ok,
+    clip_ceiling as v625_clip_ceiling,
+    lots_of as v625_lots_of,
+    with_cap_ok as v625_with_cap_ok,
+    observed_rate as v625_observed_rate,
+    pace_snapshot as v625_pace_snapshot,
+    pace_target_rate as v625_pace_target_rate,
+    paced_clip as v625_paced_clip,
+    sides_verdict as v625_sides_verdict,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -636,8 +658,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_4"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_4"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_5"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_5"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1257,6 +1279,26 @@ class Strategy1_Research_Simple(Strategy1_Research):
             getattr(self.config, "research_v624_release_life", True)
         )
         self._v624_counts: dict[str, int] = {}
+        # v6.2.5, rule A: a book holding inventory also quotes its ADDING side, while |net| + clip
+        # stays inside the band (2 clips: the held one plus one opposite).  Making counts
+        # 2·min(buy, sell) per book, so a book that only exits scores its smaller side -- measured on
+        # the validator's per-book gauges: balance 50% against 86% for the median mainnet maker, and
+        # 121 of 128 books quoting one side at v6.2.4 tick 3,000.  Off restores v6.2.4 exactly.
+        self.research_v625_two_sided = self._as_bool(
+            getattr(self.config, "research_v625_two_sided", True)
+        )
+        # v6.2.5, rule B: each book's clip is the smallest whole number of minimum orders that keeps
+        # the book on the validator's turnover-cap pace (10 × miner_wealth per 24 sim-h = 62,500
+        # quote per book per 3 sim-h).  Measured: 1.1M per window against a field median of 8.0M,
+        # which is that pace over 128 books.  The clip also sets the closing cadence kappa counts, so
+        # the smallest clip that reaches the pace serves both legs.  Off restores one minimum order.
+        self.research_v625_cap_pace = self._as_bool(
+            getattr(self.config, "research_v625_cap_pace", True)
+        )
+        self._v625_counts: dict[str, int] = {}
+        self._v625_pace: dict[int, Any] = {}
+        self._v625_caps_lot = None
+        self._v625_errors = 0
 
     def _init_direct_overlay_state(self) -> None:
         """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
@@ -8424,6 +8466,148 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 self.research_profitable_exit_min_net_bps = saved
             else:
                 self.__dict__.pop("research_profitable_exit_min_net_bps", None)
+    # ---- v6.2.5: two sides on every book, the clip paced to the validator's turnover cap --------
+
+    def _v625_two_sided_on(self) -> bool:
+        return bool(self._v62_on() and getattr(self, "research_v625_two_sided", True))
+
+    def _v625_cap_pace_on(self) -> bool:
+        return bool(self._v62_on() and getattr(self, "research_v625_cap_pace", True))
+
+    def _v625_on(self) -> bool:
+        return bool(self._v625_two_sided_on() or self._v625_cap_pace_on())
+
+    def _v625_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v625_counts", None)
+        if counts is None:
+            counts = {}
+            self._v625_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v625_now_ns(self, state) -> int:
+        now = getattr(state, "timestamp", None) if state is not None else None
+        if now is None:
+            now = getattr(self, "_research_last_sim_ts", None)
+        try:
+            return int(now or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _v625_clip(self, book_id: int, state, facts, *, mid: float) -> float:
+        """This book's clip this request: one minimum order, or the cap-paced one.
+
+        The target is the validator's own cap over its own period, the sample is its own volume
+        sampling interval, and the measurement is the venue's ``account.traded_volume`` -- the very
+        number the cap is applied to.  Between samples the clip is held.
+        """
+        min_order = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+        if not self._v625_cap_pace_on():
+            return min_order
+        try:
+            cap = float(self._research_volume_cap_quote(state))
+            used = float(self._research_book_traded_volume(int(book_id)))
+            remaining = float(self._research_volume_cap_remaining(state, int(book_id)))
+        except Exception:
+            self._v625_errors = int(getattr(self, "_v625_errors", 0) or 0) + 1
+            return min_order
+        now_ns = self._v625_now_ns(state)
+        target = v625_pace_target_rate(cap)
+        paces = getattr(self, "_v625_pace", None)
+        if paces is None:
+            paces = {}
+            self._v625_pace = paces
+        pace = paces.get(int(book_id))
+        if pace is None:
+            paces[int(book_id)] = V625BookPace(
+                clip=min_order, obs_rate=None, target_rate=target, sampled_ns=now_ns, volume=used,
+            )
+            return min_order
+        obs = v625_observed_rate(
+            prev_ns=pace.sampled_ns, prev_volume=pace.volume, now_ns=now_ns, volume=used,
+        )
+        if obs is None:
+            if pace.sampled_ns is None or (now_ns - int(pace.sampled_ns)) >= V625_PACE_SAMPLE_NS:
+                pace.sampled_ns, pace.volume = now_ns, used     # the venue's window rolled
+            return float(pace.clip)
+        ceiling = v625_clip_ceiling(
+            min_order=min_order, base_free=facts.base_free, quote_free=facts.quote_free,
+            price=mid, cap_remaining=remaining,
+        )
+        clip = v625_paced_clip(
+            clip_now=pace.clip, min_order=min_order, target_rate=target, obs_rate=obs,
+            ceiling=ceiling,
+        )
+        if clip > float(pace.clip):
+            self._v625_count("clip_up")
+        elif clip < float(pace.clip):
+            self._v625_count("clip_down")
+        pace.clip, pace.obs_rate, pace.target_rate = float(clip), float(obs), float(target)
+        pace.sampled_ns, pace.volume = now_ns, used
+        return float(clip)
+
+    def _v625_sides(self, facts, *, clip: float, flat_eps: float, state, mid: float) -> dict:
+        """Which sides this book gets this request, and why the others do not."""
+        sides = v625_sides_verdict(
+            facts, clip=clip, flat_eps=flat_eps, two_sided=self._v625_two_sided_on(),
+        )
+        if not self._v625_cap_pace_on():
+            return sides
+        try:
+            cap = float(self._research_volume_cap_quote(state))
+            used = float(self._research_book_traded_volume(int(facts.book_id)))
+        except Exception:
+            self._v625_errors = int(getattr(self, "_v625_errors", 0) or 0) + 1
+            return sides
+        if v625_cap_reserve_ok(
+            cap_quote=cap, used=used, net_base=facts.net_base, mid=mid, clip=clip,
+        ):
+            return sides
+        self._v625_count("cap_reserve")
+        return {
+            side: (V625_REASON_CAP_RESERVE if reason == V625_REASON_OK else reason)
+            for side, reason in sides.items()
+        }
+
+    def _v625_apply_caps(self, state) -> None:
+        """Re-derive the portfolio caps when the paced band grows: books × band, still the universe's."""
+        if not self._v625_cap_pace_on():
+            return
+        paces = getattr(self, "_v625_pace", None) or {}
+        if not paces:
+            return
+        books = getattr(state, "books", None) or {}
+        n = len(books)
+        if n <= 0:
+            return
+        min_order = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+        lot = max(min_order, v625_band_for(max(float(p.clip) for p in paces.values())) / V625_BAND_CLIPS)
+        prev = getattr(self, "_v625_caps_lot", None)
+        if prev is not None and lot <= float(prev) + 1e-12:
+            return
+        caps = v62_universe_caps(n, V625_BAND_CLIPS * lot)
+        for key, value in caps.items():
+            setattr(self, key, value)
+        self._v625_caps_lot = lot
+        self._v625_count("caps_raised")
+        self._emit(
+            "V625_CAPS", force=True, tick=int(getattr(self, "_tick", 0) or 0),
+            v625_version=V625_CAP_PACED_VERSION, universe=int(n), clip=lot,
+            band=V625_BAND_CLIPS * lot, after=dict(caps),
+        )
+
+    def _v625_snapshot(self) -> dict:
+        """The pacing state for V62_STATE."""
+        out = dict(getattr(self, "_v625_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v625_errors", 0) or 0)
+        try:
+            out.update(v625_pace_snapshot(
+                getattr(self, "_v625_pace", {}) or {},
+                min_order=float(getattr(self, "mm_base_size", 0.25) or 0.25),
+            ))
+        except Exception:
+            out["errors"] = int(out.get("errors", 0)) + 1
+        return out
+
     def _v62_apply_caps(self, state) -> None:
         """The portfolio caps are the universe's: every book may hold its one lot in flight.
 
@@ -8507,8 +8691,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
             max_instructions=int(getattr(self, "max_instructions_per_book", 5) or 5),
         )
 
-    def _v62_place_touch_quotes(self, response, state, book_id: int, book, lot: float) -> int:
-        """One lot at the best bid and one at the best ask, post-only, the frozen client ids."""
+    def _v62_place_touch_quotes(
+        self, response, state, book_id: int, book, lot: float, sides: dict | None = None,
+    ) -> int:
+        """One lot at the best bid and one at the best ask, post-only, the frozen client ids.
+
+        ``sides`` (v6.2.5) names the sides this book may quote this request; None is both, which is
+        v6.2.4 exactly.
+        """
         try:
             best_bid = float(book.bids[0].price)
             best_ask = float(book.asks[0].price)
@@ -8532,6 +8722,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             (OrderDirection.BUY, bid_px, buy_cid, "buy"),
             (OrderDirection.SELL, ask_px, sell_cid, "sell"),
         ):
+            if sides is not None and sides.get(side) != V625_REASON_OK:
+                continue
             if self._count_book_instructions(response, int(book_id)) >= budget:
                 break
             response.limit_order(
@@ -8569,16 +8761,37 @@ class Strategy1_Research_Simple(Strategy1_Research):
             book_id = int(raw_id)
             book = books[raw_id]
             facts = self._v62_book_facts(book_id, book, state, response, lot)
-            verdict = v62_universe_verdict(facts, lot=lot, flat_eps=eps)
+            clip, sides = lot, None
+            if self._v625_on():
+                mid = 0.0
+                if facts.best_bid is not None and facts.best_ask is not None:
+                    mid = 0.5 * (float(facts.best_bid) + float(facts.best_ask))
+                clip = self._v625_clip(book_id, state, facts, mid=mid)
+                if clip != lot and mid > 0.0:
+                    try:
+                        facts = v625_with_cap_ok(facts, self._research_can_add_volume(
+                            state, book_id, float(clip) * mid * 2.0,
+                        ))
+                    except Exception:
+                        self._v625_errors = int(getattr(self, "_v625_errors", 0) or 0) + 1
+                sides = self._v625_sides(facts, clip=clip, flat_eps=eps, state=state, mid=mid)
+                allowed = [s for s, why in sides.items() if why == V625_REASON_OK]
+                verdict = V62_REASON_OK if allowed else sides.get(V625_SIDE_BUY, V625_REASON_BAND)
+                if allowed and len(allowed) == 1:
+                    self._v625_count("one_side")
+            else:
+                verdict = v62_universe_verdict(facts, lot=lot, flat_eps=eps)
             if verdict != V62_REASON_OK:
                 request[verdict] = request.get(verdict, 0) + 1
                 continue
             request["eligible"] += 1
-            n = self._v62_place_touch_quotes(response, state, book_id, book, lot)
+            n = self._v62_place_touch_quotes(response, state, book_id, book, clip, sides)
             if n:
                 request["quoted_books"] += 1
                 request["placements"] += int(n)
                 placed_total += int(n)
+                if sides is not None and abs(float(facts.net_base)) > eps:
+                    self._v625_count("adding_on_held_book")
         for key, value in request.items():
             if key != "books":
                 self._v62_count(key, value)
@@ -8621,6 +8834,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             premium_floor=self._v623_snapshot(state),
             release_life_on=int(self._v624_on()),
             release_life=dict(getattr(self, "_v624_counts", {}) or {}),
+            two_sided_on=int(self._v625_two_sided_on()),
+            cap_pace_on=int(self._v625_cap_pace_on()),
+            cap_paced=self._v625_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
             making=(mirror.snapshot() if mirror is not None else {}),
@@ -11654,6 +11870,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_v623_premium_floor": 0,
             "direct_v623_releases": 0,
             "direct_v624_release_life": 0,
+            "direct_v625_two_sided": 0,
+            "direct_v625_cap_pace": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -11879,6 +12097,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_v623_premium_floor"] = int(self._v623_on())
         stats["direct_v623_releases"] = int(dict(getattr(self, "_v623_counts", {}) or {}).get("releases", 0))
         stats["direct_v624_release_life"] = int(self._v624_on())
+        stats["direct_v625_two_sided"] = int(self._v625_two_sided_on())
+        stats["direct_v625_cap_pace"] = int(self._v625_cap_pace_on())
         recovery_reserve_abs = dust_recovery_reserve_abs(
             dust_count=reserve_dust_now, min_order=min_size,
         )
@@ -11980,6 +12200,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if self._v62_on():
             try:
                 v62_placed = self._v62_acquire(response, state, stats)
+                self._v625_apply_caps(state)
             except Exception:
                 self._v62_errors = int(getattr(self, "_v62_errors", 0) or 0) + 1
                 v62_placed = 0

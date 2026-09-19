@@ -384,8 +384,8 @@ def test_taker_outcomes_are_matched_to_their_own_decision():
 # ---- wiring ---------------------------------------------------------------------------------------
 
 def test_the_version_names_a1961():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_4"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_4"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_5"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_5"' in SIMPLE
 
 
 def test_switches_exist_and_default_on():

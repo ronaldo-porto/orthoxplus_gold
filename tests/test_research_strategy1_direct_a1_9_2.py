@@ -48,8 +48,8 @@ BOOK = 115
 # ------------------------------------------------------------- source pins
 
 def test_version_advances_to_a1_9_2_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_4"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_4"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_5"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_5"' in SRC
 
 
 def test_exit_refresh_version_no_longer_reports_a_stale_phase():
