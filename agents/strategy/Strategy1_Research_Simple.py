@@ -439,6 +439,7 @@ from research_v62_making_mirror import (
     MakingMirror as V62MakingMirror,
 )
 from research_v623_premium_floor import (
+    BOOK_LOSS as V623_BOOK_LOSS,
     BOOK_PREMIUM as V623_BOOK_PREMIUM,
     KAPPA_MIN_REALIZED_OBSERVATIONS as V623_MIN_OBSERVATIONS,
     PUBLISH_STEP_NS as V623_PUBLISH_STEP_NS,

@@ -1629,6 +1629,10 @@ fi
 
 if [[ "$V626_BUILD" == "1" ]]; then
   # v6.2.6: clean closes (median loss budget), balanced capture, and the exit's quote life.
+  grep -qF 'BOOK_LOSS as V623_BOOK_LOSS' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.6 uses V623_BOOK_LOSS without importing it." >&2
+    exit 1
+  }
   grep -qF 'if v626_spend_allowed(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.2.6 releases do not consult the median loss budget." >&2
     exit 1
@@ -1735,6 +1739,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_2_4_release_life.py \
       tests/test_research_v6_2_5_cap_paced.py \
       tests/test_research_v6_2_6_balanced_maker.py \
+      tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
       tests/test_wiring_integrity.py \
