@@ -141,6 +141,7 @@ class _Base:
         self.research_v62_breadth = breadth
         self.research_v61_no_loss = v61
         self.research_v623_premium_floor = on
+        self.research_v626_loss_budget = False   # v6.2.6 has its own suite
         self._research_realized_pnl_events_by_book = dict(events or {})
         self._research_realized_generation = 0
         self.research_kappa_lookback_ns = 10_800 * S
@@ -164,7 +165,8 @@ _ns = {
 }
 exec("class Harness(_Base):\n    pass\n", _ns)
 for _name in ("_v61_on", "_v62_on", "_v623_on", "_v623_count", "_v623_census", "_v623_lifted",
-              "_v623_release", "_v623_resting_floor_bps", "_v623_snapshot"):
+              "_v623_release", "_v623_resting_floor_bps", "_v623_snapshot",
+              "_v626_loss_budget_on"):
     exec("class Harness(Harness):\n" + textwrap.indent(textwrap.dedent(_method_source(_name)), "    "), _ns)
 Harness = _ns["Harness"]
 
@@ -266,7 +268,7 @@ exec("class FloorHarness(_Base):\n    pass\n", _floor_ns)
 for _name in ("_v61_on", "_v61_count", "_v61_price_decimals", "_v61_positions", "_v61_floor_for",
               "_v61_apply_floor", "_v611_floor_reprice_on", "_v611_count", "_v611_seed_comparand",
               "_v62_on", "_v623_on", "_v623_count", "_v623_census", "_v623_lifted", "_v623_release",
-              "_v623_resting_floor_bps", "_v623_snapshot"):
+              "_v623_resting_floor_bps", "_v623_snapshot", "_v626_loss_budget_on"):
     exec("class FloorHarness(FloorHarness):\n"
          + textwrap.indent(textwrap.dedent(_method_source(_name)), "    "), _floor_ns)
 FloorHarness = _floor_ns["FloorHarness"]
@@ -359,12 +361,12 @@ def test_switch_defaults_on_and_telemetry_and_stats():
     assert "premium_floor_on=int(self._v623_on())" in tele
     assert "premium_floor=self._v623_snapshot(state)," in tele
     assert '"direct_v623_premium_floor"' in SIMPLE and '"direct_v623_releases"' in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_5"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_6"' in SIMPLE
     assert "V623_PREMIUM_FLOOR_VERSION = \"premium_floor_v6_2_3\"" in MODULE
 
 
 def test_launcher_arm_params_guard_and_gate():
-    assert "strategy1_direct_v6_2_5)" in LAUNCHER and "V623_BUILD=1 ;;" in LAUNCHER
+    assert "strategy1_direct_v6_2_6)" in LAUNCHER and "V623_BUILD=1 ;;" in LAUNCHER
     assert "strategy1_direct_v6_2_2)" in LAUNCHER                 # the previous arm stays
     assert "research_v623_premium_floor=1" in LAUNCHER
     assert "[preflight] v6.2.3 premium floor PASS" in LAUNCHER

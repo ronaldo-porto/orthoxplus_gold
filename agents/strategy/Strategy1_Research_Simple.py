@@ -470,6 +470,19 @@ from research_v625_cap_paced import (
     paced_clip as v625_paced_clip,
     sides_verdict as v625_sides_verdict,
 )
+from research_v626_balanced_maker import (
+    REASON_SIDE_OWNED as V626_REASON_SIDE_OWNED,
+    REASON_SURPLUS as V626_REASON_SURPLUS,
+    V626_BALANCED_MAKER_VERSION,
+    balance_ratio as v626_balance_ratio,
+    book_blocked as v626_book_blocked,
+    median_budget as v626_median_budget,
+    open_book_caps as v626_open_book_caps,
+    side_already_instructed as v626_side_already_instructed,
+    side_clips as v626_side_clips,
+    skip_reason as v626_skip_reason,
+    spend_allowed as v626_spend_allowed,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -658,8 +671,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_5"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_5"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_6"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_6"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1299,6 +1312,29 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v625_pace: dict[int, Any] = {}
         self._v625_caps_lot = None
         self._v625_errors = 0
+        # v6.2.6 rule A: kappa is the MEDIAN over scored books, and a book that has already realised a
+        # loss in the window is at ~0.4996 whatever it does next.  So a release may take a CLEAN book's
+        # first loss only when that book is stuck at the inventory band, and only while the books
+        # carrying a loss stay under half of the scored ones (v6.2.5 tick 3,000: 16 clean of 128, kappa
+        # 0.4996, while the closing cadence was already 158 per book per window).  Off restores v6.2.5.
+        self.research_v626_loss_budget = self._as_bool(
+            getattr(self.config, "research_v626_loss_budget", True)
+        )
+        # v6.2.6 rule B: making counts 2*min(buy capture, sell capture) per book, so the clip goes to
+        # whichever side is behind, and a book whose smaller side has gone negative stops adding on the
+        # leading side (v6.2.5: balance 37%, 30 books at -136.7 against +511.8).  Off restores v6.2.5.
+        self.research_v626_capture_balance = self._as_bool(
+            getattr(self.config, "research_v626_capture_balance", True)
+        )
+        # v6.2.6 rule C: a touch quote gets the exit's persistent life instead of 0.5 s -- entries fill
+        # 3.6% against 11.1% for exits.  More fills per placement lets the pacing controller hold a
+        # SMALLER clip at the same volume, and a smaller clip is more closes per book.  Off = v6.2.5.
+        self.research_v626_quote_life = self._as_bool(
+            getattr(self.config, "research_v626_quote_life", True)
+        )
+        self._v626_counts: dict[str, int] = {}
+        self._v626_spent: tuple[Any, set[int]] | None = None
+        self._v626_errors = 0
 
     def _init_direct_overlay_state(self) -> None:
         """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
@@ -8360,7 +8396,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if census is None:
             return False, ""
         status = v623_book_status(census.get(int(book_id)), min_observations=V623_MIN_OBSERVATIONS)
-        return status != V623_BOOK_PREMIUM, status
+        if not self._v626_loss_budget_on():
+            return status != V623_BOOK_PREMIUM, status
+        # v6.2.6 rule A: a book already carrying a loss is spent and free; a clean one (PREMIUM, THIN or
+        # EMPTY) is spent only when it is stuck at the band and the median still holds.
+        if status == V623_BOOK_LOSS:
+            return True, status
+        if v626_spend_allowed(
+            status_is_loss=False, blocked=self._v626_blocked(int(book_id), state),
+            budget=self._v626_budget(state, census),
+        ):
+            self._v626_spend(int(book_id))
+            return True, status
+        self._v626_count("budget_held")
+        return False, status
 
     def _v623_release(
         self, book_id: int, state, *, lot, floor, close_price, long_pos: bool, qty, action,
@@ -8584,7 +8633,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         prev = getattr(self, "_v625_caps_lot", None)
         if prev is not None and lot <= float(prev) + 1e-12:
             return
-        caps = v62_universe_caps(n, V625_BAND_CLIPS * lot)
+        caps = v626_open_book_caps(v62_universe_caps(n, V625_BAND_CLIPS * lot))
         for key, value in caps.items():
             setattr(self, key, value)
         self._v625_caps_lot = lot
@@ -8608,6 +8657,93 @@ class Strategy1_Research_Simple(Strategy1_Research):
             out["errors"] = int(out.get("errors", 0)) + 1
         return out
 
+    # ---- v6.2.6: clean closes and balanced capture ---------------------------------------------
+
+    def _v626_loss_budget_on(self) -> bool:
+        return bool(self._v623_on() and getattr(self, "research_v626_loss_budget", True))
+
+    def _v626_capture_balance_on(self) -> bool:
+        return bool(self._v62_on() and getattr(self, "research_v626_capture_balance", True))
+
+    def _v626_quote_life_on(self) -> bool:
+        return bool(self._v62_on() and getattr(self, "research_v626_quote_life", True))
+
+    def _v626_on(self) -> bool:
+        return bool(self._v626_loss_budget_on() or self._v626_capture_balance_on()
+                    or self._v626_quote_life_on())
+
+    def _v626_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v626_counts", None)
+        if counts is None:
+            counts = {}
+            self._v626_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v626_budget(self, state, census) -> int:
+        """How many more clean books may be spent this state while the median book stays clean."""
+        premium = loss = 0
+        for window in (census or {}).values():
+            status = v623_book_status(window, min_observations=V623_MIN_OBSERVATIONS)
+            if status == V623_BOOK_PREMIUM:
+                premium += 1
+            elif status == V623_BOOK_LOSS:
+                loss += 1
+        budget = v626_median_budget(premium=premium, loss=loss)
+        key = (int(getattr(self, "_tick", 0) or 0), premium, loss)
+        spent = getattr(self, "_v626_spent", None)
+        if spent is None or spent[0] != key:
+            spent = (key, set())
+            self._v626_spent = spent
+        return max(0, budget - len(spent[1]))
+
+    def _v626_spend(self, book_id: int) -> None:
+        spent = getattr(self, "_v626_spent", None)
+        if spent is not None:
+            spent[1].add(int(book_id))
+        self._v626_count("budget_spent")
+
+    def _v626_blocked(self, book_id: int, state=None) -> bool:
+        """True when the book is stuck: one more clip would take it past the inventory band."""
+        min_order = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+        pace = (getattr(self, "_v625_pace", None) or {}).get(int(book_id))
+        clip = float(getattr(pace, "clip", min_order) or min_order)
+        try:
+            net = float(self._direct_signed_inventory(int(book_id)))
+        except Exception:
+            self._v626_errors = int(getattr(self, "_v626_errors", 0) or 0) + 1
+            return False
+        return v626_book_blocked(net_base=net, clip=clip, band=v625_band_for(clip))
+
+    def _v626_book_capture(self, book_id: int) -> tuple:
+        mirror = getattr(self, "_v62_mirror", None)
+        if mirror is None:
+            return 0.0, 0.0
+        try:
+            return mirror.book_capture(int(book_id))
+        except Exception:
+            self._v626_errors = int(getattr(self, "_v626_errors", 0) or 0) + 1
+            return 0.0, 0.0
+
+    def _v626_side_clips(self, book_id: int, clip: float) -> dict:
+        """The clip for each side, sized by which side's capture is behind (rule B)."""
+        if not self._v626_capture_balance_on():
+            return {V625_SIDE_BUY: float(clip), V625_SIDE_SELL: float(clip)}
+        buy, sell = self._v626_book_capture(int(book_id))
+        out = v626_side_clips(
+            clip=clip, buy_capture=buy, sell_capture=sell,
+            min_order=float(getattr(self, "mm_base_size", 0.25) or 0.25), lots_of=v625_lots_of,
+        )
+        if min(buy, sell) < 0.0:
+            self._v626_count("surplus_paused")
+        elif out.get(V625_SIDE_BUY) != out.get(V625_SIDE_SELL):
+            self._v626_count("side_skewed")
+        return out
+
+    def _v626_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v626_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v626_errors", 0) or 0)
+        return out
+
     def _v62_apply_caps(self, state) -> None:
         """The portfolio caps are the universe's: every book may hold its one lot in flight.
 
@@ -8622,7 +8758,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if n <= 0:
             return
         lot = float(getattr(self, "mm_base_size", 0.25) or 0.25)
-        caps = v62_universe_caps(n, lot)
+        caps = v626_open_book_caps(v62_universe_caps(n, lot))
         before = {key: getattr(self, key, None) for key in caps}
         for key, value in caps.items():
             setattr(self, key, value)
@@ -8635,6 +8771,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _v62_entry_ttl_ns(self, book_id: int, state) -> int:
         """The entry TTL the frozen placement path would choose for this book (parity with v6.1.1)."""
         baseline = int(getattr(self, "mm_expiry_period", 500_000_000) or 500_000_000)
+        if self._v626_quote_life_on():
+            # v6.2.6 rule C: the exit's persistent life, with the frozen 5 s cap.
+            persistent = float(getattr(self, "research_profitable_exit_ttl_ms", 4000.0) or 4000.0)
+            self._v626_count("quote_life")
+            return int(max(0.0, min(5000.0, persistent)) * 1_000_000)
         if not bool(getattr(self, "research_enable_adaptive_ttl", False)):
             return baseline
         try:
@@ -8693,6 +8834,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _v62_place_touch_quotes(
         self, response, state, book_id: int, book, lot: float, sides: dict | None = None,
+        side_qty: dict | None = None,
     ) -> int:
         """One lot at the best bid and one at the best ask, post-only, the frozen client ids.
 
@@ -8724,12 +8866,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
         ):
             if sides is not None and sides.get(side) != V625_REASON_OK:
                 continue
+            side_q = qty if side_qty is None else v62_lot_quantity(
+                side_qty.get(side, qty), getattr(cfg, "volumeDecimals", 4),
+            )
+            if side_q <= 0.0:
+                self._v626_count("surplus_skipped")
+                continue
+            if v626_side_already_instructed(response, int(book_id), direction):
+                self._v626_count("side_owned")
+                continue
             if self._count_book_instructions(response, int(book_id)) >= budget:
                 break
             response.limit_order(
                 book_id=int(book_id),
                 direction=direction,
-                quantity=qty,
+                quantity=side_q,
                 price=price,
                 clientOrderId=client_id,
                 stp=STP.CANCEL_BOTH,
@@ -8761,7 +8912,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             book_id = int(raw_id)
             book = books[raw_id]
             facts = self._v62_book_facts(book_id, book, state, response, lot)
-            clip, sides = lot, None
+            clip, sides, side_qty = lot, None, None
             if self._v625_on():
                 mid = 0.0
                 if facts.best_bid is not None and facts.best_ask is not None:
@@ -8775,8 +8926,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     except Exception:
                         self._v625_errors = int(getattr(self, "_v625_errors", 0) or 0) + 1
                 sides = self._v625_sides(facts, clip=clip, flat_eps=eps, state=state, mid=mid)
+                side_qty = self._v626_side_clips(book_id, clip)
+                for side_token in (V625_SIDE_BUY, V625_SIDE_SELL):
+                    if sides.get(side_token) == V625_REASON_OK and side_qty.get(side_token, 0.0) <= 0.0:
+                        sides[side_token] = V626_REASON_SURPLUS
                 allowed = [s for s, why in sides.items() if why == V625_REASON_OK]
-                verdict = V62_REASON_OK if allowed else sides.get(V625_SIDE_BUY, V625_REASON_BAND)
+                verdict = V62_REASON_OK if allowed else v626_skip_reason(
+                    sides, exit_side_token=V625_REASON_EXIT_SIDE,
+                )
                 if allowed and len(allowed) == 1:
                     self._v625_count("one_side")
             else:
@@ -8785,7 +8942,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 request[verdict] = request.get(verdict, 0) + 1
                 continue
             request["eligible"] += 1
-            n = self._v62_place_touch_quotes(response, state, book_id, book, clip, sides)
+            n = self._v62_place_touch_quotes(
+                response, state, book_id, book, clip, sides, side_qty,
+            )
             if n:
                 request["quoted_books"] += 1
                 request["placements"] += int(n)
@@ -8837,6 +8996,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             two_sided_on=int(self._v625_two_sided_on()),
             cap_pace_on=int(self._v625_cap_pace_on()),
             cap_paced=self._v625_snapshot(),
+            loss_budget_on=int(self._v626_loss_budget_on()),
+            capture_balance_on=int(self._v626_capture_balance_on()),
+            quote_life_on=int(self._v626_quote_life_on()),
+            balanced_maker=self._v626_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
             making=(mirror.snapshot() if mirror is not None else {}),
@@ -11872,6 +12035,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "direct_v624_release_life": 0,
             "direct_v625_two_sided": 0,
             "direct_v625_cap_pace": 0,
+            "direct_v626_loss_budget": 0,
+            "direct_v626_capture_balance": 0,
+            "direct_v626_quote_life": 0,
         }
 
         profile_by_id = {int(p.book_id): p for p in (getattr(selection, "profiles", None) or [])}
@@ -12099,6 +12265,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["direct_v624_release_life"] = int(self._v624_on())
         stats["direct_v625_two_sided"] = int(self._v625_two_sided_on())
         stats["direct_v625_cap_pace"] = int(self._v625_cap_pace_on())
+        stats["direct_v626_loss_budget"] = int(self._v626_loss_budget_on())
+        stats["direct_v626_capture_balance"] = int(self._v626_capture_balance_on())
+        stats["direct_v626_quote_life"] = int(self._v626_quote_life_on())
         recovery_reserve_abs = dust_recovery_reserve_abs(
             dust_count=reserve_dust_now, min_order=min_size,
         )

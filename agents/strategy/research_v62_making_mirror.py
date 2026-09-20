@@ -259,6 +259,16 @@ class MakingMirror:
     def making(self) -> float:
         return balanced_reward_per_book(self.buy_sums, self.sell_sums, [self.uid]).get(self.uid, 0.0)
 
+    def book_capture(self, book_id: Any) -> tuple[float, float]:
+        """This book's windowed (buy, sell) capture for the tracked uid -- the validator's own terms."""
+        try:
+            b = int(book_id)
+        except (TypeError, ValueError):
+            return 0.0, 0.0
+        cb = self.buy_sums.get(self.uid) or {}
+        cs = self.sell_sums.get(self.uid) or {}
+        return float(cb.get(b, 0.0)), float(cs.get(b, 0.0))
+
     def snapshot(self) -> dict[str, Any]:
         cb = self.buy_sums.get(self.uid) or {}
         cs = self.sell_sums.get(self.uid) or {}

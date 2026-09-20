@@ -21,6 +21,8 @@ from pathlib import Path
 import pytest
 
 import research_v62_breadth as br
+import research_v625_cap_paced as cap_paced
+import research_v626_balanced_maker as bm
 from _harness import extractor
 from research_v62_making_mirror import MakingMirror as V62MakingMirror, DEFAULT_LOOKBACK_NS
 
@@ -40,6 +42,8 @@ METHODS = [
     "_v624_on",                                # v6.2.4: and the release life
     "_v625_two_sided_on", "_v625_cap_pace_on", "_v625_on", "_v625_count",   # v6.2.5: both switches off
     "_v625_snapshot", "_v625_apply_caps",
+    "_v626_capture_balance_on", "_v626_quote_life_on", "_v626_loss_budget_on",   # v6.2.6, all off
+    "_v626_count", "_v626_side_clips", "_v626_book_capture", "_v626_snapshot",
 ]
 LOT = 0.25
 UNIVERSE = 128
@@ -263,6 +267,10 @@ def _agent(*, v62=True, books=None, tick=10):
         "v62_universe_caps": br.universe_caps, "v62_universe_verdict": br.universe_verdict,
         "V62_DEFAULT_LOOKBACK_NS": DEFAULT_LOOKBACK_NS, "V62MakingMirror": V62MakingMirror,
         "V625_REASON_OK": "OK", "V625_BAND_CLIPS": 2.0,
+        "V625_SIDE_BUY": "buy", "V625_SIDE_SELL": "sell",
+        "v626_side_clips": bm.side_clips, "v626_side_already_instructed": bm.side_already_instructed,
+        "v626_skip_reason": bm.skip_reason, "v626_open_book_caps": bm.open_book_caps,
+        "v625_lots_of": cap_paced.lots_of, "V626_REASON_SURPLUS": bm.REASON_SURPLUS,
         "v625_band_for": lambda clip: 2.0 * float(clip),
         "v625_pace_snapshot": lambda paces, min_order=0.25: {"books": len(paces)},
         "V625_CAP_PACED_VERSION": "cap_paced_maker_v6_2_5",
@@ -274,6 +282,11 @@ def _agent(*, v62=True, books=None, tick=10):
     agent.research_v623_premium_floor = False   # v6.2.3 has its own suite
     agent.research_v625_two_sided = False       # v6.2.5 has its own suite: this one is v6.2.0
     agent.research_v625_cap_pace = False
+    agent.research_v626_capture_balance = False
+    agent.research_v626_quote_life = False
+    agent.research_v626_loss_budget = False
+    agent._v626_counts = {}
+    agent._v626_errors = 0
     agent._v625_counts = {}
     agent._v625_pace = {}
     agent._v625_caps_lot = None
@@ -416,10 +429,12 @@ def test_acquire_is_deterministic_in_book_order():
 def test_caps_come_from_the_universe_once():
     agent = _agent()
     agent._v62_apply_caps(_state())
-    assert agent.research_max_total_abs_base == 32.0
-    assert agent.research_max_total_open_books == 128 and agent.research_max_active_open_books == 128
-    assert agent.research_max_open_books == 128 and agent.max_managed_books_per_tick == 128
-    assert agent.max_mm_books_per_tick == 128
+    assert agent.research_max_total_abs_base == 32.0          # the BASE exposure is still the universe's
+    # v6.2.6 widens the book COUNTS (only) for the guard's double count of a book that is dust on its
+    # measure and flat on ours; 2 x 128 can never admit more books than exist.
+    assert agent.research_max_total_open_books == 256 and agent.research_max_active_open_books == 256
+    assert agent.research_max_open_books == 256 and agent.max_managed_books_per_tick == 256
+    assert agent.max_mm_books_per_tick == 256
     rows = _rows(agent, "V62_CAPS")
     assert len(rows) == 1 and rows[0]["universe"] == 128 and rows[0]["before"]["research_max_total_abs_base"] == 2.0
     agent.research_max_total_abs_base = 1.0
@@ -525,12 +540,12 @@ def test_mirror_and_telemetry_wired():
 def test_switch_defaults_on_and_version():
     init = ast.get_source_segment(SIMPLE, _method("_init_build_switches"))
     assert 'getattr(self.config, "research_v62_breadth", True)' in init
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_5"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_5"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_6"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_6"' in SIMPLE
 
 
 def test_launcher_arm_params_guards_and_gate():
-    arm = next(line for line in LAUNCHER.splitlines() if line.strip().startswith("strategy1_direct_v6_2_5)"))
+    arm = next(line for line in LAUNCHER.splitlines() if line.strip().startswith("strategy1_direct_v6_2_6)"))
     assert "V611_BUILD=1" in arm and "V620_BUILD=1" in arm
     assert "strategy1_direct_v6_1_1)" in LAUNCHER and "V620_BUILD=0" in LAUNCHER
     assert "research_v62_breadth=1" in LAUNCHER

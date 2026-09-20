@@ -115,6 +115,7 @@ class _Base:
     def __init__(self, v623=True, v624=True, regime="NORMAL"):
         self.research_v62_breadth = True
         self.research_v61_no_loss = True
+        self.research_v626_loss_budget = False   # v6.2.6 has its own suite
         self.research_v623_premium_floor = v623
         self.research_v624_release_life = v624
         self._research_realized_pnl_events_by_book = dict(EVENTS)
@@ -161,7 +162,7 @@ _ns = {
 exec("class Harness(_Base):\n    pass\n", _ns)
 exec("class Harness(Harness):\n" + textwrap.indent(textwrap.dedent(_frozen("_research_place_maker_exit")), "    "), _ns)
 for _name in ("_v61_on", "_v62_on", "_v623_on", "_v623_count", "_v623_census", "_v623_lifted",
-              "_v624_on", "_v624_count", "_v624_release_life"):
+              "_v624_on", "_v624_count", "_v624_release_life", "_v626_loss_budget_on"):
     src = textwrap.dedent(_simple(_name))
     if _name == "_v624_release_life":          # the extractor returns the def without its decorator
         src = "@contextmanager\n" + src
@@ -253,11 +254,11 @@ def test_switch_defaults_on_needs_v623_and_telemetry_and_stats():
     tele = _simple("_v62_telemetry")
     assert "release_life_on=int(self._v624_on())" in tele
     assert '"direct_v624_release_life"' in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_5"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_6"' in SIMPLE
 
 
 def test_launcher_arm_params_guard_and_gate():
-    assert "strategy1_direct_v6_2_5)" in LAUNCHER and "V624_BUILD=1 ;;" in LAUNCHER
+    assert "strategy1_direct_v6_2_6)" in LAUNCHER and "V624_BUILD=1 ;;" in LAUNCHER
     assert "strategy1_direct_v6_2_3)" in LAUNCHER
     assert "research_v624_release_life=1" in LAUNCHER
     assert "[preflight] v6.2.4 release life PASS" in LAUNCHER
