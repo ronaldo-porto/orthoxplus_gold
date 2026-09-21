@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import research_v626_balanced_maker as bm  # noqa: E402
 import research_v625_cap_paced as cp  # noqa: E402
+import research_v627_maker_ceiling as mc  # noqa: E402
 import research_v623_premium_floor as pf  # noqa: E402
 from research_v62_breadth import universe_caps  # noqa: E402
 from research_v62_making_mirror import MakingMirror  # noqa: E402
@@ -171,6 +172,11 @@ class _Agent:
         self.research_v626_loss_budget = kw.get("loss_budget", True)
         self.research_v626_capture_balance = kw.get("capture_balance", True)
         self.research_v626_quote_life = kw.get("quote_life", True)
+        # v6.2.7 has its own suite: these tests are v6.2.6's rules on their own terms.
+        self.research_v627_balance_gate = kw.get("balance_gate", False)
+        self.research_v627_band_caps = kw.get("band_caps", False)
+        self._v627_counts = {}
+        self._v627_errors = 0
         self._v626_counts = {}
         self._v626_spent = None
         self._v626_errors = 0
@@ -197,6 +203,8 @@ def _bind(agent, *names):
         "v626_median_budget": bm.median_budget, "v626_spend_allowed": bm.spend_allowed,
         "v626_book_blocked": bm.book_blocked, "v626_side_clips": bm.side_clips,
         "v626_balance_ratio": bm.balance_ratio, "v625_band_for": cp.band_for,
+        "v627_band_caps": mc.band_caps, "v627_balance_gate_sides": mc.balance_gate_sides,
+        "V627_BALANCE_TARGET": mc.BALANCE_TARGET,
         "v625_lots_of": cp.lots_of, "V625_SIDE_BUY": cp.SIDE_BUY, "V625_SIDE_SELL": cp.SIDE_SELL,
         "v623_book_status": pf.book_status, "V623_MIN_OBSERVATIONS": pf.KAPPA_MIN_REALIZED_OBSERVATIONS,
         "V623_BOOK_PREMIUM": pf.BOOK_PREMIUM, "V623_BOOK_LOSS": pf.BOOK_LOSS, "Any": object,
@@ -212,6 +220,8 @@ def _agent(**kw):
     return _bind(_Agent(**kw), "_v626_loss_budget_on", "_v626_capture_balance_on",
                  "_v626_quote_life_on", "_v626_on", "_v626_count", "_v626_budget", "_v626_spend",
                  "_v626_blocked", "_v626_book_capture", "_v626_side_clips", "_v626_snapshot",
+                 "_v627_balance_gate_on", "_v627_band_caps_on", "_v627_on", "_v627_count",
+                 "_v627_caps", "_v627_snapshot",
                  "_v62_entry_ttl_ns")
 
 
@@ -302,24 +312,30 @@ def test_the_placement_uses_the_side_quantity_and_skips_an_owned_side():
 
 
 def test_both_cap_sites_widen_the_book_counts():
-    assert "caps = v626_open_book_caps(v62_universe_caps(n, lot))" in SIMPLE
-    assert "caps = v626_open_book_caps(v62_universe_caps(n, V625_BAND_CLIPS * lot))" in SIMPLE
+    assert "caps = self._v627_caps(v626_open_book_caps(v62_universe_caps(n, lot)))" in SIMPLE
+    # v6.2.7 moved the band out of the argument and into _v627_caps; the widening still happens
+    # at both sites, which is what this test is for.
+    assert "caps = self._v627_caps(v626_open_book_caps(raw))" in SIMPLE
 
 
 def test_the_switches_default_on_and_the_state_row_carries_them():
-    for key in ("research_v626_loss_budget", "research_v626_capture_balance", "research_v626_quote_life"):
+    # Rule A is RETIRED by v6.2.7 and now defaults OFF -- it cost 25% of releases and 24% of fills
+    # and returned premium books 16 -> 11.  Rules B and C still default on.
+    assert 'getattr(self.config, "research_v626_loss_budget", False)' in SIMPLE
+    for key in ("research_v626_capture_balance", "research_v626_quote_life"):
         assert f'getattr(self.config, "{key}", True)' in SIMPLE
-        assert f'stats["direct_{key[9:]}"] = int(self._{key[9:]}_on())'.replace("direct_v626", "direct_v626") in SIMPLE
+        assert f'stats["direct_{key[9:]}"] = int(self._{key[9:]}_on())' in SIMPLE
     assert "loss_budget_on=int(self._v626_loss_budget_on())" in SIMPLE
     assert "balanced_maker=self._v626_snapshot()" in SIMPLE
 
 
 def test_the_version_pin_moved_and_the_launcher_carries_the_build():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_6"' in SIMPLE
-    assert "strategy1_direct_v6_2_6)" in LAUNCHER and "V626_BUILD=1 ;;" in LAUNCHER
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_7"' in SIMPLE
+    assert "strategy1_direct_v6_2_7)" in LAUNCHER and "V626_BUILD=1 ;;" in LAUNCHER
     assert "[preflight] v6.2.6 balanced maker PASS" in LAUNCHER
     assert "tests/test_research_v6_2_6_balanced_maker.py" in LAUNCHER
-    for key in ("research_v626_loss_budget=1", "research_v626_capture_balance=1",
+    for key in ("research_v626_loss_budget=0",          # retired by v6.2.7
+                "research_v626_capture_balance=1",
                 "research_v626_quote_life=1"):
         assert key in LAUNCHER
     # v6.2.5 keeps its own arm, so either build can still be run

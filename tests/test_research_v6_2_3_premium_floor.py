@@ -361,12 +361,12 @@ def test_switch_defaults_on_and_telemetry_and_stats():
     assert "premium_floor_on=int(self._v623_on())" in tele
     assert "premium_floor=self._v623_snapshot(state)," in tele
     assert '"direct_v623_premium_floor"' in SIMPLE and '"direct_v623_releases"' in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_6"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_7"' in SIMPLE
     assert "V623_PREMIUM_FLOOR_VERSION = \"premium_floor_v6_2_3\"" in MODULE
 
 
 def test_launcher_arm_params_guard_and_gate():
-    assert "strategy1_direct_v6_2_6)" in LAUNCHER and "V623_BUILD=1 ;;" in LAUNCHER
+    assert "strategy1_direct_v6_2_7)" in LAUNCHER and "V623_BUILD=1 ;;" in LAUNCHER
     assert "strategy1_direct_v6_2_2)" in LAUNCHER                 # the previous arm stays
     assert "research_v623_premium_floor=1" in LAUNCHER
     assert "[preflight] v6.2.3 premium floor PASS" in LAUNCHER

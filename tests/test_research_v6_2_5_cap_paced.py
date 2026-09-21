@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import research_v625_cap_paced as cp  # noqa: E402
 import research_v626_balanced_maker as bm  # noqa: E402
+import research_v627_maker_ceiling as mc  # noqa: E402
 from research_v62_breadth import (  # noqa: E402
     REASON_BUDGET, REASON_CROSSED, REASON_LIVE_ORDER, REASON_NO_BALANCE, REASON_NO_L1,
     REASON_OK, REASON_VOLUME_CAP, BookFacts,
@@ -327,6 +328,10 @@ def _acquire_agent(*, two_sided=True, cap_pace=True, traded=None, cap=CAP, books
     agent.research_v625_cap_pace = cap_pace
     agent.research_v626_capture_balance = False      # v6.2.6 has its own suite: this one is v6.2.5
     agent.research_v626_quote_life = False
+    agent.research_v627_balance_gate = False         # and v6.2.7 has its own
+    agent.research_v627_band_caps = False
+    agent._v627_counts = {}
+    agent._v627_errors = 0
     agent._v626_counts = {}
     agent._v626_errors = 0
     agent._traded = dict(traded or {})
@@ -355,12 +360,16 @@ def _acquire_agent(*, two_sided=True, cap_pace=True, traded=None, cap=CAP, books
         "v626_side_already_instructed": bm.side_already_instructed,
         "v626_skip_reason": bm.skip_reason, "v626_side_clips": bm.side_clips,
         "v626_balance_ratio": bm.balance_ratio, "v626_open_book_caps": bm.open_book_caps,
+        "v627_band_caps": mc.band_caps, "v627_balance_gate_sides": mc.balance_gate_sides,
+        "V627_BALANCE_TARGET": mc.BALANCE_TARGET,
         "V626_REASON_SURPLUS": bm.REASON_SURPLUS,
     })
     for name in ("_v625_two_sided_on", "_v625_cap_pace_on", "_v625_on", "_v625_count",
                  "_v625_now_ns", "_v625_clip", "_v625_sides", "_v625_snapshot", "_v625_apply_caps",
                  "_v626_capture_balance_on", "_v626_quote_life_on", "_v626_count",
                  "_v626_side_clips", "_v626_book_capture", "_v62_entry_ttl_ns",
+                 "_v627_balance_gate_on", "_v627_band_caps_on", "_v627_on", "_v627_count",
+                 "_v627_caps", "_v627_snapshot",
                  "_v62_book_facts", "_v62_place_touch_quotes", "_v62_acquire"):
         exec(compile(ast.Module(body=[ast.parse(_simple(name)).body[0]], type_ignores=[]),
                      "<v625>", "exec"), ns)
@@ -469,7 +478,8 @@ def test_the_placement_honours_the_per_side_verdict():
 
 def test_the_caps_follow_the_band_and_only_ever_grow():
     src = _simple("_v625_apply_caps")
-    assert "v62_universe_caps(n, V625_BAND_CLIPS * lot)" in src
+    # v6.2.7 keeps this branch for the gate-off arm and applies the band once when the gate is on.
+    assert "V625_BAND_CLIPS * lot)" in src
     assert "if prev is not None and lot <= float(prev) + 1e-12:" in src
 
 
@@ -487,8 +497,8 @@ def test_the_state_row_and_the_stats_carry_the_build():
 
 
 def test_the_version_pin_moved():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_6"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_6"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_7"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_7"' in SIMPLE
 
 
 def test_the_launcher_carries_the_arm_the_params_and_the_guard():

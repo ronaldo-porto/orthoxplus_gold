@@ -484,6 +484,13 @@ from research_v626_balanced_maker import (
     skip_reason as v626_skip_reason,
     spend_allowed as v626_spend_allowed,
 )
+from research_v627_maker_ceiling import (
+    BALANCE_TARGET as V627_BALANCE_TARGET,
+    V627_MAKER_CEILING_VERSION,
+    balance_gate_sides as v627_balance_gate_sides,
+    band_caps as v627_band_caps,
+    book_balance as v627_book_balance,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -672,8 +679,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_6"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_6"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_7"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_7"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1318,8 +1325,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # first loss only when that book is stuck at the inventory band, and only while the books
         # carrying a loss stay under half of the scored ones (v6.2.5 tick 3,000: 16 clean of 128, kappa
         # 0.4996, while the closing cadence was already 158 per book per window).  Off restores v6.2.5.
+        # RETIRED in v6.2.7 (default off): at matched tick 3,000 it cost 25% of releases and 24% of
+        # fills and returned FEWER clean books (premium 16 -> 11), and the field carries no maker with
+        # kappa at all -- 0 of 255 agents hold kappa > 0.65 with making rank > 0.5.  On restores v6.2.6.
         self.research_v626_loss_budget = self._as_bool(
-            getattr(self.config, "research_v626_loss_budget", True)
+            getattr(self.config, "research_v626_loss_budget", False)
         )
         # v6.2.6 rule B: making counts 2*min(buy capture, sell capture) per book, so the clip goes to
         # whichever side is behind, and a book whose smaller side has gone negative stops adding on the
@@ -1336,6 +1346,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v626_counts: dict[str, int] = {}
         self._v626_spent: tuple[Any, set[int]] | None = None
         self._v626_errors = 0
+        # v6.2.7: rule B becomes corrective.  The proportional split only slowed an imbalance -- the
+        # surplus side kept quoting at a trimmed size and making is 2*min(buy, sell), so that size
+        # scored nothing.  Balance stalled at 60.9% with the median book at 0.663.  Off = v6.2.6.
+        self.research_v627_balance_gate = self._as_bool(
+            getattr(self.config, "research_v627_balance_gate", True)
+        )
+        # v6.2.7: the portfolio exposure bound and the startup seed bound come off one band.  They
+        # were set independently, the seed bound at twice the exposure bound, and the v6.2.6 launch
+        # arrived holding 63.97 BASE of a 64.0 cap and refused 99.93% of its placements.  Off = v6.2.6.
+        self.research_v627_band_caps = self._as_bool(
+            getattr(self.config, "research_v627_band_caps", True)
+        )
+        self._v627_counts: dict[str, int] = {}
+        self._v627_errors = 0
 
     def _init_direct_overlay_state(self) -> None:
         """Create the Direct overlay's per-run state: caches, ledgers, counters and timers.
@@ -8634,7 +8658,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         prev = getattr(self, "_v625_caps_lot", None)
         if prev is not None and lot <= float(prev) + 1e-12:
             return
-        caps = v626_open_book_caps(v62_universe_caps(n, V625_BAND_CLIPS * lot))
+        # v6.2.7: the band is applied once, in _v627_caps, so the exposure bound and the seed bound
+        # cannot drift apart.  With the gate off this is the v6.2.5 arithmetic unchanged.
+        raw = v62_universe_caps(n, lot if self._v627_band_caps_on() else V625_BAND_CLIPS * lot)
+        caps = self._v627_caps(v626_open_book_caps(raw))
         for key, value in caps.items():
             setattr(self, key, value)
         self._v625_caps_lot = lot
@@ -8661,7 +8688,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
     # ---- v6.2.6: clean closes and balanced capture ---------------------------------------------
 
     def _v626_loss_budget_on(self) -> bool:
-        return bool(self._v623_on() and getattr(self, "research_v626_loss_budget", True))
+        # v6.2.7 retires rule A: the default is OFF.  Measured at matched tick 3,000 it cost 25% of
+        # releases and 24% of fills and returned five FEWER clean books (premium 16 -> 11), and the
+        # field shows no maker holds kappa at all (0 of 255 with kappa > 0.65 and making rank > 0.5).
+        return bool(self._v623_on() and getattr(self, "research_v626_loss_budget", False))
 
     def _v626_capture_balance_on(self) -> bool:
         return bool(self._v62_on() and getattr(self, "research_v626_capture_balance", True))
@@ -8672,6 +8702,43 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _v626_on(self) -> bool:
         return bool(self._v626_loss_budget_on() or self._v626_capture_balance_on()
                     or self._v626_quote_life_on())
+
+    # ---- v6.2.7: the making leg, taken as far as a maker can take it --------------------------
+
+    def _v627_balance_gate_on(self) -> bool:
+        return bool(self._v626_capture_balance_on()
+                    and getattr(self, "research_v627_balance_gate", True))
+
+    def _v627_band_caps_on(self) -> bool:
+        return bool(self._v62_on() and getattr(self, "research_v627_band_caps", True))
+
+    def _v627_on(self) -> bool:
+        return bool(self._v627_balance_gate_on() or self._v627_band_caps_on())
+
+    def _v627_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v627_counts", None)
+        if counts is None:
+            counts = {}
+            self._v627_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v627_caps(self, caps: dict) -> dict:
+        """The universe caps with the exposure bound and the seed bound on one band (v6.2.7)."""
+        if not self._v627_band_caps_on():
+            return caps
+        try:
+            out = v627_band_caps(caps, band_clips=V625_BAND_CLIPS)
+        except Exception:
+            self._v627_errors = int(getattr(self, "_v627_errors", 0) or 0) + 1
+            return caps
+        self._v627_count("band_caps")
+        return out
+
+    def _v627_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v627_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v627_errors", 0) or 0)
+        out["balance_target"] = float(V627_BALANCE_TARGET)
+        return out
 
     def _v626_count(self, key: str, n: int = 1) -> None:
         counts = getattr(self, "_v626_counts", None)
@@ -8730,9 +8797,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if not self._v626_capture_balance_on():
             return {V625_SIDE_BUY: float(clip), V625_SIDE_SELL: float(clip)}
         buy, sell = self._v626_book_capture(int(book_id))
+        min_order = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+        if self._v627_balance_gate_on():
+            # v6.2.7: the surplus side waits for the book, it is not merely trimmed.
+            out = v627_balance_gate_sides(
+                clip=clip, buy_capture=buy, sell_capture=sell,
+                min_order=min_order, lots_of=v625_lots_of, target=V627_BALANCE_TARGET,
+            )
+            if out.get(V625_SIDE_BUY, 0.0) <= 0.0 and out.get(V625_SIDE_SELL, 0.0) <= 0.0:
+                self._v627_count("both_sides_negative")
+            elif out.get(V625_SIDE_BUY) != out.get(V625_SIDE_SELL):
+                self._v627_count("deficit_only")
+            else:
+                self._v627_count("balanced")
+            return out
         out = v626_side_clips(
             clip=clip, buy_capture=buy, sell_capture=sell,
-            min_order=float(getattr(self, "mm_base_size", 0.25) or 0.25), lots_of=v625_lots_of,
+            min_order=min_order, lots_of=v625_lots_of,
         )
         if min(buy, sell) < 0.0:
             self._v626_count("surplus_paused")
@@ -8759,7 +8840,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if n <= 0:
             return
         lot = float(getattr(self, "mm_base_size", 0.25) or 0.25)
-        caps = v626_open_book_caps(v62_universe_caps(n, lot))
+        caps = self._v627_caps(v626_open_book_caps(v62_universe_caps(n, lot)))
         before = {key: getattr(self, key, None) for key in caps}
         for key, value in caps.items():
             setattr(self, key, value)
@@ -9001,6 +9082,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             capture_balance_on=int(self._v626_capture_balance_on()),
             quote_life_on=int(self._v626_quote_life_on()),
             balanced_maker=self._v626_snapshot(),
+            balance_gate_on=int(self._v627_balance_gate_on()),
+            band_caps_on=int(self._v627_band_caps_on()),
+            maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
             making=(mirror.snapshot() if mirror is not None else {}),

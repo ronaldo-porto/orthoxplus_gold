@@ -131,12 +131,12 @@ def test_switch_defaults_on_and_telemetry_carries_the_managed_set():
     tele = _method_source("_v62_telemetry")
     assert "managed_universe_on=int(self._v621_on())" in tele
     assert 'managed_universe=dict(getattr(self, "_v621_last", {}) or {})' in tele
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_6"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_7"' in SIMPLE
     assert '"direct_v621_forced_inventory"' in SIMPLE
 
 
 def test_launcher_arm_params_guard_and_gate():
-    assert "strategy1_direct_v6_2_6)" in LAUNCHER and "V621_BUILD=1 ;;" in LAUNCHER
+    assert "strategy1_direct_v6_2_7)" in LAUNCHER and "V621_BUILD=1 ;;" in LAUNCHER
     assert "research_v621_managed_universe=1" in LAUNCHER
     assert "[preflight] v6.2.1 managed universe PASS" in LAUNCHER
     assert "grep -qF 'cap_override=v621_cap'" in LAUNCHER
