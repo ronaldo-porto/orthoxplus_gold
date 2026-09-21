@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import research_v625_cap_paced as cp  # noqa: E402
 import research_v626_balanced_maker as bm  # noqa: E402
 import research_v627_maker_ceiling as mc  # noqa: E402
+import research_v628_touch_exit as te  # noqa: E402
 from research_v62_breadth import (  # noqa: E402
     REASON_BUDGET, REASON_CROSSED, REASON_LIVE_ORDER, REASON_NO_BALANCE, REASON_NO_L1,
     REASON_OK, REASON_VOLUME_CAP, BookFacts,
@@ -256,6 +257,9 @@ def _bind(agent, *names):
         "V625_PACE_PERIOD_NS": cp.PACE_PERIOD_NS,
         "v627_cap_absorption_clip": mc.cap_absorption_clip,
         "v627_bounded_ceiling": mc.bounded_ceiling, "v627_pace_rewound": mc.pace_rewound,
+        "V628_REASON_FEE_UNVIABLE": te.REASON_FEE_UNVIABLE, "V628_TOUCH_EXIT_VERSION": te.V628_TOUCH_EXIT_VERSION,
+        "v628_fee_viable": te.fee_viable, "v628_spread_bps": te.spread_bps,
+        "v628_skewed_sides": te.skewed_sides, "v628_band_inventory_util": te.band_inventory_util,
         "V625_REASON_CAP_RESERVE": cp.REASON_CAP_RESERVE, "V625_CAP_PACED_VERSION": cp.V625_CAP_PACED_VERSION,
         "Any": object,
     }
@@ -278,9 +282,15 @@ def _agent(**kw):
     agent.research_v627_clip_bound = False
     agent.research_v627_pace_rewind = False
     agent._v627_counts, agent._v627_errors = {}, 0
+    agent.research_v628_rung_cap = False        # v6.2.8 has its own suite
+    agent.research_v628_band_inventory = False
+    agent.research_v628_fee_viable = False
+    agent.research_v628_skew_sides = False
+    agent._v628_counts, agent._v628_errors = {}, 0
     return _bind(agent, "_v625_two_sided_on", "_v625_cap_pace_on", "_v625_on", "_v625_count",
                  "_v625_now_ns", "_v625_clip", "_v625_sides", "_v625_snapshot",
-                 "_v627_clip_bound_on", "_v627_pace_rewind_on", "_v627_clip_bound", "_v627_count")
+                 "_v627_clip_bound_on", "_v627_pace_rewind_on", "_v627_clip_bound", "_v627_count",
+                 "_v628_rung_cap_on", "_v628_band_inventory_on", "_v628_fee_viable_on", "_v628_skew_sides_on", "_v628_on", "_v628_count", "_v628_book_viable", "_v628_snapshot")
 
 
 def test_the_first_call_opens_the_sample_at_one_minimum_order():
@@ -341,6 +351,11 @@ def _acquire_agent(*, two_sided=True, cap_pace=True, traded=None, cap=CAP, books
     agent.research_v627_clip_bound = False      # v6.2.7 bounds the clip; this suite is v6.2.5
     agent.research_v627_pace_rewind = False
     agent._v627_counts = {}
+    agent.research_v628_rung_cap = False        # v6.2.8 has its own suite
+    agent.research_v628_band_inventory = False
+    agent.research_v628_fee_viable = False
+    agent.research_v628_skew_sides = False
+    agent._v628_counts, agent._v628_errors = {}, 0
     agent._v627_errors = 0
     agent._v626_counts = {}
     agent._v626_errors = 0
@@ -374,6 +389,9 @@ def _acquire_agent(*, two_sided=True, cap_pace=True, traded=None, cap=CAP, books
         "V627_BALANCE_TARGET": mc.BALANCE_TARGET,
         "v627_cap_absorption_clip": mc.cap_absorption_clip,
         "v627_bounded_ceiling": mc.bounded_ceiling, "v627_pace_rewound": mc.pace_rewound,
+        "V628_REASON_FEE_UNVIABLE": te.REASON_FEE_UNVIABLE, "V628_TOUCH_EXIT_VERSION": te.V628_TOUCH_EXIT_VERSION,
+        "v628_fee_viable": te.fee_viable, "v628_spread_bps": te.spread_bps,
+        "v628_skewed_sides": te.skewed_sides, "v628_band_inventory_util": te.band_inventory_util,
         "V625_PACE_PERIOD_NS": cp.PACE_PERIOD_NS,
         "V626_REASON_SURPLUS": bm.REASON_SURPLUS,
     })
@@ -384,6 +402,7 @@ def _acquire_agent(*, two_sided=True, cap_pace=True, traded=None, cap=CAP, books
                  "_v627_balance_gate_on", "_v627_band_caps_on", "_v627_on", "_v627_count",
                  "_v627_caps", "_v627_snapshot",
                  "_v627_clip_bound_on", "_v627_pace_rewind_on", "_v627_clip_bound",
+                 "_v628_rung_cap_on", "_v628_band_inventory_on", "_v628_fee_viable_on", "_v628_skew_sides_on", "_v628_on", "_v628_count", "_v628_book_viable", "_v628_snapshot",
                  "_v62_book_facts", "_v62_place_touch_quotes", "_v62_acquire"):
         exec(compile(ast.Module(body=[ast.parse(_simple(name)).body[0]], type_ignores=[]),
                      "<v625>", "exec"), ns)
@@ -511,8 +530,8 @@ def test_the_state_row_and_the_stats_carry_the_build():
 
 
 def test_the_version_pin_moved():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_7"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_7"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
 
 
 def test_the_launcher_carries_the_arm_the_params_and_the_guard():

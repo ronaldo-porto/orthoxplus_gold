@@ -495,6 +495,16 @@ from research_v627_maker_ceiling import (
     cap_absorption_clip as v627_cap_absorption_clip,
     pace_rewound as v627_pace_rewound,
 )
+from research_v628_touch_exit import (
+    CAPPED_MARKER as V628_CAPPED_MARKER,
+    REASON_FEE_UNVIABLE as V628_REASON_FEE_UNVIABLE,
+    V628_TOUCH_EXIT_VERSION,
+    band_inventory_util as v628_band_inventory_util,
+    capped_price_fn as v628_capped_price_fn,
+    fee_viable as v628_fee_viable,
+    skewed_sides as v628_skewed_sides,
+    spread_bps as v628_spread_bps,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -683,8 +693,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_7"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_7"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_8"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_8"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1374,6 +1384,29 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self.research_v627_pace_rewind = self._as_bool(
             getattr(self.config, "research_v627_pace_rewind", True)
         )
+        # v6.2.8 S1: an AGGRESSIVE maker exit is priced at the own touch.  Far-touch closes took 60-83 s
+        # and were gross-negative; own-touch closes took 15 s and were gross-positive.  Off = v6.2.7.
+        self.research_v628_rung_cap = self._as_bool(
+            getattr(self.config, "research_v628_rung_cap", True)
+        )
+        # v6.2.8 S2: exit urgency measures inventory against the band, not the slot-era 1.2 BASE.
+        self.research_v628_band_inventory = self._as_bool(
+            getattr(self.config, "research_v628_band_inventory", True)
+        )
+        # v6.2.8 S3: no new entries on a book whose spread cannot clear two maker fees.  RETIRED before
+        # launch, default OFF: it guards net-of-fee PnL, but the validator's making (centred-mid capture)
+        # and skill (MTM alpha) legs are both fee-blind and the volume cap is set from initial capital,
+        # so it bought no score -- and it admitted 5 of 57 testnet books and 42 of 101 mainnet books.
+        self.research_v628_fee_viable = self._as_bool(
+            getattr(self.config, "research_v628_fee_viable", False)
+        )
+        # v6.2.8 S4: both sides always quote, skewed toward the deficit; supersedes the v6.2.7 gate.
+        self.research_v628_skew_sides = self._as_bool(
+            getattr(self.config, "research_v628_skew_sides", True)
+        )
+        self._v628_counts: dict[str, int] = {}
+        self._v628_errors = 0
+        self._v628_util_book: int | None = None
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -2411,7 +2444,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
         setattr(module, "choose_position_exit", a172_direct_chooser)
         try:
-            result = super()._research_apply_unified_exit(legacy, **kwargs)
+            # v6.2.8 S1: the unified exit prices its maker rung here, and falls back to AGGRESSIVE when
+            # the ladder proposes TAKER after three failed exits -- both go through the capped price.
+            with self._v628_rung_cap_scope():
+                result = super()._research_apply_unified_exit(legacy, **kwargs)
         finally:
             setattr(module, "choose_position_exit", original)
 
@@ -6430,10 +6466,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
         # v6.2.4: a v6.2.3 release takes the exit order life inside this one frozen call.
         with self._v624_release_life(int(book_id), state):
-            return super()._research_place_maker_exit(
-                response, state, book_id, book, inventory, qty, action,
-                close_price=close_price, maker_net_bps=maker_net_bps,
-            )
+            # v6.2.8 S1: the maker exit is priced through the capped rung.
+            with self._v628_rung_cap_scope():
+                return super()._research_place_maker_exit(
+                    response, state, book_id, book, inventory, qty, action,
+                    close_price=close_price, maker_net_bps=maker_net_bps,
+                )
 
     def _emit(self, event_type: str, force: bool = False, **payload: Any) -> None:
         # v5.0.0: the analytics ledger reads a row as it is written.  The row goes on unchanged,
@@ -8791,6 +8829,116 @@ class Strategy1_Research_Simple(Strategy1_Research):
         out["balance_target"] = float(V627_BALANCE_TARGET)
         return out
 
+    # ---- v6.2.8: close at the own touch, inventory against the band, trade only where it can pay -----
+
+    def _v628_rung_cap_on(self) -> bool:
+        return bool(self._v62_on() and getattr(self, "research_v628_rung_cap", True))
+
+    def _v628_band_inventory_on(self) -> bool:
+        return bool(self._v625_cap_pace_on() and getattr(self, "research_v628_band_inventory", True))
+
+    def _v628_fee_viable_on(self) -> bool:
+        return bool(self._v62_on() and getattr(self, "research_v628_fee_viable", False))
+
+    def _v628_skew_sides_on(self) -> bool:
+        return bool(self._v626_capture_balance_on() and getattr(self, "research_v628_skew_sides", True))
+
+    def _v628_on(self) -> bool:
+        return bool(self._v628_rung_cap_on() or self._v628_band_inventory_on()
+                    or self._v628_fee_viable_on() or self._v628_skew_sides_on())
+
+    def _v628_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v628_counts", None)
+        if counts is None:
+            counts = {}
+            self._v628_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    @contextmanager
+    def _v628_rung_cap_scope(self):
+        """S1: inside this scope the frozen module prices an AGGRESSIVE maker exit at the own touch.
+
+        The frozen ``maker_exit_price`` is swapped for a wrapper for the duration of one frozen call and
+        restored in ``finally`` -- the same pattern ``_research_apply_unified_exit`` already uses for
+        ``choose_position_exit``.  A nested scope sees the marker and neither re-wraps nor restores.
+        """
+        if not self._v628_rung_cap_on():
+            yield
+            return
+        try:
+            module = importlib.import_module("Strategy1_Research")
+            original = getattr(module, "maker_exit_price", None)
+        except Exception:
+            self._v628_errors = int(getattr(self, "_v628_errors", 0) or 0) + 1
+            yield
+            return
+        if original is None or getattr(original, V628_CAPPED_MARKER, False):
+            yield
+            return
+        setattr(module, "maker_exit_price",
+                v628_capped_price_fn(original, on_capped=lambda: self._v628_count("rung_capped")))
+        try:
+            yield
+        finally:
+            setattr(module, "maker_exit_price", original)
+
+    def _research_parked_touch_exit(self, book_id: int, book, inventory):
+        """S1: the parked-touch exit prices through the same capped rung (frozen body unchanged)."""
+        with self._v628_rung_cap_scope():
+            return super()._research_parked_touch_exit(book_id, book, inventory)
+
+    def _research_evaluate_realization(self, book_id, book, inventory, state, *args, **kwargs):
+        """S2: while this one frozen call runs, ``_inventory_util`` measures fullness against the band.
+
+        ``InventorySnapshot`` carries no book id, so the book is bound here and released in ``finally``.
+        This is the only ``_inventory_util`` call inside the evaluation, and it is the one that feeds
+        exit urgency; the other callers (sizing, close triggers) never see the binding.
+        """
+        if not self._v628_band_inventory_on():
+            return super()._research_evaluate_realization(book_id, book, inventory, state, *args, **kwargs)
+        prev = getattr(self, "_v628_util_book", None)
+        self._v628_util_book = int(book_id)
+        try:
+            return super()._research_evaluate_realization(book_id, book, inventory, state, *args, **kwargs)
+        finally:
+            self._v628_util_book = prev
+
+    def _inventory_util(self, inventory) -> float:
+        """S2: band-relative inside exit evaluation; the frozen ``|net| / max_inventory_base`` elsewhere."""
+        book_id = getattr(self, "_v628_util_book", None)
+        if book_id is None or not self._v628_band_inventory_on():
+            return super()._inventory_util(inventory)
+        try:
+            min_order = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+            pace = (getattr(self, "_v625_pace", None) or {}).get(int(book_id))
+            clip = float(getattr(pace, "clip", min_order) or min_order)
+            util = v628_band_inventory_util(
+                net_base=float(inventory.net_base), clip=clip, band_clips=V625_BAND_CLIPS,
+            )
+        except Exception:
+            self._v628_errors = int(getattr(self, "_v628_errors", 0) or 0) + 1
+            return super()._inventory_util(inventory)
+        self._v628_count("band_util")
+        return util
+
+    def _v628_book_viable(self, book_id: int, facts) -> bool:
+        """S3: may this book take new entries -- can a round trip at its touch clear two maker fees?"""
+        if not self._v628_fee_viable_on():
+            return True
+        try:
+            spread = v628_spread_bps(facts.best_bid, facts.best_ask)
+            fee = float(self._research_live_fee_bps(int(book_id), is_maker=True))
+        except Exception:
+            self._v628_errors = int(getattr(self, "_v628_errors", 0) or 0) + 1
+            return True
+        return bool(v628_fee_viable(spread_bps_value=spread, maker_fee_bps=fee))
+
+    def _v628_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v628_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v628_errors", 0) or 0)
+        out["version"] = V628_TOUCH_EXIT_VERSION
+        return out
+
     def _v626_count(self, key: str, n: int = 1) -> None:
         counts = getattr(self, "_v626_counts", None)
         if counts is None:
@@ -8849,6 +8997,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return {V625_SIDE_BUY: float(clip), V625_SIDE_SELL: float(clip)}
         buy, sell = self._v626_book_capture(int(book_id))
         min_order = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+        if self._v628_skew_sides_on():
+            # v6.2.8 S4: both sides, skewed toward the deficit, never zeroed -- no absorbing state.
+            out = v628_skewed_sides(
+                clip=clip, buy_capture=buy, sell_capture=sell, min_order=min_order, lots_of=v625_lots_of,
+            )
+            self._v628_count("skewed" if out.get(V625_SIDE_BUY) != out.get(V625_SIDE_SELL) else "even")
+            return out
         if self._v627_balance_gate_on():
             # v6.2.7: the surplus side waits for the book, it is not merely trimmed.
             out = v627_balance_gate_sides(
@@ -9040,11 +9195,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         request: dict[str, int] = {"books": len(books), "eligible": 0, "quoted_books": 0, "placements": 0}
         for reason in V62_SKIP_REASONS:
             request[reason] = 0
+        request[V628_REASON_FEE_UNVIABLE] = 0
         placed_total = 0
         for raw_id in sorted(books, key=lambda x: int(x)):
             book_id = int(raw_id)
             book = books[raw_id]
             facts = self._v62_book_facts(book_id, book, state, response, lot)
+            if not self._v628_book_viable(book_id, facts):
+                # v6.2.8 S3: a round trip at this touch cannot clear two maker fees; exits stay live.
+                request[V628_REASON_FEE_UNVIABLE] = request.get(V628_REASON_FEE_UNVIABLE, 0) + 1
+                continue
             clip, sides, side_qty = lot, None, None
             if self._v625_on():
                 mid = 0.0
@@ -9137,6 +9297,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             band_caps_on=int(self._v627_band_caps_on()),
             clip_bound_on=int(self._v627_clip_bound_on()),
             pace_rewind_on=int(self._v627_pace_rewind_on()),
+            rung_cap_on=int(self._v628_rung_cap_on()),
+            band_inventory_on=int(self._v628_band_inventory_on()),
+            fee_viable_on=int(self._v628_fee_viable_on()),
+            skew_sides_on=int(self._v628_skew_sides_on()),
+            touch_exit=self._v628_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),

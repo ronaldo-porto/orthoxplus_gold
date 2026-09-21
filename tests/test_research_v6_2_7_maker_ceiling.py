@@ -197,7 +197,7 @@ def test_the_loss_budget_default_is_off():
 
 def test_the_launcher_ships_the_loss_budget_off_and_the_v627_switches_on():
     assert "research_v626_loss_budget=0" in LAUNCHER
-    assert "research_v627_balance_gate=1" in LAUNCHER
+    assert "research_v627_balance_gate=0" in LAUNCHER     # retired by v6.2.8 S4
     assert "research_v627_band_caps=1" in LAUNCHER
 
 
@@ -247,9 +247,9 @@ def test_the_telemetry_reports_the_new_switches():
 
 
 def test_the_version_is_pinned_to_v6_2_7():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_7"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_7"' in SIMPLE
-    assert "strategy1_direct_v6_2_7)" in LAUNCHER
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
+    assert "strategy1_direct_v6_2_8)" in LAUNCHER
     assert "V627_BUILD=1" in LAUNCHER
 
 

@@ -229,7 +229,10 @@ def test_the_scope_wraps_exactly_the_one_frozen_return():
     place = _simple("_research_place_maker_exit")
     scope = place.index("with self._v624_release_life(int(book_id), state):")
     ret = place.index("return super()._research_place_maker_exit(")
-    assert scope < ret and place[scope:ret].count("\n") == 1          # the return is the with-body
+    # the return is the with-body; v6.2.8 nests exactly its own rung-cap scope (and its comment) inside
+    between = [ln.strip() for ln in place[scope:ret].splitlines()[1:]]
+    assert scope < ret and between in ([""], ["# v6.2.8 S1: the maker exit is priced through the capped rung.",
+                                               "with self._v628_rung_cap_scope():", ""])
     assert SIMPLE.count("return super()._research_place_maker_exit") == 1
     assert "= super()._research_place_maker_exit" not in SIMPLE
     # every v6.2.3 guard still runs before the scope
@@ -254,11 +257,11 @@ def test_switch_defaults_on_needs_v623_and_telemetry_and_stats():
     tele = _simple("_v62_telemetry")
     assert "release_life_on=int(self._v624_on())" in tele
     assert '"direct_v624_release_life"' in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_7"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
 
 
 def test_launcher_arm_params_guard_and_gate():
-    assert "strategy1_direct_v6_2_7)" in LAUNCHER and "V624_BUILD=1 ;;" in LAUNCHER
+    assert "strategy1_direct_v6_2_8)" in LAUNCHER and "V624_BUILD=1 ;;" in LAUNCHER
     assert "strategy1_direct_v6_2_3)" in LAUNCHER
     assert "research_v624_release_life=1" in LAUNCHER
     assert "[preflight] v6.2.4 release life PASS" in LAUNCHER

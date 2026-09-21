@@ -63,8 +63,8 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_1():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_7"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_7"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_8"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_8"' in SRC
     # A1.9.1.1: derived from runtime state, not a literal.
     assert 'stats["direct_a19_phase"] = self._a19_runtime_phase()' in SRC
     assert 'stats["direct_a19_behaviour_change"] = self._a19_behaviour_change()' in SRC

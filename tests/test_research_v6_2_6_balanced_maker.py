@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import research_v626_balanced_maker as bm  # noqa: E402
 import research_v625_cap_paced as cp  # noqa: E402
 import research_v627_maker_ceiling as mc  # noqa: E402
+import research_v628_touch_exit as te  # noqa: E402
 import research_v623_premium_floor as pf  # noqa: E402
 from research_v62_breadth import universe_caps  # noqa: E402
 from research_v62_making_mirror import MakingMirror  # noqa: E402
@@ -175,6 +176,9 @@ class _Agent:
         # v6.2.7 has its own suite: these tests are v6.2.6's rules on their own terms.
         self.research_v627_balance_gate = kw.get("balance_gate", False)
         self.research_v627_band_caps = kw.get("band_caps", False)
+        self.research_v628_skew_sides = kw.get("skew_sides", False)   # v6.2.8 has its own suite
+        self._v628_counts = {}
+        self._v628_errors = 0
         self._v627_counts = {}
         self._v627_errors = 0
         self._v626_counts = {}
@@ -204,7 +208,7 @@ def _bind(agent, *names):
         "v626_book_blocked": bm.book_blocked, "v626_side_clips": bm.side_clips,
         "v626_balance_ratio": bm.balance_ratio, "v625_band_for": cp.band_for,
         "v627_band_caps": mc.band_caps, "v627_balance_gate_sides": mc.balance_gate_sides,
-        "V627_BALANCE_TARGET": mc.BALANCE_TARGET,
+        "V627_BALANCE_TARGET": mc.BALANCE_TARGET, "v628_skewed_sides": te.skewed_sides,
         "v625_lots_of": cp.lots_of, "V625_SIDE_BUY": cp.SIDE_BUY, "V625_SIDE_SELL": cp.SIDE_SELL,
         "v623_book_status": pf.book_status, "V623_MIN_OBSERVATIONS": pf.KAPPA_MIN_REALIZED_OBSERVATIONS,
         "V623_BOOK_PREMIUM": pf.BOOK_PREMIUM, "V623_BOOK_LOSS": pf.BOOK_LOSS, "Any": object,
@@ -221,7 +225,7 @@ def _agent(**kw):
                  "_v626_quote_life_on", "_v626_on", "_v626_count", "_v626_budget", "_v626_spend",
                  "_v626_blocked", "_v626_book_capture", "_v626_side_clips", "_v626_snapshot",
                  "_v627_balance_gate_on", "_v627_band_caps_on", "_v627_on", "_v627_count",
-                 "_v627_caps", "_v627_snapshot",
+                 "_v627_caps", "_v627_snapshot", "_v628_skew_sides_on", "_v628_count",
                  "_v62_entry_ttl_ns")
 
 
@@ -330,8 +334,8 @@ def test_the_switches_default_on_and_the_state_row_carries_them():
 
 
 def test_the_version_pin_moved_and_the_launcher_carries_the_build():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_7"' in SIMPLE
-    assert "strategy1_direct_v6_2_7)" in LAUNCHER and "V626_BUILD=1 ;;" in LAUNCHER
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
+    assert "strategy1_direct_v6_2_8)" in LAUNCHER and "V626_BUILD=1 ;;" in LAUNCHER
     assert "[preflight] v6.2.6 balanced maker PASS" in LAUNCHER
     assert "tests/test_research_v6_2_6_balanced_maker.py" in LAUNCHER
     for key in ("research_v626_loss_budget=0",          # retired by v6.2.7
