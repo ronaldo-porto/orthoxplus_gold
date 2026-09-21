@@ -530,8 +530,8 @@ def test_the_state_row_and_the_stats_carry_the_build():
 
 
 def test_the_version_pin_moved():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
 
 
 def test_the_launcher_carries_the_arm_the_params_and_the_guard():

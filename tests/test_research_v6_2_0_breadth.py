@@ -25,6 +25,7 @@ import research_v625_cap_paced as cap_paced
 import research_v626_balanced_maker as bm
 import research_v627_maker_ceiling as mc
 import research_v628_touch_exit as te
+import research_v6210_touch_improve as ti
 from _harness import extractor
 from research_v62_making_mirror import MakingMirror as V62MakingMirror, DEFAULT_LOOKBACK_NS
 
@@ -50,6 +51,7 @@ METHODS = [
     "_v627_count", "_v627_caps", "_v627_snapshot",
     "_v627_clip_bound_on", "_v627_pace_rewind_on", "_v627_clip_bound",
     "_v628_rung_cap_on", "_v628_band_inventory_on", "_v628_fee_viable_on", "_v628_skew_sides_on", "_v628_on", "_v628_count", "_v628_book_viable", "_v628_snapshot",   # v6.2.8, all off
+    "_v6210_count", "_v6210_view", "_v6210_entry_prices", "_v6210_note_outbid", "_v6210_snapshot",   # v6.2.10, both off
 ]
 LOT = 0.25
 UNIVERSE = 128
@@ -288,6 +290,8 @@ def _agent(*, v62=True, books=None, tick=10):
         "v628_fee_viable": te.fee_viable, "v628_spread_bps": te.spread_bps,
         "v628_skewed_sides": te.skewed_sides, "v628_band_inventory_util": te.band_inventory_util,
         "V625_PACE_PERIOD_NS": cap_paced.PACE_PERIOD_NS,
+        "V6210_TOUCH_IMPROVE_VERSION": ti.V6210_TOUCH_IMPROVE_VERSION,
+        "v6210_entry_prices": ti.entry_prices, "v6210_touch_view": ti.touch_view,
     }
     exec("from __future__ import annotations\nclass Harness(_Base):\n" + body, scope)
     agent = scope["Harness"]()
@@ -309,6 +313,10 @@ def _agent(*, v62=True, books=None, tick=10):
     agent.research_v628_skew_sides = False
     agent._v628_counts = {}
     agent._v628_errors = 0
+    agent.research_v6210_improve_entries = False   # v6.2.10 has its own suite: this one is v6.2.0
+    agent.research_v6210_improve_exits = False
+    agent._v6210_counts = {}
+    agent._v6210_errors = 0
     agent._v627_counts = {}
     agent._v627_errors = 0
     agent._v626_counts = {}
@@ -566,8 +574,8 @@ def test_mirror_and_telemetry_wired():
 def test_switch_defaults_on_and_version():
     init = ast.get_source_segment(SIMPLE, _method("_init_build_switches"))
     assert 'getattr(self.config, "research_v62_breadth", True)' in init
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
 
 
 def test_launcher_arm_params_guards_and_gate():

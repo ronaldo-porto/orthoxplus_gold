@@ -306,8 +306,8 @@ def test_the_admission_row_is_json_safe_and_versioned():
 # ---- wiring -------------------------------------------------------------------
 
 def test_the_version_names_a196():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
 
 
 def test_switches_exist_and_default_on():

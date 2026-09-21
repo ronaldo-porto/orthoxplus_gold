@@ -513,6 +513,12 @@ from research_v629_reply_path import (  # noqa: E402
     ReplyTiming as V629ReplyTiming,
     recv_lag_ms as v629_recv_lag_ms,
 )
+from research_v6210_touch_improve import (  # noqa: E402
+    V6210_TOUCH_IMPROVE_VERSION,
+    entry_prices as v6210_entry_prices,
+    improved_price_fn as v6210_improved_price_fn,
+    touch_view as v6210_touch_view,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -701,8 +707,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_9"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_9"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_10"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_10"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1430,6 +1436,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v629_timing = V629ReplyTiming()
         self._v629_request_work = None
         self._v629_errors = 0
+        # v6.2.10 P1: entry quotes one tick inside the OTHERS' best price -- first in the queue instead of last,
+        # so a quote is filled by the next taker of any size rather than only by a level-clearing sweep.
+        # Never over our own orders; strictly inside; our side of the mid.  Off = v6.2.9.
+        self.research_v6210_improve_entries = self._as_bool(
+            getattr(self.config, "research_v6210_improve_entries", True)
+        )
+        # v6.2.10 P2: a maker exit the frozen pricer puts at the own touch goes one tick inside it, through the
+        # v6.2.8 price scope.  A passive rung that rests deeper is left alone.  Off = v6.2.9.
+        self.research_v6210_improve_exits = self._as_bool(
+            getattr(self.config, "research_v6210_improve_exits", True)
+        )
+        self._v6210_counts: dict[str, int] = {}
+        self._v6210_errors = 0
+        self._v6210_exit_book = None
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -2343,6 +2363,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         inventory = kwargs.get("inventory")
         true_unrealized = getattr(inventory, "unrealized_bps", None)
         book_id_outer = int(kwargs.get("book_id", -1))
+        # v6.2.10 P2: the book this exit is priced on, read by the one-tick-inside rule on this tick only.
+        self._v6210_exit_book = (book_id_outer, kwargs.get("book"), int(getattr(self, "_tick", 0) or 0))
         tick_outer = int(getattr(self, "_tick", 0) or 0)
         captured: dict[str, Any] = {}
 
@@ -6487,6 +6509,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     pass
                 return 0
 
+        # v6.2.10 P2: the book this exit is priced on, read by the one-tick-inside rule on this tick only.
+        self._v6210_exit_book = (int(book_id), book, int(getattr(self, "_tick", 0) or 0))
         # v6.2.4: a v6.2.3 release takes the exit order life inside this one frozen call.
         with self._v624_release_life(int(book_id), state):
             # v6.2.8 S1: the maker exit is priced through the capped rung.
@@ -8885,7 +8909,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         restored in ``finally`` -- the same pattern ``_research_apply_unified_exit`` already uses for
         ``choose_position_exit``.  A nested scope sees the marker and neither re-wraps nor restores.
         """
-        if not self._v628_rung_cap_on():
+        improve = bool(getattr(self, "research_v6210_improve_exits", False)) and self._v62_on()
+        if not (self._v628_rung_cap_on() or improve):
             yield
             return
         try:
@@ -8898,15 +8923,112 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if original is None or getattr(original, V628_CAPPED_MARKER, False):
             yield
             return
-        setattr(module, "maker_exit_price",
-                v628_capped_price_fn(original, on_capped=lambda: self._v628_count("rung_capped")))
+        priced = original
+        if self._v628_rung_cap_on():
+            priced = v628_capped_price_fn(original, on_capped=lambda: self._v628_count("rung_capped"))
+        if improve:
+            # v6.2.10 P2: an own-touch maker exit goes one tick inside the others' best price.
+            priced = v6210_improved_price_fn(
+                priced, view_for=self._v6210_exit_view,
+                on_improved=lambda: self._v6210_count("exit_improved"), marker=V628_CAPPED_MARKER,
+            )
+        setattr(module, "maker_exit_price", priced)
         try:
             yield
         finally:
             setattr(module, "maker_exit_price", original)
 
+    def _v6210_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v6210_counts", None)
+        if counts is None:
+            counts = self._v6210_counts = {}
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v6210_view(self, book_id: int, book):
+        """The book's touch as the OTHER traders show it: every order the ledger knows as ours is skipped.
+
+        The ledger holds each accepted order, entries and exits, until the exchange reports it gone -- which
+        includes an order that has expired at the venue but whose notice has not arrived yet.  Our entry client
+        ids are a second check.  Improving on our own order would walk the price one tick per re-quote.
+        """
+        ledger = self._a19_ledger_ref()
+        own_ids = {row.order_id for row in ledger.live_orders(int(book_id))} if ledger is not None else set()
+        own_cids = set(v62_entry_client_ids(int(book_id)))
+        return v6210_touch_view(book, own_ids=own_ids, own_cids=own_cids)
+
+    def _v6210_entry_prices(self, state, book_id: int, book, sides, bid_px: float, ask_px: float):
+        """P1: this request's entry prices, improved where legal, otherwise the touch unchanged."""
+        try:
+            tick = 10.0 ** -int(self._v61_price_decimals(state))
+            quote_buy = sides is None or sides.get("buy") == V625_REASON_OK
+            quote_sell = sides is None or sides.get("sell") == V625_REASON_OK
+            better_bid, better_ask = v6210_entry_prices(
+                self._v6210_view(int(book_id), book), tick=tick, quote_buy=quote_buy, quote_sell=quote_sell,
+            )
+        except Exception:
+            self._v6210_errors = int(getattr(self, "_v6210_errors", 0) or 0) + 1
+            return bid_px, ask_px
+        if quote_buy:
+            self._v6210_count("entry_bid_improved" if better_bid is not None else "entry_bid_joined")
+        if quote_sell:
+            self._v6210_count("entry_ask_improved" if better_ask is not None else "entry_ask_joined")
+        self._v6210_note_outbid(int(book_id), view_bid=better_bid, view_ask=better_ask, book=book)
+        return (bid_px if better_bid is None else better_bid), (ask_px if better_ask is None else better_ask)
+
+    def _v6210_note_outbid(self, book_id: int, *, view_bid, view_ask, book) -> None:
+        """Telemetry: another trader now shows a better price than our last improved quote on this side.
+
+        A one-tick war would show here first (the mid guard does not stop one: the others' mid moves with them).
+        A market that simply moved counts too, so this is read as a rate against the improvements.
+        """
+        last = getattr(self, "_v6210_last_entry", None)
+        if last is None:
+            last = self._v6210_last_entry = {}
+        try:
+            view = self._v6210_view(int(book_id), book)
+        except Exception:
+            view = None
+        if view is not None:
+            prev = last.get((book_id, "buy"))
+            if prev is not None and view.others_bid is not None and view.others_bid > prev + 1e-9:
+                self._v6210_count("entry_bid_outbid")
+            prev = last.get((book_id, "sell"))
+            if prev is not None and view.others_ask is not None and view.others_ask < prev - 1e-9:
+                self._v6210_count("entry_ask_outbid")
+        if view_bid is not None:
+            last[(book_id, "buy")] = view_bid
+        if view_ask is not None:
+            last[(book_id, "sell")] = view_ask
+
+    def _v6210_exit_view(self, bid, ask):
+        """P2: the TouchView of the book the frozen exit pricer is pricing, bound on this request's tick."""
+        bound = getattr(self, "_v6210_exit_book", None)
+        if not bound or bound[1] is None or int(bound[0]) < 0:
+            self._v6210_count("exit_no_book")
+            return None
+        book_id, book, tick = bound
+        if int(tick) != int(getattr(self, "_tick", 0) or 0):
+            self._v6210_count("exit_stale_book")
+            return None
+        try:
+            view = self._v6210_view(int(book_id), book)
+        except Exception:
+            self._v6210_errors = int(getattr(self, "_v6210_errors", 0) or 0) + 1
+            return None
+        if view is None:
+            self._v6210_count("exit_no_view")
+        return view
+
+    def _v6210_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v6210_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v6210_errors", 0) or 0)
+        out["version"] = V6210_TOUCH_IMPROVE_VERSION
+        return out
+
     def _research_parked_touch_exit(self, book_id: int, book, inventory):
         """S1: the parked-touch exit prices through the same capped rung (frozen body unchanged)."""
+        # v6.2.10 P2: the book this exit is priced on, read by the one-tick-inside rule on this tick only.
+        self._v6210_exit_book = (int(book_id), book, int(getattr(self, "_tick", 0) or 0))
         with self._v628_rung_cap_scope():
             return super()._research_parked_touch_exit(book_id, book, inventory)
 
@@ -9161,6 +9283,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if prices is None:
             return 0
         bid_px, ask_px = prices
+        # v6.2.10 P1: one tick inside the others' best price where the spread allows it; a side that cannot
+        # improve joins the touch exactly as before.
+        if getattr(self, "research_v6210_improve_entries", False) and self._v62_on():
+            bid_px, ask_px = self._v6210_entry_prices(state, int(book_id), book, sides, bid_px, ask_px)
         cfg = getattr(state, "config", None)
         qty = v62_lot_quantity(lot, getattr(cfg, "volumeDecimals", 4))
         if qty <= 0.0:
@@ -9325,6 +9451,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             fee_viable_on=int(self._v628_fee_viable_on()),
             skew_sides_on=int(self._v628_skew_sides_on()),
             touch_exit=self._v628_snapshot(),
+            improve_entries_on=int(bool(getattr(self, "research_v6210_improve_entries", False))),
+            improve_exits_on=int(bool(getattr(self, "research_v6210_improve_exits", False))),
+            touch_improve=self._v6210_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),

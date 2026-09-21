@@ -507,8 +507,8 @@ def test_the_switches_default_on():
 
 
 def test_version_and_launcher_arm():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_9"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_9"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_10"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_10"' in SRC
     arm = next(line for line in LAUNCHER_SRC.splitlines() if line.strip().startswith("strategy1_direct_v6_1_1)"))
     assert "V610_BUILD=1" in arm and "V611_BUILD=1" in arm
     assert "strategy1_direct_v6_1_0)" in LAUNCHER_SRC

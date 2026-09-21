@@ -334,7 +334,7 @@ def test_the_switches_default_on_and_the_state_row_carries_them():
 
 
 def test_the_version_pin_moved_and_the_launcher_carries_the_build():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
     assert "strategy1_direct_v6_2_8)" in LAUNCHER and "V626_BUILD=1 ;;" in LAUNCHER
     assert "[preflight] v6.2.6 balanced maker PASS" in LAUNCHER
     assert "tests/test_research_v6_2_6_balanced_maker.py" in LAUNCHER
