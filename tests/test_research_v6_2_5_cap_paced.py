@@ -253,6 +253,9 @@ def _bind(agent, *names):
         "v625_band_for": cp.band_for, "v625_pace_snapshot": cp.pace_snapshot,
         "V625BookPace": cp.BookPace, "V625_PACE_SAMPLE_NS": cp.PACE_SAMPLE_NS,
         "V625_BAND_CLIPS": cp.BAND_CLIPS, "V625_REASON_OK": cp.REASON_OK,
+        "V625_PACE_PERIOD_NS": cp.PACE_PERIOD_NS,
+        "v627_cap_absorption_clip": mc.cap_absorption_clip,
+        "v627_bounded_ceiling": mc.bounded_ceiling, "v627_pace_rewound": mc.pace_rewound,
         "V625_REASON_CAP_RESERVE": cp.REASON_CAP_RESERVE, "V625_CAP_PACED_VERSION": cp.V625_CAP_PACED_VERSION,
         "Any": object,
     }
@@ -271,8 +274,13 @@ class _State:
 
 def _agent(**kw):
     agent = _Agent(**kw)
+    # v6.2.7 has its own suite: bound and rewind stay off so this one measures v6.2.5's controller.
+    agent.research_v627_clip_bound = False
+    agent.research_v627_pace_rewind = False
+    agent._v627_counts, agent._v627_errors = {}, 0
     return _bind(agent, "_v625_two_sided_on", "_v625_cap_pace_on", "_v625_on", "_v625_count",
-                 "_v625_now_ns", "_v625_clip", "_v625_sides", "_v625_snapshot")
+                 "_v625_now_ns", "_v625_clip", "_v625_sides", "_v625_snapshot",
+                 "_v627_clip_bound_on", "_v627_pace_rewind_on", "_v627_clip_bound", "_v627_count")
 
 
 def test_the_first_call_opens_the_sample_at_one_minimum_order():
@@ -330,6 +338,8 @@ def _acquire_agent(*, two_sided=True, cap_pace=True, traded=None, cap=CAP, books
     agent.research_v626_quote_life = False
     agent.research_v627_balance_gate = False         # and v6.2.7 has its own
     agent.research_v627_band_caps = False
+    agent.research_v627_clip_bound = False      # v6.2.7 bounds the clip; this suite is v6.2.5
+    agent.research_v627_pace_rewind = False
     agent._v627_counts = {}
     agent._v627_errors = 0
     agent._v626_counts = {}
@@ -362,6 +372,9 @@ def _acquire_agent(*, two_sided=True, cap_pace=True, traded=None, cap=CAP, books
         "v626_balance_ratio": bm.balance_ratio, "v626_open_book_caps": bm.open_book_caps,
         "v627_band_caps": mc.band_caps, "v627_balance_gate_sides": mc.balance_gate_sides,
         "V627_BALANCE_TARGET": mc.BALANCE_TARGET,
+        "v627_cap_absorption_clip": mc.cap_absorption_clip,
+        "v627_bounded_ceiling": mc.bounded_ceiling, "v627_pace_rewound": mc.pace_rewound,
+        "V625_PACE_PERIOD_NS": cp.PACE_PERIOD_NS,
         "V626_REASON_SURPLUS": bm.REASON_SURPLUS,
     })
     for name in ("_v625_two_sided_on", "_v625_cap_pace_on", "_v625_on", "_v625_count",
@@ -370,6 +383,7 @@ def _acquire_agent(*, two_sided=True, cap_pace=True, traded=None, cap=CAP, books
                  "_v626_side_clips", "_v626_book_capture", "_v62_entry_ttl_ns",
                  "_v627_balance_gate_on", "_v627_band_caps_on", "_v627_on", "_v627_count",
                  "_v627_caps", "_v627_snapshot",
+                 "_v627_clip_bound_on", "_v627_pace_rewind_on", "_v627_clip_bound",
                  "_v62_book_facts", "_v62_place_touch_quotes", "_v62_acquire"):
         exec(compile(ast.Module(body=[ast.parse(_simple(name)).body[0]], type_ignores=[]),
                      "<v625>", "exec"), ns)

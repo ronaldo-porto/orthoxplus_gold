@@ -297,7 +297,9 @@ research_v626_loss_budget=0 \
 research_v626_capture_balance=1 \
 research_v626_quote_life=1 \
 research_v627_balance_gate=1 \
-research_v627_band_caps=1"
+research_v627_band_caps=1 \
+research_v627_clip_bound=1 \
+research_v627_pace_rewind=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -1709,6 +1711,32 @@ if [[ "$V627_BUILD" == "1" ]]; then
   }
   [[ "$PARAMS" == *"research_v627_band_caps=1"* ]] || {
     echo "ERROR: v6.2.7 build without research_v627_band_caps=1 in PARAMS." >&2
+    exit 1
+  }
+  # The clip bound is a PREREQUISITE for the band caps: _v625_apply_caps feeds the largest paced clip
+  # into universe_caps, so an unbounded clip of 83.25 would set the exposure bound to 21,312 BASE.
+  grep -qF 'def cap_absorption_clip(' "$AGENT_PATH/research_v627_maker_ceiling.py" || {
+    echo "ERROR: v6.2.7 has no cap-absorption bound on the clip." >&2
+    exit 1
+  }
+  grep -qF 'bound = self._v627_clip_bound(cap, mid)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.7 does not bound the paced clip." >&2
+    exit 1
+  }
+  grep -qF 'sample_ns=V625_PACE_SAMPLE_NS, period_ns=V625_PACE_PERIOD_NS,' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.7 clip bound is not taken from the validator's own sampling constants." >&2
+    exit 1
+  }
+  grep -qF 'if self._v627_pace_rewind_on() and v627_pace_rewound(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.7 does not re-seed the pace when the sim clock goes backwards." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v627_clip_bound=1"* ]] || {
+    echo "ERROR: v6.2.7 build without research_v627_clip_bound=1 in PARAMS." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v627_pace_rewind=1"* ]] || {
+    echo "ERROR: v6.2.7 build without research_v627_pace_rewind=1 in PARAMS." >&2
     exit 1
   }
   echo "[preflight] v6.2.7 maker ceiling PASS"

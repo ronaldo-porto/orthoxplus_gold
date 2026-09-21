@@ -47,6 +47,7 @@ METHODS = [
     "_v626_count", "_v626_side_clips", "_v626_book_capture", "_v626_snapshot",
     "_v627_balance_gate_on", "_v627_band_caps_on", "_v627_on",              # v6.2.7, both off
     "_v627_count", "_v627_caps", "_v627_snapshot",
+    "_v627_clip_bound_on", "_v627_pace_rewind_on", "_v627_clip_bound",
 ]
 LOT = 0.25
 UNIVERSE = 128
@@ -279,6 +280,9 @@ def _agent(*, v62=True, books=None, tick=10):
         "V625_CAP_PACED_VERSION": "cap_paced_maker_v6_2_5",
         "v627_band_caps": mc.band_caps, "v627_balance_gate_sides": mc.balance_gate_sides,
         "V627_BALANCE_TARGET": mc.BALANCE_TARGET,
+        "v627_cap_absorption_clip": mc.cap_absorption_clip,
+        "v627_bounded_ceiling": mc.bounded_ceiling, "v627_pace_rewound": mc.pace_rewound,
+        "V625_PACE_PERIOD_NS": cap_paced.PACE_PERIOD_NS,
     }
     exec("from __future__ import annotations\nclass Harness(_Base):\n" + body, scope)
     agent = scope["Harness"]()
@@ -292,6 +296,8 @@ def _agent(*, v62=True, books=None, tick=10):
     agent.research_v626_loss_budget = False
     agent.research_v627_balance_gate = False   # v6.2.7 has its own suite: this one is v6.2.0
     agent.research_v627_band_caps = False
+    agent.research_v627_clip_bound = False
+    agent.research_v627_pace_rewind = False
     agent._v627_counts = {}
     agent._v627_errors = 0
     agent._v626_counts = {}

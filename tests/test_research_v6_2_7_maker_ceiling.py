@@ -267,3 +267,158 @@ def test_the_preflight_guards_the_whole_build():
 
 def test_the_module_version_is_stamped():
     assert mc.V627_MAKER_CEILING_VERSION == "maker_ceiling_v6_2_7"
+
+
+# ------------------------------------------------------------------------------------------------
+# 6. Fix 1: the cap-absorption bound on the clip
+# ------------------------------------------------------------------------------------------------
+
+CAP, SAMPLE, PERIOD = 500_000.0, 600e9, 86_400e9
+
+
+def _bound(cap=CAP, price=300.0, sample=SAMPLE, period=PERIOD):
+    return mc.cap_absorption_clip(cap_quote=cap, price=price, sample_ns=sample, period_ns=period)
+
+
+def test_the_bound_is_one_samples_share_of_the_cap_in_a_round_trip():
+    # cap 500,000 over 86,400 s, sampled every 600 s -> 3,472 quote per sample period
+    assert CAP * (SAMPLE / PERIOD) == pytest.approx(3472.22, abs=0.01)
+    # a round trip is two fills, so the clip is that share over twice the price
+    assert _bound() == pytest.approx(5.787, abs=1e-3)
+
+
+def test_every_term_is_a_validator_constant_not_an_observed_number():
+    """cap = capital_turnover_cap x miner_wealth; the two intervals are the validator's own."""
+    assert cp.PACE_SAMPLE_NS == 600_000_000_000        # trade_volume_sampling_interval
+    assert cp.PACE_PERIOD_NS == 86_400_000_000_000     # trade_volume_assessment_period
+    assert _bound(cap=10.0 * 50_000.0) == pytest.approx(5.787, abs=1e-3)
+
+
+def test_the_bound_scales_the_way_its_terms_do():
+    assert _bound(cap=1_000_000.0) == pytest.approx(2 * _bound())     # twice the cap
+    assert _bound(price=600.0) == pytest.approx(_bound() / 2)         # twice the price
+    assert _bound(sample=1200e9) == pytest.approx(2 * _bound())       # twice the sample
+
+
+def test_no_cap_means_no_bound():
+    assert _bound(cap=0.0) is None
+    assert _bound(cap=-1.0) is None
+    assert _bound(price=0.0) is None
+    assert _bound(period=0.0) is None
+    assert mc.cap_absorption_clip(cap_quote=None, price=None, sample_ns=None, period_ns=None) is None
+
+
+def test_the_bound_only_ever_tightens_the_balance_ceiling():
+    assert mc.bounded_ceiling(100.0, 5.787) == pytest.approx(5.787)   # bound binds
+    assert mc.bounded_ceiling(2.0, 5.787) == pytest.approx(2.0)       # balances bind
+    assert mc.bounded_ceiling(None, 5.787) == pytest.approx(5.787)    # no balance ceiling yet
+    assert mc.bounded_ceiling(2.0, None) == pytest.approx(2.0)        # no cap -> unchanged
+    assert mc.bounded_ceiling(None, None) is None
+
+
+def test_the_measured_runaway_clips_are_all_refused_by_the_bound():
+    """v6.2.6 reached clip_max 83.25 with round-trip entry_qty up to 207.15 base."""
+    b = _bound()
+    for observed in (8.0, 26.59, 60.76, 83.25, 103.49, 207.15):
+        assert observed > b
+        assert mc.bounded_ceiling(1e9, b) == pytest.approx(b)
+
+
+def test_the_bound_never_refuses_the_ordinary_clip():
+    """75.9% of trades ran at <= 0.75 base and the median was 0.50: the bound must not touch them."""
+    b = _bound()
+    for ordinary in (0.25, 0.5, 0.75, 1.0, 2.0, 4.0):
+        assert ordinary < b or ordinary == pytest.approx(b)
+
+
+def test_a_bounded_clip_still_clears_one_minimum_order():
+    """paced_clip falls back to one minimum order when the ceiling is under it, never to zero."""
+    out = cp.paced_clip(clip_now=4.0, min_order=0.25, target_rate=1.0, obs_rate=0.001,
+                        ceiling=_bound())
+    assert 0.25 <= out <= _bound() + 1e-9
+    tiny = cp.paced_clip(clip_now=4.0, min_order=0.25, target_rate=1.0, obs_rate=0.001,
+                         ceiling=_bound(cap=1.0))
+    assert tiny == pytest.approx(0.25)
+
+
+def test_the_bound_stops_the_doubling_that_produced_the_runaway():
+    """0.5 -> 2 -> 4 -> 16 -> 64 -> 83.25 was the measured ramp; under the bound it stops at 5.5."""
+    clip = 0.5
+    for _ in range(12):                      # twelve samples with the book under pace
+        clip = cp.paced_clip(clip_now=clip, min_order=0.25, target_rate=1.0, obs_rate=1e-9,
+                             ceiling=_bound())
+    assert clip <= _bound() + 1e-9
+    assert clip == pytest.approx(5.75)       # whole minimum orders under 5.787
+    unbounded = 0.5
+    for _ in range(12):
+        unbounded = cp.paced_clip(clip_now=unbounded, min_order=0.25, target_rate=1.0,
+                                  obs_rate=1e-9, ceiling=None)
+    assert unbounded > 1000                  # what the controller does with no bound at all
+
+
+# ------------------------------------------------------------------------------------------------
+# 7. Fix 2: the pace survives a clock rewind
+# ------------------------------------------------------------------------------------------------
+
+def test_a_backwards_clock_is_detected():
+    assert mc.pace_rewound(now_ns=5, sampled_ns=86_400_000_000_000) is True
+    assert mc.pace_rewound(now_ns=86_400_000_000_001, sampled_ns=86_400_000_000_000) is False
+    assert mc.pace_rewound(now_ns=100, sampled_ns=100) is False       # equal is not a rewind
+
+
+def test_an_unsampled_book_is_never_a_rewind():
+    assert mc.pace_rewound(now_ns=0, sampled_ns=None) is False
+    assert mc.pace_rewound(now_ns=None, sampled_ns=None) is False
+    assert mc.pace_rewound(now_ns="x", sampled_ns=5) is False
+
+
+def test_the_rewind_is_what_observed_rate_cannot_handle():
+    """The freeze this fixes: a negative dt satisfies neither the sample window nor the re-seed."""
+    dt_negative = cp.observed_rate(prev_ns=86_400_000_000_000, prev_volume=100.0,
+                                   now_ns=5, volume=0.0)
+    assert dt_negative is None                       # no sample...
+    assert (5 - 86_400_000_000_000) < cp.PACE_SAMPLE_NS   # ...and the re-seed branch is false too
+    # so without the fix the controller holds pace.clip for ever, which is the measured 4,700 ticks
+
+
+def test_the_reset_is_wired_before_the_sample_is_read():
+    src = _simple("_v625_clip")
+    i_rewind = src.index("v627_pace_rewound(")
+    i_obs = src.index("obs = v625_observed_rate(")
+    assert i_rewind < i_obs, "the rewind must be handled before the stale sample is used"
+    assert "pace.clip, pace.obs_rate = min_order, None" in src
+    assert 'self._v627_count("pace_rewound")' in src
+
+
+def test_the_clip_bound_is_wired_into_the_ceiling():
+    src = _simple("_v625_clip")
+    assert "bound = self._v627_clip_bound(cap, mid)" in src
+    assert "ceiling = v627_bounded_ceiling(ceiling, bound)" in src
+    assert "sample_ns=V625_PACE_SAMPLE_NS, period_ns=V625_PACE_PERIOD_NS," in _simple("_v627_clip_bound")
+
+
+def test_the_two_new_switches_are_wired_and_default_on():
+    assert 'research_v627_clip_bound", True)' in _simple("_v627_clip_bound_on")
+    assert 'research_v627_pace_rewind", True)' in _simple("_v627_pace_rewind_on")
+    for key in ("research_v627_clip_bound", "research_v627_pace_rewind"):
+        assert f'getattr(self.config, "{key}", True)' in SIMPLE
+        assert f"{key}=1" in LAUNCHER
+    # both belong to the pacing controller and cannot outlive it
+    assert "self._v625_cap_pace_on()" in _simple("_v627_clip_bound_on")
+    assert "self._v625_cap_pace_on()" in _simple("_v627_pace_rewind_on")
+
+
+def test_the_clip_bound_keeps_the_band_caps_safe():
+    """The prerequisite: band caps multiply the largest paced clip by the universe and the band."""
+    unbounded = mc.band_caps(universe_caps(128, 83.25), band_clips=cp.BAND_CLIPS)
+    assert unbounded["research_max_total_abs_base"] == pytest.approx(21312.0)   # what v6.2.6 would give
+    bounded = mc.band_caps(universe_caps(128, _bound()), band_clips=cp.BAND_CLIPS)
+    assert bounded["research_max_total_abs_base"] == pytest.approx(1481.5, abs=0.5)
+
+
+def test_the_new_guards_are_in_the_preflight():
+    for needle in ("v6.2.7 has no cap-absorption bound on the clip",
+                   "v6.2.7 does not bound the paced clip",
+                   "v6.2.7 clip bound is not taken from the validator's own sampling constants",
+                   "v6.2.7 does not re-seed the pace when the sim clock goes backwards"):
+        assert needle in LAUNCHER

@@ -451,6 +451,7 @@ from research_v623_premium_floor import (
 )
 from research_v625_cap_paced import (
     BAND_CLIPS as V625_BAND_CLIPS,
+    PACE_PERIOD_NS as V625_PACE_PERIOD_NS,
     PACE_SAMPLE_NS as V625_PACE_SAMPLE_NS,
     REASON_BAND as V625_REASON_BAND,
     REASON_CAP_RESERVE as V625_REASON_CAP_RESERVE,
@@ -490,6 +491,9 @@ from research_v627_maker_ceiling import (
     balance_gate_sides as v627_balance_gate_sides,
     band_caps as v627_band_caps,
     book_balance as v627_book_balance,
+    bounded_ceiling as v627_bounded_ceiling,
+    cap_absorption_clip as v627_cap_absorption_clip,
+    pace_rewound as v627_pace_rewound,
 )
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
@@ -1357,6 +1361,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # arrived holding 63.97 BASE of a 64.0 cap and refused 99.93% of its placements.  Off = v6.2.6.
         self.research_v627_band_caps = self._as_bool(
             getattr(self.config, "research_v627_band_caps", True)
+        )
+        # v6.2.7: the clip may not exceed what one sample period's share of the validator's cap can
+        # absorb in a round trip.  The pacing controller prices volume and not size, and size is the
+        # cost: the loss RATE climbs 55% -> 80% with it, and 148 trades (0.97%) above this bound
+        # carried 54.2% of every loss and 66% of every fee.  Off = v6.2.6.
+        self.research_v627_clip_bound = self._as_bool(
+            getattr(self.config, "research_v627_clip_bound", True)
+        )
+        # v6.2.7: re-seed a book's pace when the sim clock goes backwards.  The testnet sim rolled
+        # over mid-run and the controller froze for 4,700 ticks at clip_max 83.25.  Off = v6.2.6.
+        self.research_v627_pace_rewind = self._as_bool(
+            getattr(self.config, "research_v627_pace_rewind", True)
         )
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
@@ -8596,6 +8612,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 clip=min_order, obs_rate=None, target_rate=target, sampled_ns=now_ns, volume=used,
             )
             return min_order
+        if self._v627_pace_rewind_on() and v627_pace_rewound(
+            now_ns=now_ns, sampled_ns=pace.sampled_ns,
+        ):
+            # v6.2.7: the simulation restarted.  Every stored sample belongs to the previous sim, and
+            # a negative dt satisfies neither observed_rate's window nor the re-seed below, so the
+            # controller would freeze here for good.  A new session starts where a fresh run starts.
+            pace.clip, pace.obs_rate = min_order, None
+            pace.sampled_ns, pace.volume, pace.target_rate = now_ns, used, target
+            self._v627_count("pace_rewound")
+            return float(pace.clip)
         obs = v625_observed_rate(
             prev_ns=pace.sampled_ns, prev_volume=pace.volume, now_ns=now_ns, volume=used,
         )
@@ -8607,6 +8633,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             min_order=min_order, base_free=facts.base_free, quote_free=facts.quote_free,
             price=mid, cap_remaining=remaining,
         )
+        bound = self._v627_clip_bound(cap, mid)
+        if bound is not None:
+            ceiling = v627_bounded_ceiling(ceiling, bound)
+            if float(pace.clip) > bound + 1e-12:
+                self._v627_count("clip_bounded")
         clip = v625_paced_clip(
             clip_now=pace.clip, min_order=min_order, target_rate=target, obs_rate=obs,
             ceiling=ceiling,
@@ -8712,8 +8743,28 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _v627_band_caps_on(self) -> bool:
         return bool(self._v62_on() and getattr(self, "research_v627_band_caps", True))
 
+    def _v627_clip_bound_on(self) -> bool:
+        return bool(self._v625_cap_pace_on() and getattr(self, "research_v627_clip_bound", True))
+
+    def _v627_pace_rewind_on(self) -> bool:
+        return bool(self._v625_cap_pace_on() and getattr(self, "research_v627_pace_rewind", True))
+
     def _v627_on(self) -> bool:
-        return bool(self._v627_balance_gate_on() or self._v627_band_caps_on())
+        return bool(self._v627_balance_gate_on() or self._v627_band_caps_on()
+                    or self._v627_clip_bound_on() or self._v627_pace_rewind_on())
+
+    def _v627_clip_bound(self, cap: float, mid: float) -> float | None:
+        """The cap-absorption bound on this book's clip, or None when it does not apply."""
+        if not self._v627_clip_bound_on():
+            return None
+        try:
+            return v627_cap_absorption_clip(
+                cap_quote=cap, price=mid,
+                sample_ns=V625_PACE_SAMPLE_NS, period_ns=V625_PACE_PERIOD_NS,
+            )
+        except Exception:
+            self._v627_errors = int(getattr(self, "_v627_errors", 0) or 0) + 1
+            return None
 
     def _v627_count(self, key: str, n: int = 1) -> None:
         counts = getattr(self, "_v627_counts", None)
@@ -9084,6 +9135,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             balanced_maker=self._v626_snapshot(),
             balance_gate_on=int(self._v627_balance_gate_on()),
             band_caps_on=int(self._v627_band_caps_on()),
+            clip_bound_on=int(self._v627_clip_bound_on()),
+            pace_rewind_on=int(self._v627_pace_rewind_on()),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
