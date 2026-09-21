@@ -361,7 +361,7 @@ def test_switch_defaults_on_and_telemetry_and_stats():
     assert "premium_floor_on=int(self._v623_on())" in tele
     assert "premium_floor=self._v623_snapshot(state)," in tele
     assert '"direct_v623_premium_floor"' in SIMPLE and '"direct_v623_releases"' in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
     assert "V623_PREMIUM_FLOOR_VERSION = \"premium_floor_v6_2_3\"" in MODULE
 
 

@@ -9,9 +9,11 @@ import ast
 import asyncio
 import gc
 import textwrap
+import time
 from pathlib import Path
 
 import research_direct_idle_gc as idle
+import research_v629_reply_path as rp
 from _harness import extractor
 
 ROOT = Path(__file__).parents[1]
@@ -252,6 +254,7 @@ class _Parent:
     def __init__(self, collector):
         self._a1992_idle_gc = collector
         self._tick = 0
+        self.research_v629_reply_timing = False   # v6.2.9 idle here: no queue, no timing rows
         self.rows = []
         self.inside = []
 
@@ -270,9 +273,12 @@ class _Parent:
 def _harness(collector):
     # Compiled inside a class body so the method's zero-argument super() resolves.
     body = "".join(textwrap.indent(textwrap.dedent(_method_source(name)), "    ") + "\n"
-                   for name in ("handle", "_a1992_note_request"))
+                   for name in ("handle", "_a1992_note_request", "_v629_begin_request", "_v629_end_request",
+                                "_v629_defer_on", "_v629_timing_on", "_v629_emit_timing"))
     namespace = {"_Parent": _Parent, "running_loop": idle.running_loop,
-                 "A1992_IDLE_GC_VERSION": idle.A1992_IDLE_GC_VERSION}
+                 "A1992_IDLE_GC_VERSION": idle.A1992_IDLE_GC_VERSION, "time": time,
+                 "v629_recv_lag_ms": rp.recv_lag_ms, "V629_TIMING_EVERY_TICKS": rp.TIMING_EVERY_TICKS,
+                 "V629_REPLY_PATH_VERSION": rp.V629_REPLY_PATH_VERSION}
     exec("from __future__ import annotations\nclass Harness(_Parent):\n" + body, namespace)
     return namespace["Harness"](collector)
 
@@ -344,8 +350,8 @@ def test_the_idle_collector_is_wired_and_launched():
     assert begin < call < handle.index("finally:") < end
     assert "self.research_a1992_idle_gc = self._as_bool(" in SIMPLE
     assert "IdleCollector(delay_s=" in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
     assert idle.A1992_IDLE_GC_VERSION.endswith("a1_9_9_2")
     for key in ("direct_a1992_version", "direct_a1992_idle_gc", "direct_a1992_installed",
                 "direct_a1992_fallback_reason", "direct_a1992_request_full_passes",

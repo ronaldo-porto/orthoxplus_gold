@@ -144,7 +144,7 @@ def test_switch_defaults_on_and_telemetry_and_stats():
     tele = _method_source("_v62_telemetry")
     assert "seed_at_breadth_on=int(self._v622_on())" in tele
     assert '"direct_v622_restored_books"' in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
 
 
 def test_launcher_arm_params_guard_and_gate():

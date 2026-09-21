@@ -505,6 +505,14 @@ from research_v628_touch_exit import (
     skewed_sides as v628_skewed_sides,
     spread_bps as v628_spread_bps,
 )
+from research_v629_reply_path import (  # noqa: E402
+    TIMING_EVERY_TICKS as V629_TIMING_EVERY_TICKS,
+    V629_REPLY_PATH_VERSION,
+    DeferredWork as V629DeferredWork,
+    FrozenStateView as V629FrozenStateView,
+    ReplyTiming as V629ReplyTiming,
+    recv_lag_ms as v629_recv_lag_ms,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -693,8 +701,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_8"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_8"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_9"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_9"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1407,6 +1415,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v628_counts: dict[str, int] = {}
         self._v628_errors = 0
         self._v628_util_book: int | None = None
+        # v6.2.9 D1: the post-decision telemetry runs after the reply, in the idle gap, on a frozen view
+        # of the state.  The validator's instruction delay grows exponentially with the round trip it
+        # waits for, and that telemetry is part of it.  Off = v6.2.8 (inline).
+        self.research_v629_defer_telemetry = self._as_bool(
+            getattr(self.config, "research_v629_defer_telemetry", True)
+        )
+        # v6.2.9 D2: the parts of the round trip the agent can see -- the validator's send stamp to
+        # handler entry, and handler entry to return.  Measurement only.
+        self.research_v629_reply_timing = self._as_bool(
+            getattr(self.config, "research_v629_reply_timing", True)
+        )
+        self._v629_work = V629DeferredWork()
+        self._v629_timing = V629ReplyTiming()
+        self._v629_request_work = None
+        self._v629_errors = 0
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -9353,6 +9376,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
 
     def handle(self, state: MarketSimulationStateUpdate) -> FinanceAgentResponse:
+        # v6.2.9 D2: handler entry, on the wall clock the validator's send stamp uses.
+        v629_entry_ns = time.time_ns()
+        v629_entry_t = time.perf_counter()
+        # v6.2.9 D1: the previous request's deferred telemetry, if its timer has not fired yet, runs
+        # before anything in this request reads or changes agent state -- so no request ever sees
+        # state a deferred task has not caught up with.
+        v629_loop = self._v629_begin_request()
         # A1.9.9.2: the collector's full pass is scheduled on the miner's event loop
         # after this request returns, so it runs in the gap before the next one.
         # Nothing here reads or changes what the strategy decides.
@@ -9372,6 +9402,65 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     self._a1992_note_request(collector)
                 except Exception:
                     pass
+            self._v629_end_request(state, entry_ns=v629_entry_ns, entry_t=v629_entry_t, loop=v629_loop)
+
+    def _v629_defer_on(self) -> bool:
+        return bool(getattr(self, "research_v629_defer_telemetry", True))
+
+    def _v629_timing_on(self) -> bool:
+        return bool(getattr(self, "research_v629_reply_timing", True))
+
+    def _v629_begin_request(self):
+        """D1: run what the last request left queued, then give this request a queue if it can defer."""
+        self._v629_request_work = None
+        work = getattr(self, "_v629_work", None)
+        if work is None:
+            return None
+        try:
+            work.flush()
+        except Exception:
+            self._v629_errors = int(getattr(self, "_v629_errors", 0) or 0) + 1
+        loop = running_loop()
+        if loop is not None and self._v629_defer_on():
+            self._v629_request_work = work
+        return loop
+
+    def _v629_end_request(self, state, *, entry_ns: int, entry_t: float, loop) -> None:
+        """D2 timing for this request, then D1: the queue runs after the reply (inline with no loop)."""
+        work = getattr(self, "_v629_request_work", None)
+        self._v629_request_work = None
+        if self._v629_timing_on():
+            try:
+                timing = self._v629_timing
+                timing.note(
+                    lag_ms=v629_recv_lag_ms(state, entry_ns),
+                    reply_ms=(time.perf_counter() - float(entry_t)) * 1000.0,
+                )
+                tick = int(getattr(self, "_tick", 0) or 0)
+                if tick == 1 or (tick > 0 and tick % V629_TIMING_EVERY_TICKS == 0):
+                    if work is not None:
+                        work.add("reply_timing_row", lambda: self._v629_emit_timing(tick))
+                    else:
+                        self._v629_emit_timing(tick)
+            except Exception:
+                self._v629_errors = int(getattr(self, "_v629_errors", 0) or 0) + 1
+        if work is not None:
+            try:
+                work.schedule(loop)
+            except Exception:
+                self._v629_errors = int(getattr(self, "_v629_errors", 0) or 0) + 1
+
+    def _v629_emit_timing(self, tick: int) -> None:
+        work = getattr(self, "_v629_work", None)
+        timing = getattr(self, "_v629_timing", None)
+        self._emit(
+            "V629_REPLY_TIMING", force=True, tick=int(tick),
+            v629_reply_path_version=V629_REPLY_PATH_VERSION,
+            defer_telemetry_on=int(self._v629_defer_on()), reply_timing_on=int(self._v629_timing_on()),
+            timing=(timing.snapshot() if timing is not None else {}),
+            deferred=(work.snapshot() if work is not None else {}),
+            errors=int(getattr(self, "_v629_errors", 0) or 0),
+        )
 
     def _a1992_note_request(self, collector) -> None:
         """One A1992_GC_TICK row per request, and A1992_IDLE_GC_STATE when the mode changes."""
@@ -9515,67 +9604,92 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a199_note_exit_stalls(response)
         except Exception:
             pass
-        # v5.0.0 analytics: after every A1.x post-pass, so the rows it reads are final.
-        try:
-            self._v500_service(state)
-        except Exception:
-            self._v500_service_errors = int(getattr(self, "_v500_service_errors", 0) or 0) + 1
-        # v5.0.1 telemetry: activations and the activity state.
-        try:
-            self._v501_service(state)
-        except Exception:
-            self._v501_errors = int(getattr(self, "_v501_errors", 0) or 0) + 1
-        # v5.0.2 telemetry: the dust state row.
-        try:
-            self._v502_service(state)
-        except Exception:
-            self._v502_errors = int(getattr(self, "_v502_errors", 0) or 0) + 1
-        # v5.0.3 telemetry: the observatory capture and its rows.  Runs while the gate holds too --
-        # the quiet window is the most valuable one to record, and the least costly to record in.
-        try:
-            self._v503_service(state)
-        except Exception:
-            self._v503_recorder_errors = int(getattr(self, "_v503_recorder_errors", 0) or 0) + 1
-        # v5.0.4 telemetry: the identity row and the recorder's stop, the request it is seen.
-        try:
-            self._v504_telemetry(state)
-        except Exception:
-            self._v504_errors = int(getattr(self, "_v504_errors", 0) or 0) + 1
-        # v6.0.0 telemetry: the short-lot state row.
-        try:
-            self._v600_telemetry(state)
-        except Exception:
-            self._v600_errors = int(getattr(self, "_v600_errors", 0) or 0) + 1
-        # v6.0.1 telemetry: the reserve state row.
-        try:
-            self._v601_telemetry(state)
-        except Exception:
-            self._v601_errors = int(getattr(self, "_v601_errors", 0) or 0) + 1
-        # v6.0.3 telemetry: the short-lot release row.
-        try:
-            self._v603_telemetry(state)
-        except Exception:
-            self._v603_errors = int(getattr(self, "_v603_errors", 0) or 0) + 1
-        # v6.1 telemetry: the no-loss state row.
-        try:
-            self._v61_telemetry(state)
-        except Exception:
-            self._v61_errors = int(getattr(self, "_v61_errors", 0) or 0) + 1
-        # v6.1 telemetry: the gap-repair and request-memo row.
-        try:
-            self._v61_gap_telemetry(state)
-        except Exception:
-            self._v61_gap_errors = int(getattr(self, "_v61_gap_errors", 0) or 0) + 1
-        # v6.1.1 telemetry: the reprice seed and the price lift.
-        try:
-            self._v611_telemetry(state)
-        except Exception:
-            self._v611_errors = int(getattr(self, "_v611_errors", 0) or 0) + 1
-        # v6.2 telemetry: the breadth state and the making mirror.
-        try:
-            self._v62_telemetry(state)
-        except Exception:
-            self._v62_errors = int(getattr(self, "_v62_errors", 0) or 0) + 1
+        # v6.2.9 D1: everything from here to the slow-request row is telemetry on a response already
+        # decided.  It runs inline, or -- when handle() gave this request a queue -- after the reply, on a
+        # frozen view of the state: the miner clears books/accounts/notices/config off the synapse on return.
+        v629_work = getattr(self, "_v629_request_work", None)
+        v629_lap = v629_work.lap if v629_work is not None else (lambda name: None)
+
+        def _v629_post_reply_telemetry(state):
+            # v5.0.0 analytics: after every A1.x post-pass, so the rows it reads are final.
+            try:
+                self._v500_service(state)
+            except Exception:
+                self._v500_service_errors = int(getattr(self, "_v500_service_errors", 0) or 0) + 1
+            v629_lap("v500_service")
+            # v5.0.1 telemetry: activations and the activity state.
+            try:
+                self._v501_service(state)
+            except Exception:
+                self._v501_errors = int(getattr(self, "_v501_errors", 0) or 0) + 1
+            v629_lap("v501_service")
+            # v5.0.2 telemetry: the dust state row.
+            try:
+                self._v502_service(state)
+            except Exception:
+                self._v502_errors = int(getattr(self, "_v502_errors", 0) or 0) + 1
+            v629_lap("v502_service")
+            # v5.0.3 telemetry: the observatory capture and its rows.  Runs while the gate holds too --
+            # the quiet window is the most valuable one to record, and the least costly to record in.
+            try:
+                self._v503_service(state)
+            except Exception:
+                self._v503_recorder_errors = int(getattr(self, "_v503_recorder_errors", 0) or 0) + 1
+            v629_lap("v503_service")
+            # v5.0.4 telemetry: the identity row and the recorder's stop, the request it is seen.
+            try:
+                self._v504_telemetry(state)
+            except Exception:
+                self._v504_errors = int(getattr(self, "_v504_errors", 0) or 0) + 1
+            v629_lap("v504_telemetry")
+            # v6.0.0 telemetry: the short-lot state row.
+            try:
+                self._v600_telemetry(state)
+            except Exception:
+                self._v600_errors = int(getattr(self, "_v600_errors", 0) or 0) + 1
+            v629_lap("v600_telemetry")
+            # v6.0.1 telemetry: the reserve state row.
+            try:
+                self._v601_telemetry(state)
+            except Exception:
+                self._v601_errors = int(getattr(self, "_v601_errors", 0) or 0) + 1
+            v629_lap("v601_telemetry")
+            # v6.0.3 telemetry: the short-lot release row.
+            try:
+                self._v603_telemetry(state)
+            except Exception:
+                self._v603_errors = int(getattr(self, "_v603_errors", 0) or 0) + 1
+            v629_lap("v603_telemetry")
+            # v6.1 telemetry: the no-loss state row.
+            try:
+                self._v61_telemetry(state)
+            except Exception:
+                self._v61_errors = int(getattr(self, "_v61_errors", 0) or 0) + 1
+            v629_lap("v61_telemetry")
+            # v6.1 telemetry: the gap-repair and request-memo row.
+            try:
+                self._v61_gap_telemetry(state)
+            except Exception:
+                self._v61_gap_errors = int(getattr(self, "_v61_gap_errors", 0) or 0) + 1
+            v629_lap("v61_gap_telemetry")
+            # v6.1.1 telemetry: the reprice seed and the price lift.
+            try:
+                self._v611_telemetry(state)
+            except Exception:
+                self._v611_errors = int(getattr(self, "_v611_errors", 0) or 0) + 1
+            v629_lap("v611_telemetry")
+            # v6.2 telemetry: the breadth state and the making mirror.
+            try:
+                self._v62_telemetry(state)
+            except Exception:
+                self._v62_errors = int(getattr(self, "_v62_errors", 0) or 0) + 1
+            v629_lap("v62_telemetry")
+
+        if v629_work is not None:
+            v629_view = V629FrozenStateView(state)
+            v629_work.add("post_reply_telemetry", lambda: _v629_post_reply_telemetry(v629_view))
+        else:
+            _v629_post_reply_telemetry(state)
         elapsed_ms = (time.perf_counter() - float(self._direct_request_wall_started)) * 1000.0
         if elapsed_ms > 100.0:
             try:

@@ -643,8 +643,8 @@ def test_the_controllers_are_wired_where_they_hold_authority():
 
 
 def test_stats_version_switches_and_launcher():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_8"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_9"' in SIMPLE
     assert rs.A199_RISK_STATE_VERSION.endswith("a1_9_9") and se.A199_SESSION_EPOCH_VERSION.endswith("a1_9_9")
     for key in ("direct_a199_version", "direct_a199_session_epoch_version", "direct_a199_exit_pending_authority",
                 "direct_a199_epoch_resync", "direct_a199_pending_books", "direct_a199_pending_entered",
