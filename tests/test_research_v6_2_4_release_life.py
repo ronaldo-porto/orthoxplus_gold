@@ -257,7 +257,7 @@ def test_switch_defaults_on_needs_v623_and_telemetry_and_stats():
     tele = _simple("_v62_telemetry")
     assert "release_life_on=int(self._v624_on())" in tele
     assert '"direct_v624_release_life"' in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_11"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_12"' in SIMPLE
 
 
 def test_launcher_arm_params_guard_and_gate():

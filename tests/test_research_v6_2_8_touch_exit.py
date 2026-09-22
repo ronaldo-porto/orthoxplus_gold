@@ -304,7 +304,7 @@ def test_the_telemetry_reports_the_build():
 
 
 def test_the_version_and_arm():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_11"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_12"' in SIMPLE
     assert "strategy1_direct_v6_2_8)" in LAUNCHER and "V628_BUILD=1 ;;" in LAUNCHER
     assert te.V628_TOUCH_EXIT_VERSION == "touch_exit_v6_2_8"
 

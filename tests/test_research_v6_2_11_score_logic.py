@@ -20,6 +20,7 @@ sys.path.insert(0, str(STRATEGY))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import research_v6211_score_logic as sl  # noqa: E402
+import research_v6212_pace_defer as pd  # noqa: E402
 import research_v623_premium_floor as pf  # noqa: E402
 import _upstream_debeta_7a3cad7 as up  # noqa: E402
 import _upstream_reward_7a3cad7 as ur  # noqa: E402
@@ -319,6 +320,7 @@ def _clip_ns():
         "V625BookPace": c5.cp.BookPace, "V625_PACE_SAMPLE_NS": c5.cp.PACE_SAMPLE_NS,
         "v627_bounded_ceiling": c5.mc.bounded_ceiling, "v627_pace_rewound": c5.mc.pace_rewound,
         "v6211_held_book": sl.held_book,
+        "v6212_sample_after_hold": pd.sample_after_hold,
     }
     return ns
 
@@ -367,7 +369,8 @@ def test_without_r2_the_same_held_book_doubles():
 def test_r2_sits_after_the_rewind_and_before_the_observed_rate():
     src = _simple("_v625_clip")
     assert src.index('self._v627_count("pace_rewound")') < src.index("v6211_held_book(") < src.index("obs = v625_observed_rate(")
-    assert "pace.sampled_ns, pace.volume = now_ns, used" in src[src.index("v6211_held_book("):]
+    # v6.2.12 routes the re-seed through sample_after_hold, which returns (now_ns, used) with its switch off
+    assert "pace.sampled_ns, pace.volume = v6212_sample_after_hold(" in src[src.index("v6211_held_book("):]
 
 
 # ---- 6. wiring --------------------------------------------------------------------------------------
@@ -389,8 +392,8 @@ def test_the_state_row_reports_the_build():
 
 
 def test_version_and_launcher_arm():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_11"' in SIMPLE
-    assert "strategy1_direct_v6_2_11)" in LAUNCHER and "V6210_BUILD=1; V6211_BUILD=1 ;;" in LAUNCHER
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_12"' in SIMPLE
+    assert "strategy1_direct_v6_2_12)" in LAUNCHER and "V6210_BUILD=1; V6211_BUILD=1 ;;" in LAUNCHER
     assert "strategy1_direct_v6_2_10)" in LAUNCHER                # the previous arm stays
     assert 'echo "[preflight] v6.2.11 score logic PASS"' in LAUNCHER
     assert "tests/test_research_v6_2_11_score_logic.py" in LAUNCHER

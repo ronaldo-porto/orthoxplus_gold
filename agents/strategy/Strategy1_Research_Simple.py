@@ -527,6 +527,10 @@ from research_v6211_score_logic import (  # noqa: E402
     held_book as v6211_held_book,
     seed_all_bounds as v62111_seed_all_bounds,
 )
+from research_v6212_pace_defer import (  # noqa: E402
+    V6212_PACE_DEFER_VERSION,
+    sample_after_hold as v6212_sample_after_hold,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -715,8 +719,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_11"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_11"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_12"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_12"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1477,9 +1481,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self.research_v62111_seed_all = self._as_bool(
             getattr(self.config, "research_v62111_seed_all", True)
         )
+        # v6.2.12: R2 keeps a held book off the pace step, but re-seeding its sample every request
+        # left no book with a whole sampling interval, so no clip ever stepped (v6.2.11.1 tick 3,000:
+        # 128 of 128 at the minimum).  The sample now runs through held time, as the cap does; only
+        # the step still waits for the book to be flat.  Off = v6.2.11.
+        self.research_v6212_pace_defer = self._as_bool(
+            getattr(self.config, "research_v6212_pace_defer", True)
+        )
         self._v6211_counts: dict[str, int] = {}
         self._v6211_errors = 0
         self._v6211_mirror = None
+        self._v6212_counts: dict[str, int] = {}
+        self._v6212_errors = 0
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -8757,9 +8770,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if bool(getattr(self, "research_v6211_hold_pace", False)) and v6211_held_book(
             getattr(facts, "net_base", 0.0), self._execution_flat_epsilon(),
         ):
-            # v6.2.11 R2: held time is not a pace sample.  Re-seed it and quote the adding side at one
-            # minimum order; the book's paced clip resumes when it is flat.
-            pace.sampled_ns, pace.volume = now_ns, used
+            # v6.2.11 R2: a held book never steps its clip and quotes the adding side at one minimum
+            # order.  v6.2.12: its sample keeps running through the held time -- the cap counts every
+            # second a book trades -- so the deferred step is taken on the first flat request a whole
+            # sampling interval later; re-seeding here (v6.2.11) leaves no book with such an interval.
+            defer = bool(getattr(self, "research_v6212_pace_defer", False))
+            pace.sampled_ns, pace.volume = v6212_sample_after_hold(
+                defer=defer, sampled_ns=pace.sampled_ns, volume=pace.volume,
+                now_ns=now_ns, used=used,
+            )
+            if defer:
+                self._v6212_count("pace_deferred")
             self._v6211_count("pace_held")
             return min_order
         obs = v625_observed_rate(
@@ -9507,6 +9528,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 out["errors"] += 1
         return out
 
+    # ---- v6.2.12: the deferred pace step ---------------------------------------------------------
+
+    def _v6212_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v6212_counts", None)
+        if counts is None:
+            counts = {}
+            self._v6212_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v6212_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v6212_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v6212_errors", 0) or 0)
+        out["version"] = V6212_PACE_DEFER_VERSION
+        return out
+
     def _v62_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         if getattr(self, "_v62_state_reported", False) and not (tick > 0 and tick % V62_STATE_EVERY_TICKS == 0):
@@ -9549,6 +9585,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             alpha_mirror_on=int(bool(getattr(self, "research_v6211_alpha_mirror", False))),
             seed_all_on=int(bool(getattr(self, "research_v62111_seed_all", False))),
             score_logic=self._v6211_snapshot(),
+            pace_defer_on=int(bool(getattr(self, "research_v6212_pace_defer", False))),
+            pace_defer=self._v6212_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),

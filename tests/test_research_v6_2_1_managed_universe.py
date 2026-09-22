@@ -131,7 +131,7 @@ def test_switch_defaults_on_and_telemetry_carries_the_managed_set():
     tele = _method_source("_v62_telemetry")
     assert "managed_universe_on=int(self._v621_on())" in tele
     assert 'managed_universe=dict(getattr(self, "_v621_last", {}) or {})' in tele
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_11"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_12"' in SIMPLE
     assert '"direct_v621_forced_inventory"' in SIMPLE
 
 
