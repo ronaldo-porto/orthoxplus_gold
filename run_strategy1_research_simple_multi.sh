@@ -314,7 +314,8 @@ research_v6210_improve_entries=1 \
 research_v6210_improve_exits=1 \
 research_v6211_lift_all=1 \
 research_v6211_hold_pace=1 \
-research_v6211_alpha_mirror=1"
+research_v6211_alpha_mirror=1 \
+research_v62111_seed_all=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -1876,7 +1877,18 @@ if [[ "$V6211_BUILD" == "1" ]]; then
   for key in research_v6211_lift_all=1 research_v6211_hold_pace=1 research_v6211_alpha_mirror=1; do
     [[ "$PARAMS" == *"$key"* ]] || { echo "ERROR: v6.2.11 build without $key in PARAMS." >&2; exit 1; }
   done
+  # v6.2.11.1: a restart seeds every inherited position when every book is lifted (none orphaned).
+  grep -qF 'seed_books_bound, seed_abs_bound = v62111_seed_all_bounds(venue)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.11.1 startup seed is still bounded under lift-all." >&2
+    exit 1
+  }
+  grep -qF 'remaining_abs=float(seed_abs_bound) - float(plan.total_abs_base),' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.11.1 unpriced-book route does not use the seed's own bound." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v62111_seed_all=1"* ]] || { echo "ERROR: v6.2.11.1 build without research_v62111_seed_all=1 in PARAMS." >&2; exit 1; }
   echo "[preflight] v6.2.11 score logic PASS"
+  echo "[preflight] v6.2.11.1 seed all PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -1955,6 +1967,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_2_9_reply_path.py \
       tests/test_research_v6_2_10_touch_improve.py \
       tests/test_research_v6_2_11_score_logic.py \
+      tests/test_research_v6_2_11_1_seed_all.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

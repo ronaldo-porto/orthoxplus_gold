@@ -522,8 +522,10 @@ from research_v6210_touch_improve import (  # noqa: E402
 from research_v6211_score_logic import (  # noqa: E402
     LIFT_ALL_STATUS as V6211_LIFT_ALL_STATUS,
     OwnAlphaMirror as V6211OwnAlphaMirror,
+    V62111_SEED_ALL_VERSION,
     V6211_SCORE_LOGIC_VERSION,
     held_book as v6211_held_book,
+    seed_all_bounds as v62111_seed_all_bounds,
 )
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
@@ -1469,6 +1471,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # v6.2.11 R4: this uid's per-book de-beta alpha on the validator's arithmetic (telemetry).
         self.research_v6211_alpha_mirror = self._as_bool(
             getattr(self.config, "research_v6211_alpha_mirror", True)
+        )
+        # v6.2.11.1: with every book lifted, the startup seed tracks every inherited position (the caps bound
+        # new adds, not what is already held).  Off = v6.2.11.
+        self.research_v62111_seed_all = self._as_bool(
+            getattr(self.config, "research_v62111_seed_all", True)
         )
         self._v6211_counts: dict[str, int] = {}
         self._v6211_errors = 0
@@ -4536,16 +4543,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
         min_order = float(
             getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25
         )
+        seed_books_bound = int(getattr(self, "research_a195_max_seed_books", A195_MAX_SEED_BOOKS))
+        seed_abs_bound = float(getattr(self, "research_a195_max_seed_abs_base", A195_MAX_SEED_ABS_BASE))
+        seed_all = bool(getattr(self, "research_v62111_seed_all", False)) and bool(
+            getattr(self, "research_v6211_lift_all", False)
+        )
+        if seed_all:
+            # v6.2.11.1: every book is lifted, so every inherited position is tracked and released.
+            seed_books_bound, seed_abs_bound = v62111_seed_all_bounds(venue)
+            self._v6211_count("seed_all")
         plan = build_seed_plan(
             venue_net_by_book=venue,
             local_net_by_book=self._a195_local_base_by_book(books),
             mid_by_book=self._a195_mid_by_book(books),
             min_order=min_order,
             tick=int(getattr(self, "_tick", 0) or 0),
-            max_books=int(getattr(self, "research_a195_max_seed_books", A195_MAX_SEED_BOOKS)),
-            max_abs_base=float(getattr(
-                self, "research_a195_max_seed_abs_base", A195_MAX_SEED_ABS_BASE,
-            )),
+            max_books=seed_books_bound,
+            max_abs_base=seed_abs_bound,
         )
         # A1.9.6 F9/F11.  REAL lots to the tracker, legacy dust to the ledger,
         # every quantity on the venue grid.  A1.9.5 appended plan.lots whole:
@@ -4602,12 +4616,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 volume_decimals=self._a196_volume_decimals(state),
                 ledger_enabled=self._a196_ledger_enabled(),
                 grid_snap=self._a196_grid_snap_enabled(),
-                remaining_books=int(getattr(
-                    self, "research_a195_max_seed_books", A195_MAX_SEED_BOOKS,
-                )) - len(plan.lots),
-                remaining_abs=float(getattr(
-                    self, "research_a195_max_seed_abs_base", A195_MAX_SEED_ABS_BASE,
-                )) - float(plan.total_abs_base),
+                remaining_books=int(seed_books_bound) - len(plan.lots),
+                remaining_abs=float(seed_abs_bound) - float(plan.total_abs_base),
             )
             self._a196_legacy_dust_ledger.update(route.ledger)
             seed_tick = int(getattr(self, "_tick", 0) or 0)
@@ -4632,6 +4642,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         payload["seeded_applied"] = int(seeded)
         payload["v622_restored_books"] = int(len(restored_books))
         payload["v622_seed_abs_bound"] = float(getattr(self, "research_a195_max_seed_abs_base", 0.0) or 0.0)
+        payload["v62111_seed_all"] = int(seed_all)
+        payload["v62111_seed_abs_bound"] = float(seed_abs_bound)
+        payload["v62111_seed_all_version"] = V62111_SEED_ALL_VERSION
         payload["legacy_ceiling_bonus_abs"] = float(self._a195_seed_legacy_ceiling_bonus)
         self._a196_seed_last = split.as_log()
         payload.update(self._a196_seed_last)
@@ -9534,6 +9547,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             lift_all_on=int(bool(getattr(self, "research_v6211_lift_all", False))),
             hold_pace_on=int(bool(getattr(self, "research_v6211_hold_pace", False))),
             alpha_mirror_on=int(bool(getattr(self, "research_v6211_alpha_mirror", False))),
+            seed_all_on=int(bool(getattr(self, "research_v62111_seed_all", False))),
             score_logic=self._v6211_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),

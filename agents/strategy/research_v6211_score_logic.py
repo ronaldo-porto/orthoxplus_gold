@@ -164,6 +164,31 @@ def track_record_step(ema: float | None, n: int, cur: float, *, ts: int, last_ts
     return ema, n, ts
 
 
+# ---- v6.2.11.1: R1's startup seed ------------------------------------------------------------------
+
+V62111_SEED_ALL_VERSION = "seed_all_v6_2_11_1"
+
+
+def seed_all_bounds(venue_net_by_book: Any) -> tuple[int, float]:
+    """The A1.9.5 startup seed's bounds when every book is lifted: every inherited position is tracked.
+
+    The bound was sized for dust and single lots; after a restart it comes from the 0.25-lot universe
+    caps (~32 base), so a restart holding more imports the largest books and orphans the rest -- traded
+    as flat, never exited (UID 67, 2026-09-22: 3 of 128 books seeded, ~380 of 414 base orphaned).
+    Tracking is not new exposure: the exposure caps still block new adds until releases bring it under.
+    Finite on purpose -- ``build_seed_plan`` reads a non-finite bound as its 24-base default.
+    """
+    nets = []
+    for value in dict(venue_net_by_book or {}).values():
+        try:
+            number = abs(float(value))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            nets.append(number)
+    return max(1, len(nets)) + 1, sum(nets) + 1.0
+
+
 # ---- R2 ---------------------------------------------------------------------------------------------
 
 def held_book(net_base: Any, flat_eps: Any) -> bool:
