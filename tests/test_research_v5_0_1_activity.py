@@ -529,8 +529,8 @@ def test_v5_0_1_is_wired_and_launched():
     assert respond.index("self._v500_service(state)") < respond.index("self._v501_service(state)")
     assert "activity_factors=factors" in _method_source("_v500_emit_score")
     assert "self.research_v501_activity_alignment = self._as_bool(" in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_11"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_11"' in SIMPLE
     assert act.V501_ACTIVITY_VERSION.endswith("v5_0_1")
     for key in ("direct_v501_activity_version", "direct_v501_activity_alignment", "direct_v501_window_open",
                 "direct_v501_eligible_books", "direct_v501_activated_eligible", "direct_v501_cold_eligible",

@@ -364,7 +364,7 @@ def test_the_preflight_guards_the_build():
 
 
 def test_the_version_and_arm():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_11"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_11"' in SIMPLE
     assert "strategy1_direct_v6_2_10)" in LAUNCHER and "V629_BUILD=1; V6210_BUILD=1 ;;" in LAUNCHER
     assert ti.V6210_TOUCH_IMPROVE_VERSION == "touch_improve_v6_2_10"

@@ -519,6 +519,12 @@ from research_v6210_touch_improve import (  # noqa: E402
     improved_price_fn as v6210_improved_price_fn,
     touch_view as v6210_touch_view,
 )
+from research_v6211_score_logic import (  # noqa: E402
+    LIFT_ALL_STATUS as V6211_LIFT_ALL_STATUS,
+    OwnAlphaMirror as V6211OwnAlphaMirror,
+    V6211_SCORE_LOGIC_VERSION,
+    held_book as v6211_held_book,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -707,8 +713,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_10"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_10"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_11"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_11"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1450,6 +1456,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6210_counts: dict[str, int] = {}
         self._v6210_errors = 0
         self._v6210_exit_book = None
+        # v6.2.11 R1: the final rung scores no Kappa-3, so the no-loss premium the floor protected is worth
+        # nothing; every book is lifted (what UID 82 ran by history on 123 of 128 books).  Off = v6.2.10.
+        self.research_v6211_lift_all = self._as_bool(
+            getattr(self.config, "research_v6211_lift_all", True)
+        )
+        # v6.2.11 R2: a held book gets the minimum clip and its pace sample is re-seeded -- its volume
+        # shortfall is its held exit, not its clip.  Off = v6.2.10.
+        self.research_v6211_hold_pace = self._as_bool(
+            getattr(self.config, "research_v6211_hold_pace", True)
+        )
+        # v6.2.11 R4: this uid's per-book de-beta alpha on the validator's arithmetic (telemetry).
+        self.research_v6211_alpha_mirror = self._as_bool(
+            getattr(self.config, "research_v6211_alpha_mirror", True)
+        )
+        self._v6211_counts: dict[str, int] = {}
+        self._v6211_errors = 0
+        self._v6211_mirror = None
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -1783,6 +1806,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v62_feed_mirror(state)
         except Exception:
             self._v62_errors = int(getattr(self, "_v62_errors", 0) or 0) + 1
+        # v6.2.11 R4 telemetry: this uid's per-book alpha, on the validator's arithmetic.
+        try:
+            self._v6211_feed_mirror(state)
+        except Exception:
+            self._v6211_errors = int(getattr(self, "_v6211_errors", 0) or 0) + 1
         return super().update(state)
 
     # ------------------------------------------------------------------
@@ -8511,17 +8539,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return census
 
     def _v623_lifted(self, book_id: int, state=None) -> tuple[bool, str]:
-        """(lifted, window status).  The floor stays on a PREMIUM book and on any error."""
+        """(lifted, window status).  The floor stays on a PREMIUM book and on any error.
+
+        v6.2.11 R1: with ``research_v6211_lift_all`` every book is lifted, the census only names its status.
+        """
         if not self._v623_on():
             return False, ""
+        lift_all = bool(getattr(self, "research_v6211_lift_all", False))
         try:
             census = self._v623_census(state)
         except Exception:
             self._v623_errors = int(getattr(self, "_v623_errors", 0) or 0) + 1
-            return False, ""
+            return (True, V6211_LIFT_ALL_STATUS) if lift_all else (False, "")
         if census is None:
-            return False, ""
+            return (True, V6211_LIFT_ALL_STATUS) if lift_all else (False, "")
         status = v623_book_status(census.get(int(book_id)), min_observations=V623_MIN_OBSERVATIONS)
+        if lift_all:
+            return True, status
         if not self._v626_loss_budget_on():
             return status != V623_BOOK_PREMIUM, status
         # v6.2.6 rule A: a book already carrying a loss is spent and free; a clean one (PREMIUM, THIN or
@@ -8707,6 +8741,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
             pace.sampled_ns, pace.volume, pace.target_rate = now_ns, used, target
             self._v627_count("pace_rewound")
             return float(pace.clip)
+        if bool(getattr(self, "research_v6211_hold_pace", False)) and v6211_held_book(
+            getattr(facts, "net_base", 0.0), self._execution_flat_epsilon(),
+        ):
+            # v6.2.11 R2: held time is not a pace sample.  Re-seed it and quote the adding side at one
+            # minimum order; the book's paced clip resumes when it is flat.
+            pace.sampled_ns, pace.volume = now_ns, used
+            self._v6211_count("pace_held")
+            return min_order
         obs = v625_observed_rate(
             prev_ns=pace.sampled_ns, prev_volume=pace.volume, now_ns=now_ns, volume=used,
         )
@@ -9417,6 +9459,41 @@ class Strategy1_Research_Simple(Strategy1_Research):
             ((int(raw_id), getattr(book, "events", None)) for raw_id, book in books.items()),
         )
 
+    # ---- v6.2.11: the score logic for the final rung ------------------------------------------------
+    def _v6211_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v6211_counts", None)
+        if counts is None:
+            counts = {}
+            self._v6211_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v6211_feed_mirror(self, state) -> None:
+        """R4: every state's prints into this uid's own-alpha mirror (the book counts are the board's)."""
+        if not bool(getattr(self, "research_v6211_alpha_mirror", False)):
+            return
+        mirror = getattr(self, "_v6211_mirror", None)
+        if mirror is None:
+            lookback = int(getattr(self, "research_kappa_lookback_ns", 0) or 0) or V62_DEFAULT_LOOKBACK_NS
+            mirror = V6211OwnAlphaMirror(int(getattr(self, "uid", 0) or 0), lookback_ns=lookback)
+            self._v6211_mirror = mirror
+        books = getattr(state, "books", None) or {}
+        mirror.ingest_state(
+            int(getattr(state, "timestamp", 0) or 0),
+            ((int(raw_id), getattr(book, "events", None)) for raw_id, book in books.items()),
+        )
+
+    def _v6211_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v6211_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v6211_errors", 0) or 0)
+        out["version"] = V6211_SCORE_LOGIC_VERSION
+        mirror = getattr(self, "_v6211_mirror", None)
+        if mirror is not None:
+            try:
+                out["alpha_mirror"] = mirror.snapshot()
+            except Exception:
+                out["errors"] += 1
+        return out
+
     def _v62_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         if getattr(self, "_v62_state_reported", False) and not (tick > 0 and tick % V62_STATE_EVERY_TICKS == 0):
@@ -9454,6 +9531,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             improve_entries_on=int(bool(getattr(self, "research_v6210_improve_entries", False))),
             improve_exits_on=int(bool(getattr(self, "research_v6210_improve_exits", False))),
             touch_improve=self._v6210_snapshot(),
+            lift_all_on=int(bool(getattr(self, "research_v6211_lift_all", False))),
+            hold_pace_on=int(bool(getattr(self, "research_v6211_hold_pace", False))),
+            alpha_mirror_on=int(bool(getattr(self, "research_v6211_alpha_mirror", False))),
+            score_logic=self._v6211_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),

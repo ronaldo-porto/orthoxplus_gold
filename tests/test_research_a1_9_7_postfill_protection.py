@@ -404,8 +404,8 @@ def test_ownership_fix_is_in_the_shared_helper():
 
 
 def test_version_and_launcher():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_10"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_11"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_11"' in SIMPLE
     assert A197_POSTFILL_PROTECTION_VERSION.endswith("a1_9_7")
     assert ("strategy1_direct_v4_16_2_a1_9_7) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; "
             "A1961_BUILD=1; A197_BUILD=1") in LAUNCHER
