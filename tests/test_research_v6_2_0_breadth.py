@@ -31,6 +31,7 @@ from research_v62_making_mirror import MakingMirror as V62MakingMirror, DEFAULT_
 import research_v6211_score_logic as sl11  # noqa: E402
 import research_v6212_pace_defer as pd12  # noqa: E402
 import research_v6213_venue_band as vb13  # noqa: E402
+import research_v6214_touch_life as tl14  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -58,6 +59,7 @@ METHODS = [
     "_v6211_count", "_v6211_feed_mirror", "_v6211_snapshot",   # v6.2.11, all off (no switch attribute)
     "_v6212_count", "_v6212_snapshot",                         # v6.2.12, off the same way
     "_v6213_count", "_v6213_snapshot",                         # v6.2.13, off the same way
+    "_v6214_count", "_v6214_snapshot",                         # v6.2.14, off the same way
 ]
 LOT = 0.25
 UNIVERSE = 128
@@ -304,6 +306,7 @@ def _agent(*, v62=True, books=None, tick=10):
         "v6212_sample_after_hold": pd12.sample_after_hold,
         "V6213_VENUE_BAND_VERSION": vb13.V6213_VENUE_BAND_VERSION,
         "v6213_venue_band": vb13.venue_band, "V6213_REASON_VENUE_BAND": vb13.REASON_VENUE_BAND,
+        "V6214_TOUCH_LIFE_VERSION": tl14.V6214_TOUCH_LIFE_VERSION,
     }
     exec("from __future__ import annotations\nclass Harness(_Base):\n" + body, scope)
     agent = scope["Harness"]()
@@ -586,8 +589,8 @@ def test_mirror_and_telemetry_wired():
 def test_switch_defaults_on_and_version():
     init = ast.get_source_segment(SIMPLE, _method("_init_build_switches"))
     assert 'getattr(self.config, "research_v62_breadth", True)' in init
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_13"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_13"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE
 
 
 def test_launcher_arm_params_guards_and_gate():

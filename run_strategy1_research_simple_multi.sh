@@ -124,7 +124,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -160,6 +160,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_11) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1 ;;
   strategy1_direct_v6_2_12) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1 ;;
   strategy1_direct_v6_2_13) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1 ;;
+  strategy1_direct_v6_2_14) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1 ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -319,7 +320,11 @@ research_v6211_hold_pace=1 \
 research_v6211_alpha_mirror=1 \
 research_v62111_seed_all=1 \
 research_v6212_pace_defer=1 \
-research_v6213_venue_band=1"
+research_v6213_venue_band=1 \
+research_v6214_touch_gap=1 \
+research_v6214_touch_life=1 \
+research_v6214_side_select=1 \
+research_v6214_exit_identity=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -1936,6 +1941,47 @@ if [[ "$V6213_BUILD" == "1" ]]; then
   [[ "$PARAMS" == *"research_v6213_venue_band=1"* ]] || { echo "ERROR: v6.2.13 build without research_v6213_venue_band=1 in PARAMS." >&2; exit 1; }
   echo "[preflight] v6.2.13 venue band PASS"
 fi
+if [[ "$V6214_BUILD" == "1" ]]; then
+  # v6.2.14: rest only at the best price, add only where the book is deep, and let a filled exit free its book.
+  # Mainnet UID 94 (v6.2.11.1): the two-tick post-only cushion put 87-91% of maker exits one tick BEHIND the own
+  # touch (fill 4.4%), 68-75% of entries sat on the thin side of the book, and every exit fill held its book to
+  # the local TTL.  S0 cushion one increment + the reject guard and the PASSIVE rung never behind; S1 an order
+  # lives while its price is the best on its side; S2 the adding side only on the deeper, not-just-hit side;
+  # S3 every limit placement carries a client id so a fill or cancel releases its book at once.
+  grep -qF 'from research_v6214_touch_life import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.14 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self.research_post_only_safety_ticks = int(V6214_TOUCH_GAP_TICKS)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.14 S0 does not set the one-increment post-only cushion." >&2
+    exit 1
+  }
+  grep -qF 'setattr(module, "guarded_post_only_price", self._v6214_guard_fn(original_guard))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.14 S0 does not re-price the reject guard from the fresh touch." >&2
+    exit 1
+  }
+  grep -qF 'priced = v6214_never_behind_price_fn(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.14 S0 does not price the PASSIVE rung at the own touch." >&2
+    exit 1
+  }
+  grep -qF 'self._v6214_service_touch_life(response, state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.14 S1/S2 post-pass is not called." >&2
+    exit 1
+  }
+  grep -qF 'sides = self._v6214_select_sides(book_id, book, sides)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.14 S2 does not select the adding side at placement." >&2
+    exit 1
+  }
+  grep -qF 'self._v6214_assign_exit_identity(response)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.14 S3 does not give exits a client id." >&2
+    exit 1
+  }
+  [[ "$V6213_BUILD" == "1" ]] || { echo "ERROR: v6.2.14 builds on the v6.2.13 venue band." >&2; exit 1; }
+  for key in research_v6214_touch_gap research_v6214_touch_life research_v6214_side_select research_v6214_exit_identity; do
+    [[ "$PARAMS" == *"${key}=1"* ]] || { echo "ERROR: v6.2.14 build without ${key}=1 in PARAMS." >&2; exit 1; }
+  done
+  echo "[preflight] v6.2.14 touch life PASS"
+fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
@@ -2016,6 +2062,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_2_11_1_seed_all.py \
       tests/test_research_v6_2_12_pace_defer.py \
       tests/test_research_v6_2_13_venue_band.py \
+      tests/test_research_v6_2_14_touch_life.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

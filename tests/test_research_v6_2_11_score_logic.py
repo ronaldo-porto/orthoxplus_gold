@@ -392,8 +392,8 @@ def test_the_state_row_reports_the_build():
 
 
 def test_version_and_launcher_arm():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_13"' in SIMPLE
-    assert "strategy1_direct_v6_2_13)" in LAUNCHER and "V6210_BUILD=1; V6211_BUILD=1 ;;" in LAUNCHER
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE
+    assert "strategy1_direct_v6_2_14)" in LAUNCHER and "V6210_BUILD=1; V6211_BUILD=1 ;;" in LAUNCHER
     assert "strategy1_direct_v6_2_10)" in LAUNCHER                # the previous arm stays
     assert 'echo "[preflight] v6.2.11 score logic PASS"' in LAUNCHER
     assert "tests/test_research_v6_2_11_score_logic.py" in LAUNCHER

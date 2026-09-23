@@ -97,4 +97,4 @@ def test_switch_default_on_declared_and_reported():
 def test_launcher_guards_and_gate_list():
     assert 'echo "[preflight] v6.2.11.1 seed all PASS"' in LAUNCHER
     assert "tests/test_research_v6_2_11_1_seed_all.py" in LAUNCHER
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_13"' in SIMPLE    # a fix release keeps the arm
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE    # a fix release keeps the arm

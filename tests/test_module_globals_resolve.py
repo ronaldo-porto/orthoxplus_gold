@@ -24,6 +24,7 @@ STRATEGY = ROOT / "agents" / "strategy"
 # caught by importing it; these are the ones that are not importable without the agent's dependencies.
 MODULES = [
     "Strategy1_Research_Simple.py",
+    "research_v6214_touch_life.py",
 ]
 
 # Strategy1_Research.py is frozen (test_research_v6_0_1_capacity::test_t4_frozen_files_are_untouched

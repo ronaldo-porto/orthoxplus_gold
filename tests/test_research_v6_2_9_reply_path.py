@@ -378,7 +378,7 @@ def test_the_preflight_guards_the_build():
 
 
 def test_the_version_and_arm():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_13"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_13"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE
     assert "strategy1_direct_v6_2_9)" in LAUNCHER and "V628_BUILD=1; V629_BUILD=1 ;;" in LAUNCHER
     assert rp.V629_REPLY_PATH_VERSION == "reply_path_v6_2_9"

@@ -536,6 +536,25 @@ from research_v6213_venue_band import (  # noqa: E402
     REASON_VENUE_BAND as V6213_REASON_VENUE_BAND,
     venue_band as v6213_venue_band,
 )
+from research_v6214_touch_life import (  # noqa: E402
+    CANCEL_BEHIND as V6214_CANCEL_BEHIND,
+    CANCEL_HIT as V6214_CANCEL_HIT,
+    CANCEL_THIN as V6214_CANCEL_THIN,
+    NEVER_BEHIND_MARKER as V6214_NEVER_BEHIND_MARKER,
+    SIDE_BUY as V6214_SIDE_BUY,
+    TOUCH_GAP_TICKS as V6214_TOUCH_GAP_TICKS,
+    V6214_TOUCH_LIFE_VERSION,
+    exit_client_id as v6214_exit_client_id,
+    exit_client_ids as v6214_exit_client_ids,
+    fresh_touch_price as v6214_fresh_touch_price,
+    is_adding as v6214_is_adding,
+    last_taker_side as v6214_last_taker_side,
+    level_quantity as v6214_level_quantity,
+    life_verdict as v6214_life_verdict,
+    never_behind_price_fn as v6214_never_behind_price_fn,
+    others_touch as v6214_others_touch,
+    select_sides as v6214_select_sides,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -724,8 +743,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_13"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_13"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_14"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_14"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1510,6 +1529,35 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6213_counts: dict[str, int] = {}
         self._v6213_errors = 0
         self._v6213_last: dict[int, float] = {}
+        # v6.2.14: rest only at the best price, add only where the book is deep, and let a filled exit free
+        # its book.  Mainnet UID 94 (v6.2.11.1): 87-91% of maker exits rested one tick behind the own touch
+        # and filled 4.4% of the time, 68-75% of entries sat on the thin side of the book, and every exit
+        # fill held its book to the local TTL.  One switch per rule; all four off = v6.2.13.
+        # S0: never behind the own touch.  The post-only cushion is one price increment -- legal, and at the
+        # touch on a one-tick spread.  The frozen base clamps the configured value to [1, 4] and every site
+        # (the maker sanitizer, the final validator, the skewed-quote clamp) reads this one attribute, so the
+        # rule is set here once; the configured value is kept for the state row.
+        self.research_v6214_touch_gap = self._as_bool(
+            getattr(self.config, "research_v6214_touch_gap", True)
+        )
+        # S1: an order lives while its price is the best on its side.
+        self.research_v6214_touch_life = self._as_bool(
+            getattr(self.config, "research_v6214_touch_life", True)
+        )
+        # S2: the adding side rests only on the deeper side of the book, not on the side the last print hit.
+        self.research_v6214_side_select = self._as_bool(
+            getattr(self.config, "research_v6214_side_select", True)
+        )
+        # S3: every limit placement carries a client id, so an exit's fill or cancel frees its book at once.
+        self.research_v6214_exit_identity = self._as_bool(
+            getattr(self.config, "research_v6214_exit_identity", True)
+        )
+        self._v6214_configured_gap = int(getattr(self, "research_post_only_safety_ticks", 2) or 2)
+        if self.research_v6214_touch_gap:
+            self.research_post_only_safety_ticks = int(V6214_TOUCH_GAP_TICKS)
+        self._v6214_counts: dict[str, int] = {}
+        self._v6214_errors = 0
+        self._v6214_last_taker: dict[int, int] = {}
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -9001,14 +9049,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         The frozen ``maker_exit_price`` is swapped for a wrapper for the duration of one frozen call and
         restored in ``finally`` -- the same pattern ``_research_apply_unified_exit`` already uses for
         ``choose_position_exit``.  A nested scope sees the marker and neither re-wraps nor restores.
+
+        v6.2.14 S0 (never behind the own touch) rides the same intercept: the PASSIVE rung is priced at the own
+        touch, and the frozen post-only reject guard -- which put every later exit on a rejected book side one tick
+        BEHIND the best price until the position closed -- re-prices from the fresh touch with no extra tick.
         """
         improve = bool(getattr(self, "research_v6210_improve_exits", False)) and self._v62_on()
-        if not (self._v628_rung_cap_on() or improve):
+        gap = bool(getattr(self, "research_v6214_touch_gap", False))
+        if not (self._v628_rung_cap_on() or improve or gap):
             yield
             return
         try:
             module = importlib.import_module("Strategy1_Research")
             original = getattr(module, "maker_exit_price", None)
+            original_guard = getattr(module, "guarded_post_only_price", None)
         except Exception:
             self._v628_errors = int(getattr(self, "_v628_errors", 0) or 0) + 1
             yield
@@ -9019,6 +9073,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         priced = original
         if self._v628_rung_cap_on():
             priced = v628_capped_price_fn(original, on_capped=lambda: self._v628_count("rung_capped"))
+        if gap:
+            # v6.2.14 S0: the PASSIVE rung (two ticks behind the own touch) is priced at the own touch.
+            priced = v6214_never_behind_price_fn(
+                priced, on_capped=lambda: self._v6214_count("passive_capped"), marker=V628_CAPPED_MARKER,
+            )
         if improve:
             # v6.2.10 P2: an own-touch maker exit goes one tick inside the others' best price.
             priced = v6210_improved_price_fn(
@@ -9026,10 +9085,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 on_improved=lambda: self._v6210_count("exit_improved"), marker=V628_CAPPED_MARKER,
             )
         setattr(module, "maker_exit_price", priced)
+        guard_swapped = False
+        if gap and original_guard is not None and not getattr(original_guard, V6214_NEVER_BEHIND_MARKER, False):
+            setattr(module, "guarded_post_only_price", self._v6214_guard_fn(original_guard))
+            guard_swapped = True
         try:
             yield
         finally:
             setattr(module, "maker_exit_price", original)
+            if guard_swapped:
+                setattr(module, "guarded_post_only_price", original_guard)
 
     def _v6210_count(self, key: str, n: int = 1) -> None:
         counts = getattr(self, "_v6210_counts", None)
@@ -9442,6 +9507,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         for raw_id in sorted(books, key=lambda x: int(x)):
             book_id = int(raw_id)
             book = books[raw_id]
+            if bool(getattr(self, "research_v6214_side_select", False)):
+                # v6.2.14 S2: every book's last print, whether or not the book quotes on this state.
+                self._v6214_note_prints(book_id, book)
             facts = self._v62_book_facts(book_id, book, state, response, lot)
             if not self._v628_book_viable(book_id, facts):
                 # v6.2.8 S3: a round trip at this touch cannot clear two maker fees; exits stay live.
@@ -9465,6 +9533,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if bool(getattr(self, "research_v6213_venue_band", False)):
                     # v6.2.13: the band is the venue's position's, not the ledger's.
                     sides, side_qty = self._v6213_venue_band(book_id, sides, side_qty, flat_eps=eps)
+                if bool(getattr(self, "research_v6214_side_select", False)):
+                    # v6.2.14 S2: an adding side rests only on the deeper side of the book, not where the last print hit.
+                    sides = self._v6214_select_sides(book_id, book, sides)
                 for side_token in (V625_SIDE_BUY, V625_SIDE_SELL):
                     if sides.get(side_token) == V625_REASON_OK and side_qty.get(side_token, 0.0) <= 0.0:
                         sides[side_token] = V626_REASON_SURPLUS
@@ -9624,6 +9695,252 @@ class Strategy1_Research_Simple(Strategy1_Research):
             out["venue_over_band"] = sum(1 for m in mags if m > band + 1e-9)
         return out
 
+    # ---- v6.2.14: rest only at the best price, add only where the book is deep ---------------------------
+    def _v6214_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v6214_counts", None)
+        if counts is None:
+            counts = {}
+            self._v6214_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v6214_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v6214_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v6214_errors", 0) or 0)
+        out["version"] = V6214_TOUCH_LIFE_VERSION
+        # S0 reads as the cushion every post-only site uses, next to what the configuration asked for.
+        out["post_only_gap_ticks"] = int(getattr(self, "research_post_only_safety_ticks", 0) or 0)
+        out["configured_gap_ticks"] = int(getattr(self, "_v6214_configured_gap", 0) or 0)
+        return out
+
+    def _v6214_guard_fn(self, original):
+        """S0: the frozen post-only reject guard's keywords, re-pricing from the fresh touch with no extra tick.
+
+        The frozen guard put a sell at least one tick above the best ask (a buy below the best bid) for the rest of
+        the position's life after one reject -- one tick behind our own touch.  Legality needs only the opposite
+        touch, and the final validator re-checks it against the same state.
+        """
+        def guard(*, side, original_price, best_bid, best_ask, tick_size, reject_streak=1):
+            self._v6214_count("guard_fresh_touch")
+            return v6214_fresh_touch_price(
+                side=side, original_price=original_price, best_bid=best_bid, best_ask=best_ask,
+                tick_size=tick_size, reject_streak=reject_streak,
+            )
+        setattr(guard, V6214_NEVER_BEHIND_MARKER, True)
+        setattr(guard, "__wrapped__", original)
+        return guard
+
+    def _v6214_note_prints(self, book_id: int, book) -> None:
+        """S2: remember which side the last print on this book hit; a state without a print keeps the old one."""
+        side = v6214_last_taker_side(getattr(book, "events", None))
+        if side is None:
+            return
+        memo = getattr(self, "_v6214_last_taker", None)
+        if memo is None:
+            memo = {}
+            self._v6214_last_taker = memo
+        memo[int(book_id)] = int(side)
+
+    def _v6214_select_sides(self, book_id: int, book, sides: dict) -> dict:
+        """S2 at placement: an adding side rests only on the deeper side of the book, and not where the last print hit.
+
+        A book with a live order of ours is skipped before this (the LIVE_ORDER verdict), so its best levels here are
+        the other traders' own.  Only a side already OK can be refused; the exit side and every band pass through.
+        """
+        memo = getattr(self, "_v6214_last_taker", None) or {}
+        out, thin, hit = v6214_select_sides(
+            sides,
+            bid_depth=v6214_level_quantity(getattr(book, "bids", None)),
+            ask_depth=v6214_level_quantity(getattr(book, "asks", None)),
+            last_taker=memo.get(int(book_id)), ok_token=V625_REASON_OK,
+        )
+        if thin:
+            self._v6214_count("select_thin", thin)
+        if hit:
+            self._v6214_count("select_hit", hit)
+        return out
+
+    def _v6214_assign_exit_identity(self, response) -> int:
+        """S3: a limit placement with no client id leaves with its book side's exit id.
+
+        The frozen exit placement sends none, so the placement notice could not register the order: neither its fill
+        nor its cancellation released its book, which stayed owned until the local TTL after every exit fill (replay:
+        making 58.3 -> 15.9).  One id per book side is unique, because a book takes a new order batch only once every
+        order it held is gone.
+        """
+        assigned = 0
+        for instruction in list(getattr(response, "instructions", None) or []):
+            if str(getattr(instruction, "type", "") or "").upper() != "PLACE_ORDER_LIMIT":
+                continue
+            if self._get(instruction, "clientOrderId", "client_order_id") is not None:
+                continue
+            try:
+                book_id = int(self._get(instruction, "bookId", "book_id"))
+            except (TypeError, ValueError):
+                continue
+            cid = v6214_exit_client_id(book_id, self._research_instruction_side(instruction))
+            if self._research_set_instruction_attr(instruction, "clientOrderId", int(cid)):
+                assigned += 1
+        if assigned:
+            self._v6214_count("exit_ids", assigned)
+        return assigned
+
+    def _v6214_cancelled_ids(self, response) -> set:
+        """Order ids a cancel in this response already names (A1.9.1, the orphan pass, the quote manager)."""
+        ids: set[int] = set()
+        for instruction in list(getattr(response, "instructions", None) or []):
+            for cancellation in list(getattr(instruction, "cancellations", None) or []):
+                try:
+                    ids.add(int(getattr(cancellation, "orderId")))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+        return ids
+
+    def _v6214_others_depth(self, book_id: int, book, own_ids: set) -> tuple[float, float]:
+        """(bid, ask) resting quantity at the other traders' best levels: our own orders taken out of the book.
+
+        ``own_ids`` is every order the ledger holds for the book, including one expired at the venue whose notice has
+        not arrived: an id the book no longer shows subtracts nothing.
+        """
+        own_cids = set(v62_entry_client_ids(int(book_id))) | set(v6214_exit_client_ids(int(book_id)))
+        _bpx, bid_q = v6214_others_touch(getattr(book, "bids", None), own_ids=own_ids, own_cids=own_cids)
+        _apx, ask_q = v6214_others_touch(getattr(book, "asks", None), own_ids=own_ids, own_cids=own_cids)
+        return bid_q, ask_q
+
+    def _v6214_service_touch_life(self, response, state) -> int:
+        """S1 + S2 after the frozen chain: cancel each resting order that no longer belongs where it rests.
+
+        S1 -- every order: once the best price on its side is one increment better than its own, the touch has moved
+        away and from there it fills only when the level ahead of it is swept.  S2 -- an order that adds to the
+        position: once its side of the book is the thinner one, or the last print hit it.  Only the offending order is
+        cancelled (replay: the same making as tearing the book down, fewer instructions, and the other order keeps its
+        place in its queue).  Nothing is placed here: a cancellation must be seen in a later state before the book
+        takes a new order (A1.7.4.3.1), and the normal paths re-quote it then.  Rows older than the life they were
+        placed under have already expired at the venue and are left alone.
+        """
+        touch_on = bool(getattr(self, "research_v6214_touch_life", False))
+        select_on = bool(getattr(self, "research_v6214_side_select", False))
+        if not (touch_on or select_on):
+            return 0
+        books = getattr(state, "books", None) or {}
+        ledger = self._a19_ledger_ref()
+        if ledger is None or not books:
+            return 0
+        try:
+            now_ns = int(getattr(state, "timestamp", 0) or 0)
+        except (TypeError, ValueError):
+            now_ns = 0
+        tick = int(getattr(self, "_tick", 0) or 0)
+        tick_size = self._a19_tick_size(state)
+        ttl_ms = float(getattr(self, "research_profitable_exit_ttl_ms", 4000.0) or 4000.0)
+        budget = int(getattr(self, "max_instructions_per_book", 5) or 5)
+        eps = float(self._execution_flat_epsilon())
+        already = self._v6214_cancelled_ids(response)
+        memo = getattr(self, "_v6214_last_taker", None) or {}
+        release = getattr(self, "_a191_reprice_release", None)
+        if release is None:
+            release = {}
+            self._a191_reprice_release = release
+        # One pass over the ledger per state, bucketed by book (a per-book scan was O(books x orders)).  The age test
+        # is the ledger's own live_orders(max_age_ms=..., now_ns=...) test.
+        live_by_book: dict[int, list] = {}
+        own_by_book: dict[int, set] = {}
+        for row in list((getattr(ledger, "orders", None) or {}).values()):
+            try:
+                book_id, order_id = int(row.book_id), int(row.order_id)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            own_by_book.setdefault(book_id, set()).add(order_id)
+            if order_id in already:
+                continue
+            if row.placed_ns > 0 and row.age_ms(now_ns) < ttl_ms:
+                live_by_book.setdefault(book_id, []).append(row)
+        emitted = 0
+        for book_id, rows in live_by_book.items():
+            book = resolve_book_from_state_mapping(books, book_id)
+            if book is None:
+                continue
+            try:
+                bids = getattr(book, "bids", None) or []
+                asks = getattr(book, "asks", None) or []
+                best_bid = float(bids[0].price) if bids else None
+                best_ask = float(asks[0].price) if asks else None
+            except (TypeError, ValueError, AttributeError, IndexError):
+                continue
+            if best_bid is None or best_ask is None:
+                continue
+            try:
+                net = float(self._direct_signed_inventory(book_id))
+            except Exception:
+                net = 0.0
+            depth = None
+            doomed = []
+            protected = self._direct_protected_partial_order_id(book_id, state)
+            for row in rows:
+                if protected is not None and int(row.order_id) == int(protected):
+                    # A1.7.3: the exact remainder of a partially filled order completes its lot; cancelling it would
+                    # leave a sub-minimum position no order can close (the entry-quote cancel skips it the same way).
+                    self._v6214_count("partial_protected")
+                    continue
+                side = int(row.side)
+                adding = bool(
+                    select_on and self._a19_is_entry_quote_row(book_id, row)
+                    and v6214_is_adding(side, net, eps)
+                )
+                own_depth = other_depth = float("nan")
+                if adding:
+                    if depth is None:
+                        depth = self._v6214_others_depth(book_id, book, own_by_book.get(book_id, set()))
+                    own_depth, other_depth = (depth[0], depth[1]) if side == V6214_SIDE_BUY else (depth[1], depth[0])
+                why = v6214_life_verdict(
+                    side=side, price=row.price, best_bid=best_bid, best_ask=best_ask, tick=tick_size,
+                    touch_on=touch_on, select_on=select_on, adding=adding,
+                    own_depth=own_depth, other_depth=other_depth, last_taker=memo.get(book_id),
+                )
+                if why is not None:
+                    doomed.append((row, why))
+            if not doomed:
+                continue
+            if self._count_book_instructions(response, book_id) >= budget:
+                self._v6214_count("budget_deferred")
+                continue
+            order_ids = [int(row.order_id) for row, _why in doomed]
+            try:
+                response.cancel_orders(book_id=book_id, order_ids=order_ids, delay=0)
+            except Exception:
+                self._v6214_errors = int(getattr(self, "_v6214_errors", 0) or 0) + 1
+                continue
+            # A1.9.0.3: the cancel names itself at once, in the observer's own vocabulary, so the lifecycle row reads it
+            # as ours: an exit is cancelled to be re-priced at the touch, an entry quote to be re-quoted.
+            reasons: dict[str, list] = {}
+            for row, _why in doomed:
+                entry = self._a19_is_entry_quote_row(book_id, row)
+                reasons.setdefault(ABSENT_ENTRY_QUOTE_CANCEL if entry else ABSENT_REPRICE_CANCEL, []).append(
+                    int(row.order_id))
+            for disposition, ids in reasons.items():
+                try:
+                    self._a19_note_exit_cancel(book_id, ids, disposition)
+                except Exception:
+                    pass
+            emitted += 1
+            for row, why in doomed:
+                self._v6214_count({
+                    V6214_CANCEL_BEHIND: "cancel_behind", V6214_CANCEL_THIN: "cancel_thin",
+                    V6214_CANCEL_HIT: "cancel_hit",
+                }.get(why, "cancel_other"))
+                if getattr(row, "client_id", None) is None:
+                    # An order sent without a client id (S3 off, or placed before it) has no registered identity: its
+                    # book is released on the exchange's acknowledgement by the A1.9.1.2 path, as a reprice cancel is.
+                    release[int(row.order_id)] = {
+                        "book_id": int(book_id), "side": "sell" if int(row.side) == 1 else "buy",
+                        "client_id": None, "tick": int(tick),
+                    }
+            if len(release) > self.A19_CANCEL_MEMO_MAX:
+                for stale in sorted(release, key=lambda k: release[k]["tick"])[: self.A19_CANCEL_MEMO_MAX // 4]:
+                    release.pop(stale, None)
+        if emitted:
+            self._v6214_count("cancel_instructions", emitted)
+        return emitted
+
     def _v62_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         if getattr(self, "_v62_state_reported", False) and not (tick > 0 and tick % V62_STATE_EVERY_TICKS == 0):
@@ -9670,6 +9987,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             pace_defer=self._v6212_snapshot(),
             venue_band_on=int(bool(getattr(self, "research_v6213_venue_band", False))),
             venue_band=self._v6213_snapshot(),
+            touch_gap_on=int(bool(getattr(self, "research_v6214_touch_gap", False))),
+            touch_life_on=int(bool(getattr(self, "research_v6214_touch_life", False))),
+            side_select_on=int(bool(getattr(self, "research_v6214_side_select", False))),
+            exit_identity_on=int(bool(getattr(self, "research_v6214_exit_identity", False))),
+            touch_life=self._v6214_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
@@ -9944,6 +10266,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a191_service_reprice_cancels(response, state)
         except Exception:
             pass
+        # v6.2.14 S1/S2: after A1.9.1, for the same reason -- the placements are decided, so a cancel only ever
+        # removes an order that no longer rests at the best price (or an adding order on a thin or just-hit side).
+        try:
+            self._v6214_service_touch_life(response, state)
+        except Exception:
+            self._v6214_errors = int(getattr(self, "_v6214_errors", 0) or 0) + 1
         # A1.9.9: measure pending ABSOLUTE exits that sent nothing this tick.
         try:
             self._a199_note_exit_stalls(response)
@@ -13227,6 +13555,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     stats["instructions"] += max(int(n or 0), after - before)
 
         # Only contract/risk safety may veto the already-decided actions here.
+        # v6.2.14 S3 vetoes nothing: a limit placement without a client id (the frozen exit path sends none) gets
+        # its book side's exit id before the pending ledger keys it, so its placement notice registers it and its
+        # fill or cancel releases the book at once instead of at the local TTL.
+        if bool(getattr(self, "research_v6214_exit_identity", False)):
+            try:
+                self._v6214_assign_exit_identity(response)
+            except Exception:
+                self._v6214_errors = int(getattr(self, "_v6214_errors", 0) or 0) + 1
         self._research_sanitize_maker_instructions(response, state)
         self._research_final_validate_instructions(response, state)
         # A1.7.4.3: bridge the validator/account snapshot gap immediately after

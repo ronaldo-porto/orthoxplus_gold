@@ -76,8 +76,8 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_0_3():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_13"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_13"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_14"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_14"' in SRC
     assert DIRECT_EXIT_LEDGER_VERSION == "direct_exit_ledger_v4_16_2_a1_9_0_3"
     assert DIRECT_EXIT_REFRESH_VERSION == "direct_exit_refresh_v4_16_2_a1_9_2"
 
@@ -101,10 +101,12 @@ def test_all_three_cancel_paths_register_a_reason():
     # 1 definition + 6 sites: WAIT, entry-quote, partial-remainder, the
     # A1.9.1 Phase B reprice cancel, the A1.9.5 step-3 startup orphan
     # cancel, and the A1.9.7 post-fill exit, which registers the entry quotes
-    # the frozen cancel-before-taker removes.  This count is the guard itself --
-    # it must rise only alongside a new *registered* site, never to
+    # the frozen cancel-before-taker removes, and (v6.2.14) the touch-life
+    # cancel of an order no longer at the best price, which registers each
+    # order as a reprice or an entry-quote cancel.  This count is the guard
+    # itself -- it must rise only alongside a new *registered* site, never to
     # accommodate an unregistered one.
-    assert SRC.count("_a19_note_exit_cancel(") == 7
+    assert SRC.count("_a19_note_exit_cancel(") == 8
     for reason in (
         "ABSENT_WAIT_CANCEL", "ABSENT_ENTRY_QUOTE_CANCEL",
         "ABSENT_PARTIAL_REMAINDER_CANCEL", "ABSENT_REPRICE_CANCEL",
