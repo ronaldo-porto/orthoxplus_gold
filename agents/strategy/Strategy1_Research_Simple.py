@@ -531,6 +531,11 @@ from research_v6212_pace_defer import (  # noqa: E402
     V6212_PACE_DEFER_VERSION,
     sample_after_hold as v6212_sample_after_hold,
 )
+from research_v6213_venue_band import (  # noqa: E402
+    V6213_VENUE_BAND_VERSION,
+    REASON_VENUE_BAND as V6213_REASON_VENUE_BAND,
+    venue_band as v6213_venue_band,
+)
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
     V601_CAPACITY_VERSION,
@@ -719,8 +724,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_12"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_12"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_13"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_13"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1493,6 +1498,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6211_mirror = None
         self._v6212_counts: dict[str, int] = {}
         self._v6212_errors = 0
+        # v6.2.13: every quote is sized so its full fill keeps the VENUE's position inside the band.
+        # The validator's alpha is linear in that position, and the ledger the band was checked
+        # against ran 0.1-0.6 base off it (seed residue, base fees, an inert divergence repair), so
+        # venue positions reached 0.75-2.1 while the band read 0.5 and the second lot and beyond
+        # carried the whole loss tail.  Only ever shrinks or refuses a quote the ledger would have
+        # placed.  Off = v6.2.12.
+        self.research_v6213_venue_band = self._as_bool(
+            getattr(self.config, "research_v6213_venue_band", True)
+        )
+        self._v6213_counts: dict[str, int] = {}
+        self._v6213_errors = 0
+        self._v6213_last: dict[int, float] = {}
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -9445,6 +9462,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         self._v625_errors = int(getattr(self, "_v625_errors", 0) or 0) + 1
                 sides = self._v625_sides(facts, clip=clip, flat_eps=eps, state=state, mid=mid)
                 side_qty = self._v626_side_clips(book_id, clip)
+                if bool(getattr(self, "research_v6213_venue_band", False)):
+                    # v6.2.13: the band is the venue's position's, not the ledger's.
+                    sides, side_qty = self._v6213_venue_band(book_id, sides, side_qty, flat_eps=eps)
                 for side_token in (V625_SIDE_BUY, V625_SIDE_SELL):
                     if sides.get(side_token) == V625_REASON_OK and side_qty.get(side_token, 0.0) <= 0.0:
                         sides[side_token] = V626_REASON_SURPLUS
@@ -9543,6 +9563,67 @@ class Strategy1_Research_Simple(Strategy1_Research):
         out["version"] = V6212_PACE_DEFER_VERSION
         return out
 
+    # ---- v6.2.13: the exposure band bounds the venue's position -----------------------------------
+    def _v6213_venue_band(self, book_id: int, sides: dict, side_qty: dict, *, flat_eps: float) -> tuple[dict, dict]:
+        """Size (or refuse) this book's quotes against the VENUE's position, never the ledger's.
+
+        The band is v6.2.5's two minimum orders -- the smallest band a held book can still add one
+        minimum order in -- and the position is ``total - initial`` from the account the state carries.
+        A side whose smallest order would leave the band is refused; a larger quote is cut to the room.
+        When the venue reports no position the ledger's verdict stands unchanged.
+        """
+        try:
+            venue = self._a195_venue_net_by_book({int(book_id): None}).get(int(book_id))
+        except Exception:
+            self._v6213_errors = int(getattr(self, "_v6213_errors", 0) or 0) + 1
+            venue = None
+        if venue is None:
+            self._v6213_count("venue_unresolved")
+            return sides, side_qty
+        try:
+            min_order = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+            out_sides, out_qty, refused, capped = v6213_venue_band(
+                venue_net=venue, band=v625_band_for(min_order), min_order=min_order,
+                sides=sides, side_qty=side_qty,
+                ok_token=V625_REASON_OK, refuse_token=V6213_REASON_VENUE_BAND,
+            )
+        except Exception:
+            self._v6213_errors = int(getattr(self, "_v6213_errors", 0) or 0) + 1
+            return sides, side_qty
+        last = getattr(self, "_v6213_last", None)
+        if last is None:
+            last = {}
+            self._v6213_last = last
+        last[int(book_id)] = float(venue)
+        if abs(float(venue)) > float(flat_eps):
+            self._v6213_count("venue_held")
+        if refused:
+            self._v6213_count("refused", refused)
+        if capped:
+            self._v6213_count("capped", capped)
+        return out_sides, out_qty
+
+    def _v6213_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v6213_counts", None)
+        if counts is None:
+            counts = {}
+            self._v6213_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v6213_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v6213_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v6213_errors", 0) or 0)
+        out["version"] = V6213_VENUE_BAND_VERSION
+        last = getattr(self, "_v6213_last", None) or {}
+        if last:
+            band = v625_band_for(float(getattr(self, "mm_base_size", 0.25) or 0.25))
+            mags = [abs(float(v)) for v in last.values()]
+            out["venue_books"] = len(mags)
+            out["venue_abs"] = round(sum(mags), 4)
+            out["venue_max"] = round(max(mags), 4)
+            out["venue_over_band"] = sum(1 for m in mags if m > band + 1e-9)
+        return out
+
     def _v62_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         if getattr(self, "_v62_state_reported", False) and not (tick > 0 and tick % V62_STATE_EVERY_TICKS == 0):
@@ -9587,6 +9668,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             score_logic=self._v6211_snapshot(),
             pace_defer_on=int(bool(getattr(self, "research_v6212_pace_defer", False))),
             pace_defer=self._v6212_snapshot(),
+            venue_band_on=int(bool(getattr(self, "research_v6213_venue_band", False))),
+            venue_band=self._v6213_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
