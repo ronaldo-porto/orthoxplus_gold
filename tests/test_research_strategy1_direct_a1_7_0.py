@@ -146,7 +146,8 @@ def test_build_does_not_skip_flat_live_entry_before_quote_manager():
 
 def test_nonflat_inventory_cancels_entry_quotes_before_exit_authority():
     method = ast.get_source_segment(SRC, METHODS['build_mm_strategy_instructions'])
-    entry_cancel = method.index('if self._direct_entry_quote_orders(book_id):')
+    # v6.2.15 S2: the check reads the closing side's entry quotes when side ownership is on
+    entry_cancel = method.index('self._direct_entry_quote_orders(book_id) if closing is None')
     manage_append = method.index('manage_queue.append(')
     assert entry_cancel < manage_append
 

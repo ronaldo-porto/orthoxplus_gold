@@ -350,8 +350,8 @@ def test_the_idle_collector_is_wired_and_launched():
     assert begin < call < handle.index("finally:") < end
     assert "self.research_a1992_idle_gc = self._as_bool(" in SIMPLE
     assert "IdleCollector(delay_s=" in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
     assert idle.A1992_IDLE_GC_VERSION.endswith("a1_9_9_2")
     for key in ("direct_a1992_version", "direct_a1992_idle_gc", "direct_a1992_installed",
                 "direct_a1992_fallback_reason", "direct_a1992_request_full_passes",

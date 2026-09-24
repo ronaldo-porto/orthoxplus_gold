@@ -32,6 +32,7 @@ import research_v6211_score_logic as sl11  # noqa: E402
 import research_v6212_pace_defer as pd12  # noqa: E402
 import research_v6213_venue_band as vb13  # noqa: E402
 import research_v6214_touch_life as tl14  # noqa: E402
+import research_v6215_order_life as ol15  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -60,6 +61,7 @@ METHODS = [
     "_v6212_count", "_v6212_snapshot",                         # v6.2.12, off the same way
     "_v6213_count", "_v6213_snapshot",                         # v6.2.13, off the same way
     "_v6214_count", "_v6214_snapshot",                         # v6.2.14, off the same way
+    "_v6215_count", "_v6215_snapshot", "_v6215_life_ms",       # v6.2.15, off the same way
 ]
 LOT = 0.25
 UNIVERSE = 128
@@ -307,6 +309,8 @@ def _agent(*, v62=True, books=None, tick=10):
         "V6213_VENUE_BAND_VERSION": vb13.V6213_VENUE_BAND_VERSION,
         "v6213_venue_band": vb13.venue_band, "V6213_REASON_VENUE_BAND": vb13.REASON_VENUE_BAND,
         "V6214_TOUCH_LIFE_VERSION": tl14.V6214_TOUCH_LIFE_VERSION,
+        "V6215_ORDER_LIFE_VERSION": ol15.V6215_ORDER_LIFE_VERSION,
+        "v6215_life_ms": ol15.life_ms, "v6215_sweep_grace_ms": ol15.sweep_grace_ms,
     }
     exec("from __future__ import annotations\nclass Harness(_Base):\n" + body, scope)
     agent = scope["Harness"]()
@@ -589,8 +593,8 @@ def test_mirror_and_telemetry_wired():
 def test_switch_defaults_on_and_version():
     init = ast.get_source_segment(SIMPLE, _method("_init_build_switches"))
     assert 'getattr(self.config, "research_v62_breadth", True)' in init
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
 
 
 def test_launcher_arm_params_guards_and_gate():

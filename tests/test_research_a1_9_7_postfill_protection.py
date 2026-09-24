@@ -376,7 +376,10 @@ def test_inventory_loop_evaluates_absolute_books_instead_of_skipping_them():
     build = _method_source("build_mm_strategy_instructions")
     candidate = build.index("a197_postfill = self._a197_postfill_candidate(book_id, inventory, mid)")
     assert candidate < build.index('n_cancel = self._direct_cancel_entry_quotes(')
-    assert "if not a197_postfill and self._direct_book_has_live_order(book_id):" in build
+    # v6.2.15 S2: with side ownership only the closing side's live order holds the book back
+    assert "if not a197_postfill and (" in build
+    assert "closing in self._v6215_live_sides(book_id) if closing is not None" in build
+    assert "else self._direct_book_has_live_order(book_id)" in build
     assert build.index("manage_queue.append(") < build.index("a197_postfill_books.add(book_id)")
     managed = build.index("if book_id in a197_postfill_books:")
     assert managed < build.index("self._a197_manage_postfill(") < build.index("self._a197_close_gap(book_id, p1_acted=False)")
@@ -404,8 +407,8 @@ def test_ownership_fix_is_in_the_shared_helper():
 
 
 def test_version_and_launcher():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_14"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
     assert A197_POSTFILL_PROTECTION_VERSION.endswith("a1_9_7")
     assert ("strategy1_direct_v4_16_2_a1_9_7) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; "
             "A1961_BUILD=1; A197_BUILD=1") in LAUNCHER

@@ -32,6 +32,8 @@ RECORDER_MAX_MB="${RECORDER_MAX_MB:-8192}"
 #   SHORT_LOT_FRACTION   short-lot boundary as a fraction of the minimum order, above 0.5 and below 1.0
 #   INHERITED_SHORT_LOTS park | exit   what a restart does with a single lot the seed rebuilt
 SHORT_LOT_FRACTION="${SHORT_LOT_FRACTION:-0.6667}"
+INHERITED_SHORT_LOTS_SOURCE="default"
+[[ -n "${INHERITED_SHORT_LOTS:-}" ]] && INHERITED_SHORT_LOTS_SOURCE="env"
 INHERITED_SHORT_LOTS="${INHERITED_SHORT_LOTS:-park}"
 # v6.0.2 operator setting; see the v6.0.2 preflight block below.  --max_active_books overrides it.
 #   MAX_ACTIVE_BOOKS  productive books held at once, 6 to 8 (the frozen Research clamp is 8, and
@@ -124,7 +126,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -161,6 +163,9 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_12) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1 ;;
   strategy1_direct_v6_2_13) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1 ;;
   strategy1_direct_v6_2_14) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1 ;;
+  strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
+    # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
+    [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
     exit 1
@@ -324,7 +329,10 @@ research_v6213_venue_band=1 \
 research_v6214_touch_gap=1 \
 research_v6214_touch_life=1 \
 research_v6214_side_select=1 \
-research_v6214_exit_identity=1"
+research_v6214_exit_identity=1 \
+research_v6215_order_life=1 \
+research_v6215_side_ownership=1 \
+research_v6215_loss_stop=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -1982,6 +1990,63 @@ if [[ "$V6214_BUILD" == "1" ]]; then
   done
   echo "[preflight] v6.2.14 touch life PASS"
 fi
+if [[ "$V6215_BUILD" == "1" ]]; then
+  # v6.2.15: an order lives as long as its reason to rest, a book side is owned by its own order, and a position
+  # whose mid mark is inside ABSOLUTE_PROTECTION keeps the chain's taker.  Mainnet UID 94 (v6.2.14): the winners'
+  # orders fill at 7-8 s of age, ours at 0.7 s because every order died at the 4-s GTT; ~40 books per state were
+  # refused because one live order owned the whole book; round trips older than 60 s carried -15.8 of the -13.4 bps
+  # round-trip mean.  S1 presence-window backstop instead of the GTT; S2 per-side ownership; S3 loss stop.
+  grep -qF 'from research_v6215_order_life import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.15 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self._v6215_normalize_expiry(response)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.15 S1 does not give entries and exits the backstop life." >&2
+    exit 1
+  }
+  grep -qF 'self._v6215_arm_ledger(self._a19_ledger_ref())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.15 S1 does not sweep the resting-order ledger past the backstop." >&2
+    exit 1
+  }
+  grep -qF 'ttl_ms = float(getattr(self, "_v6215_order_life_ms", None) or getattr(self, "research_profitable_exit_ttl_ms", 4000.0) or 4000.0)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.15 S1 does not let the touch-life pass manage orders older than the frozen TTL." >&2
+    exit 1
+  }
+  grep -qF 'sides, owned = v6215_mark_live_sides(' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.15 S2 does not refuse an owned side per side in acquisition." >&2
+    exit 1
+  }
+  grep -qF '(book_id, canonical_order_side(side)) in preexisting_order_sides if v6215_side_owned' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.15 S2 is not per side in the final validator." >&2
+    exit 1
+  }
+  grep -qF 'closing in self._v6215_live_sides(book_id) if closing is not None' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.15 S2 does not let an adding entry rest beside the exit." >&2
+    exit 1
+  }
+  grep -qF 'self._v6215_note_stop(book_id, inventory, mid)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.15 S3 does not evaluate positions against ABSOLUTE_PROTECTION." >&2
+    exit 1
+  }
+  grep -qF 'if not ok and bool(getattr(self, "research_v6215_loss_stop", False)) and self._v6215_stop_active(int(book_id)):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.15 S3 does not let the executor send a stop taker." >&2
+    exit 1
+  }
+  grep -qF 'why = V6215_STOP_REASON' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.15 S3 does not cancel the exit resting beside a stopped position." >&2
+    exit 1
+  }
+  [[ "$V6214_BUILD" == "1" ]] || { echo "ERROR: v6.2.15 builds on the v6.2.14 touch life." >&2; exit 1; }
+  for key in research_v6215_order_life research_v6215_side_ownership research_v6215_loss_stop; do
+    [[ "$PARAMS" == *"${key}=1"* ]] || { echo "ERROR: v6.2.15 build without ${key}=1 in PARAMS." >&2; exit 1; }
+  done
+  [[ "$INHERITED_SHORT_LOTS" == "exit" ]] || {
+    echo "ERROR: v6.2.15 needs INHERITED_SHORT_LOTS=exit: a parked inherited position is never managed (UID 94," >&2
+    echo "       09-24 restart: 56 of 128 books frozen for 900+ ticks)." >&2
+    exit 1
+  }
+  echo "[preflight] v6.2.15 order life PASS"
+fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
@@ -2063,6 +2128,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_2_12_pace_defer.py \
       tests/test_research_v6_2_13_venue_band.py \
       tests/test_research_v6_2_14_touch_life.py \
+      tests/test_research_v6_2_15_order_life.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

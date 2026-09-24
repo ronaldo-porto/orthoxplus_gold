@@ -423,6 +423,7 @@ from research_v611_wire import (
     lift_instruction_prices as v611_lift_instruction_prices,
 )
 from research_v62_breadth import (
+    REASON_LIVE_ORDER as V62_REASON_LIVE_ORDER,
     REASON_OK as V62_REASON_OK,
     SKIP_REASONS as V62_SKIP_REASONS,
     V62_STATE_EVERY_TICKS,
@@ -554,6 +555,23 @@ from research_v6214_touch_life import (  # noqa: E402
     never_behind_price_fn as v6214_never_behind_price_fn,
     others_touch as v6214_others_touch,
     select_sides as v6214_select_sides,
+)
+from research_v6215_order_life import (  # noqa: E402
+    BACKSTOP_MS as V6215_BACKSTOP_MS,
+    STOP_REASON as V6215_STOP_REASON,
+    V6215_ORDER_LIFE_VERSION,
+    backstop_expiry as v6215_backstop_expiry,
+    is_gtt_limit as v6215_is_gtt_limit,
+    life_ms as v6215_life_ms,
+    live_sides as v6215_live_sides,
+    mark_live_sides as v6215_mark_live_sides,
+    order_side_token as v6215_order_side_token,
+    owned_family as v6215_owned_family,
+    reducing_side as v6215_reducing_side,
+    stop_eligible as v6215_stop_eligible,
+    stop_mark_bps as v6215_stop_mark_bps,
+    sweep_grace_ms as v6215_sweep_grace_ms,
+    sweep_with_grace as v6215_sweep_with_grace,
 )
 from research_v601_capacity import (
     LIVE_BLEND_WEIGHTS as V601_LIVE_BLEND_WEIGHTS,
@@ -743,8 +761,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_14"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_14"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_15"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_15"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1558,6 +1576,31 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6214_counts: dict[str, int] = {}
         self._v6214_errors = 0
         self._v6214_last_taker: dict[int, int] = {}
+        # v6.2.15: an order lives as long as its reason to rest, a book side is owned by its own order, and a
+        # position whose mid mark is inside ABSOLUTE_PROTECTION keeps the chain's own taker.  Mainnet UID 94
+        # (v6.2.14): the winners' orders fill at 7-8 s of age, ours at 0.7 s because every order dies at the 4-s
+        # GTT; ~40 books per state are refused because one live order owns the whole book; round trips older
+        # than 60 s carry -15.8 of the -13.4 bps round-trip mean.  One switch per rule; all off = v6.2.14.
+        # S1: entries and exits live until filled, cancelled by a condition rule, or the presence-window backstop.
+        self.research_v6215_order_life = self._as_bool(
+            getattr(self.config, "research_v6215_order_life", True)
+        )
+        # S2: a live order blocks new placements on its own book side only.
+        self.research_v6215_side_ownership = self._as_bool(
+            getattr(self.config, "research_v6215_side_ownership", True)
+        )
+        # S3: a position whose mid mark is inside ABSOLUTE_PROTECTION is closed by the chain's taker.
+        self.research_v6215_loss_stop = self._as_bool(
+            getattr(self.config, "research_v6215_loss_stop", True)
+        )
+        self._v6215_counts: dict[str, int] = {}
+        self._v6215_errors = 0
+        self._v6215_stop_books: dict[int, int] = {}
+        # S1's life, read as a plain attribute by every overlay check that asks whether a resting order is still live
+        # (the TTL attribute itself is never written -- A1.8); None leaves those checks on the configured TTL.
+        self._v6215_order_life_ms = float(V6215_BACKSTOP_MS) if self.research_v6215_order_life else None
+        if self.research_v6215_order_life:
+            self._v6215_arm_ledger(getattr(self, "_a19_ledger", None))
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -4530,6 +4573,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 self._v61_errors = int(getattr(self, "_v61_errors", 0) or 0) + 1
                 ok, detail = True, {}
+            if not ok and bool(getattr(self, "research_v6215_loss_stop", False)) and self._v6215_stop_active(int(book_id)):
+                # v6.2.15 S3: a position inside ABSOLUTE_PROTECTION by its mid mark is closed at a loss.
+                self._v6215_count("stop_takers_sent")
+                ok = True
             if not ok:
                 self._v61_note_refusal(int(book_id), float(qty), bool(long_pos), detail)
                 return False
@@ -5667,7 +5714,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _a191_live_exit_row(self, book_id: int, net_base: float, now_ns: int):
         """The live, in-TTL, non-entry-quote close-side order for this book."""
         ledger = self._a19_ledger_ref()
-        ttl_ms = float(getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
+        ttl_ms = float(getattr(self, "_v6215_order_life_ms", None) or getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
         rows = ledger.live_orders(
             int(book_id), side=close_side_for(net_base),
             max_age_ms=ttl_ms, now_ns=now_ns,
@@ -5725,7 +5772,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return None
 
         long_pos = net_base > 0.0
-        ttl_ms = float(getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
+        ttl_ms = float(getattr(self, "_v6215_order_life_ms", None) or getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
         age_ms = row.age_ms(now_ns)
         remaining_ms = max(0.0, ttl_ms - age_ms)
         decision, reason = classify_resting_maker_exit(
@@ -5992,7 +6039,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             flat_eps = 1e-9
         tick_size = self._a19_tick_size(state)
-        exit_ttl_ms = float(getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
+        exit_ttl_ms = float(getattr(self, "_v6215_order_life_ms", None) or getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
         floor_bps = float(DIRECT_MAKER_EXIT_TARGET_BPS)
         min_net_bps = float(getattr(self, "research_profitable_exit_min_net_bps", 0.0) or 0.0)
         reprice_ticks = float(getattr(self, "research_profitable_exit_reprice_ticks", 3.0) or 3.0)
@@ -6261,7 +6308,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._a19_last_state_ns = now_ns
             ledger.sweep(now_ns)
         close_side = close_side_for(net_base)
-        exit_ttl_ms = float(getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
+        exit_ttl_ms = float(getattr(self, "_v6215_order_life_ms", None) or getattr(self, "research_profitable_exit_ttl_ms", 3000.0) or 3000.0)
         # Rows still inside the TTL they were placed under.  Anything at or past
         # it is treated as gone even if its cancellation notice has not arrived,
         # because Phase B must never hold on an order the exchange has retired.
@@ -8086,6 +8133,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         """v6.1: nothing that would realize a FIFO loss, and never an idle full lot."""
         if not self._v61_on() or decision is None or book_id < 0:
             return decision, V61_REWRITE_NONE
+        if (
+            bool(getattr(self, "research_v6215_loss_stop", False)) and self._v6215_stop_active(int(book_id))
+            and str(getattr(decision, "action", "") or "") == ACTION_TAKER_EXIT
+        ):
+            # v6.2.15 S3: the mid mark is inside ABSOLUTE_PROTECTION, so the chain's own taker stands.
+            self._v6215_count("stop_takers_kept")
+            return decision, V61_REWRITE_NONE
         qty = float(exit_kwargs.get("inventory_qty", 0.0) or 0.0)
         if qty == 0.0:
             qty = float(getattr(inventory, "net_base", 0.0) or 0.0)
@@ -9398,7 +9452,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             net = 0.0
         try:
-            live = bool(self._direct_book_has_live_order(int(book_id)))
+            if bool(getattr(self, "research_v6215_side_ownership", False)):
+                # v6.2.15 S2: the whole book is owned only when both of its sides are; one owned side is refused on
+                # its own after the side verdicts, so a held book can rest its adding side beside its exit.
+                live = len(self._v6215_live_sides(int(book_id))) >= 2
+            else:
+                live = bool(self._direct_book_has_live_order(int(book_id)))
         except Exception:
             live = True
         cap_ok = False
@@ -9536,6 +9595,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if bool(getattr(self, "research_v6214_side_select", False)):
                     # v6.2.14 S2: an adding side rests only on the deeper side of the book, not where the last print hit.
                     sides = self._v6214_select_sides(book_id, book, sides)
+                if bool(getattr(self, "research_v6215_side_ownership", False)):
+                    # v6.2.15 S2: a side that already rests an order of ours takes no second one.
+                    sides, owned = v6215_mark_live_sides(
+                        sides, self._v6215_live_sides(book_id),
+                        ok_token=V625_REASON_OK, live_token=V62_REASON_LIVE_ORDER,
+                    )
+                    if owned:
+                        self._v6215_count("side_owned_refusals", owned)
                 for side_token in (V625_SIDE_BUY, V625_SIDE_SELL):
                     if sides.get(side_token) == V625_REASON_OK and side_qty.get(side_token, 0.0) <= 0.0:
                         sides[side_token] = V626_REASON_SURPLUS
@@ -9819,7 +9886,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         """
         touch_on = bool(getattr(self, "research_v6214_touch_life", False))
         select_on = bool(getattr(self, "research_v6214_side_select", False))
-        if not (touch_on or select_on):
+        # v6.2.15 S3: the exit resting beside a position whose mid mark is inside ABSOLUTE_PROTECTION is cancelled
+        # here, so the next state's evaluation finds the book free and sends the chain's taker.
+        stop_on = bool(getattr(self, "research_v6215_loss_stop", False))
+        if not (touch_on or select_on or stop_on):
             return 0
         books = getattr(state, "books", None) or {}
         ledger = self._a19_ledger_ref()
@@ -9831,7 +9901,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             now_ns = 0
         tick = int(getattr(self, "_tick", 0) or 0)
         tick_size = self._a19_tick_size(state)
-        ttl_ms = float(getattr(self, "research_profitable_exit_ttl_ms", 4000.0) or 4000.0)
+        ttl_ms = float(getattr(self, "_v6215_order_life_ms", None) or getattr(self, "research_profitable_exit_ttl_ms", 4000.0) or 4000.0)
         budget = int(getattr(self, "max_instructions_per_book", 5) or 5)
         eps = float(self._execution_flat_epsilon())
         already = self._v6214_cancelled_ids(response)
@@ -9896,6 +9966,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     touch_on=touch_on, select_on=select_on, adding=adding,
                     own_depth=own_depth, other_depth=other_depth, last_taker=memo.get(book_id),
                 )
+                if (
+                    why is None and stop_on and self._v6215_stop_active(book_id)
+                    and abs(net) > eps and not self._a19_is_entry_quote_row(book_id, row)
+                    and v6215_order_side_token(side) == v6215_reducing_side(net)
+                ):
+                    why = V6215_STOP_REASON
                 if why is not None:
                     doomed.append((row, why))
             if not doomed:
@@ -9923,10 +9999,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     pass
             emitted += 1
             for row, why in doomed:
-                self._v6214_count({
-                    V6214_CANCEL_BEHIND: "cancel_behind", V6214_CANCEL_THIN: "cancel_thin",
-                    V6214_CANCEL_HIT: "cancel_hit",
-                }.get(why, "cancel_other"))
+                if stop_on and why == V6215_STOP_REASON:
+                    self._v6215_count("stop_exit_cancels")
+                else:
+                    self._v6214_count({
+                        V6214_CANCEL_BEHIND: "cancel_behind", V6214_CANCEL_THIN: "cancel_thin",
+                        V6214_CANCEL_HIT: "cancel_hit",
+                    }.get(why, "cancel_other"))
                 if getattr(row, "client_id", None) is None:
                     # An order sent without a client id (S3 off, or placed before it) has no registered identity: its
                     # book is released on the exchange's acknowledgement by the A1.9.1.2 path, as a reprice cancel is.
@@ -9940,6 +10019,120 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if emitted:
             self._v6214_count("cancel_instructions", emitted)
         return emitted
+
+    # ---- v6.2.15: order life, side ownership, loss stop ------------------------------------------------------------
+    def _v6215_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v6215_counts", None)
+        if counts is None:
+            counts = {}
+            self._v6215_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v6215_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v6215_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v6215_errors", 0) or 0)
+        out["version"] = V6215_ORDER_LIFE_VERSION
+        life_on = bool(getattr(self, "research_v6215_order_life", False))
+        out["life_ms"] = float(self._v6215_life_ms(4000.0))
+        out["sweep_grace_ms"] = float(v6215_sweep_grace_ms(life_on))
+        out["stop_books"] = len(getattr(self, "_v6215_stop_books", {}) or {})
+        return out
+
+    def _v6215_life_ms(self, default_ms: float) -> float:
+        """S1: the age below which a resting order is still ours to manage -- the backstop, or the configured TTL.
+
+        Every overlay check that asks "is this resting order still live" reads it, so a long-lived order is held,
+        re-priced or cancelled rather than presumed expired at the frozen TTL.  The TTL attribute itself is never
+        written (A1.8): the frozen base keeps its own reading of it.
+        """
+        return float(
+            getattr(self, "_v6215_order_life_ms", None)
+            or v6215_life_ms(False, getattr(self, "research_profitable_exit_ttl_ms", default_ms), float(default_ms))
+        )
+
+    def _v6215_arm_ledger(self, ledger) -> bool:
+        """S1: the resting-order ledger sweeps only past the backstop.
+
+        Its frozen 15-s grace was 'well past any TTL the strategy can request'; under S1 it is not, and a swept row is an
+        order the touch-life pass can no longer cancel.  The ledger's own ``sweep`` is replaced on this instance, so
+        every caller keeps calling ``ledger.sweep(now_ns)``.  Idempotent; re-armed every request in case the ledger was
+        rebuilt.
+        """
+        if ledger is None or getattr(getattr(ledger, "sweep", None), "_v6215_grace_ms", None) is not None:
+            return False
+        grace = float(v6215_sweep_grace_ms(True))
+
+        def sweep(now_ns, _ledger=ledger, _grace=grace):
+            return v6215_sweep_with_grace(_ledger, now_ns, _grace)
+
+        sweep._v6215_grace_ms = grace
+        try:
+            ledger.sweep = sweep
+        except (AttributeError, TypeError):
+            self._v6215_errors = int(getattr(self, "_v6215_errors", 0) or 0) + 1
+            return False
+        self._v6215_count("ledger_armed")
+        return True
+
+    def _v6215_normalize_expiry(self, response) -> int:
+        """S1: every entry and exit limit order we send rests until filled, cancelled by a rule, or the backstop."""
+        self._v6215_arm_ledger(self._a19_ledger_ref())
+        changed = 0
+        for instruction in list(getattr(response, "instructions", None) or []):
+            kind = str(getattr(instruction, "type", "") or "").upper()
+            if not v6215_is_gtt_limit(kind, self._get(instruction, "timeInForce", "time_in_force")):
+                continue
+            if not v6215_owned_family(self._get(instruction, "clientOrderId", "client_order_id")):
+                continue
+            new = v6215_backstop_expiry(self._get(instruction, "expiryPeriod", "expiry_period"))
+            if new is None:
+                continue
+            if self._research_set_instruction_attr(instruction, "expiryPeriod", int(new)):
+                changed += 1
+            else:
+                self._v6215_errors = int(getattr(self, "_v6215_errors", 0) or 0) + 1
+        if changed:
+            self._v6215_count("expiry_backstop", changed)
+        return changed
+
+    def _v6215_live_sides(self, book_id: int) -> frozenset:
+        """S2: the sides of this book that a live order of ours owns (acknowledged orders + local reservations)."""
+        bid = int(book_id)
+        order_sides = [getattr(order, "side", None) for order in self._direct_account_orders(bid)]
+        pending_sides = [key[2] for key in self._direct_pending_ledger() if int(key[0]) == bid]
+        return v6215_live_sides(order_sides, pending_sides)
+
+    def _v6215_note_stop(self, book_id: int, inventory, mid) -> bool:
+        """S3: is this position's mid mark inside ABSOLUTE_PROTECTION?  Remembered for this request only."""
+        if not bool(getattr(self, "research_v6215_loss_stop", False)):
+            return False
+        try:
+            mark = v6215_stop_mark_bps(
+                net_base=getattr(inventory, "net_base", 0.0), vwap_entry=getattr(inventory, "vwap_entry", None),
+                mid=mid, fallback=getattr(inventory, "unrealized_bps", None),
+            )
+            eligible = v6215_stop_eligible(mark)
+        except Exception:
+            self._v6215_errors = int(getattr(self, "_v6215_errors", 0) or 0) + 1
+            return False
+        books = getattr(self, "_v6215_stop_books", None)
+        if books is None:
+            books = {}
+            self._v6215_stop_books = books
+        if eligible:
+            if int(book_id) not in books:
+                self._v6215_count("stop_positions")
+            books[int(book_id)] = int(getattr(self, "_tick", 0) or 0)
+        else:
+            books.pop(int(book_id), None)
+        return eligible
+
+    def _v6215_stop_active(self, book_id: int) -> bool:
+        """S3: this book's position was found inside ABSOLUTE_PROTECTION on this request."""
+        if not bool(getattr(self, "research_v6215_loss_stop", False)):
+            return False
+        books = getattr(self, "_v6215_stop_books", None) or {}
+        return books.get(int(book_id)) == int(getattr(self, "_tick", 0) or 0)
 
     def _v62_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
@@ -9992,6 +10185,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             side_select_on=int(bool(getattr(self, "research_v6214_side_select", False))),
             exit_identity_on=int(bool(getattr(self, "research_v6214_exit_identity", False))),
             touch_life=self._v6214_snapshot(),
+            order_life_on=int(bool(getattr(self, "research_v6215_order_life", False))),
+            side_ownership_on=int(bool(getattr(self, "research_v6215_side_ownership", False))),
+            loss_stop_on=int(bool(getattr(self, "research_v6215_loss_stop", False))),
+            order_life=self._v6215_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
@@ -10418,10 +10615,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         cid = self._direct_order_client_id(order)
         return cid in self._direct_entry_quote_client_ids(book_id)
 
-    def _direct_entry_quote_orders(self, book_id: int) -> list:
+    def _direct_entry_quote_orders(self, book_id: int, side: str | None = None) -> list:
+        """This book's resting entry quotes; ``side`` (v6.2.15 S2) keeps only the quotes on that side."""
         return [
             order for order in self._direct_account_orders(int(book_id))
             if self._direct_is_entry_quote_order(int(book_id), order)
+            and (side is None or v6215_order_side_token(getattr(order, "side", None)) == side)
         ]
 
     def _direct_order_side_price(self, order) -> tuple[str, float] | None:
@@ -10438,8 +10637,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return None
         return side, px
 
-    def _direct_cancel_entry_quotes(self, response, book_id: int, *, reason: str) -> int:
-        orders = self._direct_entry_quote_orders(int(book_id))
+    def _direct_cancel_entry_quotes(self, response, book_id: int, *, reason: str, side: str | None = None) -> int:
+        orders = self._direct_entry_quote_orders(int(book_id), side=side)
         protected_id = self._direct_protected_partial_order_id(int(book_id))
         order_ids = [getattr(order, "id", None) for order in orders]
         order_ids = [
@@ -10505,11 +10704,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 net, min_order=float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25), eps=eps,
             ):
                 continue
-            # Once ordinary inventory appears, entry quotes no longer own the book.
+            # Once ordinary inventory appears, entry quotes no longer own the book.  v6.2.15 S2: the closing side's.
             if net > eps:
-                placed += self._direct_cancel_entry_quotes(
-                    response, book_id, reason="INVENTORY_OPENED",
-                )
+                if bool(getattr(self, "research_v6215_side_ownership", False)):
+                    placed += self._direct_cancel_entry_quotes(
+                        response, book_id, reason="INVENTORY_OPENED",
+                        side=v6215_reducing_side(self._direct_signed_inventory(book_id)),
+                    )
+                else:
+                    placed += self._direct_cancel_entry_quotes(
+                        response, book_id, reason="INVENTORY_OPENED",
+                    )
                 continue
             if not getattr(book, "bids", None) or not getattr(book, "asks", None):
                 placed += self._direct_cancel_entry_quotes(response, book_id, reason="BAD_BOOK")
@@ -12856,6 +13061,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         preexisting_order_books = {
             int(bid) for bid in books.keys() if self._direct_book_has_live_order(int(bid))
         }
+        # v6.2.15 S2: ownership is per book side -- an unresolved order refuses a new one on its own side only.
+        v6215_side_owned = bool(getattr(self, "research_v6215_side_ownership", False))
+        preexisting_order_sides = {
+            (int(bid), side) for bid in preexisting_order_books for side in self._v6215_live_sides(int(bid))
+        } if v6215_side_owned else set()
         same_request_buy: dict[int, float] = {}
         same_request_sell: dict[int, float] = {}
         # A1.7.4.3.1 closes the same-response gap that exists before final
@@ -12898,7 +13108,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # Cancellation acknowledgement must be visible in a later state before
             # a new placement can own this book.  This prevents stale entry/exit/
             # compaction orders from racing a newer authority.
-            if book_id in preexisting_order_books:
+            if (
+                (book_id, canonical_order_side(side)) in preexisting_order_sides if v6215_side_owned
+                else book_id in preexisting_order_books
+            ):
                 self._direct_emit_book_ownership_block(
                     book_id=book_id, side=str(side), reason="PREEXISTING_BOOK_ORDER", quantity=qty_f,
                 )
@@ -13200,16 +13413,34 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 # protection.  Then it is evaluated on this tick, and a taker exit
                 # cancels the entry quotes itself (cancel-before-taker).
                 a197_postfill = False
-                if self._direct_entry_quote_orders(book_id):
+                # v6.2.15 S3: note whether this position's mid mark is inside ABSOLUTE_PROTECTION; the touch-life
+                # post-pass then cancels its resting exit and the next evaluation keeps the chain's own taker.
+                if bool(getattr(self, "research_v6215_loss_stop", False)):
+                    self._v6215_note_stop(book_id, inventory, mid)
+                # v6.2.15 S2: an adding entry may rest beside the exit -- only an entry quote on the closing side
+                # yields to the exit, and only an order on the closing side holds the exit back.
+                closing = (
+                    v6215_reducing_side(getattr(inventory, "net_base", 0.0))
+                    if bool(getattr(self, "research_v6215_side_ownership", False)) else None
+                )
+                if (
+                    self._direct_entry_quote_orders(book_id) if closing is None
+                    else self._direct_entry_quote_orders(book_id, side=closing)
+                ):
                     a197_postfill = self._a197_postfill_candidate(book_id, inventory, mid)
                     if not a197_postfill:
                         self._a197_note_gap_skip(book_id, SKIP_INVENTORY_OPENED, inventory, mid)
                         n_cancel = self._direct_cancel_entry_quotes(
                             response, book_id, reason="INVENTORY_OPENED",
+                        ) if closing is None else self._direct_cancel_entry_quotes(
+                            response, book_id, reason="INVENTORY_OPENED", side=closing,
                         )
                         stats["instructions"] += int(n_cancel)
                         continue
-                if not a197_postfill and self._direct_book_has_live_order(book_id):
+                if not a197_postfill and (
+                    closing in self._v6215_live_sides(book_id) if closing is not None
+                    else self._direct_book_has_live_order(book_id)
+                ):
                     self._a197_note_gap_skip(book_id, SKIP_LIVE_ORDER, inventory, mid)
                     continue
                 profile = profile_by_id.get(book_id)
@@ -13563,6 +13794,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 self._v6214_assign_exit_identity(response)
             except Exception:
                 self._v6214_errors = int(getattr(self, "_v6214_errors", 0) or 0) + 1
+        # v6.2.15 S1 vetoes nothing either: every entry and exit keeps resting until it is filled, a condition rule
+        # cancels it, or the presence-window backstop expires -- set before the pending ledger records its expiry.
+        if bool(getattr(self, "research_v6215_order_life", False)):
+            try:
+                self._v6215_normalize_expiry(response)
+            except Exception:
+                self._v6215_errors = int(getattr(self, "_v6215_errors", 0) or 0) + 1
         self._research_sanitize_maker_instructions(response, state)
         self._research_final_validate_instructions(response, state)
         # A1.7.4.3: bridge the validator/account snapshot gap immediately after

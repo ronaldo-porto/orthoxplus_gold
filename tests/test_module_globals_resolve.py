@@ -25,6 +25,7 @@ STRATEGY = ROOT / "agents" / "strategy"
 MODULES = [
     "Strategy1_Research_Simple.py",
     "research_v6214_touch_life.py",
+    "research_v6215_order_life.py",
 ]
 
 # Strategy1_Research.py is frozen (test_research_v6_0_1_capacity::test_t4_frozen_files_are_untouched
