@@ -58,7 +58,7 @@ from taos.im.protocol.models import LoanSettlementOption, OrderDirection, STP, T
 
 from Strategy1 import Strategy1
 from Strategy1_Research import Strategy1_Research
-from DetailedTemplateAgent import BookSelection
+from DetailedTemplateAgent import BookSelection, MarketRegime
 from research_candidate_screen import ScreenResult
 from research_direct_economics import (
     ACTION_MAKER as EXEC_ACTION_MAKER,
@@ -587,6 +587,15 @@ from research_v63_trend_target import (
     target_base as v63_target_base,
     toward_price as v63_toward_price,
     wanted as v63_wanted,
+)
+from research_v631_sim_reset import (  # noqa: E402
+    V631_SIM_RESET_VERSION,
+    new_simulation as v631_new_simulation,
+)
+from research_v631_lean_handler import (  # noqa: E402
+    V631_LEAN_HANDLER_VERSION,
+    empty_selection_fields as v631_empty_selection_fields,
+    idle_regime_fields as v631_idle_regime_fields,
 )
 from research_v6215_order_life import (  # noqa: E402
     BACKSTOP_MS as V6215_BACKSTOP_MS,
@@ -1660,6 +1669,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v63_paused: set[int] = set()
         self._v63_caps_applied = False
         self._v63_last: dict[str, Any] = {}
+        # v6.3.1 S1: the book stop's pauses and the mid histories restart with a new simulation (the alpha mirror's
+        # window they were measured over is discarded there; a paused flat book could never release).
+        self.research_v631_sim_reset = self._as_bool(getattr(self.config, "research_v631_sim_reset", True))
+        self._v631_last_ts: int | None = None
+        self._v631_last_sim_id: str | None = None
+        self._v631_last_reset: dict[str, Any] = {}
+        # v6.3.1 S2: under v6.3 the frozen predict / select / regime pipeline and the second quote registration of
+        # the same response are not run -- only the retired entry/exit branches and telemetry read them.
+        self.research_v631_lean_handler = self._as_bool(getattr(self.config, "research_v631_lean_handler", True))
+        self._v631_counts: dict[str, int] = {}
+        self._v631_registered_response: Any = None
+        self._v631_regime: Any = None
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -10254,7 +10275,118 @@ class Strategy1_Research_Simple(Strategy1_Research):
         out["lean_log_every"] = int(V63_LEAN_LOG_EVERY_TICKS) if bool(getattr(self, "research_v63_lean_log", False)) else 0
         out["paused_books"] = len(getattr(self, "_v63_paused", set()) or set())
         out["last"] = dict(getattr(self, "_v63_last", {}) or {})
+        out["sim_reset_version"] = V631_SIM_RESET_VERSION
+        out["last_sim_reset"] = dict(getattr(self, "_v631_last_reset", {}) or {})
         return out
+
+    def _v631_observe_sim(self, state) -> str | None:
+        """v6.3.1 S1: at a new simulation, drop the book stop's pauses and every book's mid history.
+
+        Observed on every state, so the last timestamp and simulation id always track the venue; the reset itself
+        happens only with ``research_v631_sim_reset`` on.  Returns the reason when this state starts a new simulation.
+        """
+        try:
+            ts = int(getattr(state, "timestamp", 0) or 0)
+        except (TypeError, ValueError):
+            ts = 0
+        try:
+            sim_id = extract_simulation_id(state)
+        except Exception:
+            sim_id = None
+        old_ts, old_sim = getattr(self, "_v631_last_ts", None), getattr(self, "_v631_last_sim_id", None)
+        reason = v631_new_simulation(last_ts=old_ts, ts=ts, last_sim_id=old_sim, sim_id=sim_id)
+        if ts > 0:
+            self._v631_last_ts = ts
+        if sim_id:
+            self._v631_last_sim_id = str(sim_id)
+        if reason is None:
+            return None
+        self._v63_count("sim_changes")
+        if not bool(getattr(self, "research_v631_sim_reset", False)):
+            return reason
+        paused = getattr(self, "_v63_paused", None)
+        mids = getattr(self, "_v63_mids", None)
+        n_paused = len(paused) if paused else 0
+        n_mids = len(mids) if mids else 0
+        self._v63_paused = set()
+        self._v63_mids = {}
+        self._v63_count("sim_resets")
+        self._v631_last_reset = {
+            "tick": int(getattr(self, "_tick", 0) or 0), "reason": reason, "old_ts": old_ts, "new_ts": ts,
+            "old_sim": old_sim, "new_sim": sim_id, "paused_cleared": n_paused, "histories_cleared": n_mids,
+        }
+        self._emit(
+            "V631_SIM_RESET", force=True, v631_version=V631_SIM_RESET_VERSION, **self._v631_last_reset,
+        )
+        return reason
+
+    # ---- v6.3.1 S2: the lean handler ---------------------------------------------------------------------------------
+    def _v631_lean_on(self) -> bool:
+        return bool(self._v63_on() and getattr(self, "research_v631_lean_handler", False))
+
+    def _v631_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v631_counts", None)
+        if counts is None:
+            counts = {}
+            self._v631_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v631_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v631_counts", {}) or {})
+        out["version"] = V631_LEAN_HANDLER_VERSION
+        return out
+
+    def _predict_all_books(self, state):
+        """S2: the fast screen only -- no direction forecast, no neutral fallback, no full-predict fallback.
+
+        The screen stays: its inventory census drives the A1.7.3 dust normalizer's admission, the v6.0.0 lot classes
+        and V62_STATE.  The forecasts are read only by selection, regime and the frozen acquisition and exit branches,
+        none of which acts under v6.3.  A screen error keeps the last screen (never the 128-book full predict).
+        """
+        if not self._v631_lean_on():
+            return super()._predict_all_books(state)
+        self._last_predictions = {}
+        self._research_last_lanes = None
+        if not (getattr(state, "books", None) or {}):
+            return {}
+        timing = self._research_timing
+        started = time.perf_counter()
+        screen = None
+        try:
+            screen = self._research_fast_screen(state)
+        except Exception:
+            self._v631_count("screen_errors")
+        timing["screen_ms"] = (time.perf_counter() - started) * 1000.0
+        timing["screen_all_books_ms"] = timing["screen_ms"]
+        timing["full_predict_ms"] = 0.0
+        timing["screen_fallback"] = 0
+        if screen is not None:
+            timing["candidate_count"] = len(getattr(screen, "selected", None) or [])
+            timing["forced_inventory_count"] = len(getattr(screen, "forced_inventory", None) or [])
+            timing["forced_kappa_count"] = len(getattr(screen, "forced_kappa", None) or [])
+        self._v631_count("predict_skipped")
+        return {}
+
+    def classify_market_regime_from_profiles(self, profiles, predictions, selection):
+        """S2: a fixed idle regime; ``build_mm_strategy_instructions`` needs an object, only frozen branches read it."""
+        if not self._v631_lean_on():
+            return super().classify_market_regime_from_profiles(profiles, predictions, selection)
+        regime = getattr(self, "_v631_regime", None)
+        if regime is None:
+            regime = MarketRegime(**v631_idle_regime_fields())
+            self._v631_regime = regime
+        self._last_regime = regime
+        self._v631_count("regime_skipped")
+        return regime
+
+    def _research_register_submitted_quotes(self, response, state) -> None:
+        """S2: one quote-store registration per response (the second replaced the first at age 0)."""
+        if self._v631_lean_on():
+            if getattr(self, "_v631_registered_response", None) is response:
+                self._v631_count("registrations_deduped")
+                return
+            self._v631_registered_response = response
+        super()._research_register_submitted_quotes(response, state)
 
     def _v63_book_alphas(self) -> dict:
         """R5: this uid's own windowed per-book alpha (the v6.2.11 mirror); empty when it is not running."""
@@ -10277,6 +10409,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         takes no new order until the cancellation has been seen (A1.7.4.3.1), the v6.2.15 S2 side ownership.
         Returns the placements added.
         """
+        try:
+            self._v631_observe_sim(state)
+        except Exception:
+            self._v63_errors = int(getattr(self, "_v63_errors", 0) or 0) + 1
         books = getattr(state, "books", None) or {}
         ledger = self._a19_ledger_ref()
         clip = self._v63_clip()
@@ -10556,6 +10692,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             fee_cap_on=int(bool(getattr(self, "research_v63_fee_cap", False))),
             book_stop_on=int(bool(getattr(self, "research_v63_book_stop", False))),
             lean_log_on=int(bool(getattr(self, "research_v63_lean_log", False))),
+            sim_reset_on=int(bool(getattr(self, "research_v631_sim_reset", False))),
+            lean_handler_on=int(self._v631_lean_on()),
+            lean_handler=self._v631_snapshot(),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
@@ -11916,6 +12055,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def select_books_for_trading(self, state, predictions):
         """Build expensive profiles only for the bounded Direct FastPath set."""
+        if self._v631_lean_on():
+            # v6.3.1 S2: no profiles or ranking -- only the retired acquisition and exit branches read them.
+            selection = BookSelection(**v631_empty_selection_fields())
+            self._last_selection = selection
+            self._v631_count("selection_skipped")
+            return selection
         started = time.perf_counter()
         screen = getattr(self, "_research_last_screen", None)
         selected_all = [int(x) for x in (getattr(screen, "selected", None) or [])]

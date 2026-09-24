@@ -26,6 +26,8 @@ import research_v62_breadth as br  # noqa: E402
 import research_v6214_touch_life as tl  # noqa: E402
 import research_v6210_touch_improve as ti  # noqa: E402
 import research_v6215_order_life as ol  # noqa: E402
+import research_v631_sim_reset as sr  # noqa: E402
+from research_session_state import extract_simulation_id  # noqa: E402
 from research_direct_exit_ledger import DirectExitLedger  # noqa: E402
 from research_direct_exit_refresh import ABSENT_REPRICE_CANCEL  # noqa: E402
 from _harness import extractor  # noqa: E402
@@ -147,6 +149,8 @@ class _PassAgent:
         self.research_v63_alpha_floor = floor
         self._v63_counts, self._v63_errors, self._v63_mids, self._v63_paused, self._v63_last = {}, 0, {}, set(), {}
         self._v63_caps_applied = False
+        self.research_v631_sim_reset = True
+        self._v631_last_ts, self._v631_last_sim_id, self._v631_last_reset = None, None, {}
         self._v6214_last_taker = dict(last or {})
         self._v6211_mirror = _Mirror(alphas or {})
         self.venue = dict(venue or {}); self.fees = dict(fees or {}); self.live = dict(live_sides or {})
@@ -207,10 +211,12 @@ def _pass_agent(**kwargs):
         "v6210_touch_view": ti.touch_view, "V6215_BACKSTOP_MS": ol.BACKSTOP_MS, "ABSENT_REPRICE_CANCEL": ABSENT_REPRICE_CANCEL,
         "OrderDirection": _Dir, "STP": types.SimpleNamespace(CANCEL_BOTH="CANCEL_BOTH"),
         "TimeInForce": types.SimpleNamespace(GTT="GTT"), "LoanSettlementOption": types.SimpleNamespace(NONE="NONE"), "Any": Any,
+        "V631_SIM_RESET_VERSION": sr.V631_SIM_RESET_VERSION, "v631_new_simulation": sr.new_simulation,
+        "extract_simulation_id": extract_simulation_id,
     })
     cls = type("P", (_PassAgent,), {})
     for name in ("_v63_pass", "_v63_count", "_v63_clip", "_v63_apply_caps", "_v63_snapshot", "_v63_book_alphas",
-                 "_v6214_note_prints", "_v6214_others_depth", "_v6214_cancelled_ids"):
+                 "_v631_observe_sim", "_v6214_note_prints", "_v6214_others_depth", "_v6214_cancelled_ids"):
         exec(compile(ast.Module(body=[ast.parse(_simple(name)).body[0]], type_ignores=[]), "<v63>", "exec"), ns)
         setattr(cls, name, ns[name])
     return cls(**kwargs)

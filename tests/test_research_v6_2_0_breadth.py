@@ -34,6 +34,7 @@ import research_v6213_venue_band as vb13  # noqa: E402
 import research_v6214_touch_life as tl14  # noqa: E402
 import research_v6215_order_life as ol15
 import research_v63_trend_target as tt63  # noqa: E402
+import research_v631_sim_reset as sr631  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -64,6 +65,7 @@ METHODS = [
     "_v6214_count", "_v6214_snapshot",                         # v6.2.14, off the same way
     "_v6215_count", "_v6215_snapshot", "_v6215_life_ms",       # v6.2.15, off the same way
     "_v63_on", "_v63_snapshot", "_v63_clip", "_v63_count",     # v6.3, off the same way
+    "_v631_lean_on", "_v631_count", "_v631_snapshot",          # v6.3.1, off with v6.3
 ]
 LOT = 0.25
 UNIVERSE = 128
@@ -317,6 +319,8 @@ def _agent(*, v62=True, books=None, tick=10):
         "V63_TARGET_CLIPS": tt63.TARGET_CLIPS, "V63_MAKING_CLIPS": tt63.MAKING_CLIPS,
         "V63_ALPHA_FLOOR_DEFAULT": tt63.ALPHA_FLOOR_DEFAULT, "V63_CLIP_BASE": tt63.CLIP_BASE,
         "V63_LEAN_LOG_EVERY_TICKS": tt63.LEAN_LOG_EVERY_TICKS,
+        "V631_SIM_RESET_VERSION": sr631.V631_SIM_RESET_VERSION,
+        "V631_LEAN_HANDLER_VERSION": "lean_handler_v6_3_1",
     }
     exec("from __future__ import annotations\nclass Harness(_Base):\n" + body, scope)
     agent = scope["Harness"]()

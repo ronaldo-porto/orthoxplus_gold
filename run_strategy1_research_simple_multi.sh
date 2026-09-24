@@ -342,7 +342,9 @@ research_v63_fee_cap=0 \
 research_v63_book_stop=1 \
 research_v63_clip_base=1.0 \
 research_v63_alpha_floor=18 \
-research_v63_lean_log=1"
+research_v63_lean_log=1 \
+research_v631_sim_reset=1 \
+research_v631_lean_handler=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2126,6 +2128,39 @@ if [[ "$V63_BUILD" == "1" ]]; then
   [[ "$PARAMS" == *"research_v6211_alpha_mirror=1"* ]] || { echo "ERROR: v6.3 R5 needs the v6.2.11 alpha mirror on." >&2; exit 1; }
   [[ "$INHERITED_SHORT_LOTS" == "exit" ]] || { echo "ERROR: v6.3 needs INHERITED_SHORT_LOTS=exit (a parked position is never managed)." >&2; exit 1; }
   echo "[preflight] v6.3 trend target PASS"
+  # v6.3.1 S1: at a new simulation the alpha mirror discards its window and a paused flat book can never release;
+  # the book stop's pauses and the 120-state mid histories restart with the simulation (the mirror's own jump rule).
+  grep -qF 'from research_v631_sim_reset import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.1 S1 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self._v631_observe_sim(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.1 S1 the v6.3 pass does not observe the simulation." >&2
+    exit 1
+  }
+  grep -qF 'from research_v6211_score_logic import REBASE_MIN_JUMP_NS' "$AGENT_PATH/research_v631_sim_reset.py" || {
+    echo "ERROR: v6.3.1 S1 does not reset on the alpha mirror's own rebase rule." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v631_sim_reset=1"* ]] || { echo "ERROR: v6.3.1 build without research_v631_sim_reset=1 in PARAMS." >&2; exit 1; }
+  echo "[preflight] v6.3.1 sim reset PASS"
+  # v6.3.1 S2: under v6.3 the frozen predict / select / regime pipeline is not run (only the retired acquisition and
+  # exit branches read it; ~52 ms of the ~260 ms handler) and a response is registered in the quote store once.
+  # The fast screen stays: its inventory census drives the A1.7.3 dust normalizer's admission.
+  grep -qF 'from research_v631_lean_handler import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.1 S2 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'screen = self._research_fast_screen(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.1 S2 the lean predict path does not keep the fast screen." >&2
+    exit 1
+  }
+  grep -qF 'if getattr(self, "_v631_registered_response", None) is response:' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.1 S2 quote registration is not once per response." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v631_lean_handler=1"* ]] || { echo "ERROR: v6.3.1 build without research_v631_lean_handler=1 in PARAMS." >&2; exit 1; }
+  echo "[preflight] v6.3.1 lean handler PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2211,6 +2246,8 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_2_15_order_life.py \
       tests/test_research_v6_2_15_1_no_taker_stop.py \
       tests/test_research_v6_3_0_trend_target.py \
+      tests/test_research_v6_3_1_sim_reset.py \
+      tests/test_research_v6_3_1_lean_handler.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
