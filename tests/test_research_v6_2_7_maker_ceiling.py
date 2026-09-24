@@ -247,8 +247,8 @@ def test_the_telemetry_reports_the_new_switches():
 
 
 def test_the_version_is_pinned_to_v6_2_7():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_3_0"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_3_0"' in SIMPLE
     assert "strategy1_direct_v6_2_8)" in LAUNCHER
     assert "V627_BUILD=1" in LAUNCHER
 

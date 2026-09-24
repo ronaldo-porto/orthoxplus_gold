@@ -76,8 +76,8 @@ ENTRY_QUOTE_ASK_CID = 70000 + BOOK * 10 + 2
 # --------------------------------------------------------------- versioning
 
 def test_version_pins_advance_to_a1_9_0_3():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_15"' in SRC
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_15"' in SRC
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_3_0"' in SRC
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_3_0"' in SRC
     assert DIRECT_EXIT_LEDGER_VERSION == "direct_exit_ledger_v4_16_2_a1_9_0_3"
     assert DIRECT_EXIT_REFRESH_VERSION == "direct_exit_refresh_v4_16_2_a1_9_2"
 
@@ -106,7 +106,8 @@ def test_all_three_cancel_paths_register_a_reason():
     # order as a reprice or an entry-quote cancel.  This count is the guard
     # itself -- it must rise only alongside a new *registered* site, never to
     # accommodate an unregistered one.
-    assert SRC.count("_a19_note_exit_cancel(") == 8
+    # v6.3: the trend-target pass registers its own cancels (unwanted, thin, just-hit, fee-capped, paused).
+    assert SRC.count("_a19_note_exit_cancel(") == 9
     for reason in (
         "ABSENT_WAIT_CANCEL", "ABSENT_ENTRY_QUOTE_CANCEL",
         "ABSENT_PARTIAL_REMAINDER_CANCEL", "ABSENT_REPRICE_CANCEL",

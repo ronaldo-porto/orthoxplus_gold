@@ -119,7 +119,7 @@ def test_the_preflight_refuses_a_stop_in_params_or_in_the_agent_default():
 
 
 def test_the_fix_release_keeps_the_v6215_pin_arm_and_stop_code_and_is_gated():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_3_0"' in SIMPLE
     assert "strategy1_direct_v6_2_15)" in LAUNCHER
     assert "[preflight] v6.2.15.1 no taker stop PASS" in LAUNCHER
     assert "tests/test_research_v6_2_15_1_no_taker_stop.py" in LAUNCHER

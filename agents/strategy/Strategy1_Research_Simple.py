@@ -556,6 +556,38 @@ from research_v6214_touch_life import (  # noqa: E402
     others_touch as v6214_others_touch,
     select_sides as v6214_select_sides,
 )
+from research_v63_trend_target import (
+    V63_TREND_TARGET_VERSION,
+    ALPHA_FLOOR_DEFAULT as V63_ALPHA_FLOOR_DEFAULT,
+    CANCEL_FEE as V63_CANCEL_FEE,
+    CANCEL_PAUSED as V63_CANCEL_PAUSED,
+    CANCEL_UNWANTED as V63_CANCEL_UNWANTED,
+    CLIP_BASE as V63_CLIP_BASE,
+    LEAN_LOG_EVERY_TICKS as V63_LEAN_LOG_EVERY_TICKS,
+    MAKING_CLIPS as V63_MAKING_CLIPS,
+    ROLE_MAKING as V63_ROLE_MAKING,
+    ROLE_TOWARD as V63_ROLE_TOWARD,
+    SIDE_BUY as V63_SIDE_BUY,
+    SIDE_SELL as V63_SIDE_SELL,
+    SIGNAL_STATES as V63_SIGNAL_STATES,
+    TARGET_CLIPS as V63_TARGET_CLIPS,
+    caps_for as v63_caps_for,
+    client_ids as v63_client_ids,
+    fee_cap_bps as v63_fee_cap_bps,
+    improve_price as v63_improve_price,
+    lean_drop as v63_lean_drop,
+    log_mid_bps as v63_log_mid_bps,
+    making_side_verdict as v63_making_side_verdict,
+    new_history as v63_new_history,
+    own_client_ids as v63_own_client_ids,
+    role_for as v63_role_for,
+    role_of as v63_role_of,
+    signal_bps as v63_signal_bps,
+    stop_state as v63_stop_state,
+    target_base as v63_target_base,
+    toward_price as v63_toward_price,
+    wanted as v63_wanted,
+)
 from research_v6215_order_life import (  # noqa: E402
     BACKSTOP_MS as V6215_BACKSTOP_MS,
     STOP_REASON as V6215_STOP_REASON,
@@ -761,8 +793,8 @@ DIRECT_A194_EVENTS = ("A194_REBATE_COVERED", "A194_REBATE_WAIVER_WITHDRAWN")
 # harm the book has actually done, so being paid genuinely offsets it.
 A194_ALLOW_REBATE_COVERED = "ALLOW_REBATE_COVERED"
 
-SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_15"
-SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_15"
+SIMPLE_POLICY_VERSION = "strategy1_direct_v6_3_0"
+SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_3_0"
 
 # v5.0.0 analytics cadence, in requests.  The score mirror took under 3 ms at 8,400 rounds.
 V500_SCORE_EVERY_TICKS = 100
@@ -1604,6 +1636,30 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6215_order_life_ms = float(V6215_BACKSTOP_MS) if self.research_v6215_order_life else None
         if self.research_v6215_order_life:
             self._v6215_arm_ledger(getattr(self, "_a19_ledger", None))
+        # v6.3: every book holds inventory in the direction of its own recent move, with a making layer around it.
+        # Mainnet trends (consecutive 60 s returns correlate +0.45, 300 s +0.64); a resting-order maker's inventory
+        # points against the move (UID 94: -0.36 with the past 300 s return, alpha negative on 128 of 128 books).
+        # One switch per rule; all off = v6.2.15.1.
+        self.research_v63_trend_target = self._as_bool(getattr(self.config, "research_v63_trend_target", True))
+        self.research_v63_making_layer = self._as_bool(getattr(self.config, "research_v63_making_layer", True))
+        self.research_v63_fee_cap = self._as_bool(getattr(self.config, "research_v63_fee_cap", True))
+        self.research_v63_book_stop = self._as_bool(getattr(self.config, "research_v63_book_stop", True))
+        self.research_v63_lean_log = self._as_bool(getattr(self.config, "research_v63_lean_log", True))
+        try:
+            self.research_v63_clip_base = float(getattr(self.config, "research_v63_clip_base", V63_CLIP_BASE) or V63_CLIP_BASE)
+        except (TypeError, ValueError):
+            self.research_v63_clip_base = float(V63_CLIP_BASE)
+        try:
+            self.research_v63_alpha_floor = float(
+                getattr(self.config, "research_v63_alpha_floor", V63_ALPHA_FLOOR_DEFAULT) or V63_ALPHA_FLOOR_DEFAULT)
+        except (TypeError, ValueError):
+            self.research_v63_alpha_floor = float(V63_ALPHA_FLOOR_DEFAULT)
+        self._v63_counts: dict[str, int] = {}
+        self._v63_errors = 0
+        self._v63_mids: dict[int, Any] = {}
+        self._v63_paused: set[int] = set()
+        self._v63_caps_applied = False
+        self._v63_last: dict[str, Any] = {}
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -6690,6 +6746,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 )
 
     def _emit(self, event_type: str, force: bool = False, **payload: Any) -> None:
+        # v6.3 R6: a row that repeats the same fact per quote or per bookkeeping step is written on its sample
+        # state only (none of them is read by a decision or by the analytics tap below).
+        if bool(getattr(self, "research_v63_lean_log", False)) and v63_lean_drop(event_type, getattr(self, "_tick", 0)):
+            self._v63_count("lean_dropped")
+            return None
         # v5.0.0: the analytics ledger reads a row as it is written.  The row goes on unchanged,
         # and nothing the ledger holds is read by a decision.
         analytics = getattr(self, "_v500_analytics", None)
@@ -10137,6 +10198,304 @@ class Strategy1_Research_Simple(Strategy1_Research):
         books = getattr(self, "_v6215_stop_books", None) or {}
         return books.get(int(book_id)) == int(getattr(self, "_tick", 0) or 0)
 
+    # ---- v6.3: trend-aligned inventory with a making layer ----------------------------------------------------------
+    def _v63_on(self) -> bool:
+        return bool(self._v62_on() and getattr(self, "research_v63_trend_target", False))
+
+    def _v63_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v63_counts", None)
+        if counts is None:
+            counts = {}
+            self._v63_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v63_clip(self) -> float:
+        """R4: the order size in base, never below the venue's minimum order."""
+        min_order = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+        try:
+            clip = float(getattr(self, "research_v63_clip_base", V63_CLIP_BASE) or V63_CLIP_BASE)
+        except (TypeError, ValueError):
+            clip = float(V63_CLIP_BASE)
+        return max(min_order, clip)
+
+    def _v63_apply_caps(self, state) -> None:
+        """R1/R4: the exposure bound is the universe's target plus one making clip per book, re-asserted every request."""
+        books = getattr(state, "books", None) or {}
+        n = len(books)
+        if n <= 0:
+            return
+        caps = v63_caps_for(n, clip=self._v63_clip())
+        changed = False
+        for key, value in caps.items():
+            if float(getattr(self, key, 0.0) or 0.0) < float(value) - 1e-9:
+                setattr(self, key, float(value))
+                changed = True
+        if not changed:
+            return
+        if getattr(self, "_v63_caps_applied", False):
+            self._v63_count("caps_reasserted")
+            return
+        self._v63_caps_applied = True
+        self._v63_count("caps_applied")
+        self._emit(
+            "V63_CAPS", force=True, tick=int(getattr(self, "_tick", 0) or 0), v63_version=V63_TREND_TARGET_VERSION,
+            universe=int(n), clip=float(self._v63_clip()), after=dict(caps),
+        )
+
+    def _v63_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v63_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v63_errors", 0) or 0)
+        out["version"] = V63_TREND_TARGET_VERSION
+        out["clip"] = float(self._v63_clip())
+        out["signal_states"] = int(V63_SIGNAL_STATES)
+        out["target_clips"] = int(V63_TARGET_CLIPS)
+        out["making_clips"] = int(V63_MAKING_CLIPS)
+        out["alpha_floor"] = float(getattr(self, "research_v63_alpha_floor", V63_ALPHA_FLOOR_DEFAULT) or 0.0)
+        out["lean_log_every"] = int(V63_LEAN_LOG_EVERY_TICKS) if bool(getattr(self, "research_v63_lean_log", False)) else 0
+        out["paused_books"] = len(getattr(self, "_v63_paused", set()) or set())
+        out["last"] = dict(getattr(self, "_v63_last", {}) or {})
+        return out
+
+    def _v63_book_alphas(self) -> dict:
+        """R5: this uid's own windowed per-book alpha (the v6.2.11 mirror); empty when it is not running."""
+        mirror = getattr(self, "_v6211_mirror", None)
+        if mirror is None:
+            return {}
+        try:
+            return dict(mirror.book_alphas())
+        except Exception:
+            self._v63_errors = int(getattr(self, "_v63_errors", 0) or 0) + 1
+            return {}
+
+    def _v63_pass(self, response, state, stats: dict) -> int:
+        """v6.3: the quoting pass over every book -- the target orders (R1) and the making layer (R2-R5).
+
+        Per book and request: the mid's move over the lookback sets the target; the venue's position (v6.2.13) is the
+        inventory; a resting order of ours that is no longer wanted, or a making-layer order on a thin, just-hit,
+        fee-capped or paused side, is cancelled; a side with no order of ours and room to fill takes one order --
+        toward the target one tick inside or at the touch, the making layer one tick inside only.  A cancelled side
+        takes no new order until the cancellation has been seen (A1.7.4.3.1), the v6.2.15 S2 side ownership.
+        Returns the placements added.
+        """
+        books = getattr(state, "books", None) or {}
+        ledger = self._a19_ledger_ref()
+        clip = self._v63_clip()
+        min_order = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+        target_abs = float(V63_TARGET_CLIPS) * clip
+        making_on = bool(getattr(self, "research_v63_making_layer", False))
+        width = float(V63_MAKING_CLIPS) * clip if making_on else 0.0
+        stop_on = bool(getattr(self, "research_v63_book_stop", False))
+        floor = float(getattr(self, "research_v63_alpha_floor", V63_ALPHA_FLOOR_DEFAULT) or V63_ALPHA_FLOOR_DEFAULT)
+        cfg = getattr(state, "config", None)
+        dec = int(self._v61_price_decimals(state))
+        tick_size = 10.0 ** (-dec)
+        eps = float(self._execution_flat_epsilon())
+        budget = int(getattr(self, "max_instructions_per_book", 5) or 5)
+        expiry = int(float(V6215_BACKSTOP_MS) * 1_000_000)
+        try:
+            venue = self._a195_venue_net_by_book(books)
+        except Exception:
+            venue = {}
+        fee_cap = None
+        if bool(getattr(self, "research_v63_fee_cap", False)):
+            fees = []
+            for raw_id in books:
+                try:
+                    fees.append(float(self._research_live_fee_bps(int(raw_id), is_maker=True)))
+                except Exception:
+                    continue
+            fee_cap = v63_fee_cap_bps(fees)
+        alphas = self._v63_book_alphas() if stop_on else {}
+        paused = getattr(self, "_v63_paused", None)
+        if paused is None:
+            paused = set()
+            self._v63_paused = paused
+        mids = getattr(self, "_v63_mids", None)
+        if mids is None:
+            mids = {}
+            self._v63_mids = mids
+        memo = getattr(self, "_v6214_last_taker", None) or {}
+        already = self._v6214_cancelled_ids(response)
+        req: dict[str, Any] = {
+            "books": len(books), "long": 0, "short": 0, "flat": 0, "paused": 0, "no_signal": 0,
+            "placed_toward": 0, "placed_making": 0, "cancels": 0, "fee_cap_bps": fee_cap,
+        }
+        placed_total = 0
+        for raw_id in sorted(books, key=lambda x: int(x)):
+            book_id = int(raw_id)
+            book = books[raw_id]
+            try:
+                self._v6214_note_prints(book_id, book)
+            except Exception:
+                pass
+            try:
+                bids = getattr(book, "bids", None) or []
+                asks = getattr(book, "asks", None) or []
+                raw_bid = float(bids[0].price) if bids else None
+                raw_ask = float(asks[0].price) if asks else None
+            except (TypeError, ValueError, AttributeError, IndexError):
+                continue
+            prices = v62_touch_prices(raw_bid, raw_ask, dec)
+            if prices is None:
+                continue
+            raw_bid, raw_ask = prices
+            hist = mids.get(book_id)
+            if hist is None:
+                hist = v63_new_history(V63_SIGNAL_STATES)
+                mids[book_id] = hist
+            lm = v63_log_mid_bps(raw_bid, raw_ask)
+            if lm is not None:
+                hist.append(lm)
+            signal = v63_signal_bps(hist, V63_SIGNAL_STATES)
+            if signal is None:
+                req["no_signal"] += 1
+            if stop_on:
+                was = book_id in paused
+                now_paused = v63_stop_state(alphas.get(book_id), floor, was)
+                if now_paused and not was:
+                    paused.add(book_id)
+                    self._v63_count("book_pauses")
+                elif was and not now_paused:
+                    paused.discard(book_id)
+                    self._v63_count("book_releases")
+            is_paused = book_id in paused
+            target = 0.0 if is_paused else v63_target_base(signal, target_abs=target_abs)
+            if is_paused:
+                req["paused"] += 1
+            elif target > eps:
+                req["long"] += 1
+            elif target < -eps:
+                req["short"] += 1
+            else:
+                req["flat"] += 1
+            inv = venue.get(book_id)
+            if inv is None:
+                try:
+                    inv = float(self._direct_signed_inventory(book_id))
+                except Exception:
+                    inv = 0.0
+            want = v63_wanted(inv, target, clip=clip, making_width=0.0 if is_paused else width)
+            rows = []
+            own_ids: set[int] = set()
+            if ledger is not None:
+                for row in ledger.live_orders(book_id):
+                    try:
+                        own_ids.add(int(row.order_id))
+                    except (TypeError, ValueError):
+                        continue
+                    if v63_role_of(getattr(row, "client_id", None)) is not None:
+                        rows.append(row)
+            own_cids = (
+                v63_own_client_ids(book_id) | set(v62_entry_client_ids(book_id)) | set(v6214_exit_client_ids(book_id))
+            )
+            try:
+                view = v6210_touch_view(book, own_ids=own_ids, own_cids=own_cids)
+            except Exception:
+                view = None
+            try:
+                depth = self._v6214_others_depth(book_id, book, own_ids)
+            except Exception:
+                depth = (float("nan"), float("nan"))
+            fee_ok = True
+            if fee_cap is not None:
+                try:
+                    fee_ok = float(self._research_live_fee_bps(book_id, is_maker=True)) <= float(fee_cap) + 1e-9
+                except Exception:
+                    fee_ok = True
+
+            def _making_why(side, _depth=depth, _last=memo.get(book_id)):
+                own_d, other_d = (_depth[0], _depth[1]) if side == V63_SIDE_BUY else (_depth[1], _depth[0])
+                return v63_making_side_verdict(side, own_depth=own_d, other_depth=other_d, last_taker=_last)
+
+            doomed = []
+            for row in rows:
+                if int(row.order_id) in already:
+                    continue
+                side = V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL
+                role = v63_role_of(row.client_id)
+                if float(want.get(side, 0.0)) <= eps:
+                    doomed.append((row, V63_CANCEL_UNWANTED))
+                    continue
+                if role == V63_ROLE_MAKING:
+                    if is_paused:
+                        doomed.append((row, V63_CANCEL_PAUSED))
+                    elif not fee_ok:
+                        doomed.append((row, V63_CANCEL_FEE))
+                    else:
+                        why = _making_why(side)
+                        if why is not None:
+                            doomed.append((row, why))
+            cancelled_sides: set[str] = set()
+            if doomed and self._count_book_instructions(response, book_id) < budget:
+                ids = [int(row.order_id) for row, _why in doomed]
+                try:
+                    response.cancel_orders(book_id=book_id, order_ids=ids, delay=0)
+                except Exception:
+                    self._v63_errors = int(getattr(self, "_v63_errors", 0) or 0) + 1
+                else:
+                    req["cancels"] += 1
+                    for row, why in doomed:
+                        self._v63_count("cancel_" + str(why).lower())
+                        cancelled_sides.add(V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL)
+                    try:
+                        self._a19_note_exit_cancel(book_id, ids, ABSENT_REPRICE_CANCEL)
+                    except Exception:
+                        pass
+            resting_sides = {V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL for row in rows}
+            try:
+                live_sides = set(self._v6215_live_sides(book_id))
+            except Exception:
+                live_sides = set(resting_sides)
+            for side in (V63_SIDE_BUY, V63_SIDE_SELL):
+                qty = float(want.get(side, 0.0))
+                if qty <= eps or side in resting_sides or side in live_sides or side in cancelled_sides:
+                    continue
+                role = v63_role_for(side, inv, target, eps)
+                if role == V63_ROLE_MAKING:
+                    if not making_on or is_paused:
+                        continue
+                    if not fee_ok:
+                        self._v63_count("making_skipped_fee")
+                        continue
+                    if _making_why(side) is not None:
+                        self._v63_count("making_skipped_side")
+                        continue
+                    price = v63_improve_price(view, side, tick_size)
+                    if price is None:
+                        self._v63_count("making_skipped_no_improve")
+                        continue
+                else:
+                    price = v63_toward_price(view, side, tick_size, raw_bid=raw_bid, raw_ask=raw_ask)
+                q = v62_lot_quantity(qty, getattr(cfg, "volumeDecimals", 4))
+                if q + 1e-12 < min_order:
+                    self._v63_count("below_min_order")
+                    continue
+                if self._count_book_instructions(response, book_id) >= budget:
+                    self._v63_count("budget_deferred")
+                    break
+                buy_cid, sell_cid = v63_client_ids(book_id, role)
+                try:
+                    response.limit_order(
+                        book_id=book_id,
+                        direction=OrderDirection.BUY if side == V63_SIDE_BUY else OrderDirection.SELL,
+                        quantity=q, price=float(price),
+                        clientOrderId=buy_cid if side == V63_SIDE_BUY else sell_cid,
+                        stp=STP.CANCEL_BOTH, postOnly=True, timeInForce=TimeInForce.GTT, expiryPeriod=expiry,
+                        leverage=0.0, settlement_option=LoanSettlementOption.NONE, delay=0,
+                    )
+                except Exception:
+                    self._v63_errors = int(getattr(self, "_v63_errors", 0) or 0) + 1
+                    continue
+                placed_total += 1
+                req["placed_toward" if role == V63_ROLE_TOWARD else "placed_making"] += 1
+        for key in ("long", "short", "flat", "paused", "no_signal", "placed_toward", "placed_making", "cancels"):
+            self._v63_count(key, int(req[key]))
+        self._v63_count("requests")
+        self._v63_last = req
+        stats["candidates"] = int(req["long"] + req["short"])
+        stats["quoted"] = int(req["placed_toward"] + req["placed_making"])
+        return placed_total
+
     def _v62_telemetry(self, state) -> None:
         tick = int(getattr(self, "_tick", 0) or 0)
         if getattr(self, "_v62_state_reported", False) and not (tick > 0 and tick % V62_STATE_EVERY_TICKS == 0):
@@ -10192,6 +10551,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             side_ownership_on=int(bool(getattr(self, "research_v6215_side_ownership", False))),
             loss_stop_on=int(bool(getattr(self, "research_v6215_loss_stop", False))),
             order_life=self._v6215_snapshot(),
+            trend_target_on=int(self._v63_on()),
+            making_layer_on=int(bool(getattr(self, "research_v63_making_layer", False))),
+            fee_cap_on=int(bool(getattr(self, "research_v63_fee_cap", False))),
+            book_stop_on=int(bool(getattr(self, "research_v63_book_stop", False))),
+            lean_log_on=int(bool(getattr(self, "research_v63_lean_log", False))),
+            trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
             last_request=dict(getattr(self, "_v62_request", {}) or {}),
@@ -13293,6 +13658,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v62_apply_caps(state)
         except Exception:
             self._v62_errors = int(getattr(self, "_v62_errors", 0) or 0) + 1
+        # v6.3 R1/R4: the exposure bound is the universe's target plus one making clip per book.
+        if self._v63_on():
+            try:
+                self._v63_apply_caps(state)
+            except Exception:
+                self._v63_errors = int(getattr(self, "_v63_errors", 0) or 0) + 1
 
         stats: dict[str, Any] = {
             "direct_mode": 1,
@@ -13392,7 +13763,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # A1.9.7 P1: books evaluated on the tick after their entry fill.
         a197_postfill_books: set[int] = set()
         # Inventory is never dependent on acquisition shortlist membership.
-        for raw_id, book in (getattr(state, "books", None) or {}).items():
+        # v6.3 R1: a position is the target, not something to exit -- the frozen exit chain does not run.
+        for raw_id, book in ({} if self._v63_on() else (getattr(state, "books", None) or {})).items():
             book_id = int(raw_id)
             if not getattr(book, "bids", None) or not getattr(book, "asks", None):
                 continue
@@ -13692,8 +14064,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # and the slot count no longer gate acquisition.  Off, the frozen path below runs unchanged.
         if self._v62_on():
             try:
-                v62_placed = self._v62_acquire(response, state, stats)
-                self._v625_apply_caps(state)
+                if self._v63_on():
+                    # v6.3 R1: the target pass owns every book's quoting; the v6.2 acquisition does not run.
+                    v62_placed = self._v63_pass(response, state, stats)
+                else:
+                    v62_placed = self._v62_acquire(response, state, stats)
+                    self._v625_apply_caps(state)
             except Exception:
                 self._v62_errors = int(getattr(self, "_v62_errors", 0) or 0) + 1
                 v62_placed = 0

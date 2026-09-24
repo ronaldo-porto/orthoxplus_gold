@@ -126,7 +126,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -165,6 +165,9 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_14) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1 ;;
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
+    [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1
+    # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
     echo "ERROR: wrong Strategy1 direct candidate (SIMPLE_POLICY_VERSION=${POLICY_VER:-unset})" >&2
@@ -332,7 +335,14 @@ research_v6214_side_select=1 \
 research_v6214_exit_identity=1 \
 research_v6215_order_life=1 \
 research_v6215_side_ownership=1 \
-research_v6215_loss_stop=0"
+research_v6215_loss_stop=0 \
+research_v63_trend_target=1 \
+research_v63_making_layer=1 \
+research_v63_fee_cap=0 \
+research_v63_book_stop=1 \
+research_v63_clip_base=1.0 \
+research_v63_alpha_floor=18 \
+research_v63_lean_log=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2061,6 +2071,62 @@ if [[ "$V6215_BUILD" == "1" ]]; then
   echo "[preflight] v6.2.15 order life PASS"
   echo "[preflight] v6.2.15.1 no taker stop PASS"
 fi
+if [[ "$V63_BUILD" == "1" ]]; then
+  # v6.3: every book holds inventory in the direction of its own recent move, with a making layer around it.
+  # Mainnet trends (consecutive 60 s returns +0.45, 300 s +0.64, gone by 20 min); a resting-order maker's
+  # inventory points against the move (UID 94: -0.36 with the past 300 s return, alpha < 0 on 128 of 128 books;
+  # the 233 family +0.33, skill 3.7-4.1).  Replay (validator arithmetic, calibrated fills, our 58 ms delay):
+  # skill +5.3 and making 55-140 per 3-h window.  R1 trend target, R2 making layer, R3 fee cap, R4 clip, R5 stop.
+  grep -qF 'from research_v63_trend_target import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'v62_placed = self._v63_pass(response, state, stats)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3 R1 target pass does not own acquisition." >&2
+    exit 1
+  }
+  grep -qF 'for raw_id, book in ({} if self._v63_on() else (getattr(state, "books", None) or {})).items():' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3 R1 does not keep the frozen exit chain off a target position." >&2
+    exit 1
+  }
+  grep -qF 'self._v63_apply_caps(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3 R4 does not raise the exposure bound to the target band." >&2
+    exit 1
+  }
+  grep -qF 'price = v63_improve_price(view, side, tick_size)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3 R2 making layer does not rest one tick inside only." >&2
+    exit 1
+  }
+  grep -qF 'fee_cap = v63_fee_cap_bps(fees)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3 R3 fee cap is not the median live maker fee." >&2
+    exit 1
+  }
+  grep -qF 'now_paused = v63_stop_state(alphas.get(book_id), floor, was)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3 R5 book stop does not read the own alpha mirror." >&2
+    exit 1
+  }
+  grep -qF 'SIGNAL_STATES = 120' "$AGENT_PATH/research_v63_trend_target.py" || {
+    echo "ERROR: v6.3 signal lookback is not the replayed 120 states." >&2
+    exit 1
+  }
+  [[ "$V6215_BUILD" == "1" ]] || { echo "ERROR: v6.3 builds on v6.2.15.1." >&2; exit 1; }
+  grep -qF 'if bool(getattr(self, "research_v63_lean_log", False)) and v63_lean_drop(event_type, getattr(self, "_tick", 0)):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3 R6 lean log is not wired into _emit." >&2
+    exit 1
+  }
+  for key in research_v63_trend_target=1 research_v63_making_layer=1 research_v63_book_stop=1 research_v63_clip_base=1.0 research_v63_alpha_floor=18 research_v63_lean_log=1; do
+    [[ "$PARAMS" == *"$key"* ]] || { echo "ERROR: v6.3 build without $key in PARAMS." >&2; exit 1; }
+  done
+  # R3 ships OFF (score first: replay trading 0.71-0.83 off vs 0.56-0.70 on); the key must still be carried so the
+  # cap can be switched on for a capital-first run (fees cost ~20k sim quote per day at 1.0 clips, ~0.3% of wealth).
+  [[ "$PARAMS" == *"research_v63_fee_cap=0"* || "$PARAMS" == *"research_v63_fee_cap=1"* ]] || {
+    echo "ERROR: v6.3 build without research_v63_fee_cap in PARAMS." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v6211_alpha_mirror=1"* ]] || { echo "ERROR: v6.3 R5 needs the v6.2.11 alpha mirror on." >&2; exit 1; }
+  [[ "$INHERITED_SHORT_LOTS" == "exit" ]] || { echo "ERROR: v6.3 needs INHERITED_SHORT_LOTS=exit (a parked position is never managed)." >&2; exit 1; }
+  echo "[preflight] v6.3 trend target PASS"
+fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
@@ -2144,6 +2210,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_2_14_touch_life.py \
       tests/test_research_v6_2_15_order_life.py \
       tests/test_research_v6_2_15_1_no_taker_stop.py \
+      tests/test_research_v6_3_0_trend_target.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

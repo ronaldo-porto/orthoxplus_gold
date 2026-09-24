@@ -717,8 +717,8 @@ def test_the_state_row_reports_every_switch_and_the_counters():
 
 
 def test_pins_and_the_launcher_arm():
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_3_0"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_3_0"' in SIMPLE
     assert "strategy1_direct_v6_2_14)" in LAUNCHER and "V6213_BUILD=1; V6214_BUILD=1 ;;" in LAUNCHER
     assert "strategy1_direct_v6_2_13)" in LAUNCHER                      # the previous arm stays
     assert 'if [[ "$V6214_BUILD" == "1" ]]; then' in LAUNCHER

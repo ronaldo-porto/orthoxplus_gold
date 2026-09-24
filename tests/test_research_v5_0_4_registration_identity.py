@@ -561,8 +561,8 @@ def test_v5_0_4_is_wired_and_launched():
         assert f'self.{switch} = self._as_bool(\n            getattr(self.config, "{switch}", True)' in SIMPLE, switch
     assert 'getattr(self.config, "research_v504_history_anchor", ANCHOR_AUTO)' in SIMPLE
     assert 'getattr(self.config, "research_v504_legacy_session", LEGACY_IGNORE)' in SIMPLE
-    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
-    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_2_15"' in SIMPLE
+    assert 'SIMPLE_POLICY_VERSION = "strategy1_direct_v6_3_0"' in SIMPLE
+    assert 'SIMPLE_ENGINE_VERSION = "strategy1_direct_v6_3_0"' in SIMPLE
     assert si.V504_REGISTRATION_IDENTITY_VERSION.endswith("v5_0_4")
     assert mr.V504_MIRROR_ROUNDS_VERSION.endswith("v5_0_4") and obs.V504_DISK_BUDGET_VERSION.endswith("v5_0_4")
     assert obs.V503_OBSERVATORY_VERSION.endswith("v5_0_3"), "the recorder's row format is unchanged"
