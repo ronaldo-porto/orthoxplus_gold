@@ -332,7 +332,7 @@ research_v6214_side_select=1 \
 research_v6214_exit_identity=1 \
 research_v6215_order_life=1 \
 research_v6215_side_ownership=1 \
-research_v6215_loss_stop=1"
+research_v6215_loss_stop=0"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2037,15 +2037,29 @@ if [[ "$V6215_BUILD" == "1" ]]; then
     exit 1
   }
   [[ "$V6214_BUILD" == "1" ]] || { echo "ERROR: v6.2.15 builds on the v6.2.14 touch life." >&2; exit 1; }
-  for key in research_v6215_order_life research_v6215_side_ownership research_v6215_loss_stop; do
+  for key in research_v6215_order_life research_v6215_side_ownership; do
     [[ "$PARAMS" == *"${key}=1"* ]] || { echo "ERROR: v6.2.15 build without ${key}=1 in PARAMS." >&2; exit 1; }
   done
+  # v6.2.15.1: no taker stop.  The validator credits every fill's capture to its taker as well, so a stop market
+  # order is paid for by making -- the only leg that scores while per-book alpha sits under the skill floor.
+  # Mainnet UID 94 (v6.2.15, ticks 1-300): 118 stop takers filled 128 times, capture -7.55, making raw -10.47
+  # against +4.34 without them.  The stopped positions kept moving against us (median +33 bps at 60 s), so the
+  # rule returns with the skill leg (v6.3); the S3 code stays behind its switch.
+  grep -qF 'getattr(self.config, "research_v6215_loss_stop", False)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.2.15.1 S3 still defaults on in the agent." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v6215_loss_stop=0"* && "$PARAMS" != *"research_v6215_loss_stop=1"* ]] || {
+    echo "ERROR: v6.2.15.1 build without research_v6215_loss_stop=0 in PARAMS: a stop taker costs making." >&2
+    exit 1
+  }
   [[ "$INHERITED_SHORT_LOTS" == "exit" ]] || {
     echo "ERROR: v6.2.15 needs INHERITED_SHORT_LOTS=exit: a parked inherited position is never managed (UID 94," >&2
     echo "       09-24 restart: 56 of 128 books frozen for 900+ ticks)." >&2
     exit 1
   }
   echo "[preflight] v6.2.15 order life PASS"
+  echo "[preflight] v6.2.15.1 no taker stop PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2129,6 +2143,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_2_13_venue_band.py \
       tests/test_research_v6_2_14_touch_life.py \
       tests/test_research_v6_2_15_order_life.py \
+      tests/test_research_v6_2_15_1_no_taker_stop.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

@@ -1589,9 +1589,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self.research_v6215_side_ownership = self._as_bool(
             getattr(self.config, "research_v6215_side_ownership", True)
         )
-        # S3: a position whose mid mark is inside ABSOLUTE_PROTECTION is closed by the chain's taker.
+        # S3: a position whose mid mark is inside ABSOLUTE_PROTECTION is closed by the chain's taker.  Off from
+        # v6.2.15.1: the validator credits every fill's capture to its taker as well, so a stop market order is paid
+        # for by making, the only leg that scores while per-book alpha sits under the skill floor (mainnet UID 94,
+        # v6.2.15 ticks 1-300: 128 stop fills, capture -7.55, making raw -10.47 against +4.34 without them).
         self.research_v6215_loss_stop = self._as_bool(
-            getattr(self.config, "research_v6215_loss_stop", True)
+            getattr(self.config, "research_v6215_loss_stop", False)
         )
         self._v6215_counts: dict[str, int] = {}
         self._v6215_errors = 0

@@ -442,10 +442,13 @@ def test_an_owned_side_takes_no_second_order_and_a_fully_owned_book_none():
 
 # ---- 6. wiring ---------------------------------------------------------------------------------------------------
 
-def test_all_three_switches_default_on_and_ship_in_params():
-    for key in ("research_v6215_order_life", "research_v6215_side_ownership", "research_v6215_loss_stop"):
+def test_s1_and_s2_default_on_and_ship_in_params_and_s3_ships_off():
+    for key in ("research_v6215_order_life", "research_v6215_side_ownership"):
         assert f'getattr(self.config, "{key}", True)' in SIMPLE
         assert f"{key}=1" in LAUNCHER
+    # v6.2.15.1 switched the stop off (tests/test_research_v6_2_15_1_no_taker_stop.py)
+    assert 'getattr(self.config, "research_v6215_loss_stop", False)' in SIMPLE
+    assert "research_v6215_loss_stop=0" in LAUNCHER
 
 
 def test_the_frozen_ttl_attribute_is_never_written():
