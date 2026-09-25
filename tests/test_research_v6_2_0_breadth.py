@@ -67,6 +67,7 @@ METHODS = [
     "_v63_on", "_v63_snapshot", "_v63_clip", "_v63_count",     # v6.3, off the same way
     "_v631_lean_on", "_v631_count", "_v631_snapshot",          # v6.3.1, off with v6.3
     "_v632_gate_on", "_v632_count", "_v632_gate_snapshot", "_v632_score_snapshot",   # v6.3.2, off the same way
+    "_v633_on", "_v633_count", "_v633_snapshot",                                    # v6.3.3, off the same way
 ]
 LOT = 0.25
 UNIVERSE = 128
@@ -323,6 +324,7 @@ def _agent(*, v62=True, books=None, tick=10):
         "V631_SIM_RESET_VERSION": sr631.V631_SIM_RESET_VERSION,
         "V631_LEAN_HANDLER_VERSION": "lean_handler_v6_3_1",
         "V632_TARGET_GATE_VERSION": "target_gate_v6_3_2", "V632_SCORE_062_VERSION": "score_062_v6_3_2",
+        "V633_DEEP_LAYER_VERSION": "deep_layer_v6_3_3",
     }
     exec("from __future__ import annotations\nclass Harness(_Base):\n" + body, scope)
     agent = scope["Harness"]()

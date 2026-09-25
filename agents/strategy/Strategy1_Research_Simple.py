@@ -603,6 +603,20 @@ from research_v632_target_gate import (  # noqa: E402
     TargetGate as V632TargetGate,
     V632_TARGET_GATE_VERSION,
 )
+from research_v633_deep_layer import (  # noqa: E402
+    CANCEL_NO_ROOM as V633_CANCEL_NO_ROOM,
+    CANCEL_OWNS_BOOK as V633_CANCEL_OWNS_BOOK,
+    CANCEL_REPRICE as V633_CANCEL_REPRICE,
+    CANCEL_SHUT as V633_CANCEL_SHUT,
+    DeepLayer as V633DeepLayer,
+    V633_DEEP_LAYER_VERSION,
+    client_ids as v633_client_ids,
+    deep_price as v633_deep_price,
+    is_deep_client_id as v633_is_deep_client_id,
+    needs_reprice as v633_needs_reprice,
+    own_client_ids as v633_own_client_ids,
+    trade_of as v633_trade_of,
+)
 from research_v632_score_062 import (  # noqa: E402
     PRUNE_EVERY_NS as V632_PRUNE_EVERY_NS,
     SeamBlock as V632SeamBlock,
@@ -1708,6 +1722,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v632_gate: Any = None
         self._v632_counts: dict[str, int] = {}
         self._v632_errors = 0
+        # v6.3.3: a gated deep layer -- both sides of a book rest where the book's own sweeps reach (its p90 sweep
+        # depth) while the board's paper record of those orders pays; the clean-window skill leaders fill that way.
+        self.research_v633_deep_layer = self._as_bool(getattr(self.config, "research_v633_deep_layer", True))
+        self._v633_deep: Any = None
+        self._v633_counts: dict[str, int] = {}
+        self._v633_errors = 0
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -10354,11 +10374,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         n_open = len(gate.open) if gate is not None else 0
         if gate is not None:
             gate.reset()                  # v6.3.2 S2: the paper records and gates start over with the simulation
+        deep = getattr(self, "_v633_deep", None)
+        n_deep = len(deep.books) if deep is not None else 0
+        if deep is not None:
+            deep.reset()                  # v6.3.3: sweep depths and the paper deep record start over too
         self._v63_count("sim_resets")
         self._v631_last_reset = {
             "tick": int(getattr(self, "_tick", 0) or 0), "reason": reason, "old_ts": old_ts, "new_ts": ts,
             "old_sim": old_sim, "new_sim": sim_id, "paused_cleared": n_paused, "histories_cleared": n_mids,
-            "gates_cleared": n_open,
+            "gates_cleared": n_open, "deep_books_cleared": n_deep,
         }
         self._emit(
             "V631_SIM_RESET", force=True, v631_version=V631_SIM_RESET_VERSION, **self._v631_last_reset,
@@ -10409,6 +10433,105 @@ class Strategy1_Research_Simple(Strategy1_Research):
             out.update(gate.snapshot())
         out["version"] = V632_TARGET_GATE_VERSION
         return out
+
+    def _v633_on(self) -> bool:
+        return bool(self._v63_on() and getattr(self, "research_v633_deep_layer", False))
+
+    def _v633_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v633_counts", None)
+        if counts is None:
+            counts = {}
+            self._v633_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v633_deep_ref(self):
+        """v6.3.3: every book's sweep depths, paper deep record and gate (created on first use)."""
+        deep = getattr(self, "_v633_deep", None)
+        if deep is None:
+            lookback = int(getattr(self, "research_kappa_lookback_ns", 0) or 0) or V62_DEFAULT_LOOKBACK_NS
+            deep = V633DeepLayer(lookback_ns=lookback, clip=float(self._v63_clip()))
+            self._v633_deep = deep
+        return deep
+
+    def _v633_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v633_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v633_errors", 0) or 0)
+        deep = getattr(self, "_v633_deep", None)
+        if deep is not None:
+            out.update(deep.snapshot())
+        out["version"] = V633_DEEP_LAYER_VERSION
+        return out
+
+    def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,
+                   tick_size, dec, clip, min_order, budget, expiry, cfg) -> int:
+        """v6.3.3: an open book's two sides are the deep layer's -- one order per side, as the A1.7.4.3 contract requires.
+
+        Its v6.3 orders are cancelled; a deep order that drifted out of [0.5, 1.5] x depth from the mid or has no room
+        left is cancelled; a side with no order of ours, nothing cancelled on it this request and room takes one deep
+        order.  A cancelled side takes nothing until the removal has been seen (the v6.2.15 S2 side ownership).
+        """
+        req["deep_books"] += 1
+        mid = 0.5 * (float(raw_bid) + float(raw_ask))
+        doomed = [(row, V633_CANCEL_OWNS_BOOK) for row in rows if int(row.order_id) not in already]
+        resting: dict[str, Any] = {}
+        for row in deep_rows:
+            if int(row.order_id) in already:
+                continue
+            side = V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL
+            if not deep.room(side, inv):
+                doomed.append((row, V633_CANCEL_NO_ROOM))
+            elif v633_needs_reprice(float(row.price), mid, depth, tick_size):
+                doomed.append((row, V633_CANCEL_REPRICE))
+            else:
+                resting[side] = row
+        cancelled: set[str] = set()
+        if doomed and self._count_book_instructions(response, book_id) < budget:
+            ids = [int(row.order_id) for row, _why in doomed]
+            try:
+                response.cancel_orders(book_id=book_id, order_ids=ids, delay=0)
+            except Exception:
+                self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
+            else:
+                req["cancels"] += 1
+                for row, why in doomed:
+                    self._v633_count("cancel_" + str(why).lower())
+                    cancelled.add(V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL)
+                try:
+                    self._a19_note_exit_cancel(book_id, ids, ABSENT_REPRICE_CANCEL)
+                except Exception:
+                    pass
+        try:
+            live_sides = set(self._v6215_live_sides(book_id))
+        except Exception:
+            live_sides = {V63_SIDE_BUY if int(r.side) == 0 else V63_SIDE_SELL for r in list(rows) + list(deep_rows)}
+        placed = 0
+        for side in (V63_SIDE_BUY, V63_SIDE_SELL):
+            if side in resting or side in live_sides or side in cancelled or not deep.room(side, inv):
+                continue
+            q = v62_lot_quantity(clip, getattr(cfg, "volumeDecimals", 4))
+            if q + 1e-12 < min_order:
+                self._v633_count("below_min_order")
+                continue
+            if self._count_book_instructions(response, book_id) >= budget:
+                self._v633_count("budget_deferred")
+                break
+            price = v633_deep_price(mid, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+            buy_cid, sell_cid = v633_client_ids(book_id)
+            try:
+                response.limit_order(
+                    book_id=book_id,
+                    direction=OrderDirection.BUY if side == V63_SIDE_BUY else OrderDirection.SELL,
+                    quantity=q, price=float(price),
+                    clientOrderId=buy_cid if side == V63_SIDE_BUY else sell_cid,
+                    stp=STP.CANCEL_BOTH, postOnly=True, timeInForce=TimeInForce.GTT, expiryPeriod=expiry,
+                    leverage=0.0, settlement_option=LoanSettlementOption.NONE, delay=0,
+                )
+            except Exception:
+                self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
+                continue
+            placed += 1
+            req["placed_deep"] += 1
+        return placed
 
     def _v632_note_seam(self) -> None:
         """S1: the window the alpha and making mirrors discarded at a new simulation becomes a retained block."""
@@ -10591,9 +10714,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 gate.update_pool(floor)       # the board's record, from every book's record up to the last state
             except Exception:
                 self._v632_errors = int(getattr(self, "_v632_errors", 0) or 0) + 1
+        # v6.3.3: the deep layer -- its board is read once, from every book's paper record up to the last state.
+        deep = self._v633_deep_ref() if self._v633_on() else None
+        if deep is not None:
+            try:
+                deep.maybe_prune(now_ts)
+                deep.update_board()
+            except Exception:
+                self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
+                deep = None
         req: dict[str, Any] = {
             "books": len(books), "long": 0, "short": 0, "flat": 0, "paused": 0, "no_signal": 0, "gated": 0,
             "placed_toward": 0, "placed_making": 0, "cancels": 0, "fee_cap_bps": fee_cap,
+            "deep_books": 0, "placed_deep": 0,
         }
         placed_total = 0
         for raw_id in sorted(books, key=lambda x: int(x)):
@@ -10614,6 +10747,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if prices is None:
                 continue
             raw_bid, raw_ask = prices
+            depth = None
+            if deep is not None:
+                try:
+                    trades = [t for t in (v633_trade_of(ev) for ev in (getattr(book, "events", None) or ())) if t is not None]
+                    depth = deep.observe(book_id, now_ts, trades, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+                except Exception:
+                    self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
+                    depth = None
             hist = mids.get(book_id)
             if hist is None:
                 hist = v63_new_history(V63_SIGNAL_STATES)
@@ -10664,6 +10805,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     inv = 0.0
             want = v63_wanted(inv, target, clip=clip, making_width=0.0 if idle else width)
             rows = []
+            deep_rows = []
             own_ids: set[int] = set()
             if ledger is not None:
                 for row in ledger.live_orders(book_id):
@@ -10673,8 +10815,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         continue
                     if v63_role_of(getattr(row, "client_id", None)) is not None:
                         rows.append(row)
+                    elif v633_is_deep_client_id(getattr(row, "client_id", None)):
+                        deep_rows.append(row)
+            deep_open = False
+            if deep is not None and depth is not None:
+                try:
+                    deep_open = bool(deep.book_open(book_id, floor, inv))
+                except Exception:
+                    self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
+            if deep_open:
+                placed_total += self._v633_book(
+                    response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
+                    tick_size=tick_size, dec=dec, clip=clip, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
+                )
+                continue
             own_cids = (
                 v63_own_client_ids(book_id) | set(v62_entry_client_ids(book_id)) | set(v6214_exit_client_ids(book_id))
+                | v633_own_client_ids(book_id)
             )
             try:
                 view = v6210_touch_view(book, own_ids=own_ids, own_cids=own_cids)
@@ -10713,6 +10870,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         why = _making_why(side)
                         if why is not None:
                             doomed.append((row, why))
+            for row in deep_rows:             # v6.3.3: a shut book keeps no deep order
+                if int(row.order_id) not in already:
+                    doomed.append((row, V633_CANCEL_SHUT))
             cancelled_sides: set[str] = set()
             if doomed and self._count_book_instructions(response, book_id) < budget:
                 ids = [int(row.order_id) for row, _why in doomed]
@@ -10723,7 +10883,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 else:
                     req["cancels"] += 1
                     for row, why in doomed:
-                        self._v63_count("cancel_" + str(why).lower())
+                        count = self._v633_count if str(why).startswith("DEEP_") else self._v63_count
+                        count("cancel_" + str(why).lower())
                         cancelled_sides.add(V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL)
                     try:
                         self._a19_note_exit_cancel(book_id, ids, ABSENT_REPRICE_CANCEL)
@@ -10776,7 +10937,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     continue
                 placed_total += 1
                 req["placed_toward" if role == V63_ROLE_TOWARD else "placed_making"] += 1
-        for key in ("long", "short", "flat", "paused", "no_signal", "gated", "placed_toward", "placed_making", "cancels"):
+        for key in ("long", "short", "flat", "paused", "no_signal", "gated", "placed_toward", "placed_making", "cancels",
+                    "deep_books", "placed_deep"):
             self._v63_count(key, int(req[key]))
         self._v63_count("requests")
         self._v63_last = req
@@ -10851,6 +11013,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             score_062_on=int(bool(getattr(self, "research_v632_score_062", False))),
             target_gate=self._v632_gate_snapshot(),
             score_062=self._v632_score_snapshot(),
+            deep_layer_on=int(self._v633_on()),
+            deep_layer=self._v633_snapshot(),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),

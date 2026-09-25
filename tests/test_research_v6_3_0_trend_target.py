@@ -28,6 +28,7 @@ import research_v6210_touch_improve as ti  # noqa: E402
 import research_v6215_order_life as ol  # noqa: E402
 import research_v631_sim_reset as sr  # noqa: E402
 import research_v632_target_gate as tg632  # noqa: E402
+import research_v633_deep_layer as dl633  # noqa: E402
 from research_session_state import extract_simulation_id  # noqa: E402
 from research_direct_exit_ledger import DirectExitLedger  # noqa: E402
 from research_direct_exit_refresh import ABSENT_REPRICE_CANCEL  # noqa: E402
@@ -216,11 +217,18 @@ def _pass_agent(**kwargs):
         "extract_simulation_id": extract_simulation_id,
         "V632TargetGate": tg632.TargetGate, "V632_PAPER_LAG_NS": tg632.PAPER_LAG_NS, "V632_SAMPLE_NS": tg632.SAMPLE_NS,
         "V62_DEFAULT_LOOKBACK_NS": tg632.LOOKBACK_NS,
+        "V633DeepLayer": dl633.DeepLayer, "V633_DEEP_LAYER_VERSION": dl633.V633_DEEP_LAYER_VERSION,
+        "V633_CANCEL_NO_ROOM": dl633.CANCEL_NO_ROOM, "V633_CANCEL_OWNS_BOOK": dl633.CANCEL_OWNS_BOOK,
+        "V633_CANCEL_REPRICE": dl633.CANCEL_REPRICE, "V633_CANCEL_SHUT": dl633.CANCEL_SHUT,
+        "v633_client_ids": dl633.client_ids, "v633_deep_price": dl633.deep_price,
+        "v633_is_deep_client_id": dl633.is_deep_client_id, "v633_needs_reprice": dl633.needs_reprice,
+        "v633_own_client_ids": dl633.own_client_ids, "v633_trade_of": dl633.trade_of,
     })
     cls = type("P", (_PassAgent,), {})
     for name in ("_v63_pass", "_v63_count", "_v63_clip", "_v63_apply_caps", "_v63_snapshot", "_v63_book_alphas",
                  "_v631_observe_sim", "_v6214_note_prints", "_v6214_others_depth", "_v6214_cancelled_ids",
-                 "_v63_on", "_v632_gate_on", "_v632_gate_ref", "_v632_count"):
+                 "_v63_on", "_v632_gate_on", "_v632_gate_ref", "_v632_count",
+                 "_v633_on", "_v633_count", "_v633_deep_ref", "_v633_book", "_v633_snapshot"):
         exec(compile(ast.Module(body=[ast.parse(_simple(name)).body[0]], type_ignores=[]), "<v63>", "exec"), ns)
         setattr(cls, name, ns[name])
     return cls(**kwargs)

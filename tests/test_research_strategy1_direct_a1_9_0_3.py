@@ -107,7 +107,8 @@ def test_all_three_cancel_paths_register_a_reason():
     # itself -- it must rise only alongside a new *registered* site, never to
     # accommodate an unregistered one.
     # v6.3: the trend-target pass registers its own cancels (unwanted, thin, just-hit, fee-capped, paused).
-    assert SRC.count("_a19_note_exit_cancel(") == 9
+    # v6.3.3: the deep layer's open-book cancel (v6.3 orders on a deep book, drifted or bounded deep orders) registers too.
+    assert SRC.count("_a19_note_exit_cancel(") == 10
     for reason in (
         "ABSENT_WAIT_CANCEL", "ABSENT_ENTRY_QUOTE_CANCEL",
         "ABSENT_PARTIAL_REMAINDER_CANCEL", "ABSENT_REPRICE_CANCEL",

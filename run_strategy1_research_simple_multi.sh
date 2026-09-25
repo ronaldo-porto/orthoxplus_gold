@@ -346,7 +346,8 @@ research_v63_lean_log=1 \
 research_v631_sim_reset=1 \
 research_v631_lean_handler=1 \
 research_v632_score_062=1 \
-research_v632_target_gate=1"
+research_v632_target_gate=1 \
+research_v633_deep_layer=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2208,6 +2209,31 @@ if [[ "$V63_BUILD" == "1" ]]; then
   [[ "$PARAMS" == *"research_v632_target_gate=1"* ]] || { echo "ERROR: v6.3.2 build without research_v632_target_gate=1 in PARAMS." >&2; exit 1; }
   [[ "$PARAMS" == *"research_v63_book_stop=1"* ]] || { echo "ERROR: v6.3.2 S2 closes the gate on the v6.3 realized-alpha stop." >&2; exit 1; }
   echo "[preflight] v6.3.2 target gate PASS"
+  # v6.3.3: a gated deep layer -- both sides of an open book rest at the book's p90 sweep depth while the board's paper
+  # record of those orders pays (replay 09-24 sim: making 1,934 vs 339, skill +2.9 on the published floor).
+  grep -qF 'from research_v633_deep_layer import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.3 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'depth = deep.observe(book_id, now_ts, trades, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.3 the pass does not feed the sweep depths and the paper deep record." >&2
+    exit 1
+  }
+  grep -qF 'deep_open = bool(deep.book_open(book_id, floor, inv))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.3 the deep layer is not gated on its paper record." >&2
+    exit 1
+  }
+  grep -qF 'deep.update_board()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.3 the board's paper record is not read once per request." >&2
+    exit 1
+  }
+  grep -qF 'SWEEP_QUANTILE = 0.9' "$AGENT_PATH/research_v633_deep_layer.py" || {
+    echo "ERROR: v6.3.3 the deep layer is not at the replayed p90 sweep depth." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v633_deep_layer=1"* ]] || { echo "ERROR: v6.3.3 build without research_v633_deep_layer=1 in PARAMS." >&2; exit 1; }
+  [[ "$PARAMS" == *"research_v632_target_gate=1"* ]] || { echo "ERROR: v6.3.3 builds on the v6.3.2 target gate." >&2; exit 1; }
+  echo "[preflight] v6.3.3 deep layer PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2297,6 +2323,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_3_1_lean_handler.py \
       tests/test_research_v6_3_2_target_gate.py \
       tests/test_research_v6_3_2_score_062.py \
+      tests/test_research_v6_3_3_deep_layer.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
