@@ -597,6 +597,22 @@ from research_v631_lean_handler import (  # noqa: E402
     empty_selection_fields as v631_empty_selection_fields,
     idle_regime_fields as v631_idle_regime_fields,
 )
+from research_v632_target_gate import (  # noqa: E402
+    PAPER_LAG_NS as V632_PAPER_LAG_NS,
+    SAMPLE_NS as V632_SAMPLE_NS,
+    TargetGate as V632TargetGate,
+    V632_TARGET_GATE_VERSION,
+)
+from research_v632_score_062 import (  # noqa: E402
+    PRUNE_EVERY_NS as V632_PRUNE_EVERY_NS,
+    SeamBlock as V632SeamBlock,
+    V632_SCORE_062_VERSION,
+    alpha_sums as v632_alpha_sums,
+    carried as v632_carried,
+    making_per_book as v632_making_per_book,
+    skill_062 as v632_skill_062,
+    validator_view as v632_validator_view,
+)
 from research_v6215_order_life import (  # noqa: E402
     BACKSTOP_MS as V6215_BACKSTOP_MS,
     STOP_REASON as V6215_STOP_REASON,
@@ -1681,6 +1697,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v631_counts: dict[str, int] = {}
         self._v631_registered_response: Any = None
         self._v631_regime: Any = None
+        # v6.3.2 S1: the agent's own score on the validator's 0.6.2 arithmetic -- its 600-s sampled windows, the 20-book
+        # skill minimum and coverage scaling, and the window a validator that skips its seam shift keeps (telemetry).
+        self.research_v632_score_062 = self._as_bool(getattr(self.config, "research_v632_score_062", True))
+        self._v632_blocks: list[Any] = []
+        self._v632_seen_seams = 0
+        # v6.3.2 S2: the target trades a book only while its paper record would earn skill there; a gated or stopped
+        # book keeps its two-sided making layer (the v6.3 stop idled 70.7% of book-time in the 09-24 simulation).
+        self.research_v632_target_gate = self._as_bool(getattr(self.config, "research_v632_target_gate", True))
+        self._v632_gate: Any = None
+        self._v632_counts: dict[str, int] = {}
+        self._v632_errors = 0
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -2019,6 +2046,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v6211_feed_mirror(state)
         except Exception:
             self._v6211_errors = int(getattr(self, "_v6211_errors", 0) or 0) + 1
+        # v6.3.2 S1: a window the mirrors just discarded at a simulation seam is kept for the validator view.
+        try:
+            self._v632_note_seam()
+        except Exception:
+            self._v632_errors = int(getattr(self, "_v632_errors", 0) or 0) + 1
         return super().update(state)
 
     # ------------------------------------------------------------------
@@ -9728,7 +9760,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         mirror = getattr(self, "_v62_mirror", None)
         if mirror is None:
             lookback = int(getattr(self, "research_kappa_lookback_ns", 0) or 0) or V62_DEFAULT_LOOKBACK_NS
-            mirror = V62MakingMirror(int(getattr(self, "uid", 0) or 0), lookback_ns=lookback)
+            if bool(getattr(self, "research_v632_score_062", False)):
+                mirror = V62MakingMirror(int(getattr(self, "uid", 0) or 0), lookback_ns=lookback, sample_ns=V632_SAMPLE_NS,
+                                         prune_every_ns=V632_PRUNE_EVERY_NS, keep_seam=True)
+            else:
+                mirror = V62MakingMirror(int(getattr(self, "uid", 0) or 0), lookback_ns=lookback)
             self._v62_mirror = mirror
         books = getattr(state, "books", None) or {}
         mirror.ingest_state(
@@ -9751,7 +9787,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         mirror = getattr(self, "_v6211_mirror", None)
         if mirror is None:
             lookback = int(getattr(self, "research_kappa_lookback_ns", 0) or 0) or V62_DEFAULT_LOOKBACK_NS
-            mirror = V6211OwnAlphaMirror(int(getattr(self, "uid", 0) or 0), lookback_ns=lookback)
+            if bool(getattr(self, "research_v632_score_062", False)):
+                mirror = V6211OwnAlphaMirror(int(getattr(self, "uid", 0) or 0), lookback_ns=lookback,
+                                             bucket_ns=V632_SAMPLE_NS, keep_seam=True)
+            else:
+                mirror = V6211OwnAlphaMirror(int(getattr(self, "uid", 0) or 0), lookback_ns=lookback)
             self._v6211_mirror = mirror
         books = getattr(state, "books", None) or {}
         mirror.ingest_state(
@@ -10310,10 +10350,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         n_mids = len(mids) if mids else 0
         self._v63_paused = set()
         self._v63_mids = {}
+        gate = getattr(self, "_v632_gate", None)
+        n_open = len(gate.open) if gate is not None else 0
+        if gate is not None:
+            gate.reset()                  # v6.3.2 S2: the paper records and gates start over with the simulation
         self._v63_count("sim_resets")
         self._v631_last_reset = {
             "tick": int(getattr(self, "_tick", 0) or 0), "reason": reason, "old_ts": old_ts, "new_ts": ts,
             "old_sim": old_sim, "new_sim": sim_id, "paused_cleared": n_paused, "histories_cleared": n_mids,
+            "gates_cleared": n_open,
         }
         self._emit(
             "V631_SIM_RESET", force=True, v631_version=V631_SIM_RESET_VERSION, **self._v631_last_reset,
@@ -10334,6 +10379,91 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _v631_snapshot(self) -> dict:
         out = dict(getattr(self, "_v631_counts", {}) or {})
         out["version"] = V631_LEAN_HANDLER_VERSION
+        return out
+
+    # ---- v6.3.2: the target gate (S2) and the 0.6.2 score (S1) -------------------------------------------------------
+    def _v632_gate_on(self) -> bool:
+        return bool(self._v63_on() and getattr(self, "research_v632_target_gate", False))
+
+    def _v632_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v632_counts", None)
+        if counts is None:
+            counts = {}
+            self._v632_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v632_gate_ref(self):
+        """S2: every book's paper record and gate, on the validator's window (created on first use)."""
+        gate = getattr(self, "_v632_gate", None)
+        if gate is None:
+            lookback = int(getattr(self, "research_kappa_lookback_ns", 0) or 0) or V62_DEFAULT_LOOKBACK_NS
+            gate = V632TargetGate(lag_ns=V632_PAPER_LAG_NS, sample_ns=V632_SAMPLE_NS, lookback_ns=lookback)
+            self._v632_gate = gate
+        return gate
+
+    def _v632_gate_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v632_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v632_errors", 0) or 0)
+        gate = getattr(self, "_v632_gate", None)
+        if gate is not None:
+            out.update(gate.snapshot())
+        out["version"] = V632_TARGET_GATE_VERSION
+        return out
+
+    def _v632_note_seam(self) -> None:
+        """S1: the window the alpha and making mirrors discarded at a new simulation becomes a retained block."""
+        if not bool(getattr(self, "research_v632_score_062", False)):
+            return
+        alpha = getattr(self, "_v6211_mirror", None)
+        saved = getattr(alpha, "seam_saved", None) if alpha is not None else None
+        if not saved:
+            return
+        rebases = int(getattr(alpha, "rebases", 0) or 0)
+        if rebases <= int(getattr(self, "_v632_seen_seams", 0) or 0):
+            return
+        making = getattr(self, "_v62_mirror", None)
+        m_saved = (getattr(making, "seam_saved", None) if making is not None else None) or {}
+        blocks = getattr(self, "_v632_blocks", None)
+        if blocks is None:
+            blocks = []
+            self._v632_blocks = blocks
+        block = V632SeamBlock(
+            sums=saved.get("sums") or {}, buy=m_saved.get("buy") or {}, sell=m_saved.get("sell") or {},
+            inventory=saved.get("inventory") or {}, carried_in=v632_carried(blocks), ts=saved.get("ts"),
+        )
+        blocks.append(block)
+        self._v632_seen_seams = rebases
+        self._v632_count("seam_blocks")
+        self._emit(
+            "V632_SEAM_BLOCK", force=True, tick=int(getattr(self, "_tick", 0) or 0),
+            v632_score_version=V632_SCORE_062_VERSION, blocks=len(blocks), block=block.snapshot(),
+        )
+
+    def _v632_score_snapshot(self) -> dict:
+        """S1: this uid's skill leg and making on the 0.6.2 arithmetic -- the clean window, and with every retained
+        seam block (what a validator that skips its history shift scores).  Telemetry only."""
+        out: dict[str, Any] = {"version": V632_SCORE_062_VERSION,
+                               "on": int(bool(getattr(self, "research_v632_score_062", False)))}
+        if not out["on"]:
+            return out
+        alpha = getattr(self, "_v6211_mirror", None)
+        making = getattr(self, "_v62_mirror", None)
+        floor = float(getattr(self, "research_v63_alpha_floor", V63_ALPHA_FLOOR_DEFAULT) or V63_ALPHA_FLOOR_DEFAULT)
+        uid = int(getattr(self, "uid", 0) or 0)
+        buy = dict(making.buy_sums.get(uid) or {}) if making is not None else {}
+        sell = dict(making.sell_sums.get(uid) or {}) if making is not None else {}
+        blocks = list(getattr(self, "_v632_blocks", None) or [])
+        out["blocks"] = len(blocks)
+        if alpha is None:
+            return out
+        try:
+            out["clean"] = dict(v632_skill_062(alpha.book_alphas(), floor), making=round(v632_making_per_book(buy, sell), 3))
+            if blocks:
+                view_alphas, view_making = v632_validator_view(blocks, v632_alpha_sums(alpha), buy, sell)
+                out["validator"] = dict(v632_skill_062(view_alphas, floor), making=round(view_making, 3),
+                                        carried_abs=round(sum(abs(v) for v in v632_carried(blocks).values()), 4))
+        except Exception:
+            self._v632_errors = int(getattr(self, "_v632_errors", 0) or 0) + 1
         return out
 
     def _predict_all_books(self, state):
@@ -10452,8 +10582,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v63_mids = mids
         memo = getattr(self, "_v6214_last_taker", None) or {}
         already = self._v6214_cancelled_ids(response)
+        # v6.3.2 S2: the target gate -- the rule's target trades only on a book whose paper record opened it.
+        gate = self._v632_gate_ref() if self._v632_gate_on() else None
+        now_ts = int(getattr(state, "timestamp", 0) or 0)
+        if gate is not None:
+            try:
+                gate.maybe_prune(now_ts)
+                gate.update_pool(floor)       # the board's record, from every book's record up to the last state
+            except Exception:
+                self._v632_errors = int(getattr(self, "_v632_errors", 0) or 0) + 1
         req: dict[str, Any] = {
-            "books": len(books), "long": 0, "short": 0, "flat": 0, "paused": 0, "no_signal": 0,
+            "books": len(books), "long": 0, "short": 0, "flat": 0, "paused": 0, "no_signal": 0, "gated": 0,
             "placed_toward": 0, "placed_making": 0, "cancels": 0, "fee_cap_bps": fee_cap,
         }
         placed_total = 0
@@ -10495,7 +10634,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     paused.discard(book_id)
                     self._v63_count("book_releases")
             is_paused = book_id in paused
-            target = 0.0 if is_paused else v63_target_base(signal, target_abs=target_abs)
+            rule_target = v63_target_base(signal, target_abs=target_abs)
+            idle = is_paused                  # v6.3: a stopped book quotes no making layer
+            if gate is not None:
+                try:
+                    opened = gate.step(book_id, now_ts, 0.5 * (raw_bid + raw_ask), rule_target, floor, stopped=is_paused)
+                except Exception:
+                    self._v632_errors = int(getattr(self, "_v632_errors", 0) or 0) + 1
+                    opened = False
+                target = rule_target if opened else 0.0
+                idle = False                  # v6.3.2 S2: a gated or stopped book keeps both making sides
+                if not opened and abs(rule_target) > eps:
+                    req["gated"] += 1
+            else:
+                target = 0.0 if is_paused else rule_target
             if is_paused:
                 req["paused"] += 1
             elif target > eps:
@@ -10510,7 +10662,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     inv = float(self._direct_signed_inventory(book_id))
                 except Exception:
                     inv = 0.0
-            want = v63_wanted(inv, target, clip=clip, making_width=0.0 if is_paused else width)
+            want = v63_wanted(inv, target, clip=clip, making_width=0.0 if idle else width)
             rows = []
             own_ids: set[int] = set()
             if ledger is not None:
@@ -10553,7 +10705,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     doomed.append((row, V63_CANCEL_UNWANTED))
                     continue
                 if role == V63_ROLE_MAKING:
-                    if is_paused:
+                    if idle:
                         doomed.append((row, V63_CANCEL_PAUSED))
                     elif not fee_ok:
                         doomed.append((row, V63_CANCEL_FEE))
@@ -10588,7 +10740,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     continue
                 role = v63_role_for(side, inv, target, eps)
                 if role == V63_ROLE_MAKING:
-                    if not making_on or is_paused:
+                    if not making_on or idle:
                         continue
                     if not fee_ok:
                         self._v63_count("making_skipped_fee")
@@ -10624,7 +10776,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     continue
                 placed_total += 1
                 req["placed_toward" if role == V63_ROLE_TOWARD else "placed_making"] += 1
-        for key in ("long", "short", "flat", "paused", "no_signal", "placed_toward", "placed_making", "cancels"):
+        for key in ("long", "short", "flat", "paused", "no_signal", "gated", "placed_toward", "placed_making", "cancels"):
             self._v63_count(key, int(req[key]))
         self._v63_count("requests")
         self._v63_last = req
@@ -10695,6 +10847,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             sim_reset_on=int(bool(getattr(self, "research_v631_sim_reset", False))),
             lean_handler_on=int(self._v631_lean_on()),
             lean_handler=self._v631_snapshot(),
+            target_gate_on=int(self._v632_gate_on()),
+            score_062_on=int(bool(getattr(self, "research_v632_score_062", False))),
+            target_gate=self._v632_gate_snapshot(),
+            score_062=self._v632_score_snapshot(),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),

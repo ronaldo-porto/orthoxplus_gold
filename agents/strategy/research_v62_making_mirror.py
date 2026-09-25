@@ -201,12 +201,19 @@ class MakingMirror:
     """Windowed two-sided capture for the tracked uid, fed one state at a time."""
 
     def __init__(self, uid: int, *, lookback_ns: int = DEFAULT_LOOKBACK_NS, W: int = CAPTURE_W,
-                 flush_ns: int = CAPTURE_FLUSH_NS):
+                 flush_ns: int = CAPTURE_FLUSH_NS, sample_ns: int = 0, prune_every_ns: int = 0,
+                 keep_seam: bool = False):
         self.uid = int(uid)
         self.track = {self.uid}
         self.lookback_ns = int(lookback_ns)
         self.W = int(W)
         self.flush_ns = int(flush_ns)
+        # v6.3.2 S1: the validator keys every capture on its sampled clock (600 s), finalises a pending fill on that
+        # clock and prunes every 60 s; 0 keeps the v6.2.0 behaviour (raw timestamps, pruned every state).
+        self.sample_ns = max(0, int(sample_ns))
+        self.prune_every_ns = max(0, int(prune_every_ns))
+        self.keep_seam = bool(keep_seam)
+        self.seam_saved: dict[str, Any] | None = None
         self.reset()
 
     def reset(self) -> None:
@@ -216,6 +223,7 @@ class MakingMirror:
         self.sell_hist = {}
         self.mid_state = {}
         self.last_ts: int | None = None
+        self.last_prune_ts: int | None = None
         self.states = 0
         self.prints = 0
         self.fills = 0
@@ -229,10 +237,18 @@ class MakingMirror:
         if self.last_ts is not None and ts < self.last_ts - REBASE_MIN_JUMP_NS:
             # A new simulation restarts the clock; the validator rebases its histories onto it.  The
             # mirror starts over: its window is the new sim's anyway within 3 sim-h.
+            saved = None
+            if self.keep_seam:
+                saved = {"buy": dict(self.buy_sums.get(self.uid) or {}), "sell": dict(self.sell_sums.get(self.uid) or {}),
+                         "ts": self.last_ts}
+            rebases = self.rebases
             self.reset()
-            self.rebases += 1
+            self.rebases = rebases + 1
+            if saved is not None:
+                self.seam_saved = saved
         self.last_ts = ts
         self.states += 1
+        key = ts - ts % self.sample_ns if self.sample_ns else ts
         for book_id, events in books:
             trades = []
             for ev in events or ():
@@ -245,15 +261,17 @@ class MakingMirror:
             self.fills += sum(1 for t in trades if t["Ma"] == self.uid or t["Ta"] == self.uid)
             accumulate_book_capture(
                 self.buy_sums, self.sell_sums, int(book_id), trades, self.W,
-                buy_hist=self.buy_hist, sell_hist=self.sell_hist, ts=ts,
+                buy_hist=self.buy_hist, sell_hist=self.sell_hist, ts=key,
                 mid_state=self.mid_state, flush_ns=self.flush_ns, track=self.track,
             )
         flush_capture_state(self.mid_state, self.buy_sums, self.sell_sums, self.W,
-                            buy_hist=self.buy_hist, sell_hist=self.sell_hist, ts=ts,
+                            buy_hist=self.buy_hist, sell_hist=self.sell_hist, ts=key,
                             flush_ns=self.flush_ns, track=self.track)
-        threshold = ts - self.lookback_ns
-        prune_hist_2level(self.buy_hist, self.buy_sums, threshold)
-        prune_hist_2level(self.sell_hist, self.sell_sums, threshold)
+        if not self.prune_every_ns or self.last_prune_ts is None or ts - self.last_prune_ts >= self.prune_every_ns:
+            threshold = ts - self.lookback_ns
+            prune_hist_2level(self.buy_hist, self.buy_sums, threshold)
+            prune_hist_2level(self.sell_hist, self.sell_sums, threshold)
+            self.last_prune_ts = ts
         self.last_ms = (time.perf_counter() - started) * 1000.0
 
     def making(self) -> float:

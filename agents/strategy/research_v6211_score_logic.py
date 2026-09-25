@@ -231,11 +231,15 @@ class OwnAlphaMirror:
     """
 
     def __init__(self, uid: int, *, lookback_ns: int = DEFAULT_LOOKBACK_NS, bucket_ns: int = BUCKET_NS,
-                 prune_every_ns: int = PRUNE_EVERY_NS):
+                 prune_every_ns: int = PRUNE_EVERY_NS, keep_seam: bool = False):
         self.uid = int(uid)
         self.lookback_ns = int(lookback_ns)
         self.bucket_ns = max(1, int(bucket_ns))
         self.prune_every_ns = max(0, int(prune_every_ns))
+        # v6.3.2 S1: at a new simulation, keep the window being discarded (a validator that skips its history shift
+        # still scores it); nothing reads it for a decision.
+        self.keep_seam = bool(keep_seam)
+        self.seam_saved: dict[str, Any] | None = None
         self.reset()
 
     def reset(self) -> None:
@@ -268,8 +272,15 @@ class OwnAlphaMirror:
         started = time.perf_counter()
         ts = int(ts)
         if self.last_ts is not None and ts < self.last_ts - REBASE_MIN_JUMP_NS:
+            saved = None
+            if self.keep_seam:
+                saved = {"sums": {k: dict(getattr(self, k)) for k in ("mtm", "invsum", "invn", "drift", "fills")},
+                         "inventory": dict(self.inv), "ts": self.last_ts}
+            rebases = self.rebases
             self.reset()
-            self.rebases += 1
+            self.rebases = rebases + 1
+            if saved is not None:
+                self.seam_saved = saved
         if self.first_ts is None:
             self.first_ts = ts
         self.last_ts = ts

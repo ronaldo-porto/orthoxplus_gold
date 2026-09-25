@@ -27,6 +27,7 @@ import research_v6214_touch_life as tl  # noqa: E402
 import research_v6210_touch_improve as ti  # noqa: E402
 import research_v6215_order_life as ol  # noqa: E402
 import research_v631_sim_reset as sr  # noqa: E402
+import research_v632_target_gate as tg632  # noqa: E402
 from research_session_state import extract_simulation_id  # noqa: E402
 from research_direct_exit_ledger import DirectExitLedger  # noqa: E402
 from research_direct_exit_refresh import ABSENT_REPRICE_CANCEL  # noqa: E402
@@ -213,10 +214,13 @@ def _pass_agent(**kwargs):
         "TimeInForce": types.SimpleNamespace(GTT="GTT"), "LoanSettlementOption": types.SimpleNamespace(NONE="NONE"), "Any": Any,
         "V631_SIM_RESET_VERSION": sr.V631_SIM_RESET_VERSION, "v631_new_simulation": sr.new_simulation,
         "extract_simulation_id": extract_simulation_id,
+        "V632TargetGate": tg632.TargetGate, "V632_PAPER_LAG_NS": tg632.PAPER_LAG_NS, "V632_SAMPLE_NS": tg632.SAMPLE_NS,
+        "V62_DEFAULT_LOOKBACK_NS": tg632.LOOKBACK_NS,
     })
     cls = type("P", (_PassAgent,), {})
     for name in ("_v63_pass", "_v63_count", "_v63_clip", "_v63_apply_caps", "_v63_snapshot", "_v63_book_alphas",
-                 "_v631_observe_sim", "_v6214_note_prints", "_v6214_others_depth", "_v6214_cancelled_ids"):
+                 "_v631_observe_sim", "_v6214_note_prints", "_v6214_others_depth", "_v6214_cancelled_ids",
+                 "_v63_on", "_v632_gate_on", "_v632_gate_ref", "_v632_count"):
         exec(compile(ast.Module(body=[ast.parse(_simple(name)).body[0]], type_ignores=[]), "<v63>", "exec"), ns)
         setattr(cls, name, ns[name])
     return cls(**kwargs)
@@ -397,7 +401,8 @@ def test_all_five_rules_default_on_and_ship_in_params():
     # R3 ships off (score first) but stays a switch the launcher carries
     assert "research_v63_fee_cap=0" in LAUNCHER and 'research_v63_fee_cap=0"* || "$PARAMS" == *"research_v63_fee_cap=1"' in LAUNCHER
     assert 'getattr(self.config, "research_v63_clip_base", V63_CLIP_BASE)' in SIMPLE and "research_v63_clip_base=1.0" in LAUNCHER
-    assert 'getattr(self.config, "research_v63_alpha_floor", V63_ALPHA_FLOOR_DEFAULT)' in SIMPLE and "research_v63_alpha_floor=18" in LAUNCHER
+    # v6.3.2: the validator's published debeta_skill_floor moved from 18.1 (09-24) to 30.1-30.5 (09-25)
+    assert 'getattr(self.config, "research_v63_alpha_floor", V63_ALPHA_FLOOR_DEFAULT)' in SIMPLE and "research_v63_alpha_floor=30" in LAUNCHER
 
 
 def test_the_target_pass_owns_acquisition_and_the_frozen_exit_chain_stays_off():

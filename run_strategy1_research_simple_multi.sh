@@ -341,10 +341,12 @@ research_v63_making_layer=1 \
 research_v63_fee_cap=0 \
 research_v63_book_stop=1 \
 research_v63_clip_base=1.0 \
-research_v63_alpha_floor=18 \
+research_v63_alpha_floor=30 \
 research_v63_lean_log=1 \
 research_v631_sim_reset=1 \
-research_v631_lean_handler=1"
+research_v631_lean_handler=1 \
+research_v632_score_062=1 \
+research_v632_target_gate=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2116,7 +2118,7 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.3 R6 lean log is not wired into _emit." >&2
     exit 1
   }
-  for key in research_v63_trend_target=1 research_v63_making_layer=1 research_v63_book_stop=1 research_v63_clip_base=1.0 research_v63_alpha_floor=18 research_v63_lean_log=1; do
+  for key in research_v63_trend_target=1 research_v63_making_layer=1 research_v63_book_stop=1 research_v63_clip_base=1.0 research_v63_alpha_floor=30 research_v63_lean_log=1; do
     [[ "$PARAMS" == *"$key"* ]] || { echo "ERROR: v6.3 build without $key in PARAMS." >&2; exit 1; }
   done
   # R3 ships OFF (score first: replay trading 0.71-0.83 off vs 0.56-0.70 on); the key must still be carried so the
@@ -2161,6 +2163,51 @@ if [[ "$V63_BUILD" == "1" ]]; then
   }
   [[ "$PARAMS" == *"research_v631_lean_handler=1"* ]] || { echo "ERROR: v6.3.1 build without research_v631_lean_handler=1 in PARAMS." >&2; exit 1; }
   echo "[preflight] v6.3.1 lean handler PASS"
+  # v6.3.2 S1: the agent's own score on the validator's 0.6.2 arithmetic (600-s sampled windows, 20-book skill
+  # minimum, coverage) and the window a validator that skips its seam shift keeps (09-25: every pre-seam uid).
+  grep -qF 'from research_v632_score_062 import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.2 S1 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'bucket_ns=V632_SAMPLE_NS, keep_seam=True)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.2 S1 the alpha mirror is not on the validator's sampled clock." >&2
+    exit 1
+  }
+  grep -qF 'prune_every_ns=V632_PRUNE_EVERY_NS, keep_seam=True)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.2 S1 the making mirror is not on the validator's sampled clock." >&2
+    exit 1
+  }
+  grep -qF 'SKILL_MIN_BOOKS = 20' "$AGENT_PATH/research_v632_score_062.py" || {
+    echo "ERROR: v6.3.2 S1 skill minimum is not the 0.6.2 launch value." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v632_score_062=1"* ]] || { echo "ERROR: v6.3.2 build without research_v632_score_062=1 in PARAMS." >&2; exit 1; }
+  echo "[preflight] v6.3.2 score 0.6.2 PASS"
+  # v6.3.2 S2: the target trades a book only while its paper record would earn skill there (open at the floor,
+  # close under half of it); a gated or stopped book keeps its two-sided making layer.
+  grep -qF 'from research_v632_target_gate import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.2 S2 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'opened = gate.step(book_id, now_ts, 0.5 * (raw_bid + raw_ask), rule_target, floor, stopped=is_paused)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.2 S2 the pass does not gate the target on the paper record." >&2
+    exit 1
+  }
+  grep -qF 'idle = False                  # v6.3.2 S2: a gated or stopped book keeps both making sides' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.2 S2 a gated book does not keep its making layer." >&2
+    exit 1
+  }
+  grep -qF 'gate.update_pool(floor)       # the board'"'"'s record, from every book'"'"'s record up to the last state' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.2 S2 the board's record does not open the gate." >&2
+    exit 1
+  }
+  grep -qF 'PAPER_LAG_NS = 50_000_000_000' "$AGENT_PATH/research_v632_target_gate.py" || {
+    echo "ERROR: v6.3.2 S2 paper lag is not the 50-s order backstop." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v632_target_gate=1"* ]] || { echo "ERROR: v6.3.2 build without research_v632_target_gate=1 in PARAMS." >&2; exit 1; }
+  [[ "$PARAMS" == *"research_v63_book_stop=1"* ]] || { echo "ERROR: v6.3.2 S2 closes the gate on the v6.3 realized-alpha stop." >&2; exit 1; }
+  echo "[preflight] v6.3.2 target gate PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2248,6 +2295,8 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_3_0_trend_target.py \
       tests/test_research_v6_3_1_sim_reset.py \
       tests/test_research_v6_3_1_lean_handler.py \
+      tests/test_research_v6_3_2_target_gate.py \
+      tests/test_research_v6_3_2_score_062.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
