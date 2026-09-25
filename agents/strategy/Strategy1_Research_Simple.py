@@ -1728,6 +1728,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v633_deep: Any = None
         self._v633_counts: dict[str, int] = {}
         self._v633_errors = 0
+        # v6.3.3.1: a deep order lives as long as the deep layer keeps it.  The touch-order post-passes (v6.2.14 touch
+        # life, A1.9.1 exit reprice) read "behind the touch" as stale, and a deep order rests behind the touch by
+        # design: they cancelled every one a state after it rested (live 09-26 OBSERVED: 1,223 cancelled, 42 filled).
+        self.research_v6331_deep_life = self._as_bool(getattr(self.config, "research_v6331_deep_life", True))
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -5975,6 +5979,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             now_ns = 0
         tick = int(getattr(self, "_tick", 0) or 0)
         emitted = 0
+        deep_life = bool(getattr(self, "research_v6331_deep_life", False)) and self._v6331_on()
 
         # A1.9.1.1: seed a verdict for every open-inventory book BEFORE reading
         # the cache.  A1.9.1 iterated only cached verdicts, and the sole writer
@@ -6024,6 +6029,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             row = self._a191_live_exit_row(int(bid), net_base, now_ns)
             if row is None or int(row.order_id) != order_id:
                 # It filled or expired on its own between the decision and here.
+                continue
+            if deep_life and v633_is_deep_client_id(getattr(row, "client_id", None)):
+                # v6.3.3.1: the close-side order is the deep layer's -- it rests behind the touch by design.  The
+                # verdict already kept the exit path from placing a second order on this side.
+                self._v633_count("life_kept_reprice")
                 continue
             if self._count_book_instructions(response, int(bid)) >= self.max_instructions_per_book:
                 # R3: the budget is shared with placements and cancels count.
@@ -10059,6 +10069,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # is the ledger's own live_orders(max_age_ms=..., now_ns=...) test.
         live_by_book: dict[int, list] = {}
         own_by_book: dict[int, set] = {}
+        deep_life = bool(getattr(self, "research_v6331_deep_life", False)) and self._v6331_on()
+        deep_kept = 0
         for row in list((getattr(ledger, "orders", None) or {}).values()):
             try:
                 book_id, order_id = int(row.book_id), int(row.order_id)
@@ -10067,8 +10079,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
             own_by_book.setdefault(book_id, set()).add(order_id)
             if order_id in already:
                 continue
+            if deep_life and v633_is_deep_client_id(getattr(row, "client_id", None)):
+                # v6.3.3.1: a deep order rests behind the touch by design; the deep layer owns its life.
+                deep_kept += 1
+                continue
             if row.placed_ns > 0 and row.age_ms(now_ns) < ttl_ms:
                 live_by_book.setdefault(book_id, []).append(row)
+        if deep_kept:
+            self._v633_count("life_kept_touch", deep_kept)
         emitted = 0
         for book_id, rows in live_by_book.items():
             book = resolve_book_from_state_mapping(books, book_id)
@@ -10436,6 +10454,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _v633_on(self) -> bool:
         return bool(self._v63_on() and getattr(self, "research_v633_deep_layer", False))
+
+    def _v6331_on(self) -> bool:
+        """v6.3.3.1: only the deep layer ends a deep order (reprice, no room, shut, owns-book) -- or a fill or expiry."""
+        return bool(self._v633_on() and getattr(self, "research_v6331_deep_life", False))
 
     def _v633_count(self, key: str, n: int = 1) -> None:
         counts = getattr(self, "_v633_counts", None)
@@ -11014,6 +11036,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             target_gate=self._v632_gate_snapshot(),
             score_062=self._v632_score_snapshot(),
             deep_layer_on=int(self._v633_on()),
+            deep_life_on=int(bool(getattr(self, "research_v6331_deep_life", False)) and self._v6331_on()),
             deep_layer=self._v633_snapshot(),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),

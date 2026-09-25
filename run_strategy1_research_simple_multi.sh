@@ -347,7 +347,8 @@ research_v631_sim_reset=1 \
 research_v631_lean_handler=1 \
 research_v632_score_062=1 \
 research_v632_target_gate=1 \
-research_v633_deep_layer=1"
+research_v633_deep_layer=1 \
+research_v6331_deep_life=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2234,6 +2235,19 @@ if [[ "$V63_BUILD" == "1" ]]; then
   [[ "$PARAMS" == *"research_v633_deep_layer=1"* ]] || { echo "ERROR: v6.3.3 build without research_v633_deep_layer=1 in PARAMS." >&2; exit 1; }
   [[ "$PARAMS" == *"research_v632_target_gate=1"* ]] || { echo "ERROR: v6.3.3 builds on the v6.3.2 target gate." >&2; exit 1; }
   echo "[preflight] v6.3.3 deep layer PASS"
+  # v6.3.3.1: a deep order lives as long as the deep layer keeps it -- the touch-order post-passes (v6.2.14 touch life,
+  # A1.9.1 exit reprice) cancelled every deep order a state after it rested (live 09-26: 1,223 cancelled, 42 filled).
+  grep -qF 'if deep_life and v633_is_deep_client_id(getattr(row, "client_id", None)):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.3.1 the touch-order post-passes do not leave deep orders to the deep layer." >&2
+    exit 1
+  }
+  [[ "$(grep -cF 'if deep_life and v633_is_deep_client_id(getattr(row, "client_id", None)):' "$AGENT_PATH/Strategy1_Research_Simple.py")" == "2" ]] || {
+    echo "ERROR: v6.3.3.1 expects the deep-order exemption in exactly two post-passes (touch life, exit reprice)." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v6331_deep_life=1"* ]] || { echo "ERROR: v6.3.3.1 build without research_v6331_deep_life=1 in PARAMS." >&2; exit 1; }
+  [[ "$PARAMS" == *"research_v633_deep_layer=1"* ]] || { echo "ERROR: v6.3.3.1 builds on the v6.3.3 deep layer." >&2; exit 1; }
+  echo "[preflight] v6.3.3.1 deep life PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2324,6 +2338,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_3_2_target_gate.py \
       tests/test_research_v6_3_2_score_062.py \
       tests/test_research_v6_3_3_deep_layer.py \
+      tests/test_research_v6_3_3_1_deep_life.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
