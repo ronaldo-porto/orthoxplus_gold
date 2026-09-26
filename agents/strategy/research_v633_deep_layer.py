@@ -265,11 +265,12 @@ class DeepLayer:
             db.paper.place(0.5 * (bid + ask), d, bid=bid, ask=ask, tick=tick, decimals=decimals)
         return d
 
-    def book_open(self, book_id: int, floor: float, inventory: float) -> bool:
+    def book_open(self, book_id: int, floor: float, inventory: float, *, inventory_bound: bool = True) -> bool:
+        """v6.4 S2 passes inventory_bound=False: the layer keeps a book over the limit, on its reducing side (room)."""
         db = self.books.get(int(book_id))
         if not self.board_open or db is None or self.depth(book_id) is None:
             return False
-        if abs(float(inventory)) > DEEP_MAX_CLIPS * self.clip + 1e-9:
+        if inventory_bound and abs(float(inventory)) > DEEP_MAX_CLIPS * self.clip + 1e-9:
             return False
         return db.paper.alpha() >= -OWN_FLOOR_FRACTION * float(floor)
 

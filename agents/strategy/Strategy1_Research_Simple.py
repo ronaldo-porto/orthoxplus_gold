@@ -617,6 +617,12 @@ from research_v633_deep_layer import (  # noqa: E402
     own_client_ids as v633_own_client_ids,
     trade_of as v633_trade_of,
 )
+from research_v64_board import (  # noqa: E402
+    CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
+    V64_BOARD_VERSION,
+    vacuum_depth as v64_vacuum_depth,
+    vacuum_price as v64_vacuum_price,
+)
 from research_v632_score_062 import (  # noqa: E402
     PRUNE_EVERY_NS as V632_PRUNE_EVERY_NS,
     SeamBlock as V632SeamBlock,
@@ -1736,6 +1742,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # (fees charged in base leave it on the most active books) it cancelled every order each request (live 09-26
         # OBSERVED on v6.3.3.1: 521 of the deep orders' foreign cancels by tick ~280, on 33 of 49 deep books).
         self.research_v6332_deep_partial = self._as_bool(getattr(self.config, "research_v6332_deep_partial", True))
+        # v6.4 S1: a deep order rests inside a blown-out spread (the skill leaders' gap fills) instead of behind the
+        # far touch.  S2: while the deep board pays, the deep layer owns every book -- no touch trading anywhere (the
+        # window's worst book was a touch book); v6.3.2 runs only while the board is shut.
+        self.research_v64_vacuum = self._as_bool(getattr(self.config, "research_v64_vacuum", True))
+        self.research_v64_board_owns = self._as_bool(getattr(self.config, "research_v64_board_owns", True))
+        self._v64_counts: dict[str, int] = {}
+        self._v64_errors = 0
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -10482,6 +10495,50 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     out.add(oid)
         return out
 
+    def _v64_vacuum_on(self) -> bool:
+        """v6.4 S1: a deep order rests inside a blown-out spread."""
+        return bool(self._v633_on() and getattr(self, "research_v64_vacuum", False))
+
+    def _v64_board_owns_on(self) -> bool:
+        """v6.4 S2: while the deep board is open the deep layer owns every book (no touch trading anywhere)."""
+        return bool(self._v633_on() and getattr(self, "research_v64_board_owns", False))
+
+    def _v64_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v64_counts", None)
+        if counts is None:
+            counts = {}
+            self._v64_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v64_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v64_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v64_errors", 0) or 0)
+        out["version"] = V64_BOARD_VERSION
+        return out
+
+    def _v64_board_idle(self, response, book_id, rows, deep_rows, already, req, *, budget) -> None:
+        """v6.4 S2: a book the open board does not trade -- its touch orders and deep orders go, nothing is placed, and
+        its inventory waits for the layer to open it (the replay's no-touch book)."""
+        req["board_idle"] += 1
+        doomed = [(row, V64_CANCEL_BOARD_OWNS) for row in rows if int(row.order_id) not in already]
+        doomed += [(row, V633_CANCEL_SHUT) for row in deep_rows if int(row.order_id) not in already]
+        if not doomed or self._count_book_instructions(response, book_id) >= budget:
+            return
+        ids = [int(row.order_id) for row, _why in doomed]
+        try:
+            response.cancel_orders(book_id=book_id, order_ids=ids, delay=0)
+        except Exception:
+            self._v64_errors = int(getattr(self, "_v64_errors", 0) or 0) + 1
+            return
+        req["cancels"] += 1
+        for row, why in doomed:
+            count = self._v633_count if str(why).startswith("DEEP_") else self._v64_count
+            count("cancel_" + str(why).lower())
+        try:
+            self._a19_note_exit_cancel(book_id, ids, ABSENT_REPRICE_CANCEL)
+        except Exception:
+            pass
+
     def _v633_count(self, key: str, n: int = 1) -> None:
         counts = getattr(self, "_v633_counts", None)
         if counts is None:
@@ -10517,6 +10574,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         """
         req["deep_books"] += 1
         mid = 0.5 * (float(raw_bid) + float(raw_ask))
+        # v6.4 S1: in a blown-out spread the order rests inside the gap, and is judged against that distance.
+        vac = None
+        if bool(getattr(self, "research_v64_vacuum", False)) and self._v64_vacuum_on():
+            vac = v64_vacuum_depth(raw_bid, raw_ask, tick_size)
+            if vac is not None:
+                self._v64_count("vacuum_book_states")
+        eff = float(vac) if vac is not None else float(depth)
         doomed = [(row, V633_CANCEL_OWNS_BOOK) for row in rows if int(row.order_id) not in already]
         resting: dict[str, Any] = {}
         for row in deep_rows:
@@ -10525,7 +10589,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             side = V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL
             if not deep.room(side, inv):
                 doomed.append((row, V633_CANCEL_NO_ROOM))
-            elif v633_needs_reprice(float(row.price), mid, depth, tick_size):
+            elif v633_needs_reprice(float(row.price), mid, eff, tick_size):
                 doomed.append((row, V633_CANCEL_REPRICE))
             else:
                 resting[side] = row
@@ -10560,7 +10624,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if self._count_book_instructions(response, book_id) >= budget:
                 self._v633_count("budget_deferred")
                 break
-            price = v633_deep_price(mid, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+            if vac is not None:
+                price = v64_vacuum_price(mid, vac, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+            else:
+                price = v633_deep_price(mid, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
             buy_cid, sell_cid = v633_client_ids(book_id)
             try:
                 response.limit_order(
@@ -10576,6 +10643,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 continue
             placed += 1
             req["placed_deep"] += 1
+            if vac is not None:
+                self._v64_count("placed_vacuum")
         return placed
 
     def _v632_note_seam(self) -> None:
@@ -10768,10 +10837,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
                 deep = None
+        # v6.4 S2: while the board is open the deep layer owns every book; a shut board hands them back to v6.3.2.
+        owns_on = bool(getattr(self, "research_v64_board_owns", False)) and self._v64_board_owns_on()
+        board_owns = bool(owns_on and deep is not None and deep.board_open)
         req: dict[str, Any] = {
             "books": len(books), "long": 0, "short": 0, "flat": 0, "paused": 0, "no_signal": 0, "gated": 0,
             "placed_toward": 0, "placed_making": 0, "cancels": 0, "fee_cap_bps": fee_cap,
-            "deep_books": 0, "placed_deep": 0,
+            "deep_books": 0, "placed_deep": 0, "board_idle": 0, "board_owns": int(board_owns),
         }
         placed_total = 0
         for raw_id in sorted(books, key=lambda x: int(x)):
@@ -10865,7 +10937,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             deep_open = False
             if deep is not None and depth is not None:
                 try:
-                    deep_open = bool(deep.book_open(book_id, floor, inv))
+                    deep_open = bool(deep.book_open(book_id, floor, inv, inventory_bound=not owns_on))
                 except Exception:
                     self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
             if deep_open:
@@ -10873,6 +10945,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
                     tick_size=tick_size, dec=dec, clip=clip, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
                 )
+                continue
+            if board_owns:
+                # v6.4 S2: the open board trades no book at the touch; one it does not open quotes nothing.
+                self._v64_board_idle(response, book_id, rows, deep_rows, already, req, budget=budget)
                 continue
             own_cids = (
                 v63_own_client_ids(book_id) | set(v62_entry_client_ids(book_id)) | set(v6214_exit_client_ids(book_id))
@@ -11061,6 +11137,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             deep_layer_on=int(self._v633_on()),
             deep_life_on=int(bool(getattr(self, "research_v6331_deep_life", False)) and self._v6331_on()),
             deep_partial_on=int(bool(getattr(self, "research_v6332_deep_partial", False)) and self._v6332_on()),
+            vacuum_on=int(bool(getattr(self, "research_v64_vacuum", False)) and self._v64_vacuum_on()),
+            board_owns_on=int(bool(getattr(self, "research_v64_board_owns", False)) and self._v64_board_owns_on()),
+            board=(self._v64_snapshot() if bool(getattr(self, "research_v64_vacuum", False) or getattr(self, "research_v64_board_owns", False)) else {}),
             deep_layer=self._v633_snapshot(),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),

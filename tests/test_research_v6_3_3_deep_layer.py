@@ -280,6 +280,7 @@ def test_the_pass_reads_the_board_first_then_each_book_after_its_touch_and_befor
     assert body.index("deep.update_board()") < body.index("for raw_id in sorted(books, key=lambda x: int(x)):")
     assert body.index("raw_bid, raw_ask = prices") < body.index("depth = deep.observe(book_id, now_ts, trades, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)") \
         < body.index("hist = mids.get(book_id)")
-    assert body.index("deep_open = bool(deep.book_open(book_id, floor, inv))") < body.index("own_cids = (") \
+    # v6.4 S2 passes inventory_bound (the prefix is the v6.3.3 gate itself)
+    assert body.index("deep_open = bool(deep.book_open(book_id, floor, inv") < body.index("own_cids = (") \
         < body.index("doomed.append((row, V633_CANCEL_SHUT))")
     assert "| v633_own_client_ids(book_id)" in body

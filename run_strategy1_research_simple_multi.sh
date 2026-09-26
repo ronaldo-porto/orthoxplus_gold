@@ -349,7 +349,9 @@ research_v632_score_062=1 \
 research_v632_target_gate=1 \
 research_v633_deep_layer=1 \
 research_v6331_deep_life=1 \
-research_v6332_deep_partial=1"
+research_v6332_deep_partial=1 \
+research_v64_vacuum=1 \
+research_v64_board_owns=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2221,7 +2223,7 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.3.3 the pass does not feed the sweep depths and the paper deep record." >&2
     exit 1
   }
-  grep -qF 'deep_open = bool(deep.book_open(book_id, floor, inv))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'deep_open = bool(deep.book_open(book_id, floor, inv' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.3.3 the deep layer is not gated on its paper record." >&2
     exit 1
   }
@@ -2258,6 +2260,33 @@ if [[ "$V63_BUILD" == "1" ]]; then
   [[ "$PARAMS" == *"research_v6332_deep_partial=1"* ]] || { echo "ERROR: v6.3.3.2 build without research_v6332_deep_partial=1 in PARAMS." >&2; exit 1; }
   [[ "$PARAMS" == *"research_v6331_deep_life=1"* ]] || { echo "ERROR: v6.3.3.2 builds on the v6.3.3.1 deep life." >&2; exit 1; }
   echo "[preflight] v6.3.3.2 deep partial PASS"
+  # v6.4: S1 a deep order rests inside a blown-out spread; S2 while the deep board pays it owns every book (no touch
+  # trading).  Replay 09-26 (validator arithmetic, partial fills, side-ownership delay): making 2,805-4,482 vs
+  # 1,048-1,577, skill 1.50-3.21 vs 0.83-1.12 on the latest windows; the trending simulation runs v6.3.2 unchanged.
+  grep -qF 'from research_v64_board import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.4 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'price = v64_vacuum_price(mid, vac, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.4 S1 the deep layer does not rest inside a blown-out spread." >&2
+    exit 1
+  }
+  grep -qF 'deep_open = bool(deep.book_open(book_id, floor, inv, inventory_bound=not owns_on))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.4 S2 the deep layer does not keep an over-limit book on its reducing side." >&2
+    exit 1
+  }
+  grep -qF 'self._v64_board_idle(response, book_id, rows, deep_rows, already, req, budget=budget)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.4 S2 the open board still trades books at the touch." >&2
+    exit 1
+  }
+  grep -qF 'VACUUM_MIN_SPREAD_TICKS = 20.0' "$AGENT_PATH/research_v64_board.py" && grep -qF 'VACUUM_FRACTION = 0.8' "$AGENT_PATH/research_v64_board.py" || {
+    echo "ERROR: v6.4 S1 is not at the replayed vacuum (20 ticks, 0.8 of the half-spread)." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v64_vacuum=1"* ]] || { echo "ERROR: v6.4 build without research_v64_vacuum=1 in PARAMS." >&2; exit 1; }
+  [[ "$PARAMS" == *"research_v64_board_owns=1"* ]] || { echo "ERROR: v6.4 build without research_v64_board_owns=1 in PARAMS." >&2; exit 1; }
+  [[ "$PARAMS" == *"research_v633_deep_layer=1"* ]] || { echo "ERROR: v6.4 builds on the v6.3.3 deep layer." >&2; exit 1; }
+  echo "[preflight] v6.4 board PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2350,6 +2379,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_3_3_deep_layer.py \
       tests/test_research_v6_3_3_1_deep_life.py \
       tests/test_research_v6_3_3_2_deep_partial.py \
+      tests/test_research_v6_4_board.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
