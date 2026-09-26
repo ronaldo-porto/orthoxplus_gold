@@ -351,7 +351,8 @@ research_v633_deep_layer=1 \
 research_v6331_deep_life=1 \
 research_v6332_deep_partial=1 \
 research_v64_vacuum=1 \
-research_v64_board_owns=1"
+research_v64_board_owns=1 \
+research_v641_volume_pace=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2287,6 +2288,27 @@ if [[ "$V63_BUILD" == "1" ]]; then
   [[ "$PARAMS" == *"research_v64_board_owns=1"* ]] || { echo "ERROR: v6.4 build without research_v64_board_owns=1 in PARAMS." >&2; exit 1; }
   [[ "$PARAMS" == *"research_v633_deep_layer=1"* ]] || { echo "ERROR: v6.4 builds on the v6.3.3 deep layer." >&2; exit 1; }
   echo "[preflight] v6.4 board PASS"
+  # v6.4.1: the validator's volume cap (capital_turnover_cap x miner_wealth per book, summed over the 86,400-s assessment
+  # period = the whole simulation) is spent evenly over the time left: a book ahead of its pace only reduces inventory.
+  grep -qF 'from research_v641_pace import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.4.1 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'paced = bool(pace.paced(book_id, now_ts, used, pace_cap, pace_duration))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.4.1 the pass does not pace each book's volume." >&2
+    exit 1
+  }
+  grep -qF 'elif paced and v641_adds(side, inv):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.4.1 a paced deep book still keeps its adding orders." >&2
+    exit 1
+  }
+  grep -qF 'PACE_WINDOW_NS = 600_000_000_000' "$AGENT_PATH/research_v641_pace.py" && grep -qF 'ASSESSMENT_NS = 86_400_000_000_000' "$AGENT_PATH/research_v641_pace.py" || {
+    echo "ERROR: v6.4.1 pacing is not on the validator's sampling interval and assessment period." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v641_volume_pace=1"* ]] || { echo "ERROR: v6.4.1 build without research_v641_volume_pace=1 in PARAMS." >&2; exit 1; }
+  [[ "$PARAMS" == *"research_v64_board_owns=1"* ]] || { echo "ERROR: v6.4.1 builds on v6.4." >&2; exit 1; }
+  echo "[preflight] v6.4.1 volume pace PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2380,6 +2402,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_3_3_1_deep_life.py \
       tests/test_research_v6_3_3_2_deep_partial.py \
       tests/test_research_v6_4_board.py \
+      tests/test_research_v6_4_1_volume_pace.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
