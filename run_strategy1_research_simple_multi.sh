@@ -348,7 +348,8 @@ research_v631_lean_handler=1 \
 research_v632_score_062=1 \
 research_v632_target_gate=1 \
 research_v633_deep_layer=1 \
-research_v6331_deep_life=1"
+research_v6331_deep_life=1 \
+research_v6332_deep_partial=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2248,6 +2249,15 @@ if [[ "$V63_BUILD" == "1" ]]; then
   [[ "$PARAMS" == *"research_v6331_deep_life=1"* ]] || { echo "ERROR: v6.3.3.1 build without research_v6331_deep_life=1 in PARAMS." >&2; exit 1; }
   [[ "$PARAMS" == *"research_v633_deep_layer=1"* ]] || { echo "ERROR: v6.3.3.1 builds on the v6.3.3 deep layer." >&2; exit 1; }
   echo "[preflight] v6.3.3.1 deep life PASS"
+  # v6.3.3.2: the A1.7.3 partial/dust recovery cancels no deep order -- on a book holding dust it cancelled every
+  # order each request (live 09-26 on v6.3.3.1: 521 of the deep orders' foreign cancels, on the most active books).
+  grep -qF 'deep_ids = self._v6332_deep_order_ids(int(book_id), order_by_id) & set(conflicting_ids)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.3.3.2 the A1.7.3 recovery does not leave deep orders to the deep layer." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v6332_deep_partial=1"* ]] || { echo "ERROR: v6.3.3.2 build without research_v6332_deep_partial=1 in PARAMS." >&2; exit 1; }
+  [[ "$PARAMS" == *"research_v6331_deep_life=1"* ]] || { echo "ERROR: v6.3.3.2 builds on the v6.3.3.1 deep life." >&2; exit 1; }
+  echo "[preflight] v6.3.3.2 deep partial PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2339,6 +2349,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_3_2_score_062.py \
       tests/test_research_v6_3_3_deep_layer.py \
       tests/test_research_v6_3_3_1_deep_life.py \
+      tests/test_research_v6_3_3_2_deep_partial.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

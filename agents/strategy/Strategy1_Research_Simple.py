@@ -1732,6 +1732,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # life, A1.9.1 exit reprice) read "behind the touch" as stale, and a deep order rests behind the touch by
         # design: they cancelled every one a state after it rested (live 09-26 OBSERVED: 1,223 cancelled, 42 filled).
         self.research_v6331_deep_life = self._as_bool(getattr(self.config, "research_v6331_deep_life", True))
+        # v6.3.3.2: the A1.7.3 partial/dust recovery leaves a deep order to the deep layer too.  On a book holding dust
+        # (fees charged in base leave it on the most active books) it cancelled every order each request (live 09-26
+        # OBSERVED on v6.3.3.1: 521 of the deep orders' foreign cancels by tick ~280, on 33 of 49 deep books).
+        self.research_v6332_deep_partial = self._as_bool(getattr(self.config, "research_v6332_deep_partial", True))
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -10459,6 +10463,25 @@ class Strategy1_Research_Simple(Strategy1_Research):
         """v6.3.3.1: only the deep layer ends a deep order (reprice, no room, shut, owns-book) -- or a fill or expiry."""
         return bool(self._v633_on() and getattr(self, "research_v6331_deep_life", False))
 
+    def _v6332_on(self) -> bool:
+        """v6.3.3.2: the A1.7.3 partial/dust recovery cancels no deep order; its registry row and the dust stay."""
+        return bool(self._v633_on() and getattr(self, "research_v6332_deep_partial", False))
+
+    def _v6332_deep_order_ids(self, book_id: int, orders_by_id: dict) -> set:
+        """v6.3.3.2: the deep orders among a book's account orders -- by the order's own client id, or by the one the
+        ledger recorded from its placement notice (the account view need not carry it)."""
+        out = {oid for oid, order in orders_by_id.items() if v633_is_deep_client_id(self._direct_order_client_id(order))}
+        ledger = self._a19_ledger_ref()
+        if ledger is not None:
+            for row in ledger.live_orders(int(book_id)):
+                try:
+                    oid = int(row.order_id)
+                except (TypeError, ValueError):
+                    continue
+                if oid in orders_by_id and v633_is_deep_client_id(getattr(row, "client_id", None)):
+                    out.add(oid)
+        return out
+
     def _v633_count(self, key: str, n: int = 1) -> None:
         counts = getattr(self, "_v633_counts", None)
         if counts is None:
@@ -11037,6 +11060,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             score_062=self._v632_score_snapshot(),
             deep_layer_on=int(self._v633_on()),
             deep_life_on=int(bool(getattr(self, "research_v6331_deep_life", False)) and self._v6331_on()),
+            deep_partial_on=int(bool(getattr(self, "research_v6332_deep_partial", False)) and self._v6332_on()),
             deep_layer=self._v633_snapshot(),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
@@ -12833,6 +12857,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
         instructions = 0
         holds = 0
+        deep_partial = bool(getattr(self, "research_v6332_deep_partial", False)) and self._v6332_on()
         for book_id, row in list(registry.items()):
             net = float(self._direct_signed_inventory(int(book_id)))
             if not direct_is_dust_inventory(net, min_order=min_size, eps=eps):
@@ -12889,6 +12914,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 )
                 if active and bound_id is not None else ([], [oid for oid, _side in order_rows])
             )
+            if deep_partial and conflicting_ids:
+                # v6.3.3.2: a deep order is the deep layer's to end; the dust stays on the book beside it.
+                deep_ids = self._v6332_deep_order_ids(int(book_id), order_by_id) & set(conflicting_ids)
+                if deep_ids:
+                    self._v633_count("life_kept_partial", len(deep_ids))
+                    conflicting_ids = [oid for oid in conflicting_ids if oid not in deep_ids]
             matching = [order_by_id[oid] for oid in kept_ids if oid in order_by_id]
 
             if conflicting_ids and self._count_book_instructions(response, int(book_id)) < self.max_instructions_per_book:
