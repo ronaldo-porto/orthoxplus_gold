@@ -201,11 +201,12 @@ class DeepLayer:
     """Every book's sweep depths, paper deep record and gate."""
 
     def __init__(self, *, lookback_ns: int = LOOKBACK_NS, sample_ns: int = SAMPLE_NS,
-                 prune_every_ns: int = PRUNE_EVERY_NS, clip: float = DEEP_CLIPS):
+                 prune_every_ns: int = PRUNE_EVERY_NS, clip: float = DEEP_CLIPS, max_clips: float = DEEP_MAX_CLIPS):
         self.lookback_ns = int(lookback_ns)
         self.sample_ns = int(sample_ns)
         self.prune_every_ns = int(prune_every_ns)
         self.clip = float(clip)
+        self.max_clips = float(max_clips)          # v6.5 S2 passes its own bound; DEEP_MAX_CLIPS is v6.3.3's
         self.rebases = 0
         self.reset()
 
@@ -256,7 +257,7 @@ class DeepLayer:
         key = sampled_key(ts, self.sample_ns)
         if db.prev_touch is not None:
             db.sweeps.extend(sweep_depths(trades, db.prev_touch[0], db.prev_touch[1], tick))
-        limit = DEEP_MAX_CLIPS * self.clip
+        limit = self.max_clips * self.clip
         for t in trades:
             db.paper.on_print(key, t["p"], t["s"], self.clip, limit)
         db.prev_touch = (float(bid), float(ask))
@@ -270,12 +271,12 @@ class DeepLayer:
         db = self.books.get(int(book_id))
         if not self.board_open or db is None or self.depth(book_id) is None:
             return False
-        if inventory_bound and abs(float(inventory)) > DEEP_MAX_CLIPS * self.clip + 1e-9:
+        if inventory_bound and abs(float(inventory)) > self.max_clips * self.clip + 1e-9:
             return False
         return db.paper.alpha() >= -OWN_FLOOR_FRACTION * float(floor)
 
     def room(self, side: str, inventory: float) -> bool:
-        lim = DEEP_MAX_CLIPS * self.clip
+        lim = self.max_clips * self.clip
         return float(inventory) < lim - 1e-9 if side == SIDE_BUY else float(inventory) > -lim + 1e-9
 
     def snapshot(self) -> dict[str, Any]:
@@ -286,4 +287,5 @@ class DeepLayer:
             "board_alpha": round(self.board_alpha, 3), "board_opens": self.board_opens, "rebases": self.rebases,
             "books_with_depth": len(depths), "depth_p50": (sorted(depths)[len(depths) // 2] if depths else None),
             "paper_alpha_sum": round(sum(al), 3), "paper_fills": sum(db.paper.fills for db in self.books.values()),
+            "clip": self.clip, "max_clips": self.max_clips,
         }

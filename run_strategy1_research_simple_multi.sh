@@ -352,7 +352,9 @@ research_v6331_deep_life=1 \
 research_v6332_deep_partial=1 \
 research_v64_vacuum=1 \
 research_v64_board_owns=1 \
-research_v641_volume_pace=1"
+research_v641_volume_pace=1 \
+research_v65_deep_clip_mult=2.0 \
+research_v65_deep_max_clips=3.0"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2309,6 +2311,34 @@ if [[ "$V63_BUILD" == "1" ]]; then
   [[ "$PARAMS" == *"research_v641_volume_pace=1"* ]] || { echo "ERROR: v6.4.1 build without research_v641_volume_pace=1 in PARAMS." >&2; exit 1; }
   [[ "$PARAMS" == *"research_v64_board_owns=1"* ]] || { echo "ERROR: v6.4.1 builds on v6.4." >&2; exit 1; }
   echo "[preflight] v6.4.1 volume pace PASS"
+  # v6.5: the deep layer's own size -- its orders twice the touch clip (S1), three of them of room per book (S2), and
+  # the final validator's exposure cap derived from that bound plus one deep order in flight per book.  Replay 09-27
+  # (validator arithmetic, partial fills, side-ownership delay, the v6.4.1 pacer on each UID's remaining allowance):
+  # alpha +55..+93%, making +37..+59%, skill 3.72 -> 4.90 (UID 94) and 2.83 -> 5.75 (UID 104).
+  grep -qF 'from research_v65_deep_clips import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.5 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'deep = V633DeepLayer(lookback_ns=lookback, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.5 the deep layer is not built at its own clip and bound." >&2
+    exit 1
+  }
+  grep -qF 'tick_size=tick_size, dec=dec, clip=deep.clip, min_order=min_order' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.5 S1 deep orders are not placed at the deep layer's clip." >&2
+    exit 1
+  }
+  grep -qF 'deep_caps = v65_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.5 the exposure cap does not follow the deep bound (the validator would refuse the new room)." >&2
+    exit 1
+  }
+  grep -qF 'CLIP_MULT = 2.0' "$AGENT_PATH/research_v65_deep_clips.py" && grep -qF 'MAX_CLIPS = 3.0' "$AGENT_PATH/research_v65_deep_clips.py" || {
+    echo "ERROR: v6.5 is not at the replayed size (clip x2.0, 3.0 clips of room)." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v65_deep_clip_mult=2.0"* ]] || { echo "ERROR: v6.5 build without research_v65_deep_clip_mult=2.0 in PARAMS." >&2; exit 1; }
+  [[ "$PARAMS" == *"research_v65_deep_max_clips=3.0"* ]] || { echo "ERROR: v6.5 build without research_v65_deep_max_clips=3.0 in PARAMS." >&2; exit 1; }
+  [[ "$PARAMS" == *"research_v641_volume_pace=1"* ]] || { echo "ERROR: v6.5 builds on v6.4.1 (larger clips spend the volume cap faster)." >&2; exit 1; }
+  echo "[preflight] v6.5 deep clips PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2403,6 +2433,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_3_3_2_deep_partial.py \
       tests/test_research_v6_4_board.py \
       tests/test_research_v6_4_1_volume_pace.py \
+      tests/test_research_v6_5_deep_clips.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

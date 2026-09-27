@@ -624,6 +624,15 @@ from research_v641_pace import (  # noqa: E402
     adds as v641_adds,
     duration_ns as v641_duration_ns,
 )
+from research_v65_deep_clips import (  # noqa: E402
+    CLIP_MULT as V65_CLIP_MULT,
+    MAX_CLIPS as V65_MAX_CLIPS,
+    V65_DEEP_CLIPS_VERSION,
+    book_bound as v65_book_bound,
+    caps_for as v65_caps_for,
+    deep_clip as v65_deep_clip,
+    max_clips as v65_max_clips,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1762,6 +1771,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v641_pace: Any = None
         self._v641_counts: dict[str, int] = {}
         self._v641_errors = 0
+        # v6.5: the deep layer's own size.  S1 its clip is the touch clip times a multiple (1.0 is v6.4.1); S2 a book
+        # holds that many of its clips (2.0 is v6.4.1).  The validator's exposure cap follows the deep bound.
+        try:
+            self.research_v65_deep_clip_mult = float(getattr(self.config, "research_v65_deep_clip_mult", V65_CLIP_MULT))
+        except (TypeError, ValueError):
+            self.research_v65_deep_clip_mult = float(V65_CLIP_MULT)
+        try:
+            self.research_v65_deep_max_clips = float(getattr(self.config, "research_v65_deep_max_clips", V65_MAX_CLIPS))
+        except (TypeError, ValueError):
+            self.research_v65_deep_max_clips = float(V65_MAX_CLIPS)
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -10354,6 +10373,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if n <= 0:
             return
         caps = v63_caps_for(n, clip=self._v63_clip())
+        if getattr(self, "research_v65_deep_clip_mult", None) is not None and self._v633_on():
+            # v6.5: every book may hold the deep layer's bound plus one deep order in flight (the final validator
+            # charges each order its worst-case fill); at v6.4.1's size this is the three clips above.
+            deep_caps = v65_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())
+            caps = {key: max(float(value), float(deep_caps.get(key, 0.0))) for key, value in caps.items()}
         changed = False
         for key, value in caps.items():
             if float(getattr(self, key, 0.0) or 0.0) < float(value) - 1e-9:
@@ -10535,6 +10559,25 @@ class Strategy1_Research_Simple(Strategy1_Research):
         out["version"] = V641_PACE_VERSION
         return out
 
+    def _v65_deep_clip(self) -> float:
+        """v6.5 S1: the deep layer's clip -- the touch clip times the multiple, never below the minimum order."""
+        min_order = float(getattr(self, "mm_base_size", 0.25) or 0.25)
+        return float(v65_deep_clip(self._v63_clip(), getattr(self, "research_v65_deep_clip_mult", None), min_order))
+
+    def _v65_max_clips(self) -> float:
+        """v6.5 S2: a book's deep inventory bound, in deep clips."""
+        return float(v65_max_clips(getattr(self, "research_v65_deep_max_clips", None)))
+
+    def _v65_snapshot(self) -> dict:
+        deep = getattr(self, "_v633_deep", None)
+        clip = float(deep.clip) if deep is not None else self._v65_deep_clip()
+        clips = float(deep.max_clips) if deep is not None else self._v65_max_clips()
+        return {
+            "version": V65_DEEP_CLIPS_VERSION, "mult": float(getattr(self, "research_v65_deep_clip_mult", 1.0)),
+            "clip": clip, "max_clips": clips, "book_bound_base": float(v65_book_bound(clip, clips)),
+            "cap_total_abs_base": float(getattr(self, "research_max_total_abs_base", 0.0) or 0.0),
+        }
+
     def _v64_vacuum_on(self) -> bool:
         """v6.4 S1: a deep order rests inside a blown-out spread."""
         return bool(self._v633_on() and getattr(self, "research_v64_vacuum", False))
@@ -10591,7 +10634,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         deep = getattr(self, "_v633_deep", None)
         if deep is None:
             lookback = int(getattr(self, "research_kappa_lookback_ns", 0) or 0) or V62_DEFAULT_LOOKBACK_NS
-            deep = V633DeepLayer(lookback_ns=lookback, clip=float(self._v63_clip()))
+            if getattr(self, "research_v65_deep_clip_mult", None) is None:
+                deep = V633DeepLayer(lookback_ns=lookback, clip=float(self._v63_clip()))
+            else:
+                # v6.5: S1 the layer's clip, S2 its bound in clips (1.0 and 2.0 build the v6.4.1 layer)
+                deep = V633DeepLayer(lookback_ns=lookback, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())
             self._v633_deep = deep
         return deep
 
@@ -11013,7 +11060,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if deep_open:
                 placed_total += self._v633_book(
                     response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
-                    tick_size=tick_size, dec=dec, clip=clip, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
+                    tick_size=tick_size, dec=dec, clip=deep.clip, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
                     paced=paced,
                 )
                 continue
@@ -11212,6 +11259,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             board_owns_on=int(bool(getattr(self, "research_v64_board_owns", False)) and self._v64_board_owns_on()),
             volume_pace_on=int(bool(getattr(self, "research_v641_volume_pace", False)) and self._v641_on()),
             volume_pace=(self._v641_snapshot() if bool(getattr(self, "research_v641_volume_pace", False)) else {}),
+            deep_clips=(self._v65_snapshot() if getattr(self, "research_v65_deep_clip_mult", None) is not None else {}),
             board=(self._v64_snapshot() if bool(getattr(self, "research_v64_vacuum", False) or getattr(self, "research_v64_board_owns", False)) else {}),
             deep_layer=self._v633_snapshot(),
             trend_target=self._v63_snapshot(),
