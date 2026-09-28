@@ -222,7 +222,7 @@ def test_the_switches_default_to_the_replayed_size_ship_in_params_and_are_prefli
     # v6.6: the multiple comes from --deep_clip_mult (1.0 or 2.0, default 2.0) and S3 sets two clips of room
     assert "research_v65_deep_clip_mult=${DEEP_CLIP_MULT}" in params and "research_v65_deep_max_clips=2.0" in params
     assert 'DEEP_CLIP_MULT="${DEEP_CLIP_MULT:-2.0}"' in LAUNCHER
-    assert 'echo "[preflight] v6.5 deep clips PASS (deep_clip_mult=${DEEP_CLIP_MULT})"' in LAUNCHER
+    assert 'echo "[preflight] v6.5 deep clips PASS (deep_clip_mult=${DEEP_CLIP_MULT} from ${DEEP_CLIP_MULT_SOURCE})"' in LAUNCHER
     assert "tests/test_research_v6_5_deep_clips.py" in LAUNCHER
 
 

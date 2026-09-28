@@ -7,7 +7,10 @@ filled four 2-base deep sells in 32 s into a 12% spike, to its 6-base bound, and
 latest three contain the spike): lowest window skill 0.99 -> 3.85 at UID 104's allowance and 1.28 -> 2.67 at UID 94's.
 """
 import ast
+import os
+import subprocess
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -414,3 +417,31 @@ def test_the_pass_notes_fills_before_the_books_are_quoted():
     src = _src("_v63_pass")
     assert src.index("spacing.note(book_id, book_trades,") < src.index("placed_total += self._v633_book(")
     assert src.index("spacing.maybe_rebase(now_ts)") < src.index("for raw_id in sorted(books")
+
+
+def _parse(args=(), env=None):
+    """The launcher's settings and long-option parsing on their own: what DEEP_CLIP_MULT and its source end up as."""
+    head = LAUNCHER[:LAUNCHER.index('while getopts "w:h:u:a:e:p:i:" flag; do')]
+    script = head + 'echo "$DEEP_CLIP_MULT|$DEEP_CLIP_MULT_SOURCE|$HISTORY_ANCHOR|$HISTORY_ANCHOR_SOURCE"\n'
+    tmp = Path(tempfile.mkdtemp()) / "parse.sh"
+    tmp.write_text(script)
+    e = {k: v for k, v in os.environ.items() if k not in ("DEEP_CLIP_MULT", "HISTORY_ANCHOR")}
+    e.update(env or {})
+    out = subprocess.run(["bash", str(tmp), *args], capture_output=True, text=True, env=e, timeout=60)
+    return out.returncode, out.stdout.strip(), out.stderr
+
+
+def test_deep_clip_mult_is_a_launcher_option_like_history_anchor():
+    assert _parse() == (0, "2.0|default|auto|default", "")
+    assert _parse(["--deep_clip_mult", "1.0"])[1] == "1.0|flag|auto|default"
+    assert _parse(["--deep_clip_mult=2.0", "--history_anchor", "established"])[1] == "2.0|flag|established|flag"
+    assert _parse(["--deep_clip_mult", "1"])[1] == "1.0|flag|auto|default"                  # 1 and 2 are read as 1.0 / 2.0
+    assert _parse(["--deep_clip_mult=2"])[1] == "2.0|flag|auto|default"
+    assert _parse(env={"DEEP_CLIP_MULT": "1.0"})[1] == "1.0|env|auto|default"
+    assert _parse(["--deep_clip_mult", "2.0"], env={"DEEP_CLIP_MULT": "1.0"})[1] == "2.0|flag|auto|default"  # the flag wins
+    assert _parse(["--deep_clip_mult", "3"])[1] == "3|flag|auto|default"                     # the preflight refuses it
+    code, _out, err = _parse(["--deep_clip_mult"])
+    assert code == 2 and "--deep_clip_mult requires 1.0 or 2.0" in err
+    assert 'echo "[Strategy1_Research_Simple] deep_clip_mult=$DEEP_CLIP_MULT (from $DEEP_CLIP_MULT_SOURCE)"' in LAUNCHER
+    assert "# --deep_clip_mult 1.0 | 2.0  (v6.6; omitted = 2.0; 1 and 2 are accepted)" in LAUNCHER
+    assert '[preflight] v6.6 NOTE: mainnet with --deep_clip_mult 1.0' in LAUNCHER

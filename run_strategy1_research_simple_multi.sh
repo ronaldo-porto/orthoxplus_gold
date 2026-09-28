@@ -39,9 +39,15 @@ INHERITED_SHORT_LOTS="${INHERITED_SHORT_LOTS:-park}"
 #   MAX_ACTIVE_BOOKS  productive books held at once, 6 to 8 (the frozen Research clamp is 8, and
 #                     8 x 0.25 is exactly the 2.0 BASE cap).  6 restores v6.0.1.
 MAX_ACTIVE_BOOKS="${MAX_ACTIVE_BOOKS:-8}"
-# v6.6: --deep_clip_mult 1.0 | 2.0 -- the deep layer's order size in touch clips (v6.5 S1).  2.0 is the default; 1.0 is
-#   for a UID whose remaining volume cap is short (replayed 09-28 on UID 94's allowance: the 1.0 size held the skill leg
-#   in the latest windows where 2.0 did not).  The sim changeover resets every allowance.
+# v6.6 operator setting; see the v6.5/v6.6 preflight blocks below.
+#   DEEP_CLIP_MULT  1.0 | 2.0   the deep layer's order size in touch clips (v6.5 S1): 2.0 = 2 base, 1.0 = 1 base.
+#                   1.0 is for a UID whose remaining volume cap is short (replayed 09-28 on UID 94's allowance: the
+#                   1.0 size held the skill leg in the latest windows where 2.0 did not); the sim changeover resets
+#                   every allowance, so relaunch at 2.0 then.
+# Prefer the --deep_clip_mult flag (parsed below); it overrides the environment variable.
+# With neither, the size is 2.0.  1 and 2 are read as 1.0 and 2.0.
+DEEP_CLIP_MULT_SOURCE="default"
+[[ -n "${DEEP_CLIP_MULT:-}" ]] && DEEP_CLIP_MULT_SOURCE="env"
 DEEP_CLIP_MULT="${DEEP_CLIP_MULT:-2.0}"
 
 EXTRA=()
@@ -55,6 +61,10 @@ EXTRA=()
 #   established  every restart of a UID that already has a score history
 #   auto         a fresh registration only
 #   ./run_strategy1_research_simple_multi.sh --pm2_name sn79-m67 --history_anchor established ...
+# --deep_clip_mult 1.0 | 2.0  (v6.6; omitted = 2.0; 1 and 2 are accepted)
+#   2.0  2-base deep orders, 4 base of room per book -- the default
+#   1.0  1-base deep orders, 2 base of room per book -- a UID with little volume allowance left
+#   ./run_strategy1_research_simple_multi.sh --pm2_name sn79-v66-94-R --history_anchor established --deep_clip_mult 1.0 ...
 _normalized_args=()
 while (($#)); do
   case "$1" in
@@ -81,12 +91,12 @@ while (($#)); do
       ;;
     --deep_clip_mult)
       [[ $# -ge 2 && -n "${2:-}" ]] || { echo "ERROR: --deep_clip_mult requires 1.0 or 2.0" >&2; exit 2; }
-      DEEP_CLIP_MULT="$2"
+      DEEP_CLIP_MULT="$2"; DEEP_CLIP_MULT_SOURCE="flag"
       shift 2
       ;;
     --deep_clip_mult=*)
       [[ -n "${1#*=}" ]] || { echo "ERROR: --deep_clip_mult requires 1.0 or 2.0" >&2; exit 2; }
-      DEEP_CLIP_MULT="${1#*=}"
+      DEEP_CLIP_MULT="${1#*=}"; DEEP_CLIP_MULT_SOURCE="flag"
       shift
       ;;
     --history_anchor)
@@ -107,6 +117,10 @@ while (($#)); do
 done
 set -- "${_normalized_args[@]}"
 unset _normalized_args
+case "$DEEP_CLIP_MULT" in
+  1) DEEP_CLIP_MULT="1.0" ;;
+  2) DEEP_CLIP_MULT="2.0" ;;
+esac
 
 while getopts "w:h:u:a:e:p:i:" flag; do
   case "$flag" in
@@ -2360,7 +2374,11 @@ if [[ "$V63_BUILD" == "1" ]]; then
   [[ "$PARAMS" == *"research_v65_deep_clip_mult=${DEEP_CLIP_MULT} "* ]] || { echo "ERROR: v6.5 build without research_v65_deep_clip_mult=${DEEP_CLIP_MULT} in PARAMS." >&2; exit 1; }
   [[ "$PARAMS" == *"research_v65_deep_max_clips=2.0 "* ]] || { echo "ERROR: v6.6 S3 build without research_v65_deep_max_clips=2.0 in PARAMS." >&2; exit 1; }
   [[ "$PARAMS" == *"research_v641_volume_pace=1"* ]] || { echo "ERROR: v6.5 builds on v6.4.1 (larger clips spend the volume cap faster)." >&2; exit 1; }
-  echo "[preflight] v6.5 deep clips PASS (deep_clip_mult=${DEEP_CLIP_MULT})"
+  if [[ "$NETUID" == "79" && "$DEEP_CLIP_MULT" == "1.0" ]]; then
+    echo "[preflight] v6.6 NOTE: mainnet with --deep_clip_mult 1.0 (1-base deep orders).  Right for a UID with little" >&2
+    echo "            volume allowance left this simulation; the changeover resets it -- relaunch at 2.0 then." >&2
+  fi
+  echo "[preflight] v6.5 deep clips PASS (deep_clip_mult=${DEEP_CLIP_MULT} from ${DEEP_CLIP_MULT_SOURCE})"
   # v6.6: S1 an add to a held position rests only a full depth beyond the last add on its side; S2 each book is paced
   # against a budget line to the simulation's end; S3 two clips of room (above); S4 a capped book takes no placement;
   # S5 exchange identities keyed by (book, order id).  Mainnet 09-27/28: UID 104's skill fell to rank 0.475 on one spike
@@ -2510,7 +2528,7 @@ echo "[Strategy1_Research_Simple] version=${POLICY_VER}"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] history_anchor=$HISTORY_ANCHOR (from $HISTORY_ANCHOR_SOURCE)"
 echo "[Strategy1_Research_Simple] max_active_books=$MAX_ACTIVE_BOOKS"
-echo "[Strategy1_Research_Simple] deep_clip_mult=$DEEP_CLIP_MULT"
+echo "[Strategy1_Research_Simple] deep_clip_mult=$DEEP_CLIP_MULT (from $DEEP_CLIP_MULT_SOURCE)"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 
 # Keep the strategy directory importable in the actual PM2/miner process, not
