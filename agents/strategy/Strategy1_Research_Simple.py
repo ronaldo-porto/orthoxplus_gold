@@ -633,6 +633,16 @@ from research_v65_deep_clips import (  # noqa: E402
     deep_clip as v65_deep_clip,
     max_clips as v65_max_clips,
 )
+from research_v66_add_spacing import (  # noqa: E402
+    AddSpacing as V66AddSpacing,
+    CANCEL_SPACING as V66_CANCEL_SPACING,
+    V66_ADD_SPACING_VERSION,
+    adds_to_position as v66_adds_to_position,
+)
+from research_v66_pace_line import (  # noqa: E402
+    PaceLine as V66PaceLine,
+    V66_PACE_LINE_VERSION,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1781,6 +1791,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self.research_v65_deep_max_clips = float(getattr(self.config, "research_v65_deep_max_clips", V65_MAX_CLIPS))
         except (TypeError, ValueError):
             self.research_v65_deep_max_clips = float(V65_MAX_CLIPS)
+        # v6.6: S1 an add to a held position rests only a full depth beyond the last add on its side; S2 each book's
+        # volume is paced against a budget line to the simulation's end (not a 600-s rate); S4 a capped book takes no
+        # placement at all, as the validator drops them; S5 exchange identities are keyed by (book, order id).
+        self.research_v66_add_spacing = self._as_bool(getattr(self.config, "research_v66_add_spacing", True))
+        self.research_v66_pace_line = self._as_bool(getattr(self.config, "research_v66_pace_line", True))
+        self.research_v66_cap_closed = self._as_bool(getattr(self.config, "research_v66_cap_closed", True))
+        self.research_v66_book_identity = self._as_bool(getattr(self.config, "research_v66_book_identity", True))
+        self._v66_spacing: Any = None
+        self._v66_pace: Any = None
+        self._v66_counts: dict[str, int] = {}
+        self._v66_errors = 0
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -10578,6 +10599,48 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "cap_total_abs_base": float(getattr(self, "research_max_total_abs_base", 0.0) or 0.0),
         }
 
+    def _v66_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v66_counts", None)
+        if counts is None:
+            counts = {}
+            self._v66_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v66_spacing_on(self) -> bool:
+        """v6.6 S1: the deep layer adds to a held position only a full depth beyond its last add."""
+        return bool(self._v633_on() and getattr(self, "research_v66_add_spacing", False))
+
+    def _v66_spacing_ref(self):
+        spacing = getattr(self, "_v66_spacing", None)
+        if spacing is None:
+            spacing = V66AddSpacing()
+            self._v66_spacing = spacing
+        return spacing
+
+    def _v66_pace_line_on(self) -> bool:
+        """v6.6 S2: the v6.4.1 pacing consumer, fed by a budget line instead of the 600-s rate."""
+        return bool(self._v641_on() and getattr(self, "research_v66_pace_line", False))
+
+    def _v66_pace_ref(self):
+        pace = getattr(self, "_v66_pace", None)
+        if pace is None:
+            pace = V66PaceLine()
+            self._v66_pace = pace
+        return pace
+
+    def _v66_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v66_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v66_errors", 0) or 0)
+        out["add_spacing_on"] = int(bool(getattr(self, "research_v66_add_spacing", False)))
+        out["pace_line_on"] = int(bool(getattr(self, "research_v66_pace_line", False)))
+        out["cap_closed_on"] = int(bool(getattr(self, "research_v66_cap_closed", False)))
+        out["book_identity_on"] = int(bool(getattr(self, "research_v66_book_identity", False)))
+        spacing = getattr(self, "_v66_spacing", None)
+        out["add_spacing"] = spacing.snapshot() if spacing is not None else {"version": V66_ADD_SPACING_VERSION}
+        pace = getattr(self, "_v66_pace", None)
+        out["pace_line"] = pace.snapshot() if pace is not None else {"version": V66_PACE_LINE_VERSION}
+        return out
+
     def _v64_vacuum_on(self) -> bool:
         """v6.4 S1: a deep order rests inside a blown-out spread."""
         return bool(self._v633_on() and getattr(self, "research_v64_vacuum", False))
@@ -10668,6 +10731,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if vac is not None:
                 self._v64_count("vacuum_book_states")
         eff = float(vac) if vac is not None else float(depth)
+        # v6.6 S1: a side that would grow a held position rests only a full depth (eff) beyond its last add.
+        unspaced: set[str] = set()
+        if bool(getattr(self, "research_v66_add_spacing", False)) and self._v66_spacing_on():
+            try:
+                spacing = self._v66_spacing_ref()
+                for side in (V63_SIDE_BUY, V63_SIDE_SELL):
+                    if not v66_adds_to_position(side, inv):
+                        continue
+                    if vac is not None:
+                        want = v64_vacuum_price(mid, vac, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+                    else:
+                        want = v633_deep_price(mid, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+                    if not spacing.allows(book_id, side, want, inv, eff, tick_size):
+                        unspaced.add(side)
+            except Exception:
+                self._v66_errors = int(getattr(self, "_v66_errors", 0) or 0) + 1
+                unspaced = set()
         doomed = [(row, V633_CANCEL_OWNS_BOOK) for row in rows if int(row.order_id) not in already]
         resting: dict[str, Any] = {}
         for row in deep_rows:
@@ -10678,6 +10758,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 doomed.append((row, V633_CANCEL_NO_ROOM))
             elif paced and v641_adds(side, inv):
                 doomed.append((row, V641_CANCEL_PACED))     # v6.4.1: ahead of its volume pace, no adding order
+            elif side in unspaced:
+                doomed.append((row, V66_CANCEL_SPACING))    # v6.6 S1: not a full depth beyond the last add
+                self._v66_count("cancel_spacing")
             elif v633_needs_reprice(float(row.price), mid, eff, tick_size):
                 doomed.append((row, V633_CANCEL_REPRICE))
             else:
@@ -10707,6 +10790,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if side in resting or side in live_sides or side in cancelled or not deep.room(side, inv):
                 continue
             if paced and v641_adds(side, inv):
+                continue
+            if side in unspaced:
+                self._v66_count("placement_spaced_out")
                 continue
             q = v62_lot_quantity(clip, getattr(cfg, "volumeDecimals", 4))
             if q + 1e-12 < min_order:
@@ -10928,6 +11014,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
                 deep = None
+        spacing = None
+        if deep is not None and bool(getattr(self, "research_v66_add_spacing", False)) and self._v66_spacing_on():
+            try:
+                spacing = self._v66_spacing_ref()
+                spacing.maybe_rebase(now_ts)
+            except Exception:
+                self._v66_errors = int(getattr(self, "_v66_errors", 0) or 0) + 1
+                spacing = None
         # v6.4 S2: while the board is open the deep layer owns every book; a shut board hands them back to v6.3.2.
         owns_on = bool(getattr(self, "research_v64_board_owns", False)) and self._v64_board_owns_on()
         board_owns = bool(owns_on and deep is not None and deep.board_open)
@@ -10936,7 +11030,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         pace_cap, pace_duration = 0.0, None
         if bool(getattr(self, "research_v641_volume_pace", False)) and self._v641_on():
             try:
-                pace = self._v641_pace_ref()
+                if bool(getattr(self, "research_v66_pace_line", False)) and self._v66_pace_line_on():
+                    pace = self._v66_pace_ref()           # v6.6 S2: the budget line, same consumer as v6.4.1
+                else:
+                    pace = self._v641_pace_ref()
                 pace_cap = float(self._research_volume_cap_quote(state) or 0.0)
                 pace_duration = v641_duration_ns(getattr(state, "config", None))
             except Exception:
@@ -10967,9 +11064,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 continue
             raw_bid, raw_ask = prices
             depth = None
+            book_trades: list = []
             if deep is not None:
                 try:
                     trades = [t for t in (v633_trade_of(ev) for ev in (getattr(book, "events", None) or ())) if t is not None]
+                    book_trades = trades
                     depth = deep.observe(book_id, now_ts, trades, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
                 except Exception:
                     self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
@@ -11022,6 +11121,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     inv = float(self._direct_signed_inventory(book_id))
                 except Exception:
                     inv = 0.0
+            if spacing is not None:
+                # v6.6 S1: our fills in this state's prints, against the inventory they left, mark each side's last add.
+                try:
+                    spacing.note(book_id, book_trades, getattr(self, "uid", None), inv, eps=eps)
+                except Exception:
+                    self._v66_errors = int(getattr(self, "_v66_errors", 0) or 0) + 1
             paced = False
             if pace is not None:
                 try:
@@ -11260,6 +11365,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             volume_pace_on=int(bool(getattr(self, "research_v641_volume_pace", False)) and self._v641_on()),
             volume_pace=(self._v641_snapshot() if bool(getattr(self, "research_v641_volume_pace", False)) else {}),
             deep_clips=(self._v65_snapshot() if getattr(self, "research_v65_deep_clip_mult", None) is not None else {}),
+            v66=(self._v66_snapshot() if getattr(self, "research_v66_add_spacing", None) is not None else {}),
             board=(self._v64_snapshot() if bool(getattr(self, "research_v64_vacuum", False) or getattr(self, "research_v64_board_owns", False)) else {}),
             deep_layer=self._v633_snapshot(),
             trend_target=self._v63_snapshot(),
@@ -13610,6 +13716,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             exchange_order_id=exchange_order_id, book_id=book_id,
             client_order_id=client_order_id, side=side,
             remaining_quantity=remaining_quantity,
+            book_keyed=bool(getattr(self, "research_v66_book_identity", False)),
         )
 
     def _direct_release_pending_exact(
@@ -13782,6 +13889,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             decision, identity = cancellation_identity_decision(
                 registry, exchange_order_id=oid_int, notice_book_id=notice_book,
                 success=bool(getattr(cancellation, "success", False)),
+                book_keyed=bool(getattr(self, "research_v66_book_identity", False)),
             )
             if decision == "STALE_UNKNOWN" and self._a191_release_reprice_ownership(
                 exchange_order_id=oid_int, notice_book_id=notice_book,
@@ -13820,7 +13928,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 book_id=int(identity.book_id), client_order_id=identity.client_order_id,
                 side=identity.side, reason=f"NOTICE_{phase}_EXACT", exchange_order_id=oid_int,
             )
-            registry.pop(oid_int, None)
+            if bool(getattr(self, "research_v66_book_identity", False)):
+                registry.pop((int(identity.book_id), int(oid_int)), None)      # v6.6 S5: (book, order id)
+            else:
+                registry.pop(oid_int, None)
             self._direct_identity_releases = int(getattr(self, "_direct_identity_releases", 0) or 0) + 1
             self._direct_emit_identity_diag(
                 "A17432_IDENTITY_RELEASE", book=int(identity.book_id),
@@ -13958,7 +14069,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 own_oid = int(getattr(event, "takerOrderId", 0) or 0)
         except (TypeError, ValueError):
             own_oid = None
-        identity = registry.get(own_oid) if own_oid else None
+        keyed = bool(getattr(self, "research_v66_book_identity", False))
+        # v6.6 S5: the venue numbers orders per book, so a fill is looked up by (book, order id), never by id alone.
+        identity = (registry.get((bid, own_oid)) if keyed else registry.get(own_oid)) if own_oid else None
         matches = []
         if identity is not None:
             key = identity.pending_key()
@@ -13968,7 +14081,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 identity, q, eps=float(self._execution_flat_epsilon())
             )
             if identity_remaining <= 0.0:
-                registry.pop(int(identity.exchange_order_id), None)
+                if keyed:
+                    registry.pop((int(identity.book_id), int(identity.exchange_order_id)), None)
+                else:
+                    registry.pop(int(identity.exchange_order_id), None)
         else:
             # A fill can race the placement acknowledgement. Fall back only to
             # one unambiguous exact client id; never match by book alone.
@@ -14285,6 +14401,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 headroom = float(self._research_volume_cap_headroom(state, book_id))
             except Exception:
                 headroom = 1.0
+
+            if risk_reducing_batch and headroom <= 0.0 and bool(getattr(self, "research_v66_cap_closed", False)):
+                # v6.6 S4: the validator drops every non-cancel instruction on a book at its volume cap
+                # (query.py: miner_volumes[book] >= volume_cap) -- a reducing order too.  Mainnet UID 94 sent ~22,000
+                # such orders to its capped books on 09-27/28; none of them reached the book.
+                self._v66_count("cap_closed_rejects")
+                self._research_log_final_contract_reject(
+                    book_id, side, old_price_f, best_bid, best_ask, "VOLUME_CAP", False,
+                )
+                continue
 
             if not risk_reducing_batch:
                 projected_total_abs = shadow_abs + delta_worst

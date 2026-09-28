@@ -39,6 +39,10 @@ INHERITED_SHORT_LOTS="${INHERITED_SHORT_LOTS:-park}"
 #   MAX_ACTIVE_BOOKS  productive books held at once, 6 to 8 (the frozen Research clamp is 8, and
 #                     8 x 0.25 is exactly the 2.0 BASE cap).  6 restores v6.0.1.
 MAX_ACTIVE_BOOKS="${MAX_ACTIVE_BOOKS:-8}"
+# v6.6: --deep_clip_mult 1.0 | 2.0 -- the deep layer's order size in touch clips (v6.5 S1).  2.0 is the default; 1.0 is
+#   for a UID whose remaining volume cap is short (replayed 09-28 on UID 94's allowance: the 1.0 size held the skill leg
+#   in the latest windows where 2.0 did not).  The sim changeover resets every allowance.
+DEEP_CLIP_MULT="${DEEP_CLIP_MULT:-2.0}"
 
 EXTRA=()
 
@@ -73,6 +77,16 @@ while (($#)); do
     --max_active_books=*)
       [[ -n "${1#*=}" ]] || { echo "ERROR: --max_active_books requires 6, 7 or 8" >&2; exit 2; }
       MAX_ACTIVE_BOOKS="${1#*=}"
+      shift
+      ;;
+    --deep_clip_mult)
+      [[ $# -ge 2 && -n "${2:-}" ]] || { echo "ERROR: --deep_clip_mult requires 1.0 or 2.0" >&2; exit 2; }
+      DEEP_CLIP_MULT="$2"
+      shift 2
+      ;;
+    --deep_clip_mult=*)
+      [[ -n "${1#*=}" ]] || { echo "ERROR: --deep_clip_mult requires 1.0 or 2.0" >&2; exit 2; }
+      DEEP_CLIP_MULT="${1#*=}"
       shift
       ;;
     --history_anchor)
@@ -353,8 +367,12 @@ research_v6332_deep_partial=1 \
 research_v64_vacuum=1 \
 research_v64_board_owns=1 \
 research_v641_volume_pace=1 \
-research_v65_deep_clip_mult=2.0 \
-research_v65_deep_max_clips=3.0"
+research_v65_deep_clip_mult=${DEEP_CLIP_MULT} \
+research_v65_deep_max_clips=2.0 \
+research_v66_add_spacing=1 \
+research_v66_pace_line=1 \
+research_v66_cap_closed=1 \
+research_v66_book_identity=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2331,14 +2349,56 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.5 the exposure cap does not follow the deep bound (the validator would refuse the new room)." >&2
     exit 1
   }
-  grep -qF 'CLIP_MULT = 2.0' "$AGENT_PATH/research_v65_deep_clips.py" && grep -qF 'MAX_CLIPS = 3.0' "$AGENT_PATH/research_v65_deep_clips.py" || {
-    echo "ERROR: v6.5 is not at the replayed size (clip x2.0, 3.0 clips of room)." >&2
+  grep -qF 'CLIP_MULT = 2.0' "$AGENT_PATH/research_v65_deep_clips.py" && grep -qF 'MAX_CLIPS = 2.0' "$AGENT_PATH/research_v65_deep_clips.py" || {
+    echo "ERROR: v6.5 is not at the replayed size (clip x2.0; v6.6 S3: 2.0 clips of room)." >&2
     exit 1
   }
-  [[ "$PARAMS" == *"research_v65_deep_clip_mult=2.0"* ]] || { echo "ERROR: v6.5 build without research_v65_deep_clip_mult=2.0 in PARAMS." >&2; exit 1; }
-  [[ "$PARAMS" == *"research_v65_deep_max_clips=3.0"* ]] || { echo "ERROR: v6.5 build without research_v65_deep_max_clips=3.0 in PARAMS." >&2; exit 1; }
+  [[ "$DEEP_CLIP_MULT" == "1.0" || "$DEEP_CLIP_MULT" == "2.0" ]] || {
+    echo "ERROR: --deep_clip_mult '${DEEP_CLIP_MULT}' is not 1.0 or 2.0 (the replayed sizes)." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v65_deep_clip_mult=${DEEP_CLIP_MULT} "* ]] || { echo "ERROR: v6.5 build without research_v65_deep_clip_mult=${DEEP_CLIP_MULT} in PARAMS." >&2; exit 1; }
+  [[ "$PARAMS" == *"research_v65_deep_max_clips=2.0 "* ]] || { echo "ERROR: v6.6 S3 build without research_v65_deep_max_clips=2.0 in PARAMS." >&2; exit 1; }
   [[ "$PARAMS" == *"research_v641_volume_pace=1"* ]] || { echo "ERROR: v6.5 builds on v6.4.1 (larger clips spend the volume cap faster)." >&2; exit 1; }
-  echo "[preflight] v6.5 deep clips PASS"
+  echo "[preflight] v6.5 deep clips PASS (deep_clip_mult=${DEEP_CLIP_MULT})"
+  # v6.6: S1 an add to a held position rests only a full depth beyond the last add on its side; S2 each book is paced
+  # against a budget line to the simulation's end; S3 two clips of room (above); S4 a capped book takes no placement;
+  # S5 exchange identities keyed by (book, order id).  Mainnet 09-27/28: UID 104's skill fell to rank 0.475 on one spike
+  # book filled to the 6-base bound, UID 94 capped six more books under the 600-s rate.  Replay, six windows: lowest
+  # window skill 0.99 -> 3.85 at UID 104's allowance, 1.28 -> 2.67 at UID 94's (1.0 size), making up.
+  grep -qF 'from research_v66_add_spacing import (' "$AGENT_PATH/Strategy1_Research_Simple.py" && grep -qF 'from research_v66_pace_line import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.6 modules are not imported." >&2
+    exit 1
+  }
+  grep -qF 'spacing.note(book_id, book_trades, getattr(self, "uid", None), inv, eps=eps)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.6 S1 the pass does not record each side's last add." >&2
+    exit 1
+  }
+  grep -qF 'if not spacing.allows(book_id, side, want, inv, eff, tick_size):' "$AGENT_PATH/Strategy1_Research_Simple.py" && grep -qF 'doomed.append((row, V66_CANCEL_SPACING))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.6 S1 deep placement does not keep adds a full depth apart." >&2
+    exit 1
+  }
+  grep -qF 'pace = self._v66_pace_ref()           # v6.6 S2: the budget line, same consumer as v6.4.1' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.6 S2 the pass does not pace against the budget line." >&2
+    exit 1
+  }
+  grep -qF 'from research_v641_pace import ASSESSMENT_NS, PACE_WINDOW_NS, REBASE_MIN_JUMP_NS' "$AGENT_PATH/research_v66_pace_line.py" || {
+    echo "ERROR: v6.6 S2 the line is not on the validator's sampling interval and assessment period." >&2
+    exit 1
+  }
+  grep -qF 'if risk_reducing_batch and headroom <= 0.0 and bool(getattr(self, "research_v66_cap_closed", False)):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.6 S4 a capped book still takes reducing placements the validator drops." >&2
+    exit 1
+  }
+  grep -qF 'book_keyed=bool(getattr(self, "research_v66_book_identity", False)),' "$AGENT_PATH/Strategy1_Research_Simple.py" && grep -qF 'registry[identity_key(bid, oid, book_keyed=book_keyed)] = row' "$AGENT_PATH/research_direct_book_ownership.py" || {
+    echo "ERROR: v6.6 S5 exchange identities are not keyed by (book, order id)." >&2
+    exit 1
+  }
+  for _v66 in research_v66_add_spacing=1 research_v66_pace_line=1 research_v66_cap_closed=1 research_v66_book_identity=1; do
+    [[ " $PARAMS " == *" ${_v66} "* || "$PARAMS" == *"${_v66}" ]] || { echo "ERROR: v6.6 build without ${_v66} in PARAMS." >&2; exit 1; }
+  done
+  [[ "$PARAMS" == *"research_v641_volume_pace=1"* ]] || { echo "ERROR: v6.6 S2 feeds the v6.4.1 pacing consumer (research_v641_volume_pace=1)." >&2; exit 1; }
+  echo "[preflight] v6.6 add spacing / pace line / cap closed / book identity PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2434,6 +2494,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_4_board.py \
       tests/test_research_v6_4_1_volume_pace.py \
       tests/test_research_v6_5_deep_clips.py \
+      tests/test_research_v6_6.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
@@ -2449,6 +2510,7 @@ echo "[Strategy1_Research_Simple] version=${POLICY_VER}"
 echo "[Strategy1_Research_Simple] pm2_name=$PM2_NAME netuid=$NETUID axon_port=$AXON_PORT"
 echo "[Strategy1_Research_Simple] history_anchor=$HISTORY_ANCHOR (from $HISTORY_ANCHOR_SOURCE)"
 echo "[Strategy1_Research_Simple] max_active_books=$MAX_ACTIVE_BOOKS"
+echo "[Strategy1_Research_Simple] deep_clip_mult=$DEEP_CLIP_MULT"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 
 # Keep the strategy directory importable in the actual PM2/miner process, not

@@ -75,7 +75,7 @@ def _sides(resp):
 # ---- 1. the module --------------------------------------------------------------------------------------------------
 
 def test_the_deep_clip_is_the_touch_clip_times_the_multiple_never_below_the_minimum_order():
-    assert dc.CLIP_MULT == 2.0 and dc.MAX_CLIPS == 3.0 and dc.V641_CLIP_MULT == 1.0
+    assert dc.CLIP_MULT == 2.0 and dc.MAX_CLIPS == 2.0 and dc.V641_CLIP_MULT == 1.0          # v6.6 S3: two clips
     assert dc.deep_clip(1.0, 2.0, 0.25) == 2.0
     assert dc.deep_clip(1.0, 1.0, 0.25) == 1.0                                  # v6.4.1
     assert dc.deep_clip(1.0, "2.0") == 2.0
@@ -219,8 +219,10 @@ def test_the_switches_default_to_the_replayed_size_ship_in_params_and_are_prefli
             in SIMPLE)
     start = LAUNCHER.index('PARAMS="')
     params = LAUNCHER[start:LAUNCHER.index('"\n', start + len('PARAMS="'))]
-    assert "research_v65_deep_clip_mult=2.0" in params and "research_v65_deep_max_clips=3.0" in params
-    assert 'echo "[preflight] v6.5 deep clips PASS"' in LAUNCHER
+    # v6.6: the multiple comes from --deep_clip_mult (1.0 or 2.0, default 2.0) and S3 sets two clips of room
+    assert "research_v65_deep_clip_mult=${DEEP_CLIP_MULT}" in params and "research_v65_deep_max_clips=2.0" in params
+    assert 'DEEP_CLIP_MULT="${DEEP_CLIP_MULT:-2.0}"' in LAUNCHER
+    assert 'echo "[preflight] v6.5 deep clips PASS (deep_clip_mult=${DEEP_CLIP_MULT})"' in LAUNCHER
     assert "tests/test_research_v6_5_deep_clips.py" in LAUNCHER
 
 

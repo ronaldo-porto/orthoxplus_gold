@@ -18,7 +18,11 @@ The rules (two switches, one causal change each):
 * S1 ``research_v65_deep_clip_mult`` -- the deep layer's clip (its orders, its vacuum orders and its paper record)
   is the touch clip times this multiple.  1.0 is v6.4.1.  OBSERVED: 2.0 won the grid (1 / 2 / 3 / 4).
 * S2 ``research_v65_deep_max_clips`` -- a book's deep inventory bound, in deep clips.  2.0 (v6.3.3's DEEP_MAX_CLIPS)
-  is v6.4.1.  OBSERVED: 3.0 won the grid (2 / 3 / 8).
+  is v6.4.1.  OBSERVED: 3.0 won the grid (2 / 3 / 8) on 09-26/27.
+  v6.6 S3 sets it back to 2.0.  OBSERVED: live 09-27/28 the third clip was where UID 104's skill went -- book 7 filled
+  it on the way into a 12% spike (-175.6, skill 1.92 with it vs 4.92 without) -- and the six-window replay (r65y/r65z,
+  the latest three with that spike) gives it no making (5,703 vs 5,732) and half the skill (1.10 vs 2.21); with v6.6
+  S1/S2 two clips hold the lowest window at 3.85 against 0.99.
 * The exposure cap follows (STRUCTURAL).  The final validator charges every order its worst-case fill against
   ``research_max_total_abs_base``, which v6.3 sets to three touch clips per book: the v6.4.1 deep bound (two clips) plus
   one order in flight, exactly.  A larger deep bound needs the same arithmetic on its own size -- the bound plus one
@@ -34,7 +38,7 @@ from research_v633_deep_layer import DEEP_MAX_CLIPS as V633_MAX_CLIPS
 V65_DEEP_CLIPS_VERSION = "deep_clips_v6_5"
 
 CLIP_MULT = 2.0                # OBSERVED: the r650/r652 replay grid (1 / 2 / 3 / 4)
-MAX_CLIPS = 3.0                # OBSERVED: the r650 replay grid (2 / 3 / 8)
+MAX_CLIPS = 2.0                # OBSERVED: v6.6 S3 (r65y/r65z six windows); v6.5 shipped 3.0 from the r650 grid
 V641_CLIP_MULT = 1.0           # the multiple that reproduces v6.4.1
 
 

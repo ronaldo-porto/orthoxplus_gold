@@ -49,6 +49,18 @@ class ExchangeOrderIdentity:
         return (int(self.book_id), str(self.client_order_id), canonical_order_side(self.side))
 
 
+def identity_key(book_id, exchange_order_id, *, book_keyed: bool = False):
+    """The registry key of one exchange order.
+
+    v6.6 S5: the venue numbers orders per book -- the same id is live on two books at once (mainnet 09-27: 72-73
+    cancellations a day per UID landed on the other book's identity and were blocked, and a fill looked up by id alone
+    could reduce another book's reservation).  Keyed by (book, id) every order is its own entry.  ``book_keyed`` False
+    is the A1.7.4.3.2 key, the id alone.
+    """
+    oid = int(exchange_order_id)
+    return (int(book_id), oid) if book_keyed else oid
+
+
 def register_exchange_identity(
     registry: dict[int, ExchangeOrderIdentity],
     *,
@@ -58,6 +70,7 @@ def register_exchange_identity(
     side,
     remaining_quantity: float = 0.0,
     max_entries: int = DIRECT_ORDER_IDENTITY_MAX,
+    book_keyed: bool = False,
 ) -> ExchangeOrderIdentity | None:
     """Register exact exchange->client ownership without guessing missing ids."""
     if exchange_order_id is None or client_order_id is None or book_id is None:
@@ -75,7 +88,7 @@ def register_exchange_identity(
         side=canonical_order_side(side),
         remaining_quantity=qty,
     )
-    registry[oid] = row
+    registry[identity_key(bid, oid, book_keyed=book_keyed)] = row
     # dict preserves insertion order; keep the correctness cache bounded.
     limit = max(128, int(max_entries or DIRECT_ORDER_IDENTITY_MAX))
     while len(registry) > limit:
@@ -97,6 +110,7 @@ def cancellation_identity_decision(
     exchange_order_id,
     notice_book_id,
     success: bool,
+    book_keyed: bool = False,
 ) -> tuple[str, ExchangeOrderIdentity | None]:
     """Pure identity gate for cancellation-driven ownership release.
 
@@ -107,6 +121,20 @@ def cancellation_identity_decision(
         oid = int(exchange_order_id)
     except (TypeError, ValueError):
         return "STALE_UNKNOWN", None
+    if book_keyed:
+        # v6.6 S5: a notice names its book; without one only an unambiguous id may stand for it.
+        if notice_book_id is not None:
+            try:
+                identity = registry.get(identity_key(notice_book_id, oid, book_keyed=True))
+            except (TypeError, ValueError):
+                return "STALE_UNKNOWN", None
+            if identity is None:
+                return "STALE_UNKNOWN", None
+            return ("RELEASE" if bool(success) else "FAILED_KEEP"), identity
+        found = [row for key, row in registry.items() if isinstance(key, tuple) and key[1] == oid]
+        if len(found) != 1:
+            return "STALE_UNKNOWN", None
+        return ("RELEASE" if bool(success) else "FAILED_KEEP"), found[0]
     identity = registry.get(oid)
     if identity is None:
         return "STALE_UNKNOWN", None
