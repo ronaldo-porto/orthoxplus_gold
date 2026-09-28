@@ -386,7 +386,8 @@ research_v65_deep_max_clips=2.0 \
 research_v66_add_spacing=1 \
 research_v66_pace_line=1 \
 research_v66_cap_closed=1 \
-research_v66_book_identity=1"
+research_v66_book_identity=1 \
+research_v661_vol_bound=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2417,6 +2418,28 @@ if [[ "$V63_BUILD" == "1" ]]; then
   done
   [[ "$PARAMS" == *"research_v641_volume_pace=1"* ]] || { echo "ERROR: v6.6 S2 feeds the v6.4.1 pacing consumer (research_v641_volume_pace=1)." >&2; exit 1; }
   echo "[preflight] v6.6 add spacing / pace line / cap closed / book identity PASS"
+  # v6.6.1: a book moving faster than the median book (sum of |log-mid change| over the validator's 600-s sampling
+  # interval) keeps only bound x median / its own of the deep bound.  Mainnet 09-28: two spikes (book 23 ~11:00 JST,
+  # book 2 18:18 JST) filled the deep/vacuum adding side to the whole bound; book 23 alone cost UID 94 0.915 -> 0.776 and
+  # UID 104 0.827 -> 0.644 trading.  Replay through 20:31 JST: UID 94 0.619 -> 0.845, UID 104 0.601 -> 0.757 (1 base 0.797).
+  grep -qF 'from research_v661_vol_bound import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.6.1 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'vol.begin_pass()              # v6.6.1: the median book' "$AGENT_PATH/Strategy1_Research_Simple.py" && grep -qF 'vol.observe(book_id, now_ts, lm)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.6.1 the pass does not read each book's volatility against the median book's." >&2
+    exit 1
+  }
+  grep -qF 'paced=paced, bound_scale=bound_scale,' "$AGENT_PATH/Strategy1_Research_Simple.py" && grep -qF 'return bool(v661_room(side_, inv, float(deep.max_clips) * float(deep.clip) * float(bound_scale)))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.6.1 deep placement does not use the volatility-scaled bound." >&2
+    exit 1
+  }
+  grep -qF 'VOL_WINDOW_NS = SAMPLE_NS' "$AGENT_PATH/research_v661_vol_bound.py" || {
+    echo "ERROR: v6.6.1 the volatility window is not the validator's sampling interval." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v661_vol_bound=1 "* || "$PARAMS" == *"research_v661_vol_bound=1" ]] || { echo "ERROR: v6.6.1 build without research_v661_vol_bound=1 in PARAMS." >&2; exit 1; }
+  echo "[preflight] v6.6.1 volatility-scaled deep bound PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2513,6 +2536,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_4_1_volume_pace.py \
       tests/test_research_v6_5_deep_clips.py \
       tests/test_research_v6_6.py \
+      tests/test_research_v6_6_1.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

@@ -643,6 +643,11 @@ from research_v66_pace_line import (  # noqa: E402
     PaceLine as V66PaceLine,
     V66_PACE_LINE_VERSION,
 )
+from research_v661_vol_bound import (  # noqa: E402
+    V661_VOL_BOUND_VERSION,
+    VolBound as V661VolBound,
+    room as v661_room,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1802,6 +1807,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v66_pace: Any = None
         self._v66_counts: dict[str, int] = {}
         self._v66_errors = 0
+        # v6.6.1: the deep bound of a book moving faster than the median book shrinks by median / its own volatility.
+        self.research_v661_vol_bound = self._as_bool(getattr(self.config, "research_v661_vol_bound", True))
+        self._v661_vol: Any = None
+        self._v661_counts: dict[str, int] = {}
+        self._v661_errors = 0
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -10641,6 +10651,32 @@ class Strategy1_Research_Simple(Strategy1_Research):
         out["pace_line"] = pace.snapshot() if pace is not None else {"version": V66_PACE_LINE_VERSION}
         return out
 
+    def _v661_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v661_counts", None)
+        if counts is None:
+            counts = {}
+            self._v661_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v661_vol_on(self) -> bool:
+        """v6.6.1: the deep bound follows the book's volatility against the median book's."""
+        return bool(self._v633_on() and getattr(self, "research_v661_vol_bound", False))
+
+    def _v661_vol_ref(self):
+        vol = getattr(self, "_v661_vol", None)
+        if vol is None:
+            vol = V661VolBound()
+            self._v661_vol = vol
+        return vol
+
+    def _v661_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v661_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v661_errors", 0) or 0)
+        out["vol_bound_on"] = int(bool(getattr(self, "research_v661_vol_bound", False)))
+        vol = getattr(self, "_v661_vol", None)
+        out["vol_bound"] = vol.snapshot() if vol is not None else {"version": V661_VOL_BOUND_VERSION}
+        return out
+
     def _v64_vacuum_on(self) -> bool:
         """v6.4 S1: a deep order rests inside a blown-out spread."""
         return bool(self._v633_on() and getattr(self, "research_v64_vacuum", False))
@@ -10715,7 +10751,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return out
 
     def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,
-                   tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False) -> int:
+                   tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False,
+                   bound_scale: float = 1.0) -> int:
         """v6.3.3: an open book's two sides are the deep layer's -- one order per side, as the A1.7.4.3 contract requires.
 
         Its v6.3 orders are cancelled; a deep order that drifted out of [0.5, 1.5] x depth from the mid or has no room
@@ -10748,14 +10785,24 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 self._v66_errors = int(getattr(self, "_v66_errors", 0) or 0) + 1
                 unspaced = set()
+        scaled = float(bound_scale) < 1.0 - 1e-12
+
+        def _room(side_: str) -> bool:
+            # v6.6.1: a book faster than the median book adds only up to bound x median / its own volatility.
+            if scaled:
+                return bool(v661_room(side_, inv, float(deep.max_clips) * float(deep.clip) * float(bound_scale)))
+            return bool(deep.room(side_, inv))
+
         doomed = [(row, V633_CANCEL_OWNS_BOOK) for row in rows if int(row.order_id) not in already]
         resting: dict[str, Any] = {}
         for row in deep_rows:
             if int(row.order_id) in already:
                 continue
             side = V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL
-            if not deep.room(side, inv):
+            if not _room(side):
                 doomed.append((row, V633_CANCEL_NO_ROOM))
+                if deep.room(side, inv):
+                    self._v661_count("cancel_vol_bound")
             elif paced and v641_adds(side, inv):
                 doomed.append((row, V641_CANCEL_PACED))     # v6.4.1: ahead of its volume pace, no adding order
             elif side in unspaced:
@@ -10788,6 +10835,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         placed = 0
         for side in (V63_SIDE_BUY, V63_SIDE_SELL):
             if side in resting or side in live_sides or side in cancelled or not deep.room(side, inv):
+                continue
+            if not _room(side):
+                self._v661_count("placement_vol_bound")
                 continue
             if paced and v641_adds(side, inv):
                 continue
@@ -11022,6 +11072,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 self._v66_errors = int(getattr(self, "_v66_errors", 0) or 0) + 1
                 spacing = None
+        vol = None
+        if deep is not None and bool(getattr(self, "research_v661_vol_bound", False)) and self._v661_vol_on():
+            try:
+                vol = self._v661_vol_ref()
+                vol.maybe_rebase(now_ts)
+                vol.begin_pass()              # v6.6.1: the median book's volatility, up to the last state
+            except Exception:
+                self._v661_errors = int(getattr(self, "_v661_errors", 0) or 0) + 1
+                vol = None
         # v6.4 S2: while the board is open the deep layer owns every book; a shut board hands them back to v6.3.2.
         owns_on = bool(getattr(self, "research_v64_board_owns", False)) and self._v64_board_owns_on()
         board_owns = bool(owns_on and deep is not None and deep.board_open)
@@ -11080,6 +11139,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
             lm = v63_log_mid_bps(raw_bid, raw_ask)
             if lm is not None:
                 hist.append(lm)
+            bound_scale = 1.0
+            if vol is not None:
+                try:
+                    if lm is not None:
+                        vol.observe(book_id, now_ts, lm)
+                    bound_scale = float(vol.scale(book_id))
+                except Exception:
+                    self._v661_errors = int(getattr(self, "_v661_errors", 0) or 0) + 1
+                    bound_scale = 1.0
             signal = v63_signal_bps(hist, V63_SIGNAL_STATES)
             if signal is None:
                 req["no_signal"] += 1
@@ -11166,7 +11234,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 placed_total += self._v633_book(
                     response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
                     tick_size=tick_size, dec=dec, clip=deep.clip, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
-                    paced=paced,
+                    paced=paced, bound_scale=bound_scale,
                 )
                 continue
             if board_owns:
@@ -11366,6 +11434,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             volume_pace=(self._v641_snapshot() if bool(getattr(self, "research_v641_volume_pace", False)) else {}),
             deep_clips=(self._v65_snapshot() if getattr(self, "research_v65_deep_clip_mult", None) is not None else {}),
             v66=(self._v66_snapshot() if getattr(self, "research_v66_add_spacing", None) is not None else {}),
+            v661=(self._v661_snapshot() if getattr(self, "research_v661_vol_bound", None) is not None else {}),
             board=(self._v64_snapshot() if bool(getattr(self, "research_v64_vacuum", False) or getattr(self, "research_v64_board_owns", False)) else {}),
             deep_layer=self._v633_snapshot(),
             trend_target=self._v63_snapshot(),
