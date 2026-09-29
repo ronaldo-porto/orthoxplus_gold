@@ -396,7 +396,8 @@ def test_the_switches_default_on_ship_in_params_and_are_preflighted():
     start = LAUNCHER.index('PARAMS="')
     params = LAUNCHER[start:LAUNCHER.index('"\n', start + len('PARAMS="'))]
     for key in ("research_v66_add_spacing=1", "research_v66_pace_line=1", "research_v66_cap_closed=1",
-                "research_v66_book_identity=1", "research_v65_deep_max_clips=2.0", "research_v65_deep_clip_mult=${DEEP_CLIP_MULT}"):
+                "research_v66_book_identity=1", "research_v65_deep_clip_mult=${DEEP_CLIP_MULT}",
+                "research_v65_deep_max_clips=4.0"):                          # v6.9 S2: four clips (v6.6 S3 shipped 2.0)
         assert key in params
     assert 'echo "[preflight] v6.6 add spacing / pace line / cap closed / book identity PASS"' in LAUNCHER
     assert "tests/test_research_v6_6.py" in LAUNCHER

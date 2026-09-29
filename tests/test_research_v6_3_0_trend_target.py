@@ -30,6 +30,7 @@ import research_v631_sim_reset as sr  # noqa: E402
 import research_v632_target_gate as tg632  # noqa: E402
 import research_v633_deep_layer as dl633  # noqa: E402
 import research_v68_deep_owns as d68  # noqa: E402
+import research_v69_deep_ladder as d69  # noqa: E402
 from research_session_state import extract_simulation_id  # noqa: E402
 from research_direct_exit_ledger import DirectExitLedger  # noqa: E402
 from research_direct_exit_refresh import ABSENT_REPRICE_CANCEL  # noqa: E402
@@ -227,13 +228,21 @@ def _pass_agent(**kwargs):
         # v6.8: the names its methods reach; a harness agent sets none of its switches, so each stays off here
         "v68_touch_fallback_retired": d68.touch_fallback_retired, "v68_per_book_gate": d68.per_book_gate,
         "v68_restore_deep": d68.restore_deep, "V68_DEEP_OWNS_VERSION": d68.V68_DEEP_OWNS_VERSION,
+        # v6.9: the names its methods reach; a harness agent sets none of its switches, so the ladder stays off here
+        "v633_deep_level": dl633.deep_level, "v633_level_client_ids": dl633.level_client_ids,
+        "V69_CANCEL_LEVEL_OFF": d69.CANCEL_LEVEL_OFF, "V69_LADDER_QUANTILES": d69.LADDER_QUANTILES,
+        "V69_LADDER_CLIPS": d69.LADDER_CLIPS, "V69_WHOLE_SIDE": d69.WHOLE_SIDE,
+        "V69_DEEP_LADDER_VERSION": d69.V69_DEEP_LADDER_VERSION, "v69_caps_for": d69.caps_for,
+        "v69_deep_first_keeps": d69.deep_first_keeps, "v69_ladder_levels": d69.ladder_levels,
+        "v69_level_quantity": d69.level_quantity, "v69_live_slots": d69.live_slots, "v69_slot_taken": d69.slot_taken,
     })
     cls = type("P", (_PassAgent,), {})
     for name in ("_v63_pass", "_v63_count", "_v63_clip", "_v63_apply_caps", "_v63_snapshot", "_v63_book_alphas",
                  "_v631_observe_sim", "_v6214_note_prints", "_v6214_others_depth", "_v6214_cancelled_ids",
                  "_v63_on", "_v632_gate_on", "_v632_gate_ref", "_v632_count",
                  "_v633_on", "_v633_count", "_v633_deep_ref", "_v633_book", "_v633_snapshot",
-                 "_v68_count", "_v68_per_book_gate", "_v68_apply_deep_restore"):
+                 "_v68_count", "_v68_per_book_gate", "_v68_apply_deep_restore",
+                 "_v69_count", "_v69_ladder_on", "_v69_deep_first_on"):
         exec(compile(ast.Module(body=[ast.parse(_simple(name)).body[0]], type_ignores=[]), "<v63>", "exec"), ns)
         setattr(cls, name, ns[name])
     return cls(**kwargs)

@@ -305,7 +305,8 @@ def test_the_switches_default_on_ship_in_params_and_are_preflighted():
     params = LAUNCHER[start:LAUNCHER.index('"\n', start + len('PARAMS="'))]
     for key in SWITCHES:
         assert f'self.{key} = self._as_bool(getattr(self.config, "{key}", True))' in SIMPLE, key
-        assert f"{key}=1" in params, key
+        # v6.9 S4 ships S2 off: the pooled board is the regime gate again (S3 keeps it through a restart)
+        assert f"{key}={0 if key == 'research_v68_book_gate' else 1}" in params, key
     assert 'echo "[preflight] v6.8 deep owns the book PASS"' in LAUNCHER
     assert "tests/test_research_v6_8.py" in LAUNCHER
 

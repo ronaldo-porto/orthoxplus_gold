@@ -50,7 +50,8 @@ SAMPLE_NS = 600_000_000_000            # scoring.activity.trade_volume_sampling_
 LOOKBACK_NS = 10_800_000_000_000       # scoring.kappa.lookback
 PRUNE_EVERY_NS = 60_000_000_000
 REBASE_MIN_JUMP_NS = 3_600_000_000_000
-CLIENT_BASE = 40000                    # 40001..41272: v6.3's role_of owns 60000-69999, entries 70000+, exits 80000+
+CLIENT_BASE = 40000                    # 40001..41276: v6.3's role_of owns 60000-69999, entries 70000+, exits 80000+
+DEEP_LEVELS = 3                        # v6.9: level 0 (this module's order) and the ladder's two levels, ids +1..+6
 SIDE_BUY = "buy"
 SIDE_SELL = "sell"
 CANCEL_REPRICE = "DEEP_REPRICE"
@@ -59,21 +60,34 @@ CANCEL_SHUT = "DEEP_SHUT"
 CANCEL_OWNS_BOOK = "DEEP_OWNS_BOOK"
 
 
+def level_client_ids(book_id: int, level: int = 0) -> tuple[int, int]:
+    """(buy, sell) client ids of one deep level on one book: level 0 is +1/+2, v6.9's ladder levels +3/+4 and +5/+6."""
+    b, k = int(book_id), int(level)
+    return CLIENT_BASE + 10 * b + 2 * k + 1, CLIENT_BASE + 10 * b + 2 * k + 2
+
+
 def client_ids(book_id: int) -> tuple[int, int]:
-    b = int(book_id)
-    return CLIENT_BASE + 10 * b + 1, CLIENT_BASE + 10 * b + 2
+    return level_client_ids(book_id, 0)
 
 
 def own_client_ids(book_id: int) -> set[int]:
     return set(client_ids(book_id))
 
 
-def is_deep_client_id(cid: Any) -> bool:
+def deep_level(cid: Any) -> int | None:
+    """The deep level a client id belongs to (0 = v6.3.3's order, 1-2 = v6.9's ladder), None for any other id."""
     try:
         c = int(cid)
     except (TypeError, ValueError):
-        return False
-    return CLIENT_BASE <= c < CLIENT_BASE + 2000 and c % 10 in (1, 2)
+        return None
+    if not (CLIENT_BASE <= c < CLIENT_BASE + 2000):
+        return None
+    digit = c % 10
+    return (digit - 1) // 2 if 1 <= digit <= 2 * DEEP_LEVELS else None
+
+
+def is_deep_client_id(cid: Any) -> bool:
+    return deep_level(cid) is not None
 
 
 def sampled_key(ts: int, sample_ns: int = SAMPLE_NS) -> int:
@@ -247,6 +261,15 @@ class DeepLayer:
         if db is None or len(db.sweeps) < SWEEP_MIN:
             return None
         return quantile(db.sweeps, self.sweep_quantile)
+
+    def sweep_depths(self, book_id: int, quantiles: Iterable[float]) -> tuple[float, ...] | None:
+        """v6.9: this book's sweep record at several quantiles from one sort (None until SWEEP_MIN sweeps)."""
+        db = self.books.get(int(book_id))
+        if db is None or len(db.sweeps) < SWEEP_MIN:
+            return None
+        v = sorted(float(x) for x in db.sweeps)
+        n = len(v)
+        return tuple(v[min(n - 1, int(float(q) * n))] for q in quantiles)
 
     def observe(self, book_id: int, ts: int, trades: list, *, bid: float, ask: float, tick: float,
                 decimals: int) -> float | None:

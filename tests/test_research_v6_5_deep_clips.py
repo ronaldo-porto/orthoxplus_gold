@@ -52,6 +52,7 @@ def _obj(mult=2.0, clips=3.0, *, deep_on=True, touch_clip=1.0, **attrs):
     o._v67_sweep_quantile = lambda: dl.SWEEP_QUANTILE      # v6.7's method, stubbed at v6.3.3's p90 (no probe)
     o._v68_per_book_gate = lambda: False                   # v6.8 S2's method, stubbed at the pooled board (no probe)
     o._v68_apply_deep_restore = lambda deep: None          # v6.8 S3's method, stubbed: nothing to restore (no probe)
+    o._v69_ladder_on = lambda: False                       # v6.9 S1's method, stubbed off: v6.5's caps (no probe)
     for n in ("_v65_deep_clip", "_v65_max_clips", "_v65_snapshot", "_v633_deep_ref", "_v63_apply_caps"):
         setattr(o, n, types.MethodType(_method(n), o))
     o._v63_count = lambda key, n=1: o._v63_counts.__setitem__(key, o._v63_counts.get(key, 0) + n)
@@ -223,7 +224,8 @@ def test_the_switches_default_to_the_replayed_size_ship_in_params_and_are_prefli
     start = LAUNCHER.index('PARAMS="')
     params = LAUNCHER[start:LAUNCHER.index('"\n', start + len('PARAMS="'))]
     # v6.6: the multiple comes from --deep_clip_mult (1.0 or 2.0, default 2.0) and S3 sets two clips of room
-    assert "research_v65_deep_clip_mult=${DEEP_CLIP_MULT}" in params and "research_v65_deep_max_clips=2.0" in params
+    # v6.9 S2 ships four clips of bound (v6.6 S3 shipped 2.0); the module constant stays v6.6's default
+    assert "research_v65_deep_clip_mult=${DEEP_CLIP_MULT}" in params and "research_v65_deep_max_clips=4.0" in params
     assert 'DEEP_CLIP_MULT="${DEEP_CLIP_MULT:-2.0}"' in LAUNCHER
     assert 'echo "[preflight] v6.5 deep clips PASS (deep_clip_mult=${DEEP_CLIP_MULT} from ${DEEP_CLIP_MULT_SOURCE})"' in LAUNCHER
     assert "tests/test_research_v6_5_deep_clips.py" in LAUNCHER

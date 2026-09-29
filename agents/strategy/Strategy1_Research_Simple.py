@@ -611,8 +611,10 @@ from research_v633_deep_layer import (  # noqa: E402
     DeepLayer as V633DeepLayer,
     V633_DEEP_LAYER_VERSION,
     client_ids as v633_client_ids,
+    deep_level as v633_deep_level,
     deep_price as v633_deep_price,
     is_deep_client_id as v633_is_deep_client_id,
+    level_client_ids as v633_level_client_ids,
     needs_reprice as v633_needs_reprice,
     own_client_ids as v633_own_client_ids,
     trade_of as v633_trade_of,
@@ -661,6 +663,19 @@ from research_v68_deep_owns import (  # noqa: E402
     per_book_gate as v68_per_book_gate,
     restore_deep as v68_restore_deep,
     touch_fallback_retired as v68_touch_fallback_retired,
+)
+from research_v69_deep_ladder import (  # noqa: E402
+    CANCEL_LEVEL_OFF as V69_CANCEL_LEVEL_OFF,
+    LADDER_CLIPS as V69_LADDER_CLIPS,
+    LADDER_QUANTILES as V69_LADDER_QUANTILES,
+    V69_DEEP_LADDER_VERSION,
+    WHOLE_SIDE as V69_WHOLE_SIDE,
+    caps_for as v69_caps_for,
+    deep_first_keeps as v69_deep_first_keeps,
+    ladder_levels as v69_ladder_levels,
+    level_quantity as v69_level_quantity,
+    live_slots as v69_live_slots,
+    slot_taken as v69_slot_taken,
 )
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
@@ -1838,6 +1853,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v68_counts: dict[str, int] = {}
         self._v68_errors = 0
         self._v68_deep_restore: Any = None
+        # v6.9: a deep ladder -- S1 two more deep orders per side at each book's sweep-record p99 and max, S3 a book
+        # ahead of its volume line keeps only its deepest order (S2: research_v65_deep_max_clips 4.0; S4:
+        # research_v68_book_gate 0, the pooled board as the regime gate -- both launcher parameters).
+        self.research_v69_deep_ladder = self._as_bool(getattr(self.config, "research_v69_deep_ladder", True))
+        self.research_v69_deep_first_pace = self._as_bool(getattr(self.config, "research_v69_deep_first_pace", True))
+        self._v69_counts: dict[str, int] = {}
+        self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -10434,6 +10456,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # v6.5: every book may hold the deep layer's bound plus one deep order in flight (the final validator
             # charges each order its worst-case fill); at v6.4.1's size this is the three clips above.
             deep_caps = v65_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())
+            if self._v69_ladder_on():
+                # v6.9 S1: a book inside its bound may rest every level of one side at once -- bound plus all in flight.
+                deep_caps = v69_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())
             caps = {key: max(float(value), float(deep_caps.get(key, 0.0))) for key, value in caps.items()}
         changed = False
         for key, value in caps.items():
@@ -10768,6 +10793,67 @@ class Strategy1_Research_Simple(Strategy1_Research):
         out["rolling_line"] = int(isinstance(getattr(self, "_v66_pace", None), V68RollingPaceLine))
         return out
 
+    def _v69_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v69_counts", None)
+        if counts is None:
+            counts = {}
+            self._v69_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v69_ladder_on(self) -> bool:
+        """v6.9 S1: two more deep orders per side, at the book's own sweep-record p99 and max."""
+        return bool(self._v633_on() and getattr(self, "research_v69_deep_ladder", False))
+
+    def _v69_deep_first_on(self) -> bool:
+        """v6.9 S3: a book ahead of its volume line keeps its deepest ladder order on the side that adds."""
+        return bool(self._v69_ladder_on() and getattr(self, "research_v69_deep_first_pace", False))
+
+    def _v69_ledger_client_ids(self) -> dict:
+        """v6.9 S1: the client id the ledger recorded for each (book, order id), built once per request and only when
+        an acknowledged order arrives without its own (the account view need not carry it)."""
+        tick = int(getattr(self, "_tick", 0) or 0)
+        cached = getattr(self, "_v69_cid_index", None)
+        if cached is not None and cached[0] == tick:
+            return cached[1]
+        index: dict[tuple[int, int], Any] = {}
+        ledger = self._a19_ledger_ref()
+        for row in list((getattr(ledger, "orders", None) or {}).values()) if ledger is not None else []:
+            try:
+                index[(int(row.book_id), int(row.order_id))] = getattr(row, "client_id", None)
+            except (TypeError, ValueError, AttributeError):
+                continue
+        self._v69_cid_index = (tick, index)
+        return index
+
+    def _v69_live_slots(self, book_id: int) -> dict:
+        """v6.9 S1: per side, the deep levels our live orders hold (acknowledged + locally pending); any other order,
+        or one whose client id cannot be read, holds its whole side (the v6.2.15 S2 rule)."""
+        bid = int(book_id)
+        rows = []
+        for order in self._direct_account_orders(bid):
+            cid = self._direct_order_client_id(order)
+            if cid is None:
+                try:
+                    cid = self._v69_ledger_client_ids().get((bid, int(getattr(order, "id", None))))
+                except (TypeError, ValueError):
+                    cid = None
+            rows.append((getattr(order, "side", None), cid))
+        rows.extend((key[2], key[1]) for key in self._direct_pending_ledger() if int(key[0]) == bid)
+        return v69_live_slots(rows)
+
+    def _v69_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v69_counts", {}) or {})
+        out["version"] = V69_DEEP_LADDER_VERSION
+        out["errors"] = int(getattr(self, "_v69_errors", 0) or 0)
+        out["deep_ladder_on"] = int(bool(getattr(self, "research_v69_deep_ladder", False)))
+        out["deep_first_pace_on"] = int(bool(getattr(self, "research_v69_deep_first_pace", False)))
+        out["ladder_quantiles"] = list(V69_LADDER_QUANTILES)
+        out["ladder_clips"] = list(V69_LADDER_CLIPS)
+        deep = getattr(self, "_v633_deep", None)
+        out["max_clips"] = float(deep.max_clips) if deep is not None else None
+        out["pooled_board"] = int(not bool(getattr(deep, "per_book_gate", False))) if deep is not None else None
+        return out
+
     def _v64_vacuum_on(self) -> bool:
         """v6.4 S1: a deep order rests inside a blown-out spread."""
         return bool(self._v633_on() and getattr(self, "research_v64_vacuum", False))
@@ -10853,6 +10939,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         Its v6.3 orders are cancelled; a deep order that drifted out of [0.5, 1.5] x depth from the mid or has no room
         left is cancelled; a side with no order of ours, nothing cancelled on it this request and room takes one deep
         order.  A cancelled side takes nothing until the removal has been seen (the v6.2.15 S2 side ownership).
+
+        v6.9 S1 (the ladder): each side also rests an order at the book's sweep-record p99 and max, each judged by the
+        same band on its own depth; ownership is per (side, level), so a resting level does not keep the next out,
+        and a side still takes one new order per request (shallow first).  S3: ahead of its volume line, the adding
+        side keeps its deepest level only.
         """
         req["deep_books"] += 1
         mid = 0.5 * (float(raw_bid) + float(raw_ask))
@@ -10888,26 +10979,43 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 return bool(v661_room(side_, inv, float(deep.max_clips) * float(deep.clip) * float(bound_scale)))
             return bool(deep.room(side_, inv))
 
+        # v6.9 S1: the ladder's levels -- the book's own record at p99 and max, each deeper than level 0 (eff).
+        ladder = bool(self._v69_ladder_on())
+        deep_first = bool(ladder and self._v69_deep_first_on())
+        level_depth: dict[int, float] = {}
+        levels: list = []
+        if ladder:
+            try:
+                depths = deep.sweep_depths(book_id, V69_LADDER_QUANTILES)
+                if depths is not None:
+                    level_depth = {i + 1: float(d) for i, d in enumerate(depths)}
+                levels = v69_ladder_levels(depths, eff)
+            except Exception:
+                self._v69_errors = int(getattr(self, "_v69_errors", 0) or 0) + 1
+                level_depth, levels = {}, []
         doomed = [(row, V633_CANCEL_OWNS_BOOK) for row in rows if int(row.order_id) not in already]
-        resting: dict[str, Any] = {}
+        resting: dict[Any, Any] = {}
         for row in deep_rows:
             if int(row.order_id) in already:
                 continue
             side = V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL
-            if not _room(side):
+            level = int(v633_deep_level(getattr(row, "client_id", None)) or 0)
+            if level and not ladder:
+                doomed.append((row, V69_CANCEL_LEVEL_OFF))  # v6.9: a ladder order the layer no longer places
+            elif not _room(side):
                 doomed.append((row, V633_CANCEL_NO_ROOM))
                 if deep.room(side, inv):
                     self._v661_count("cancel_vol_bound")
-            elif paced and v641_adds(side, inv):
+            elif paced and v641_adds(side, inv) and not (deep_first and v69_deep_first_keeps(level)):
                 doomed.append((row, V641_CANCEL_PACED))     # v6.4.1: ahead of its volume pace, no adding order
-            elif side in unspaced:
+            elif level == 0 and side in unspaced:
                 doomed.append((row, V66_CANCEL_SPACING))    # v6.6 S1: not a full depth beyond the last add
                 self._v66_count("cancel_spacing")
-            elif v633_needs_reprice(float(row.price), mid, eff, tick_size):
+            elif v633_needs_reprice(float(row.price), mid, eff if level == 0 else level_depth.get(level, 0.0), tick_size):
                 doomed.append((row, V633_CANCEL_REPRICE))
             else:
-                resting[side] = row
-        cancelled: set[str] = set()
+                resting[(side, level) if ladder else side] = row
+        cancelled: set = set()
         if doomed and self._count_book_instructions(response, book_id) < budget:
             ids = [int(row.order_id) for row, _why in doomed]
             try:
@@ -10918,55 +11026,89 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 req["cancels"] += 1
                 for row, why in doomed:
                     (self._v641_count if paced and why == V641_CANCEL_PACED else self._v633_count)("cancel_" + str(why).lower())
-                    cancelled.add(V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL)
+                    side = V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL
+                    if not ladder:
+                        cancelled.add(side)
+                        continue
+                    level = v633_deep_level(getattr(row, "client_id", None))
+                    cancelled.add((side, V69_WHOLE_SIDE if level is None else int(level)))
+                    if level:
+                        self._v69_count("cancel_l%d_%s" % (int(level), str(why).lower()))
                 try:
                     self._a19_note_exit_cancel(book_id, ids, ABSENT_REPRICE_CANCEL)
                 except Exception:
                     pass
-        try:
-            live_sides = set(self._v6215_live_sides(book_id))
-        except Exception:
-            live_sides = {V63_SIDE_BUY if int(r.side) == 0 else V63_SIDE_SELL for r in list(rows) + list(deep_rows)}
+        live_sides: set = set()
+        slots: dict = {}
+        if ladder:
+            try:
+                slots = self._v69_live_slots(book_id)
+            except Exception:
+                slots = v69_live_slots([(r.side, getattr(r, "client_id", None)) for r in list(rows) + list(deep_rows)])
+        else:
+            try:
+                live_sides = set(self._v6215_live_sides(book_id))
+            except Exception:
+                live_sides = {V63_SIDE_BUY if int(r.side) == 0 else V63_SIDE_SELL for r in list(rows) + list(deep_rows)}
+        candidates = [(0, float(depth))] + [(k, d) for k, d, _clips in levels]
         placed = 0
+        spent = False
         for side in (V63_SIDE_BUY, V63_SIDE_SELL):
-            if side in resting or side in live_sides or side in cancelled or not deep.room(side, inv):
+            if spent:
+                break
+            if not ladder and (side in resting or side in live_sides or side in cancelled):
+                continue
+            if not deep.room(side, inv):
                 continue
             if not _room(side):
                 self._v661_count("placement_vol_bound")
                 continue
-            if paced and v641_adds(side, inv):
-                continue
-            if side in unspaced:
-                self._v66_count("placement_spaced_out")
-                continue
-            q = v62_lot_quantity(clip, getattr(cfg, "volumeDecimals", 4))
-            if q + 1e-12 < min_order:
-                self._v633_count("below_min_order")
-                continue
-            if self._count_book_instructions(response, book_id) >= budget:
-                self._v633_count("budget_deferred")
-                break
-            if vac is not None:
-                price = v64_vacuum_price(mid, vac, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
-            else:
-                price = v633_deep_price(mid, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
-            buy_cid, sell_cid = v633_client_ids(book_id)
-            try:
-                response.limit_order(
-                    book_id=book_id,
-                    direction=OrderDirection.BUY if side == V63_SIDE_BUY else OrderDirection.SELL,
-                    quantity=q, price=float(price),
-                    clientOrderId=buy_cid if side == V63_SIDE_BUY else sell_cid,
-                    stp=STP.CANCEL_BOTH, postOnly=True, timeInForce=TimeInForce.GTT, expiryPeriod=expiry,
-                    leverage=0.0, settlement_option=LoanSettlementOption.NONE, delay=0,
-                )
-            except Exception:
-                self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
-                continue
-            placed += 1
-            req["placed_deep"] += 1
-            if vac is not None:
-                self._v64_count("placed_vacuum")
+            adding = bool(paced and v641_adds(side, inv))
+            for level, level_d in candidates:
+                if ladder and ((side, level) in resting or v69_slot_taken(slots, side, level)
+                               or (side, level) in cancelled or (side, V69_WHOLE_SIDE) in cancelled):
+                    continue
+                if adding and not (deep_first and v69_deep_first_keeps(level)):
+                    continue
+                if level == 0 and side in unspaced:
+                    self._v66_count("placement_spaced_out")
+                    continue
+                q = v62_lot_quantity(v69_level_quantity(clip, level) if level else clip, getattr(cfg, "volumeDecimals", 4))
+                if q + 1e-12 < min_order:
+                    self._v633_count("below_min_order")
+                    continue
+                if self._count_book_instructions(response, book_id) >= budget:
+                    self._v633_count("budget_deferred")
+                    spent = True
+                    break
+                if level:
+                    price = v633_deep_price(mid, level_d, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+                elif vac is not None:
+                    price = v64_vacuum_price(mid, vac, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+                else:
+                    price = v633_deep_price(mid, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+                buy_cid, sell_cid = v633_level_client_ids(book_id, level) if level else v633_client_ids(book_id)
+                try:
+                    response.limit_order(
+                        book_id=book_id,
+                        direction=OrderDirection.BUY if side == V63_SIDE_BUY else OrderDirection.SELL,
+                        quantity=q, price=float(price),
+                        clientOrderId=buy_cid if side == V63_SIDE_BUY else sell_cid,
+                        stp=STP.CANCEL_BOTH, postOnly=True, timeInForce=TimeInForce.GTT, expiryPeriod=expiry,
+                        leverage=0.0, settlement_option=LoanSettlementOption.NONE, delay=0,
+                    )
+                except Exception:
+                    self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
+                    continue
+                placed += 1
+                req["placed_deep"] += 1
+                if level:
+                    self._v69_count("placed_l%d" % level)
+                    if adding:
+                        self._v69_count("paced_kept_deepest")
+                elif vac is not None:
+                    self._v64_count("placed_vacuum")
+                break                   # one new order per book side per request (the A1.7.4.3.1 same-response rule)
         return placed
 
     def _v632_note_seam(self) -> None:
@@ -11537,6 +11679,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             v661=(self._v661_snapshot() if getattr(self, "research_v661_vol_bound", None) is not None else {}),
             v67=(self._v67_snapshot() if getattr(self, "research_v67_deep_depth", None) is not None else {}),
             v68=(self._v68_snapshot() if getattr(self, "research_v68_no_touch_fallback", None) is not None else {}),
+            v69=(self._v69_snapshot() if getattr(self, "research_v69_deep_ladder", None) is not None else {}),
             board=(self._v64_snapshot() if bool(getattr(self, "research_v64_vacuum", False) or getattr(self, "research_v64_board_owns", False)) else {}),
             deep_layer=self._v633_snapshot(),
             trend_target=self._v63_snapshot(),
@@ -14447,6 +14590,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         preexisting_order_sides = {
             (int(bid), side) for bid in preexisting_order_books for side in self._v6215_live_sides(int(bid))
         } if v6215_side_owned else set()
+        # v6.9 S1: a deep order owns its (book, side, level) -- a resting deep level does not refuse another level on
+        # its side; any other order (or one whose client id cannot be read) still holds the whole side.
+        v69_level_owned = bool(v6215_side_owned and self._v69_ladder_on())
+        preexisting_order_slots: dict[int, dict] = {}       # read once per book that takes a deep placement
         same_request_buy: dict[int, float] = {}
         same_request_sell: dict[int, float] = {}
         # A1.7.4.3.1 closes the same-response gap that exists before final
@@ -14489,10 +14636,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # Cancellation acknowledgement must be visible in a later state before
             # a new placement can own this book.  This prevents stale entry/exit/
             # compaction orders from racing a newer authority.
-            if (
-                (book_id, canonical_order_side(side)) in preexisting_order_sides if v6215_side_owned
-                else book_id in preexisting_order_books
-            ):
+            deep_slot = (
+                v633_deep_level(self._get(instruction, "clientOrderId", "client_order_id")) if v69_level_owned else None
+            )
+            if deep_slot is not None:
+                if book_id in preexisting_order_books and book_id not in preexisting_order_slots:
+                    preexisting_order_slots[book_id] = self._v69_live_slots(book_id)
+                inflight = v69_slot_taken(preexisting_order_slots.get(book_id), side, deep_slot)
+                if not inflight and (book_id, canonical_order_side(side)) in preexisting_order_sides:
+                    self._v69_count("slot_admitted")        # v6.9 S1: the side is held by another deep level only
+            else:
+                inflight = (
+                    (book_id, canonical_order_side(side)) in preexisting_order_sides if v6215_side_owned
+                    else book_id in preexisting_order_books
+                )
+            if inflight:
                 self._direct_emit_book_ownership_block(
                     book_id=book_id, side=str(side), reason="PREEXISTING_BOOK_ORDER", quantity=qty_f,
                 )

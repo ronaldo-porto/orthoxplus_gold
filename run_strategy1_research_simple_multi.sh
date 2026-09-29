@@ -382,7 +382,7 @@ research_v64_vacuum=1 \
 research_v64_board_owns=1 \
 research_v641_volume_pace=1 \
 research_v65_deep_clip_mult=${DEEP_CLIP_MULT} \
-research_v65_deep_max_clips=2.0 \
+research_v65_deep_max_clips=4.0 \
 research_v66_add_spacing=1 \
 research_v66_pace_line=1 \
 research_v66_cap_closed=1 \
@@ -390,10 +390,12 @@ research_v66_book_identity=1 \
 research_v661_vol_bound=1 \
 research_v67_deep_depth=1 \
 research_v68_no_touch_fallback=1 \
-research_v68_book_gate=1 \
+research_v68_book_gate=0 \
 research_v68_deep_persist=1 \
 research_v68_post_only=1 \
-research_v68_rolling_budget=1"
+research_v68_rolling_budget=1 \
+research_v69_deep_ladder=1 \
+research_v69_deep_first_pace=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2339,7 +2341,8 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.4.1 the pass does not pace each book's volume." >&2
     exit 1
   }
-  grep -qF 'elif paced and v641_adds(side, inv):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  # (v6.9 S3 continues this condition with its deep-first keep, so the pattern stops at the adds test)
+  grep -qF 'elif paced and v641_adds(side, inv)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.4.1 a paced deep book still keeps its adding orders." >&2
     exit 1
   }
@@ -2380,7 +2383,8 @@ if [[ "$V63_BUILD" == "1" ]]; then
     exit 1
   }
   [[ "$PARAMS" == *"research_v65_deep_clip_mult=${DEEP_CLIP_MULT} "* ]] || { echo "ERROR: v6.5 build without research_v65_deep_clip_mult=${DEEP_CLIP_MULT} in PARAMS." >&2; exit 1; }
-  [[ "$PARAMS" == *"research_v65_deep_max_clips=2.0 "* ]] || { echo "ERROR: v6.6 S3 build without research_v65_deep_max_clips=2.0 in PARAMS." >&2; exit 1; }
+  # (v6.9 S2 raises the bound from v6.6 S3's two clips to four; its block below pins the module constant as well)
+  [[ "$PARAMS" == *"research_v65_deep_max_clips=4.0 "* ]] || { echo "ERROR: v6.9 S2 build without research_v65_deep_max_clips=4.0 in PARAMS." >&2; exit 1; }
   [[ "$PARAMS" == *"research_v641_volume_pace=1"* ]] || { echo "ERROR: v6.5 builds on v6.4.1 (larger clips spend the volume cap faster)." >&2; exit 1; }
   if [[ "$NETUID" == "79" && "$DEEP_CLIP_MULT" == "1.0" ]]; then
     echo "[preflight] v6.6 NOTE: mainnet with --deep_clip_mult 1.0 (1-base deep orders).  Right for a UID with little" >&2
@@ -2511,10 +2515,58 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.8 S5 the budget line is not the rolling-window line." >&2
     exit 1
   }
-  for key in research_v68_no_touch_fallback research_v68_book_gate research_v68_deep_persist research_v68_post_only research_v68_rolling_budget; do
+  # (v6.9 S4 turns S2 off -- research_v68_book_gate=0, checked in the v6.9 block below)
+  for key in research_v68_no_touch_fallback research_v68_deep_persist research_v68_post_only research_v68_rolling_budget; do
     [[ " $PARAMS " == *" $key=1 "* || "$PARAMS" == *"$key=1" ]] || { echo "ERROR: v6.8 build without $key=1 in PARAMS." >&2; exit 1; }
   done
   echo "[preflight] v6.8 deep owns the book PASS"
+  # v6.9: a deep ladder.  Replayed 09-29/30 JST on the recorded prints with the validator's arithmetic (proportional_both
+  # pay against the field at six snapshot times, the daily cap consumed from the simulation's start): the v6.8 model
+  # 1.112% mean pay, the ladder 1.585% (+42.6%), kept books 124-127, kappa 2.1-4.8, worst book -100..-170.  S1 two more
+  # deep orders per side at each book's sweep-record p99 and max (one and two deep clips), owned per (book, side,
+  # level); S2 a four-clip bound (research_v65_deep_max_clips 4.0); S3 a book ahead of its volume line keeps only its
+  # deepest order; S4 the pooled board is the regime gate again (research_v68_book_gate 0).
+  grep -qF 'from research_v69_deep_ladder import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.9 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'depths = deep.sweep_depths(book_id, V69_LADDER_QUANTILES)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.9 S1 the ladder does not read its depths from the book's sweep record." >&2
+    exit 1
+  }
+  grep -qF 'buy_cid, sell_cid = v633_level_client_ids(book_id, level) if level else v633_client_ids(book_id)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.9 S1 the ladder's levels are not placed under their own client ids." >&2
+    exit 1
+  }
+  grep -qF 'return (digit - 1) // 2 if 1 <= digit <= 2 * DEEP_LEVELS else None' "$AGENT_PATH/research_v633_deep_layer.py" || {
+    echo "ERROR: v6.9 S1 the ladder's client ids are not deep ids (the deep layer would not own them)." >&2
+    exit 1
+  }
+  grep -qF 'inflight = v69_slot_taken(preexisting_order_slots.get(book_id), side, deep_slot)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.9 S1 the final validator does not own deep orders per level (a resting level refuses the next)." >&2
+    exit 1
+  }
+  grep -qF 'deep_caps = v69_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.9 S1 the exposure cap does not count the ladder in flight (the validator would refuse it)." >&2
+    exit 1
+  }
+  grep -qF 'LADDER_QUANTILES = (0.99, 1.0)' "$AGENT_PATH/research_v69_deep_ladder.py" && grep -qF 'LADDER_CLIPS = (1.0, 2.0)' "$AGENT_PATH/research_v69_deep_ladder.py" && grep -qF 'DEEP_MAX_CLIPS = 4.0' "$AGENT_PATH/research_v69_deep_ladder.py" || {
+    echo "ERROR: v6.9 is not at the replayed ladder (p99/max, clip x1/x2, four clips of bound)." >&2
+    exit 1
+  }
+  grep -qF 'elif paced and v641_adds(side, inv) and not (deep_first and v69_deep_first_keeps(level)):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.9 S3 a paced book does not keep its deepest order." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v65_deep_max_clips=4.0 "* ]] || { echo "ERROR: v6.9 S2 build without research_v65_deep_max_clips=4.0 in PARAMS." >&2; exit 1; }
+  [[ "$PARAMS" == *"research_v68_book_gate=0 "* ]] || { echo "ERROR: v6.9 S4 build without research_v68_book_gate=0 in PARAMS (the pooled board is the regime gate)." >&2; exit 1; }
+  for key in research_v69_deep_ladder research_v69_deep_first_pace; do
+    [[ " $PARAMS " == *" $key=1 "* || "$PARAMS" == *"$key=1" ]] || { echo "ERROR: v6.9 build without $key=1 in PARAMS." >&2; exit 1; }
+  done
+  if [[ "$DEEP_CLIP_MULT" == "1.0" ]]; then
+    echo "[preflight] v6.9 NOTE: --deep_clip_mult 1.0 halves every level (1/1/2 base, bound 4); replayed at 2.0." >&2
+  fi
+  echo "[preflight] v6.9 deep ladder PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2614,6 +2666,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_6_1.py \
       tests/test_research_v6_7.py \
       tests/test_research_v6_8.py \
+      tests/test_research_v6_9.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
