@@ -49,6 +49,7 @@ def _obj(mult=2.0, clips=3.0, *, deep_on=True, touch_clip=1.0, **attrs):
         o.research_v65_deep_max_clips = clips
     o._v63_clip = lambda: touch_clip
     o._v633_on = lambda: deep_on
+    o._v67_sweep_quantile = lambda: dl.SWEEP_QUANTILE      # v6.7's method, stubbed at v6.3.3's p90 (no probe)
     for n in ("_v65_deep_clip", "_v65_max_clips", "_v65_snapshot", "_v633_deep_ref", "_v63_apply_caps"):
         setattr(o, n, types.MethodType(_method(n), o))
     o._v63_count = lambda key, n=1: o._v63_counts.__setitem__(key, o._v63_counts.get(key, 0) + n)

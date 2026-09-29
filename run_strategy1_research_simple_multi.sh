@@ -387,7 +387,8 @@ research_v66_add_spacing=1 \
 research_v66_pace_line=1 \
 research_v66_cap_closed=1 \
 research_v66_book_identity=1 \
-research_v661_vol_bound=1"
+research_v661_vol_bound=1 \
+research_v67_deep_depth=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2352,7 +2353,8 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.5 module is not imported." >&2
     exit 1
   }
-  grep -qF 'deep = V633DeepLayer(lookback_ns=lookback, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  # (v6.7 continues this call with its sweep quantile on the next line, so the pattern stops at the bound)
+  grep -qF 'deep = V633DeepLayer(lookback_ns=lookback, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.5 the deep layer is not built at its own clip and bound." >&2
     exit 1
   }
@@ -2440,6 +2442,31 @@ if [[ "$V63_BUILD" == "1" ]]; then
   }
   [[ " $PARAMS " == *" research_v661_vol_bound=1 "* || "$PARAMS" == *"research_v661_vol_bound=1" ]] || { echo "ERROR: v6.6.1 build without research_v661_vol_bound=1 in PARAMS." >&2; exit 1; }
   echo "[preflight] v6.6.1 volatility-scaled deep bound PASS"
+  # v6.7: the deep layer rests at the 97th percentile of each book's own sweep depths (live orders and the paper
+  # record that gates them).  The validator pays proportional_both since 00:26 JST 09-29 (half captured-spread share,
+  # half net-alpha share) under a 500k-per-book-per-sim volume cap, so pay per unit of volume decides.  Replay: at
+  # 2 base p97 vs the live 1-base p90 +24.1% / +25.4% pay share on two stretches, ahead in every window.
+  grep -qF 'from research_v67_deep_depth import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.7 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'sweep_quantile=self._v67_sweep_quantile())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.7 the deep layer is not built at the v6.7 sweep quantile." >&2
+    exit 1
+  }
+  grep -qF 'return quantile(db.sweeps, self.sweep_quantile)' "$AGENT_PATH/research_v633_deep_layer.py" || {
+    echo "ERROR: v6.7 the deep layer does not rest at its own sweep quantile." >&2
+    exit 1
+  }
+  grep -qE '^DEEP_QUANTILE = 0\.97 ' "$AGENT_PATH/research_v67_deep_depth.py" || {
+    echo "ERROR: v6.7 is not at the replayed depth (p97)." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v67_deep_depth=1 "* || "$PARAMS" == *"research_v67_deep_depth=1" ]] || { echo "ERROR: v6.7 build without research_v67_deep_depth=1 in PARAMS." >&2; exit 1; }
+  if [[ "$NETUID" == "79" && "$DEEP_CLIP_MULT" == "1.0" ]]; then
+    echo "[preflight] v6.7 NOTE: replayed at 2 base (the default); 1.0 keeps a nearly spent volume allowance." >&2
+  fi
+  echo "[preflight] v6.7 deep depth p97 PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2537,6 +2564,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_5_deep_clips.py \
       tests/test_research_v6_6.py \
       tests/test_research_v6_6_1.py \
+      tests/test_research_v6_7.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

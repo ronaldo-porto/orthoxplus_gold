@@ -201,12 +201,14 @@ class DeepLayer:
     """Every book's sweep depths, paper deep record and gate."""
 
     def __init__(self, *, lookback_ns: int = LOOKBACK_NS, sample_ns: int = SAMPLE_NS,
-                 prune_every_ns: int = PRUNE_EVERY_NS, clip: float = DEEP_CLIPS, max_clips: float = DEEP_MAX_CLIPS):
+                 prune_every_ns: int = PRUNE_EVERY_NS, clip: float = DEEP_CLIPS, max_clips: float = DEEP_MAX_CLIPS,
+                 sweep_quantile: float = SWEEP_QUANTILE):
         self.lookback_ns = int(lookback_ns)
         self.sample_ns = int(sample_ns)
         self.prune_every_ns = int(prune_every_ns)
         self.clip = float(clip)
         self.max_clips = float(max_clips)          # v6.5 S2 passes its own bound; DEEP_MAX_CLIPS is v6.3.3's
+        self.sweep_quantile = float(sweep_quantile)  # v6.7 passes its own; SWEEP_QUANTILE is v6.3.3's
         self.rebases = 0
         self.reset()
 
@@ -243,7 +245,7 @@ class DeepLayer:
         db = self.books.get(int(book_id))
         if db is None or len(db.sweeps) < SWEEP_MIN:
             return None
-        return quantile(db.sweeps, SWEEP_QUANTILE)
+        return quantile(db.sweeps, self.sweep_quantile)
 
     def observe(self, book_id: int, ts: int, trades: list, *, bid: float, ask: float, tick: float,
                 decimals: int) -> float | None:
@@ -287,5 +289,5 @@ class DeepLayer:
             "board_alpha": round(self.board_alpha, 3), "board_opens": self.board_opens, "rebases": self.rebases,
             "books_with_depth": len(depths), "depth_p50": (sorted(depths)[len(depths) // 2] if depths else None),
             "paper_alpha_sum": round(sum(al), 3), "paper_fills": sum(db.paper.fills for db in self.books.values()),
-            "clip": self.clip, "max_clips": self.max_clips,
+            "clip": self.clip, "max_clips": self.max_clips, "sweep_quantile": self.sweep_quantile,
         }
