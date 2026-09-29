@@ -388,7 +388,12 @@ research_v66_pace_line=1 \
 research_v66_cap_closed=1 \
 research_v66_book_identity=1 \
 research_v661_vol_bound=1 \
-research_v67_deep_depth=1"
+research_v67_deep_depth=1 \
+research_v68_no_touch_fallback=1 \
+research_v68_book_gate=1 \
+research_v68_deep_persist=1 \
+research_v68_post_only=1 \
+research_v68_rolling_budget=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2450,7 +2455,8 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.7 module is not imported." >&2
     exit 1
   }
-  grep -qF 'sweep_quantile=self._v67_sweep_quantile())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  # (v6.8 continues this call with its per-book gate on the next line, so the pattern stops at the quantile)
+  grep -qF 'sweep_quantile=self._v67_sweep_quantile()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.7 the deep layer is not built at the v6.7 sweep quantile." >&2
     exit 1
   }
@@ -2467,6 +2473,48 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "[preflight] v6.7 NOTE: replayed at 2 base (the default); 1.0 keeps a nearly spent volume allowance." >&2
   fi
   echo "[preflight] v6.7 deep depth p97 PASS"
+  # v6.8: the deep layer owns the book.  Measured 09-29 with the validator's capture arithmetic on the recorded prints
+  # (it reproduces the making gauges): touch fills capture +0.0..+2.7 bps in every sim-hour, 20+ ticks deep +9..+15;
+  # our v6.3.2 fallback traded 1.4-2.9M quote an hour per agent at +0.0..+0.1 bps whenever the pooled board was shut
+  # (and a restart shuts it); the validator's 500k/book window rolls across simulations; ~1,000 exits per agent-run
+  # could cross.  S1 no touch fallback, S2 a gate per book, S3 the layer's record across a restart, S4 nothing that
+  # takes, S5 the budget line at the cap per assessment period.  All STRUCTURAL; no new tuned number.
+  grep -qF 'from research_v68_deep_owns import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.8 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'if board_owns or no_fallback:' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.8 S1 a book the deep layer does not trade still falls back to the touch." >&2
+    exit 1
+  }
+  grep -qF 'per_book_gate=self._v68_per_book_gate())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.8 S2 the deep layer is not built with its per-book gate." >&2
+    exit 1
+  }
+  grep -qF 'if (not self.board_open and not self.per_book_gate) or db is None' "$AGENT_PATH/research_v633_deep_layer.py" || {
+    echo "ERROR: v6.8 S2 a book still waits for the pooled board." >&2
+    exit 1
+  }
+  grep -qF 'payload[V68_DEEP_SESSION_KEY] = v68_deep_state(self._v633_deep)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.8 S3 the deep layer's record is not saved with the session." >&2
+    exit 1
+  }
+  grep -qF 'self._v68_apply_deep_restore(deep)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.8 S3 the saved record is not restored into the deep layer." >&2
+    exit 1
+  }
+  grep -qF 'self._v68_no_take(response)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.8 S4 orders that can take are not stopped." >&2
+    exit 1
+  }
+  grep -qF 'pace = V68RollingPaceLine() if bool(getattr(self, "research_v68_rolling_budget", False)) else V66PaceLine()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.8 S5 the budget line is not the rolling-window line." >&2
+    exit 1
+  }
+  for key in research_v68_no_touch_fallback research_v68_book_gate research_v68_deep_persist research_v68_post_only research_v68_rolling_budget; do
+    [[ " $PARAMS " == *" $key=1 "* || "$PARAMS" == *"$key=1" ]] || { echo "ERROR: v6.8 build without $key=1 in PARAMS." >&2; exit 1; }
+  done
+  echo "[preflight] v6.8 deep owns the book PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2565,6 +2613,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_6.py \
       tests/test_research_v6_6_1.py \
       tests/test_research_v6_7.py \
+      tests/test_research_v6_8.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

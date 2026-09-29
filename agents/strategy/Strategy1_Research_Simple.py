@@ -652,6 +652,16 @@ from research_v67_deep_depth import (  # noqa: E402
     V67_DEEP_DEPTH_VERSION,
     sweep_quantile as v67_sweep_quantile,
 )
+from research_v68_deep_owns import (  # noqa: E402
+    DEEP_SESSION_KEY as V68_DEEP_SESSION_KEY,
+    RollingPaceLine as V68RollingPaceLine,
+    V68_DEEP_OWNS_VERSION,
+    deep_state as v68_deep_state,
+    no_take as v68_no_take,
+    per_book_gate as v68_per_book_gate,
+    restore_deep as v68_restore_deep,
+    touch_fallback_retired as v68_touch_fallback_retired,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1818,6 +1828,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v661_errors = 0
         # v6.7: the deep layer rests at the 97th percentile of each book's sweep depths (proportional pay, capped volume).
         self.research_v67_deep_depth = self._as_bool(getattr(self.config, "research_v67_deep_depth", True))
+        # v6.8: the deep layer owns the book -- S1 no touch fallback, S2 a gate per book, S3 its record across a
+        # restart, S4 nothing that takes, S5 a budget line on the validator's rolling volume window.
+        self.research_v68_no_touch_fallback = self._as_bool(getattr(self.config, "research_v68_no_touch_fallback", True))
+        self.research_v68_book_gate = self._as_bool(getattr(self.config, "research_v68_book_gate", True))
+        self.research_v68_deep_persist = self._as_bool(getattr(self.config, "research_v68_deep_persist", True))
+        self.research_v68_post_only = self._as_bool(getattr(self.config, "research_v68_post_only", True))
+        self.research_v68_rolling_budget = self._as_bool(getattr(self.config, "research_v68_rolling_budget", True))
+        self._v68_counts: dict[str, int] = {}
+        self._v68_errors = 0
+        self._v68_deep_restore: Any = None
         self._v627_counts: dict[str, int] = {}
         self._v627_errors = 0
 
@@ -10640,7 +10660,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _v66_pace_ref(self):
         pace = getattr(self, "_v66_pace", None)
         if pace is None:
-            pace = V66PaceLine()
+            # v6.8 S5: the line on the validator's rolling window; v6.6's runs to the cap at the simulation's end
+            pace = V68RollingPaceLine() if bool(getattr(self, "research_v68_rolling_budget", False)) else V66PaceLine()
             self._v66_pace = pace
         return pace
 
@@ -10691,6 +10712,61 @@ class Strategy1_Research_Simple(Strategy1_Research):
         deep = getattr(self, "_v633_deep", None)
         return {"version": V67_DEEP_DEPTH_VERSION, "deep_depth_on": int(bool(getattr(self, "research_v67_deep_depth", False))),
                 "sweep_quantile": (float(deep.sweep_quantile) if deep is not None else self._v67_sweep_quantile())}
+
+    def _v68_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v68_counts", None)
+        if counts is None:
+            counts = {}
+            self._v68_counts = counts
+        counts[key] = int(counts.get(key, 0)) + int(n)
+
+    def _v68_per_book_gate(self) -> bool:
+        """v6.8 S2: the deep layer opens a book on that book's own record; a shut pooled board does not shut it."""
+        return bool(v68_per_book_gate(bool(getattr(self, "research_v68_book_gate", False))))
+
+    def _v68_apply_deep_restore(self, deep) -> None:
+        """v6.8 S3: the record this uid's session file carried for this simulation goes back into a new layer, once."""
+        payload = getattr(self, "_v68_deep_restore", None)
+        if payload is None or deep is None or not bool(getattr(self, "research_v68_deep_persist", False)):
+            return
+        self._v68_deep_restore = None
+        try:
+            restored = int(v68_restore_deep(deep, payload))
+        except Exception:
+            self._v68_errors = int(getattr(self, "_v68_errors", 0) or 0) + 1
+            return
+        self._v68_count("restored_books", restored)
+        try:
+            self._emit("V68_DEEP_RESTORE", force=True, tick=int(getattr(self, "_tick", 0) or 0), books=restored,
+                       last_prune_ts=getattr(deep, "last_prune_ts", None), version=V68_DEEP_OWNS_VERSION)
+        except Exception:
+            pass
+
+    def _v68_no_take(self, response) -> None:
+        """v6.8 S4: every limit order post-only; an order that can only take is not sent."""
+        instructions = list(getattr(response, "instructions", None) or [])
+        if not instructions:
+            return
+        kept, converted, dropped = v68_no_take(instructions, self._research_set_instruction_attr)
+        if converted:
+            self._v68_count("made_post_only", converted)
+        if dropped:
+            self._v68_count("dropped_taking", dropped)
+            try:
+                response.instructions[:] = kept
+            except Exception:
+                object.__setattr__(response, "instructions", kept)
+
+    def _v68_snapshot(self) -> dict:
+        out = dict(getattr(self, "_v68_counts", {}) or {})
+        out["version"] = V68_DEEP_OWNS_VERSION
+        out["errors"] = int(getattr(self, "_v68_errors", 0) or 0)
+        for key in ("no_touch_fallback", "book_gate", "deep_persist", "post_only", "rolling_budget"):
+            out[key + "_on"] = int(bool(getattr(self, "research_v68_" + key, False)))
+        deep = getattr(self, "_v633_deep", None)
+        out["per_book_gate"] = int(bool(getattr(deep, "per_book_gate", False))) if deep is not None else None
+        out["rolling_line"] = int(isinstance(getattr(self, "_v66_pace", None), V68RollingPaceLine))
+        return out
 
     def _v64_vacuum_on(self) -> bool:
         """v6.4 S1: a deep order rests inside a blown-out spread."""
@@ -10754,8 +10830,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 # v6.5: S1 the layer's clip, S2 its bound in clips (1.0 and 2.0 build the v6.4.1 layer);
                 # v6.7: the sweep-depth quantile its live orders and paper record rest at
                 deep = V633DeepLayer(lookback_ns=lookback, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips(),
-                                     sweep_quantile=self._v67_sweep_quantile())
+                                     sweep_quantile=self._v67_sweep_quantile(),
+                                     per_book_gate=self._v68_per_book_gate())
             self._v633_deep = deep
+            self._v68_apply_deep_restore(deep)        # v6.8 S3: the record the session file carried, if any
         return deep
 
     def _v633_snapshot(self) -> dict:
@@ -11121,6 +11199,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "deep_books": 0, "placed_deep": 0, "board_idle": 0, "board_owns": int(board_owns), "volume_paced": 0,
         }
         placed_total = 0
+        # v6.8 S1: with a deep layer, a book it does not trade quotes nothing -- the v6.3.2 touch path is no fallback.
+        no_fallback = v68_touch_fallback_retired(getattr(self, "research_v68_no_touch_fallback", False), deep is not None)
         for raw_id in sorted(books, key=lambda x: int(x)):
             book_id = int(raw_id)
             book = books[raw_id]
@@ -11254,9 +11334,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     paced=paced, bound_scale=bound_scale,
                 )
                 continue
-            if board_owns:
+            if board_owns or no_fallback:
                 # v6.4 S2: the open board trades no book at the touch; one it does not open quotes nothing.
+                # v6.8 S1: nor does one the layer does not open under a shut board.
                 self._v64_board_idle(response, book_id, rows, deep_rows, already, req, budget=budget)
+                if not board_owns:
+                    self._v68_count("idle_book_states")
                 continue
             own_cids = (
                 v63_own_client_ids(book_id) | set(v62_entry_client_ids(book_id)) | set(v6214_exit_client_ids(book_id))
@@ -11453,6 +11536,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             v66=(self._v66_snapshot() if getattr(self, "research_v66_add_spacing", None) is not None else {}),
             v661=(self._v661_snapshot() if getattr(self, "research_v661_vol_bound", None) is not None else {}),
             v67=(self._v67_snapshot() if getattr(self, "research_v67_deep_depth", None) is not None else {}),
+            v68=(self._v68_snapshot() if getattr(self, "research_v68_no_touch_fallback", None) is not None else {}),
             board=(self._v64_snapshot() if bool(getattr(self, "research_v64_vacuum", False) or getattr(self, "research_v64_board_owns", False)) else {}),
             deep_layer=self._v633_snapshot(),
             trend_target=self._v63_snapshot(),
@@ -12895,6 +12979,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return raw
         # v6.1: the lot deques this UID saved; the A1.9.5 seed consumes them when they still match.
         self._v61_restored_lots = self._v61_lots_from_session(raw.get("direct_v61_lots"))
+        # v6.8 S3: the deep layer's record for this simulation, put back when the layer is built.
+        self._v68_deep_restore = raw.get(V68_DEEP_SESSION_KEY) if bool(getattr(self, "research_v68_deep_persist", False)) else None
+        if getattr(self, "_v633_deep", None) is not None:
+            self._v68_apply_deep_restore(self._v633_deep)
         direct = raw.get("direct_maker_quality_a1_5_1")
         same_version = isinstance(direct, dict)
         if not isinstance(direct, dict):
@@ -12977,6 +13065,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # v6.1: the FIFO deques, so a restart floors against the validator's lots, not a reseed's.
             if self._v61_on():
                 payload["direct_v61_lots"] = self._v61_lots_session_state()
+            # v6.8 S3: the deep layer's sweep depths and paper record, so a restart does not start it over.
+            if bool(getattr(self, "research_v68_deep_persist", False)) and getattr(self, "_v633_deep", None) is not None:
+                payload[V68_DEEP_SESSION_KEY] = v68_deep_state(self._v633_deep)
             payload["direct_maker_quality_a1_5_1"] = {
                 "version": DIRECT_QUALITY_VERSION,
                 "global": getattr(self, "_direct_maker_quality_global", MakerLifecycleStats()).as_state(),
@@ -15112,6 +15203,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 self._v6215_normalize_expiry(response)
             except Exception:
                 self._v6215_errors = int(getattr(self, "_v6215_errors", 0) or 0) + 1
+        # v6.8 S4: nothing that takes leaves -- every limit order post-only (the sanitizer below prices it to rest) and
+        # no order that can only take; the venue's self-trade prevention does not reach across our uids.
+        if bool(getattr(self, "research_v68_post_only", False)):
+            try:
+                self._v68_no_take(response)
+            except Exception:
+                self._v68_errors = int(getattr(self, "_v68_errors", 0) or 0) + 1
         self._research_sanitize_maker_instructions(response, state)
         self._research_final_validate_instructions(response, state)
         # A1.7.4.3: bridge the validator/account snapshot gap immediately after

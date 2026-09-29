@@ -202,13 +202,14 @@ class DeepLayer:
 
     def __init__(self, *, lookback_ns: int = LOOKBACK_NS, sample_ns: int = SAMPLE_NS,
                  prune_every_ns: int = PRUNE_EVERY_NS, clip: float = DEEP_CLIPS, max_clips: float = DEEP_MAX_CLIPS,
-                 sweep_quantile: float = SWEEP_QUANTILE):
+                 sweep_quantile: float = SWEEP_QUANTILE, per_book_gate: bool = False):
         self.lookback_ns = int(lookback_ns)
         self.sample_ns = int(sample_ns)
         self.prune_every_ns = int(prune_every_ns)
         self.clip = float(clip)
         self.max_clips = float(max_clips)          # v6.5 S2 passes its own bound; DEEP_MAX_CLIPS is v6.3.3's
         self.sweep_quantile = float(sweep_quantile)  # v6.7 passes its own; SWEEP_QUANTILE is v6.3.3's
+        self.per_book_gate = bool(per_book_gate)     # v6.8 S2: each book's own record opens it, not the pooled board
         self.rebases = 0
         self.reset()
 
@@ -271,7 +272,7 @@ class DeepLayer:
     def book_open(self, book_id: int, floor: float, inventory: float, *, inventory_bound: bool = True) -> bool:
         """v6.4 S2 passes inventory_bound=False: the layer keeps a book over the limit, on its reducing side (room)."""
         db = self.books.get(int(book_id))
-        if not self.board_open or db is None or self.depth(book_id) is None:
+        if (not self.board_open and not self.per_book_gate) or db is None or self.depth(book_id) is None:
             return False
         if inventory_bound and abs(float(inventory)) > self.max_clips * self.clip + 1e-9:
             return False
@@ -290,4 +291,5 @@ class DeepLayer:
             "books_with_depth": len(depths), "depth_p50": (sorted(depths)[len(depths) // 2] if depths else None),
             "paper_alpha_sum": round(sum(al), 3), "paper_fills": sum(db.paper.fills for db in self.books.values()),
             "clip": self.clip, "max_clips": self.max_clips, "sweep_quantile": self.sweep_quantile,
+            "per_book_gate": int(self.per_book_gate),
         }
