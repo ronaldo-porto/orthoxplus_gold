@@ -132,12 +132,11 @@ def test_the_bound_test_stays_pre_fill_on_inventory_not_on_the_sized_order():
 
 # ---- 3. the wiring --------------------------------------------------------------------------------------------------
 
-def test_the_switch_is_read_by_name_defaults_off_and_is_a_launcher_parameter():
-    # v6.10: the switch defaults OFF in the source and is driven by the launcher's FREE_BASE operator
-    # setting (FREE_BASE=0 is v6.9), so landing the build changes no behaviour until it is turned on.
-    assert 'getattr(self.config, "research_v691_free_base", False)' in SIMPLE
+def test_the_switch_is_read_by_name_defaults_on_and_is_a_launcher_parameter():
+    # v6.10 ships this ON: the plain launcher run is v6.10.  FREE_BASE=0 turns it back to v6.9.
+    assert 'getattr(self.config, "research_v691_free_base", True)' in SIMPLE
     assert "%s=${FREE_BASE}" % SWITCH in LAUNCHER
-    assert 'FREE_BASE="${FREE_BASE:-0}"' in LAUNCHER
+    assert 'FREE_BASE="${FREE_BASE:-1}"' in LAUNCHER
     snap = t69._method("_v69_snapshot", V691_FREE_BASE_VERSION=d69.V691_FREE_BASE_VERSION)(
         types.SimpleNamespace(_v69_counts={"sized_by_free_base_l0": 2}, _v69_errors=0, research_v69_deep_ladder=True,
                               research_v69_deep_first_pace=True, research_v691_free_base=True, _v633_deep=None))

@@ -41,10 +41,10 @@ INHERITED_SHORT_LOTS="${INHERITED_SHORT_LOTS:-park}"
 MAX_ACTIVE_BOOKS="${MAX_ACTIVE_BOOKS:-8}"
 # v6.10 S2 operator setting: the deep bound (in deep clips) for a book at or below its volume
 # line.  0 is v6.9 -- the bound does not follow the pacing state and the build is a no-op.
-BEHIND_MAX_CLIPS="${BEHIND_MAX_CLIPS:-0}"
+BEHIND_MAX_CLIPS="${BEHIND_MAX_CLIPS:-24}"
 # v6.9.1 C2 operator setting: size a deep order by what the book's account can actually reserve
 # (free base for a sell, free quote for a buy).  0 is v6.9 -- the switch is off and the build is a no-op.
-FREE_BASE="${FREE_BASE:-0}"
+FREE_BASE="${FREE_BASE:-1}"
 # v6.6 operator setting; see the v6.5/v6.6 preflight blocks below.
 #   DEEP_CLIP_MULT  1.0 | 2.0   the deep layer's order size in touch clips (v6.5 S1): 2.0 = 2 base, 1.0 = 1 base.
 #                   1.0 is for a UID whose remaining volume cap is short (replayed 09-28 on UID 94's allowance: the

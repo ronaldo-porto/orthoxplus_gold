@@ -35,7 +35,8 @@ from typing import Any
 
 V610_PACED_BOUND_VERSION = "paced_bound_v6_10"
 
-BEHIND_MAX_CLIPS_OFF = 0.0          # the default: the bound does not follow the pacing state (v6.9)
+BEHIND_MAX_CLIPS_OFF = 0.0          # the OFF sentinel: the bound does not follow the pacing state (v6.9)
+BEHIND_MAX_CLIPS_DEFAULT = 24.0     # v6.10 ships ON: 24 deep clips = 48 base for a book behind its line
 
 
 def _finite(value: Any) -> float | None:

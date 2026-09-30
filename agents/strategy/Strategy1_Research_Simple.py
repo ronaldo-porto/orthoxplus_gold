@@ -680,6 +680,7 @@ from research_v69_deep_ladder import (  # noqa: E402
     slot_taken as v69_slot_taken,
 )
 from research_v610_paced_bound import (  # noqa: E402
+    BEHIND_MAX_CLIPS_DEFAULT as V610_BEHIND_MAX_CLIPS_DEFAULT,
     BEHIND_MAX_CLIPS_OFF as V610_BEHIND_MAX_CLIPS_OFF,
     V610_PACED_BOUND_VERSION,
     behind_clips as v610_behind_clips,
@@ -1868,15 +1869,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self.research_v69_deep_ladder = self._as_bool(getattr(self.config, "research_v69_deep_ladder", True))
         self.research_v69_deep_first_pace = self._as_bool(getattr(self.config, "research_v69_deep_first_pace", True))
         # v6.10 S2: the deep bound in deep clips for a book at or BELOW its volume line; a paced (ahead) book keeps
-        # research_v65_deep_max_clips.  0.0 is v6.9 -- the bound does not follow the pacing state.
+        # research_v65_deep_max_clips.  v6.10 ships 24 (= 48 base); 0.0 turns it off and is v6.9.
         try:
             self.research_v610_behind_max_clips = float(
-                getattr(self.config, "research_v610_behind_max_clips", V610_BEHIND_MAX_CLIPS_OFF))
+                getattr(self.config, "research_v610_behind_max_clips", V610_BEHIND_MAX_CLIPS_DEFAULT))
         except (TypeError, ValueError):
-            self.research_v610_behind_max_clips = float(V610_BEHIND_MAX_CLIPS_OFF)
+            self.research_v610_behind_max_clips = float(V610_BEHIND_MAX_CLIPS_DEFAULT)
         # v6.9.1 C2: a deep order is no larger than what the book's account can reserve for it (its free base for a
         # sell, its free quote at the order's price for a buy).  STRUCTURAL: see research_v69_deep_ladder.
-        self.research_v691_free_base = self._as_bool(getattr(self.config, "research_v691_free_base", False))
+        self.research_v691_free_base = self._as_bool(getattr(self.config, "research_v691_free_base", True))
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
