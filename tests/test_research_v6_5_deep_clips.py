@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import research_v633_deep_layer as dl  # noqa: E402
 import research_v63_trend_target as tt  # noqa: E402
 import research_v65_deep_clips as dc  # noqa: E402
+import research_v610_paced_bound as d610  # noqa: E402
 import test_research_v6_3_0_trend_target as t63  # noqa: E402
 import test_research_v6_3_3_deep_layer as d633  # noqa: E402
 import test_research_v6_4_board as t64  # noqa: E402
@@ -31,7 +32,9 @@ TICK = 0.01
 EXTRA = {"V65_DEEP_CLIPS_VERSION": dc.V65_DEEP_CLIPS_VERSION, "v65_deep_clip": dc.deep_clip,
          "v65_max_clips": dc.max_clips, "v65_book_bound": dc.book_bound, "v65_caps_for": dc.caps_for,
          "V633DeepLayer": dl.DeepLayer, "V62_DEFAULT_LOOKBACK_NS": dl.LOOKBACK_NS, "v63_caps_for": tt.caps_for,
-         "V63_TREND_TARGET_VERSION": tt.V63_TREND_TARGET_VERSION}
+         "V63_TREND_TARGET_VERSION": tt.V63_TREND_TARGET_VERSION,
+         # v6.10 S2: the switch is unset on this object, so the cap keeps the v6.5/v6.9 bound
+         "v610_behind_clips": d610.behind_clips, "v610_caps_clips": d610.caps_clips}
 
 
 def _method(name):
@@ -53,7 +56,8 @@ def _obj(mult=2.0, clips=3.0, *, deep_on=True, touch_clip=1.0, **attrs):
     o._v68_per_book_gate = lambda: False                   # v6.8 S2's method, stubbed at the pooled board (no probe)
     o._v68_apply_deep_restore = lambda deep: None          # v6.8 S3's method, stubbed: nothing to restore (no probe)
     o._v69_ladder_on = lambda: False                       # v6.9 S1's method, stubbed off: v6.5's caps (no probe)
-    for n in ("_v65_deep_clip", "_v65_max_clips", "_v65_snapshot", "_v633_deep_ref", "_v63_apply_caps"):
+    for n in ("_v65_deep_clip", "_v65_max_clips", "_v65_snapshot", "_v633_deep_ref", "_v63_apply_caps",
+              "_v610_behind_clips", "_v610_caps_clips"):          # v6.10 S2: the cap's bound
         setattr(o, n, types.MethodType(_method(n), o))
     o._v63_count = lambda key, n=1: o._v63_counts.__setitem__(key, o._v63_counts.get(key, 0) + n)
     o._emit = lambda *a, **k: o.events.append((a, k))

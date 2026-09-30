@@ -50,6 +50,7 @@ from research_v65_deep_clips import book_bound
 from research_v6215_order_life import SIDE_BUY, SIDE_SELL, order_side_token
 
 V69_DEEP_LADDER_VERSION = "deep_ladder_v6_9"
+V691_FREE_BASE_VERSION = "deep_ladder_free_base_v6_9_1"
 
 LADDER_QUANTILES = (0.99, 1.0)      # OBSERVED (r69 grids): levels 1 and 2 at the sweep record's p99 and max
 LADDER_CLIPS = (1.0, 2.0)           # OBSERVED (r69c): their sizes in deep clips (2 and 4 base at the 2-base clip)
@@ -90,6 +91,37 @@ def level_quantity(clip: Any, level: int) -> float:
     if k <= 0 or k > len(LADDER_CLIPS):
         return c
     return c * float(LADDER_CLIPS[k - 1])
+
+
+def quantity_within_free(q: Any, free: Any, min_order: Any, volume_decimals: Any) -> float:
+    """C2 (v6.9.1): an order no larger than what the account can reserve for it, floored to the volume grid; 0.0 when
+    what is free is below the venue's minimum order (a size the venue would refuse anyway).
+
+    STRUCTURAL: the venue reserves a limit sell's base (a buy's quote) at placement and refuses the order outright
+    when the free balance is short (OrderPlacementValidator: ``!baseBalance.canReserve(volume)`` ->
+    INSUFFICIENT_BASE); ``free`` already excludes what our resting orders on the book reserve.  A miner's base on a
+    book is its Pareto endowment ``wealth / ((1 + r) * price)`` with ``r = scale * (1 - u) ** (-1 / shape)``
+    (Balances::fromXML, type="pareto"; scale 1, shape 2, wealth 50,000, price 300 -> at most 83.3 base, median
+    69, below 12 base on 0.6% of books, below 20 on 1.9%).  The 2/2/4 ladder reserves up to 8 base of sells on top
+    of a short bound of 8, so on such a book the level's whole size is refused every request (09-30: UID 94 books
+    15/62, 251 book 78, 165 books 49/100, 104 book 6, 88 book 98 -- 5,000 refusals, the books one-sided for
+    7-62 min).  The level keeps its identity (client id, ownership slot, depth); only its size shrinks.
+    ``free``/``q`` that cannot be read leave the size alone (a bad read never stops the layer)."""
+    size = _finite(q)
+    if size is None or size <= 0.0:
+        return 0.0
+    avail = _finite(free)
+    if avail is None:
+        return float(size)
+    if avail < size:
+        try:
+            d = max(0, int(volume_decimals))
+        except (TypeError, ValueError):
+            d = 4
+        scale = 10.0 ** d
+        size = math.floor(max(0.0, avail) * scale + 1e-9) / scale
+    floor = max(0.0, _finite(min_order) or 0.0)
+    return float(size) if size + 1e-12 >= floor and size > 0.0 else 0.0
 
 
 def deep_first_keeps(level: int) -> bool:

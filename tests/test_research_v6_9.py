@@ -31,6 +31,7 @@ import research_v63_trend_target as tt  # noqa: E402
 import research_v64_board as b64  # noqa: E402
 import research_v65_deep_clips as dc  # noqa: E402
 import research_v69_deep_ladder as d69  # noqa: E402
+import research_v610_paced_bound as d610  # noqa: E402
 import test_research_v6_3_0_trend_target as t63  # noqa: E402
 import test_research_v6_4_1_volume_pace as t641  # noqa: E402
 import test_research_v6_4_board as t64  # noqa: E402
@@ -55,7 +56,11 @@ EXPIRY = 50_000_000_000
 def _method(name, **extra):
     scope = {"Any": object, "V69_DEEP_LADDER_VERSION": d69.V69_DEEP_LADDER_VERSION,
              "V69_LADDER_QUANTILES": d69.LADDER_QUANTILES, "V69_LADDER_CLIPS": d69.LADDER_CLIPS,
-             "v69_live_slots": d69.live_slots, "v69_caps_for": d69.caps_for, **extra}
+             "v69_live_slots": d69.live_slots, "v69_caps_for": d69.caps_for,
+             "V691_FREE_BASE_VERSION": d69.V691_FREE_BASE_VERSION,
+             # v6.10 S2: the snapshot's bound row and the helper it reads
+             "V610_PACED_BOUND_VERSION": d610.V610_PACED_BOUND_VERSION, "v610_behind_clips": d610.behind_clips,
+             **extra}
     exec(compile(ast.Module(body=[ast.parse(_src(name)).body[0]], type_ignores=[]), f"<{name}>", "exec"), scope)
     return scope[name]
 
@@ -550,7 +555,12 @@ def test_the_state_row_reports_v6_9():
             in _src("_v62_telemetry"))
     o = types.SimpleNamespace(_v69_counts={"placed_l1": 3}, _v69_errors=0, research_v69_deep_ladder=True,
                               research_v69_deep_first_pace=True, _v633_deep=dl.DeepLayer(clip=2.0, max_clips=4.0))
+    o.research_v610_behind_max_clips = 0.0                 # v6.10 S2 off: the bound does not follow the pacing state
     o._v69_snapshot = types.MethodType(_method("_v69_snapshot"), o)
     assert o._v69_snapshot() == {"placed_l1": 3, "version": "deep_ladder_v6_9", "errors": 0, "deep_ladder_on": 1,
-                                 "deep_first_pace_on": 1, "ladder_quantiles": [0.99, 1.0], "ladder_clips": [1.0, 2.0],
+                                 "deep_first_pace_on": 1, "free_base_on": 0,                     # v6.9.1 C2 (unset here)
+                                 "behind_max_clips": 0.0,                                        # v6.10 S2 (off here)
+                                 "paced_bound_version": "paced_bound_v6_10",
+                                 "free_base_version": "deep_ladder_free_base_v6_9_1",
+                                 "ladder_quantiles": [0.99, 1.0], "ladder_clips": [1.0, 2.0],
                                  "max_clips": 4.0, "pooled_board": 1}

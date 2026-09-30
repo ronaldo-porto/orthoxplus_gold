@@ -669,13 +669,22 @@ from research_v69_deep_ladder import (  # noqa: E402
     LADDER_CLIPS as V69_LADDER_CLIPS,
     LADDER_QUANTILES as V69_LADDER_QUANTILES,
     V69_DEEP_LADDER_VERSION,
+    V691_FREE_BASE_VERSION,
     WHOLE_SIDE as V69_WHOLE_SIDE,
     caps_for as v69_caps_for,
     deep_first_keeps as v69_deep_first_keeps,
     ladder_levels as v69_ladder_levels,
     level_quantity as v69_level_quantity,
     live_slots as v69_live_slots,
+    quantity_within_free as v691_quantity_within_free,
     slot_taken as v69_slot_taken,
+)
+from research_v610_paced_bound import (  # noqa: E402
+    BEHIND_MAX_CLIPS_OFF as V610_BEHIND_MAX_CLIPS_OFF,
+    V610_PACED_BOUND_VERSION,
+    behind_clips as v610_behind_clips,
+    bound_clips as v610_bound_clips,
+    caps_clips as v610_caps_clips,
 )
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
@@ -1858,6 +1867,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # research_v68_book_gate 0, the pooled board as the regime gate -- both launcher parameters).
         self.research_v69_deep_ladder = self._as_bool(getattr(self.config, "research_v69_deep_ladder", True))
         self.research_v69_deep_first_pace = self._as_bool(getattr(self.config, "research_v69_deep_first_pace", True))
+        # v6.10 S2: the deep bound in deep clips for a book at or BELOW its volume line; a paced (ahead) book keeps
+        # research_v65_deep_max_clips.  0.0 is v6.9 -- the bound does not follow the pacing state.
+        try:
+            self.research_v610_behind_max_clips = float(
+                getattr(self.config, "research_v610_behind_max_clips", V610_BEHIND_MAX_CLIPS_OFF))
+        except (TypeError, ValueError):
+            self.research_v610_behind_max_clips = float(V610_BEHIND_MAX_CLIPS_OFF)
+        # v6.9.1 C2: a deep order is no larger than what the book's account can reserve for it (its free base for a
+        # sell, its free quote at the order's price for a buy).  STRUCTURAL: see research_v69_deep_ladder.
+        self.research_v691_free_base = self._as_bool(getattr(self.config, "research_v691_free_base", False))
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -10455,10 +10474,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if getattr(self, "research_v65_deep_clip_mult", None) is not None and self._v633_on():
             # v6.5: every book may hold the deep layer's bound plus one deep order in flight (the final validator
             # charges each order its worst-case fill); at v6.4.1's size this is the three clips above.
-            deep_caps = v65_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())
+            # v6.10 S2: sized for the largest bound any book may take this request, not the one it holds -- the
+            # cap is one number for the whole universe and the validator charges every order its worst-case fill.
+            deep_caps = v65_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v610_caps_clips())
             if self._v69_ladder_on():
                 # v6.9 S1: a book inside its bound may rest every level of one side at once -- bound plus all in flight.
-                deep_caps = v69_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())
+                deep_caps = v69_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v610_caps_clips())
             caps = {key: max(float(value), float(deep_caps.get(key, 0.0))) for key, value in caps.items()}
         changed = False
         for key, value in caps.items():
@@ -10650,6 +10671,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         """v6.5 S2: a book's deep inventory bound, in deep clips."""
         return float(v65_max_clips(getattr(self, "research_v65_deep_max_clips", None)))
 
+    def _v610_behind_clips(self) -> float:
+        """v6.10 S2: the bound in deep clips a book at or below its volume line may hold (0.0 is v6.9, off)."""
+        return float(v610_behind_clips(getattr(self, "research_v610_behind_max_clips", None)))
+
+    def _v610_caps_clips(self) -> float:
+        """v6.10 S2: the bound the exposure cap is sized for -- the largest any book may take this request."""
+        return float(v610_caps_clips(self._v65_max_clips(), self._v610_behind_clips()))
+
+    def _v610_bound_base(self, deep, paced: bool) -> float:
+        """v6.10 S2: this book's deep inventory bound in base, given its pacing state."""
+        clips = v610_bound_clips(float(getattr(deep, "max_clips", 0.0) or 0.0),
+                                 self._v610_behind_clips(), bool(paced))
+        return float(clips) * float(getattr(deep, "clip", 0.0) or 0.0)
+
     def _v65_snapshot(self) -> dict:
         deep = getattr(self, "_v633_deep", None)
         clip = float(deep.clip) if deep is not None else self._v65_deep_clip()
@@ -10808,6 +10843,29 @@ class Strategy1_Research_Simple(Strategy1_Research):
         """v6.9 S3: a book ahead of its volume line keeps its deepest ladder order on the side that adds."""
         return bool(self._v69_ladder_on() and getattr(self, "research_v69_deep_first_pace", False))
 
+    def _v691_free_base_on(self) -> bool:
+        """v6.9.1 C2: deep orders sized within the book's free balance on the leg the venue reserves."""
+        return bool(self._v633_on() and getattr(self, "research_v691_free_base", False))
+
+    def _v691_free_for(self, book_id: int, side: str, price: Any) -> float | None:
+        """What the book's account can reserve for one more order on ``side``, in base: the free base for a sell,
+        the free quote over the order's price for a buy.  None when the account cannot be read (the size is then
+        left alone -- the venue's own refusal, not a guess, decides)."""
+        acct = (getattr(self, "accounts", None) or {}).get(int(book_id))
+        if acct is None:
+            return None
+        try:
+            if side == V63_SIDE_SELL:
+                free = float(acct.base_balance.free)
+            else:
+                px = float(price)
+                if not (px == px and 0.0 < px < float("inf")):
+                    return None
+                free = float(acct.quote_balance.free) / px
+        except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+            return None
+        return free if (free == free and abs(free) != float("inf")) else None
+
     def _v69_ledger_client_ids(self) -> dict:
         """v6.9 S1: the client id the ledger recorded for each (book, order id), built once per request and only when
         an acknowledged order arrives without its own (the account view need not carry it)."""
@@ -10847,6 +10905,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         out["errors"] = int(getattr(self, "_v69_errors", 0) or 0)
         out["deep_ladder_on"] = int(bool(getattr(self, "research_v69_deep_ladder", False)))
         out["deep_first_pace_on"] = int(bool(getattr(self, "research_v69_deep_first_pace", False)))
+        # v6.10 S2 (0.0 = off); read from the switch, not the method, so a snapshot needs no more wiring.
+        out["behind_max_clips"] = float(v610_behind_clips(getattr(self, "research_v610_behind_max_clips", None)))
+        out["paced_bound_version"] = V610_PACED_BOUND_VERSION
+        out["free_base_on"] = int(bool(getattr(self, "research_v691_free_base", False)))
+        out["free_base_version"] = V691_FREE_BASE_VERSION
         out["ladder_quantiles"] = list(V69_LADDER_QUANTILES)
         out["ladder_clips"] = list(V69_LADDER_CLIPS)
         deep = getattr(self, "_v633_deep", None)
@@ -10972,12 +11035,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 self._v66_errors = int(getattr(self, "_v66_errors", 0) or 0) + 1
                 unspaced = set()
         scaled = float(bound_scale) < 1.0 - 1e-12
+        # v6.10 S2: the bound follows the pacing state -- a book at or below its volume line may hold
+        # research_v610_behind_max_clips deep clips; a paced (ahead) book keeps v6.9's.  One bound for the whole
+        # book, so level 0 and every ladder level are judged against it, exactly as they are in v6.9.
+        bound = self._v610_bound_base(deep, paced)
+
+        def _plain(side_: str) -> bool:
+            return bool(deep.room(side_, inv, bound))
 
         def _room(side_: str) -> bool:
             # v6.6.1: a book faster than the median book adds only up to bound x median / its own volatility.
             if scaled:
-                return bool(v661_room(side_, inv, float(deep.max_clips) * float(deep.clip) * float(bound_scale)))
-            return bool(deep.room(side_, inv))
+                return bool(v661_room(side_, inv, bound * float(bound_scale)))
+            return _plain(side_)
 
         # v6.9 S1: the ladder's levels -- the book's own record at p99 and max, each deeper than level 0 (eff).
         ladder = bool(self._v69_ladder_on())
@@ -11004,7 +11074,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 doomed.append((row, V69_CANCEL_LEVEL_OFF))  # v6.9: a ladder order the layer no longer places
             elif not _room(side):
                 doomed.append((row, V633_CANCEL_NO_ROOM))
-                if deep.room(side, inv):
+                if _plain(side):
                     self._v661_count("cancel_vol_bound")
             elif paced and v641_adds(side, inv) and not (deep_first and v69_deep_first_keeps(level)):
                 doomed.append((row, V641_CANCEL_PACED))     # v6.4.1: ahead of its volume pace, no adding order
@@ -11058,7 +11128,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 break
             if not ladder and (side in resting or side in live_sides or side in cancelled):
                 continue
-            if not deep.room(side, inv):
+            if not _plain(side):
                 continue
             if not _room(side):
                 self._v661_count("placement_vol_bound")
@@ -11077,16 +11147,32 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if q + 1e-12 < min_order:
                     self._v633_count("below_min_order")
                     continue
-                if self._count_book_instructions(response, book_id) >= budget:
-                    self._v633_count("budget_deferred")
-                    spent = True
-                    break
                 if level:
                     price = v633_deep_price(mid, level_d, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
                 elif vac is not None:
                     price = v64_vacuum_price(mid, vac, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
                 else:
                     price = v633_deep_price(mid, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+                if self._v691_free_base_on():
+                    # v6.9.1 C2: the level's size is what the account can still reserve for it, never more.  A level
+                    # the account cannot fund at the minimum order takes nothing this request (and spends no
+                    # instruction on a refusal); the next level is tried, since a deeper one is no cheaper.
+                    try:
+                        free = self._v691_free_for(book_id, side, price)
+                        sized = v691_quantity_within_free(q, free, min_order, getattr(cfg, "volumeDecimals", 4))
+                    except Exception:
+                        self._v69_errors = int(getattr(self, "_v69_errors", 0) or 0) + 1
+                        free, sized = None, q
+                    if free is not None and sized + 1e-12 < q:
+                        if sized <= 0.0:
+                            self._v69_count("no_free_%s_l%d" % ("base" if side == V63_SIDE_SELL else "quote", level))
+                            continue
+                        self._v69_count("sized_by_free_%s_l%d" % ("base" if side == V63_SIDE_SELL else "quote", level))
+                        q = sized
+                if self._count_book_instructions(response, book_id) >= budget:
+                    self._v633_count("budget_deferred")
+                    spent = True
+                    break
                 buy_cid, sell_cid = v633_level_client_ids(book_id, level) if level else v633_client_ids(book_id)
                 try:
                     response.limit_order(

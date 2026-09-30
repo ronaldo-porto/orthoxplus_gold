@@ -301,8 +301,10 @@ class DeepLayer:
             return False
         return db.paper.alpha() >= -OWN_FLOOR_FRACTION * float(floor)
 
-    def room(self, side: str, inventory: float) -> bool:
-        lim = self.max_clips * self.clip
+    def room(self, side: str, inventory: float, limit: float | None = None) -> bool:
+        """v6.10 S2 passes the bound it decided on for this book (the pacing state moves it); with none, the
+        layer's own ``max_clips x clip`` -- every caller before v6.10, unchanged."""
+        lim = (self.max_clips * self.clip) if limit is None else max(0.0, float(limit))
         return float(inventory) < lim - 1e-9 if side == SIDE_BUY else float(inventory) > -lim + 1e-9
 
     def snapshot(self) -> dict[str, Any]:

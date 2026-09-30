@@ -39,6 +39,12 @@ INHERITED_SHORT_LOTS="${INHERITED_SHORT_LOTS:-park}"
 #   MAX_ACTIVE_BOOKS  productive books held at once, 6 to 8 (the frozen Research clamp is 8, and
 #                     8 x 0.25 is exactly the 2.0 BASE cap).  6 restores v6.0.1.
 MAX_ACTIVE_BOOKS="${MAX_ACTIVE_BOOKS:-8}"
+# v6.10 S2 operator setting: the deep bound (in deep clips) for a book at or below its volume
+# line.  0 is v6.9 -- the bound does not follow the pacing state and the build is a no-op.
+BEHIND_MAX_CLIPS="${BEHIND_MAX_CLIPS:-0}"
+# v6.9.1 C2 operator setting: size a deep order by what the book's account can actually reserve
+# (free base for a sell, free quote for a buy).  0 is v6.9 -- the switch is off and the build is a no-op.
+FREE_BASE="${FREE_BASE:-0}"
 # v6.6 operator setting; see the v6.5/v6.6 preflight blocks below.
 #   DEEP_CLIP_MULT  1.0 | 2.0   the deep layer's order size in touch clips (v6.5 S1): 2.0 = 2 base, 1.0 = 1 base.
 #                   1.0 is for a UID whose remaining volume cap is short (replayed 09-28 on UID 94's allowance: the
@@ -154,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -194,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -395,7 +401,9 @@ research_v68_deep_persist=1 \
 research_v68_post_only=1 \
 research_v68_rolling_budget=1 \
 research_v69_deep_ladder=1 \
-research_v69_deep_first_pace=1"
+research_v69_deep_first_pace=1 \
+research_v691_free_base=${FREE_BASE} \
+research_v610_behind_max_clips=${BEHIND_MAX_CLIPS}"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2370,7 +2378,7 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.5 S1 deep orders are not placed at the deep layer's clip." >&2
     exit 1
   }
-  grep -qF 'deep_caps = v65_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'deep_caps = v65_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v610_caps_clips())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.5 the exposure cap does not follow the deep bound (the validator would refuse the new room)." >&2
     exit 1
   }
@@ -2441,7 +2449,7 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.6.1 the pass does not read each book's volatility against the median book's." >&2
     exit 1
   }
-  grep -qF 'paced=paced, bound_scale=bound_scale,' "$AGENT_PATH/Strategy1_Research_Simple.py" && grep -qF 'return bool(v661_room(side_, inv, float(deep.max_clips) * float(deep.clip) * float(bound_scale)))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'paced=paced, bound_scale=bound_scale,' "$AGENT_PATH/Strategy1_Research_Simple.py" && grep -qF 'return bool(v661_room(side_, inv, bound * float(bound_scale)))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.6.1 deep placement does not use the volatility-scaled bound." >&2
     exit 1
   }
@@ -2546,7 +2554,7 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.9 S1 the final validator does not own deep orders per level (a resting level refuses the next)." >&2
     exit 1
   }
-  grep -qF 'deep_caps = v69_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v65_max_clips())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'deep_caps = v69_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v610_caps_clips())' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.9 S1 the exposure cap does not count the ladder in flight (the validator would refuse it)." >&2
     exit 1
   }
@@ -2567,6 +2575,44 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "[preflight] v6.9 NOTE: --deep_clip_mult 1.0 halves every level (1/1/2 base, bound 4); replayed at 2.0." >&2
   fi
   echo "[preflight] v6.9 deep ladder PASS"
+fi
+
+# v6.10 S2.  The deep bound follows the book's pacing state: a book at or below its volume line
+# may hold BEHIND_MAX_CLIPS deep clips, a paced (ahead) book keeps research_v65_deep_max_clips.
+# BEHIND_MAX_CLIPS=0 is v6.9 and the whole build is a no-op, so this block only checks the wiring
+# is present; the value is echoed so a launch always says which bound it ran.
+# NOTE: V610_BUILD is v6.1.0's gate (set since strategy1_direct_v6_1_0); v6.10 is V6_10_BUILD.
+if [[ "${V6_10_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v610_paced_bound import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.10 S2 paced bound not imported." >&2
+    exit 1
+  }
+  grep -qF 'bound = self._v610_bound_base(deep, paced)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.10 S2 the deep bound does not follow the pacing state." >&2
+    exit 1
+  }
+  grep -qF 'def bound_clips(' "$AGENT_PATH/research_v610_paced_bound.py" || {
+    echo "ERROR: v6.10 S2 research_v610_paced_bound.py has no bound_clips()." >&2
+    exit 1
+  }
+  # STRUCTURAL: the exposure cap must be sized for the LARGEST bound any book may take, or the final
+  # validator refuses the new room as STRICT_EXPOSURE_HEADROOM (see research_v65_deep_clips.caps_for).
+  grep -qF 'max_clips=self._v610_caps_clips()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.10 S2 the exposure cap does not follow the behind-the-line bound." >&2
+    exit 1
+  }
+  [[ "$BEHIND_MAX_CLIPS" =~ ^[0-9]+(\.[0-9]+)?$ ]] || {
+    echo "ERROR: BEHIND_MAX_CLIPS '${BEHIND_MAX_CLIPS}' is not a number (0 = off, 24 = the replayed C_24: 24 deep clips = 48 base)." >&2
+    exit 1
+  }
+  [[ "$PARAMS" == *"research_v610_behind_max_clips=${BEHIND_MAX_CLIPS}"* ]] || {
+    echo "ERROR: v6.10 build without research_v610_behind_max_clips=${BEHIND_MAX_CLIPS} in PARAMS." >&2
+    exit 1
+  }
+  if [[ "$BEHIND_MAX_CLIPS" == "0" || "$BEHIND_MAX_CLIPS" == "0.0" ]]; then
+    echo "[preflight] v6.10 NOTE: BEHIND_MAX_CLIPS=0 -- the bound does not follow the pacing state (v6.9 behaviour)." >&2
+  fi
+  echo "[preflight] v6.10 paced deep bound PASS (behind_max_clips=${BEHIND_MAX_CLIPS})"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2667,6 +2713,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_7.py \
       tests/test_research_v6_8.py \
       tests/test_research_v6_9.py \
+      tests/test_research_v6_9_1_free_base.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

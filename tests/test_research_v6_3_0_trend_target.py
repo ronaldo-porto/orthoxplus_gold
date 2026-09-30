@@ -31,6 +31,7 @@ import research_v632_target_gate as tg632  # noqa: E402
 import research_v633_deep_layer as dl633  # noqa: E402
 import research_v68_deep_owns as d68  # noqa: E402
 import research_v69_deep_ladder as d69  # noqa: E402
+import research_v610_paced_bound as d610  # noqa: E402
 from research_session_state import extract_simulation_id  # noqa: E402
 from research_direct_exit_ledger import DirectExitLedger  # noqa: E402
 from research_direct_exit_refresh import ABSENT_REPRICE_CANCEL  # noqa: E402
@@ -235,6 +236,11 @@ def _pass_agent(**kwargs):
         "V69_DEEP_LADDER_VERSION": d69.V69_DEEP_LADDER_VERSION, "v69_caps_for": d69.caps_for,
         "v69_deep_first_keeps": d69.deep_first_keeps, "v69_ladder_levels": d69.ladder_levels,
         "v69_level_quantity": d69.level_quantity, "v69_live_slots": d69.live_slots, "v69_slot_taken": d69.slot_taken,
+        # v6.9.1 C2: the names its methods reach; the switch is unset here, so deep orders keep their full size
+        "v691_quantity_within_free": d69.quantity_within_free, "V691_FREE_BASE_VERSION": d69.V691_FREE_BASE_VERSION,
+        # v6.10 S2: the switch is unset here, so every book keeps the v6.9 bound
+        "v610_behind_clips": d610.behind_clips, "v610_bound_clips": d610.bound_clips,
+        "v610_caps_clips": d610.caps_clips,
     })
     cls = type("P", (_PassAgent,), {})
     for name in ("_v63_pass", "_v63_count", "_v63_clip", "_v63_apply_caps", "_v63_snapshot", "_v63_book_alphas",
@@ -242,7 +248,9 @@ def _pass_agent(**kwargs):
                  "_v63_on", "_v632_gate_on", "_v632_gate_ref", "_v632_count",
                  "_v633_on", "_v633_count", "_v633_deep_ref", "_v633_book", "_v633_snapshot",
                  "_v68_count", "_v68_per_book_gate", "_v68_apply_deep_restore",
-                 "_v69_count", "_v69_ladder_on", "_v69_deep_first_on"):
+                 "_v69_count", "_v69_ladder_on", "_v69_deep_first_on", "_v691_free_base_on", "_v691_free_for",
+                 # v6.10 S2: the bound _v633_book judges every level against
+                 "_v610_behind_clips", "_v610_caps_clips", "_v610_bound_base"):
         exec(compile(ast.Module(body=[ast.parse(_simple(name)).body[0]], type_ignores=[]), "<v63>", "exec"), ns)
         setattr(cls, name, ns[name])
     return cls(**kwargs)
