@@ -531,7 +531,7 @@ def test_the_switches_default_on_ship_in_params_and_are_preflighted():
         assert f'self.{key} = self._as_bool(getattr(self.config, "{key}", True))' in SIMPLE, key
         assert f"{key}=1" in params, key
     assert "research_v65_deep_max_clips=4.0 " in params                               # S2
-    assert "research_v68_book_gate=0 " in params                                     # S4
+    assert "research_v68_book_gate=1 " in params                                     # S4, retired by v6.11 S1
     assert 'echo "[preflight] v6.9 deep ladder PASS"' in LAUNCHER
     assert "tests/test_research_v6_9.py" in LAUNCHER
 

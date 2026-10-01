@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -396,7 +396,7 @@ research_v66_book_identity=1 \
 research_v661_vol_bound=1 \
 research_v67_deep_depth=1 \
 research_v68_no_touch_fallback=1 \
-research_v68_book_gate=0 \
+research_v68_book_gate=1 \
 research_v68_deep_persist=1 \
 research_v68_post_only=1 \
 research_v68_rolling_budget=1 \
@@ -2523,7 +2523,7 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.8 S5 the budget line is not the rolling-window line." >&2
     exit 1
   }
-  # (v6.9 S4 turns S2 off -- research_v68_book_gate=0, checked in the v6.9 block below)
+  # (v6.9 S4 turned S2 off; v6.11 S1 turns it on again -- research_v68_book_gate=1, checked in the v6.11 block below)
   for key in research_v68_no_touch_fallback research_v68_deep_persist research_v68_post_only research_v68_rolling_budget; do
     [[ " $PARAMS " == *" $key=1 "* || "$PARAMS" == *"$key=1" ]] || { echo "ERROR: v6.8 build without $key=1 in PARAMS." >&2; exit 1; }
   done
@@ -2533,7 +2533,7 @@ if [[ "$V63_BUILD" == "1" ]]; then
   # 1.112% mean pay, the ladder 1.585% (+42.6%), kept books 124-127, kappa 2.1-4.8, worst book -100..-170.  S1 two more
   # deep orders per side at each book's sweep-record p99 and max (one and two deep clips), owned per (book, side,
   # level); S2 a four-clip bound (research_v65_deep_max_clips 4.0); S3 a book ahead of its volume line keeps only its
-  # deepest order; S4 the pooled board is the regime gate again (research_v68_book_gate 0).
+  # deepest order; S4 the pooled board is the regime gate again (research_v68_book_gate 0; retired by v6.11 S1).
   grep -qF 'from research_v69_deep_ladder import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.9 module is not imported." >&2
     exit 1
@@ -2567,7 +2567,7 @@ if [[ "$V63_BUILD" == "1" ]]; then
     exit 1
   }
   [[ "$PARAMS" == *"research_v65_deep_max_clips=4.0 "* ]] || { echo "ERROR: v6.9 S2 build without research_v65_deep_max_clips=4.0 in PARAMS." >&2; exit 1; }
-  [[ "$PARAMS" == *"research_v68_book_gate=0 "* ]] || { echo "ERROR: v6.9 S4 build without research_v68_book_gate=0 in PARAMS (the pooled board is the regime gate)." >&2; exit 1; }
+  # v6.9 S4 (research_v68_book_gate=0) is retired by v6.11 S1; the shipped value is checked in the v6.11 block below.
   for key in research_v69_deep_ladder research_v69_deep_first_pace; do
     [[ " $PARAMS " == *" $key=1 "* || "$PARAMS" == *"$key=1" ]] || { echo "ERROR: v6.9 build without $key=1 in PARAMS." >&2; exit 1; }
   done
@@ -2613,6 +2613,29 @@ if [[ "${V6_10_BUILD:-0}" == "1" ]]; then
     echo "[preflight] v6.10 NOTE: BEHIND_MAX_CLIPS=0 -- the bound does not follow the pacing state (v6.9 behaviour)." >&2
   fi
   echo "[preflight] v6.10 paced deep bound PASS (behind_max_clips=${BEHIND_MAX_CLIPS})"
+fi
+
+# v6.11 S1.  A shut pooled board no longer silences every book: research_v68_book_gate=1 (v6.8 S2, its code unchanged)
+# opens each book on its own paper record; the per-book floor (paper alpha >= -OWN_FLOOR_FRACTION x floor) and the
+# rolling volume line stay.  STRUCTURAL: v6.9 S4 restored the pooled board on two premises OBSERVED on the previous
+# simulation -- the 500k/book cap is scarce, and the gated hours spend it ~5x less efficiently.  OBSERVED 10-01/02 on
+# sim 20260929_2015 (validator capture arithmetic on the recorded prints): the board silenced the whole fleet from
+# 12:40-14:54 JST; while it was open the volume line withheld only 1.7-2.6% of book-states; deep-band (2-10 bps)
+# capture was 1.10 bps in the window it shut and 1.15-1.22 bps the 4,800 sim-s after; field making rose 39% while ours
+# fell from 2.5% to 0.2% of the field.  A tail held the pooled mean at -6.6 (median book -2.7, 106/128 above the
+# per-book floor), and a paper book pinned at its bound scores alpha exactly 0 against a pool that needs > 0, so the
+# board does not reopen by itself while silence empties the validator window.  The v6.8 block above checks the layer
+# is built with the gate and that book_open honours it; this block checks the switch feeds it and ships on.
+if [[ "${V6_11_BUILD:-0}" == "1" ]]; then
+  grep -qF 'return bool(v68_per_book_gate(bool(getattr(self, "research_v68_book_gate", False))))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.11 S1 the per-book gate does not read research_v68_book_gate." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v68_book_gate=1 "* ]] || {
+    echo "ERROR: v6.11 S1 build without research_v68_book_gate=1 in PARAMS (a shut pooled board would silence every book)." >&2
+    exit 1
+  }
+  echo "[preflight] v6.11 per-book gate PASS"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -2714,6 +2737,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_8.py \
       tests/test_research_v6_9.py \
       tests/test_research_v6_9_1_free_base.py \
+      tests/test_research_v6_11.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
