@@ -32,6 +32,7 @@ import research_v633_deep_layer as dl633  # noqa: E402
 import research_v68_deep_owns as d68  # noqa: E402
 import research_v69_deep_ladder as d69  # noqa: E402
 import research_v610_paced_bound as d610  # noqa: E402
+import research_v612_reduce_depth as d612  # noqa: E402
 from research_session_state import extract_simulation_id  # noqa: E402
 from research_direct_exit_ledger import DirectExitLedger  # noqa: E402
 from research_direct_exit_refresh import ABSENT_REPRICE_CANCEL  # noqa: E402
@@ -241,6 +242,8 @@ def _pass_agent(**kwargs):
         # v6.10 S2: the switch is unset here, so every book keeps the v6.9 bound
         "v610_behind_clips": d610.behind_clips, "v610_bound_clips": d610.bound_clips,
         "v610_caps_clips": d610.caps_clips,
+        # v6.12 S1: the switch is unset here, so the reducing side keeps the book's depth
+        "v612_level0_depth": d612.level0_depth,
     })
     cls = type("P", (_PassAgent,), {})
     for name in ("_v63_pass", "_v63_count", "_v63_clip", "_v63_apply_caps", "_v63_snapshot", "_v63_book_alphas",

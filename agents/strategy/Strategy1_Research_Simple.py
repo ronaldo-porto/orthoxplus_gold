@@ -687,6 +687,11 @@ from research_v610_paced_bound import (  # noqa: E402
     bound_clips as v610_bound_clips,
     caps_clips as v610_caps_clips,
 )
+from research_v612_reduce_depth import (  # noqa: E402
+    REDUCE_DEPTH_FACTOR as V612_REDUCE_DEPTH_FACTOR,
+    V612_REDUCE_DEPTH_VERSION,
+    level0_depth as v612_level0_depth,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1878,6 +1883,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # v6.9.1 C2: a deep order is no larger than what the book's account can reserve for it (its free base for a
         # sell, its free quote at the order's price for a buy).  STRUCTURAL: see research_v69_deep_ladder.
         self.research_v691_free_base = self._as_bool(getattr(self.config, "research_v691_free_base", True))
+        # v6.12: on a held book the side that reduces the position rests its level-0 deep order at
+        # V612_REDUCE_DEPTH_FACTOR of the depth.  STRUCTURAL: see research_v612_reduce_depth.
+        self.research_v612_reduce_depth = self._as_bool(getattr(self.config, "research_v612_reduce_depth", True))
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11018,6 +11026,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if vac is not None:
                 self._v64_count("vacuum_book_states")
         eff = float(vac) if vac is not None else float(depth)
+        # v6.12: on a held book the side that reduces the position rests its level-0 order at a fraction of the depth
+        # and is judged against that distance; the adding side, a vacuum order and the paper record keep the depth.
+        eff_side = {V63_SIDE_BUY: eff, V63_SIDE_SELL: eff}
+        if vac is None and bool(getattr(self, "research_v612_reduce_depth", False)):
+            try:
+                eff_side = {s_: float(v612_level0_depth(s_, depth, inv, min_order)) for s_ in (V63_SIDE_BUY, V63_SIDE_SELL)}
+            except Exception:
+                self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
+                eff_side = {V63_SIDE_BUY: eff, V63_SIDE_SELL: eff}
         # v6.6 S1: a side that would grow a held position rests only a full depth (eff) beyond its last add.
         unspaced: set[str] = set()
         if bool(getattr(self, "research_v66_add_spacing", False)) and self._v66_spacing_on():
@@ -11054,16 +11071,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         ladder = bool(self._v69_ladder_on())
         deep_first = bool(ladder and self._v69_deep_first_on())
         level_depth: dict[int, float] = {}
-        levels: list = []
+        levels_side: dict = {V63_SIDE_BUY: [], V63_SIDE_SELL: []}
         if ladder:
             try:
                 depths = deep.sweep_depths(book_id, V69_LADDER_QUANTILES)
                 if depths is not None:
                     level_depth = {i + 1: float(d) for i, d in enumerate(depths)}
-                levels = v69_ladder_levels(depths, eff)
+                # each side's levels are those deeper than ITS level 0 (v6.12 moves the reducing side's)
+                levels_side = {s_: v69_ladder_levels(depths, eff_side[s_]) for s_ in (V63_SIDE_BUY, V63_SIDE_SELL)}
             except Exception:
                 self._v69_errors = int(getattr(self, "_v69_errors", 0) or 0) + 1
-                level_depth, levels = {}, []
+                level_depth, levels_side = {}, {V63_SIDE_BUY: [], V63_SIDE_SELL: []}
         doomed = [(row, V633_CANCEL_OWNS_BOOK) for row in rows if int(row.order_id) not in already]
         resting: dict[Any, Any] = {}
         for row in deep_rows:
@@ -11082,7 +11100,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             elif level == 0 and side in unspaced:
                 doomed.append((row, V66_CANCEL_SPACING))    # v6.6 S1: not a full depth beyond the last add
                 self._v66_count("cancel_spacing")
-            elif v633_needs_reprice(float(row.price), mid, eff if level == 0 else level_depth.get(level, 0.0), tick_size):
+            elif v633_needs_reprice(float(row.price), mid, eff_side[side] if level == 0 else level_depth.get(level, 0.0),
+                                    tick_size):
                 doomed.append((row, V633_CANCEL_REPRICE))
             else:
                 resting[(side, level) if ladder else side] = row
@@ -11121,7 +11140,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 live_sides = set(self._v6215_live_sides(book_id))
             except Exception:
                 live_sides = {V63_SIDE_BUY if int(r.side) == 0 else V63_SIDE_SELL for r in list(rows) + list(deep_rows)}
-        candidates = [(0, float(depth))] + [(k, d) for k, d, _clips in levels]
+        candidates = {s_: [(0, float(depth))] + [(k, d) for k, d, _clips in levels_side[s_]]
+                      for s_ in (V63_SIDE_BUY, V63_SIDE_SELL)}
         placed = 0
         spent = False
         for side in (V63_SIDE_BUY, V63_SIDE_SELL):
@@ -11135,7 +11155,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 self._v661_count("placement_vol_bound")
                 continue
             adding = bool(paced and v641_adds(side, inv))
-            for level, level_d in candidates:
+            for level, level_d in candidates[side]:
                 if ladder and ((side, level) in resting or v69_slot_taken(slots, side, level)
                                or (side, level) in cancelled or (side, V69_WHOLE_SIDE) in cancelled):
                     continue
@@ -11153,7 +11173,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 elif vac is not None:
                     price = v64_vacuum_price(mid, vac, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
                 else:
-                    price = v633_deep_price(mid, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+                    price = v633_deep_price(mid, eff_side[side], side, bid=raw_bid, ask=raw_ask, tick=tick_size,
+                                            decimals=dec)
                 if self._v691_free_base_on():
                     # v6.9.1 C2: the level's size is what the account can still reserve for it, never more.  A level
                     # the account cannot fund at the minimum order takes nothing this request (and spends no
@@ -11195,6 +11216,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         self._v69_count("paced_kept_deepest")
                 elif vac is not None:
                     self._v64_count("placed_vacuum")
+                elif eff_side[side] < float(depth) - 1e-9:
+                    self._v633_count("placed_reducing_l0")      # v6.12: the reducing side's level 0, closer
                 break                   # one new order per book side per request (the A1.7.4.3.1 same-response rule)
         return placed
 

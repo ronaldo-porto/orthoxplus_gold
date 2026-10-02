@@ -92,9 +92,9 @@ def test_the_switch_ships_on_and_now_agrees_with_the_agent_default():
 
 
 def test_the_v611_block_is_gated_preflighted_and_listed():
-    assert "; V6_10_BUILD=0; V6_11_BUILD=0\n" in LAUNCHER
+    assert "; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0\n" in LAUNCHER        # v6.12 appends its own
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_10_BUILD=1; V6_11_BUILD=1"), arm
+    assert arm.endswith("; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1"), arm
     assert 'if [[ "${V6_11_BUILD:-0}" == "1" ]]; then' in LAUNCHER
     assert 'echo "[preflight] v6.11 per-book gate PASS"' in LAUNCHER
     assert "tests/test_research_v6_11.py" in LAUNCHER
