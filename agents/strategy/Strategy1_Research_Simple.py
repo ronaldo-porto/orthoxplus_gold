@@ -692,6 +692,13 @@ from research_v612_reduce_depth import (  # noqa: E402
     V612_REDUCE_DEPTH_VERSION,
     level0_depth as v612_level0_depth,
 )
+from research_v70_fundamental import (  # noqa: E402
+    SharedFeed as V70SharedFeed,
+    V70_FUNDAMENTAL_VERSION,
+    book_anchor as v70_book_anchor,
+    level0_depths as v70_level0_depths,
+    side_bound as v70_side_bound,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1886,6 +1893,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # v6.12: on a held book the side that reduces the position rests its level-0 deep order at
         # V612_REDUCE_DEPTH_FACTOR of the depth.  STRUCTURAL: see research_v612_reduce_depth.
         self.research_v612_reduce_depth = self._as_bool(getattr(self.config, "research_v612_reduce_depth", True))
+        # v7.0: on a book whose published fundamental sits at least theta from the mid, the level-0 deep order on the
+        # side trading toward it rests closer and that side may hold more; the other side rests at the full depth.
+        # STRUCTURAL: see research_v70_fundamental.
+        self.research_v70_fundamental = self._as_bool(getattr(self.config, "research_v70_fundamental", True))
+        self._v70_counts: dict[str, int] = {}
+        self._v70_errors = 0
+        self._v70_feed = None
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11003,6 +11017,43 @@ class Strategy1_Research_Simple(Strategy1_Research):
         out["version"] = V633_DEEP_LAYER_VERSION
         return out
 
+    def _v70_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v70_counts", None)
+        if counts is None:
+            counts = {}
+            self._v70_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v70_feed_ref(self):
+        """v7.0: the host's shared fundamental feed, started on first use (a daemon thread; a response never waits)."""
+        feed = getattr(self, "_v70_feed", None)
+        if feed is None:
+            feed = V70SharedFeed()
+            feed.start()
+            self._v70_feed = feed
+        return feed
+
+    def _v70_toward(self, book_id: int, raw_bid, raw_ask, cfg):
+        """v7.0: the side of this book that trades toward its published fundamental, when that sits at least theta
+        from the mid in a fresh page of this simulation; None otherwise (the book is v6.12)."""
+        feed = self._v70_feed_ref()
+        sim_id = getattr(cfg, "simulation_id", None) if cfg is not None else None
+        if not sim_id and cfg is not None:
+            log_dir = getattr(cfg, "logDir", None)
+            sim_id = str(log_dir).replace("\\", "/").rstrip("/").split("/")[-1] if log_dir else None
+        toward, reason, _gap, _theta = v70_book_anchor(
+            feed.snapshot(), int(book_id), raw_bid, raw_ask,
+            state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id,
+            fp_sigma=(getattr(cfg, "fp_sigma", None) if cfg is not None else None),
+            duration_ns=(getattr(cfg, "duration", None) if cfg is not None else None))
+        self._v70_count("book_" + str(reason))
+        return toward
+
+    def _v70_snapshot(self) -> dict:
+        feed = getattr(self, "_v70_feed", None)
+        return {"version": V70_FUNDAMENTAL_VERSION, "counts": dict(getattr(self, "_v70_counts", {}) or {}),
+                "errors": int(getattr(self, "_v70_errors", 0) or 0), "feed": (feed.status() if feed is not None else {})}
+
     def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,
                    tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False,
                    bound_scale: float = 1.0) -> int:
@@ -11035,6 +11086,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
                 eff_side = {V63_SIDE_BUY: eff, V63_SIDE_SELL: eff}
+        # v7.0: on a book whose published fundamental sits at least theta from the mid, the side trading toward it rests
+        # its level 0 at a fraction of the depth and may hold more; the other side rests at the full depth (the v6.12
+        # pull does not apply against the fundamental).  A vacuum order and a book without a fresh fundamental of this
+        # simulation are v6.12.
+        toward = None
+        if vac is None and bool(getattr(self, "research_v70_fundamental", False)):
+            try:
+                toward = self._v70_toward(book_id, raw_bid, raw_ask, cfg)
+                if toward is not None:
+                    eff_side = {s_: float(d_) for s_, d_ in v70_level0_depths(eff_side, depth, toward).items()}
+            except Exception:
+                self._v70_errors = int(getattr(self, "_v70_errors", 0) or 0) + 1
+                toward = None
         # v6.6 S1: a side that would grow a held position rests only a full depth (eff) beyond its last add.
         unspaced: set[str] = set()
         if bool(getattr(self, "research_v66_add_spacing", False)) and self._v66_spacing_on():
@@ -11059,10 +11123,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         bound = self._v610_bound_base(deep, paced)
 
         def _plain(side_: str) -> bool:
+            if toward is not None:
+                # v7.0: the side trading toward an anchored book's fundamental is judged against a larger bound
+                return bool(deep.room(side_, inv, v70_side_bound(side_, bound, toward)))
             return bool(deep.room(side_, inv, bound))
 
         def _room(side_: str) -> bool:
             # v6.6.1: a book faster than the median book adds only up to bound x median / its own volatility.
+            if scaled and toward is not None:
+                # v7.0: the same larger bound for the side trading toward an anchored book's fundamental
+                return bool(v661_room(side_, inv, v70_side_bound(side_, bound, toward) * float(bound_scale)))
             if scaled:
                 return bool(v661_room(side_, inv, bound * float(bound_scale)))
             return _plain(side_)
@@ -11216,6 +11286,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         self._v69_count("paced_kept_deepest")
                 elif vac is not None:
                     self._v64_count("placed_vacuum")
+                elif toward is not None:
+                    self._v70_count("placed_toward_l0" if side == toward else "placed_against_l0")   # v7.0
                 elif eff_side[side] < float(depth) - 1e-9:
                     self._v633_count("placed_reducing_l0")      # v6.12: the reducing side's level 0, closer
                 break                   # one new order per book side per request (the A1.7.4.3.1 same-response rule)
@@ -11792,6 +11864,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             v69=(self._v69_snapshot() if getattr(self, "research_v69_deep_ladder", None) is not None else {}),
             board=(self._v64_snapshot() if bool(getattr(self, "research_v64_vacuum", False) or getattr(self, "research_v64_board_owns", False)) else {}),
             deep_layer=self._v633_snapshot(),
+            fundamental_on=int(bool(getattr(self, "research_v70_fundamental", False))),
+            fundamental=(self._v70_snapshot() if getattr(self, "research_v70_fundamental", None) is not None else {}),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),

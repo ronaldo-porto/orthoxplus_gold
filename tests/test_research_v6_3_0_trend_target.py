@@ -33,6 +33,7 @@ import research_v68_deep_owns as d68  # noqa: E402
 import research_v69_deep_ladder as d69  # noqa: E402
 import research_v610_paced_bound as d610  # noqa: E402
 import research_v612_reduce_depth as d612  # noqa: E402
+import research_v70_fundamental as d70  # noqa: E402
 from research_session_state import extract_simulation_id  # noqa: E402
 from research_direct_exit_ledger import DirectExitLedger  # noqa: E402
 from research_direct_exit_refresh import ABSENT_REPRICE_CANCEL  # noqa: E402
@@ -244,6 +245,8 @@ def _pass_agent(**kwargs):
         "v610_caps_clips": d610.caps_clips,
         # v6.12 S1: the switch is unset here, so the reducing side keeps the book's depth
         "v612_level0_depth": d612.level0_depth,
+        # v7.0 S1: the switch is unset here, so every book keeps the v6.12 depths and bound
+        "v70_level0_depths": d70.level0_depths, "v70_side_bound": d70.side_bound,
     })
     cls = type("P", (_PassAgent,), {})
     for name in ("_v63_pass", "_v63_count", "_v63_clip", "_v63_apply_caps", "_v63_snapshot", "_v63_book_alphas",
@@ -253,7 +256,9 @@ def _pass_agent(**kwargs):
                  "_v68_count", "_v68_per_book_gate", "_v68_apply_deep_restore",
                  "_v69_count", "_v69_ladder_on", "_v69_deep_first_on", "_v691_free_base_on", "_v691_free_for",
                  # v6.10 S2: the bound _v633_book judges every level against
-                 "_v610_behind_clips", "_v610_caps_clips", "_v610_bound_base"):
+                 "_v610_behind_clips", "_v610_caps_clips", "_v610_bound_base",
+                 # v7.0 S1: the counter an anchored book's placement reaches
+                 "_v70_count"):
         exec(compile(ast.Module(body=[ast.parse(_simple(name)).body[0]], type_ignores=[]), "<v63>", "exec"), ns)
         setattr(cls, name, ns[name])
     return cls(**kwargs)
