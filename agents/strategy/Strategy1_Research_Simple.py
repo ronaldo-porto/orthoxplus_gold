@@ -640,6 +640,7 @@ from research_v66_add_spacing import (  # noqa: E402
     CANCEL_SPACING as V66_CANCEL_SPACING,
     V66_ADD_SPACING_VERSION,
     adds_to_position as v66_adds_to_position,
+    own_fills as v66_own_fills,
 )
 from research_v66_pace_line import (  # noqa: E402
     PaceLine as V66PaceLine,
@@ -691,6 +692,11 @@ from research_v612_reduce_depth import (  # noqa: E402
     REDUCE_DEPTH_FACTOR as V612_REDUCE_DEPTH_FACTOR,
     V612_REDUCE_DEPTH_VERSION,
     level0_depth as v612_level0_depth,
+)
+from research_v613_seam_reserve import (  # noqa: E402
+    RESERVE_HORIZON_S as V613_RESERVE_HORIZON_S,
+    SeamReserve as V613SeamReserve,
+    V613_SEAM_RESERVE_VERSION,
 )
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
@@ -1886,6 +1892,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # v6.12: on a held book the side that reduces the position rests its level-0 deep order at
         # V612_REDUCE_DEPTH_FACTOR of the depth.  STRUCTURAL: see research_v612_reduce_depth.
         self.research_v612_reduce_depth = self._as_bool(getattr(self.config, "research_v612_reduce_depth", True))
+        # v6.13: in the simulation's last V613_RESERVE_HORIZON_S a book trades no faster than the volume cap's sustainable
+        # rate, so the busiest books start the next simulation with room.  STRUCTURAL: see research_v613_seam_reserve.
+        self.research_v613_seam_reserve = self._as_bool(getattr(self.config, "research_v613_seam_reserve", True))
+        self._v613_counts: dict[str, int] = {}
+        self._v613_errors = 0
+        self._v613_reserve = None
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11003,6 +11015,28 @@ class Strategy1_Research_Simple(Strategy1_Research):
         out["version"] = V633_DEEP_LAYER_VERSION
         return out
 
+    def _v613_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v613_counts", None)
+        if counts is None:
+            counts = {}
+            self._v613_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v613_ref(self):
+        """v6.13: the seam reserve's per-book state (created on first use)."""
+        reserve = getattr(self, "_v613_reserve", None)
+        if reserve is None:
+            reserve = V613SeamReserve()
+            self._v613_reserve = reserve
+        return reserve
+
+    def _v613_snapshot(self) -> dict:
+        reserve = getattr(self, "_v613_reserve", None)
+        out = reserve.snapshot() if reserve is not None else {"version": V613_SEAM_RESERVE_VERSION}
+        out["counts"] = dict(getattr(self, "_v613_counts", {}) or {})
+        out["errors"] = int(getattr(self, "_v613_errors", 0) or 0)
+        return out
+
     def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,
                    tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False,
                    bound_scale: float = 1.0) -> int:
@@ -11445,6 +11479,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 self._v641_errors = int(getattr(self, "_v641_errors", 0) or 0) + 1
                 pace = None
+        # v6.13: the seam reserve -- the venue's cap and the simulation's end, read once per request.
+        reserve = None
+        v613_cap, v613_duration = 0.0, None
+        if bool(getattr(self, "research_v613_seam_reserve", False)):
+            try:
+                reserve = self._v613_ref()
+                v613_cap = float(self._research_volume_cap_quote(state) or 0.0)
+                v613_duration = v641_duration_ns(getattr(state, "config", None))
+            except Exception:
+                self._v613_errors = int(getattr(self, "_v613_errors", 0) or 0) + 1
+                reserve = None
         req: dict[str, Any] = {
             "books": len(books), "long": 0, "short": 0, "flat": 0, "paused": 0, "no_signal": 0, "gated": 0,
             "placed_toward": 0, "placed_making": 0, "cancels": 0, "fee_cap_bps": fee_cap,
@@ -11573,6 +11618,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         rows.append(row)
                     elif v633_is_deep_client_id(getattr(row, "client_id", None)):
                         deep_rows.append(row)
+            # v6.13: in the simulation's last hours a book over the cap's sustainable rate is held on both sides.
+            if reserve is not None:
+                held = False
+                try:
+                    reserve.observe(book_id, now_ts, v66_own_fills(book_trades, getattr(self, "uid", None)), v613_duration)
+                    held = bool(reserve.held(book_id, now_ts, v613_cap, v613_duration))
+                except Exception:
+                    self._v613_errors = int(getattr(self, "_v613_errors", 0) or 0) + 1
+                    held = False
+                if held:
+                    self._v613_count("held_book_states")
+                    self._v64_board_idle(response, book_id, rows, deep_rows, already, req, budget=budget)
+                    continue
             deep_open = False
             if deep is not None and depth is not None:
                 try:
@@ -11792,6 +11850,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             v69=(self._v69_snapshot() if getattr(self, "research_v69_deep_ladder", None) is not None else {}),
             board=(self._v64_snapshot() if bool(getattr(self, "research_v64_vacuum", False) or getattr(self, "research_v64_board_owns", False)) else {}),
             deep_layer=self._v633_snapshot(),
+            seam_reserve_on=int(bool(getattr(self, "research_v613_seam_reserve", False))),
+            seam_reserve=(self._v613_snapshot() if getattr(self, "research_v613_seam_reserve", None) is not None else {}),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),

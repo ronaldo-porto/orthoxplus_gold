@@ -24,6 +24,7 @@ STRATEGY = ROOT / "agents" / "strategy"
 # caught by importing it; these are the ones that are not importable without the agent's dependencies.
 MODULES = [
     "Strategy1_Research_Simple.py",
+    "research_v613_seam_reserve.py",
     "research_v6214_touch_life.py",
     "research_v6215_order_life.py",
     "research_v63_trend_target.py",
