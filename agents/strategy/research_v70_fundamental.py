@@ -1,5 +1,14 @@
 # SPDX-License-Identifier: MIT
-"""v7.0: the deep layer anchors on the fundamental price the validator publishes for every book.
+"""v7.0 / v7.1: the deep layer anchors on the fundamental price the validator publishes for every book.
+
+v7.1 (10-04 JST): the side against the fundamental keeps v6.12 exactly.
+* Live v7.0 on UID 237 (10-03 05:48-21:45 JST, 10,037 sim-s; diff-in-diff against the four v6.12 UIDs over the same
+  windows): volume -22%, making -23%, making and alpha per unit of volume unchanged.  v7.0 rested the against side at
+  the full depth even when it was the side that unwinds the position, removing v6.12's half-depth unwind there.
+* The replay calibrated on that live window (UID 237's recording, sim 46,437-56,575) reproduces it (v7.0 making
+  -18%); with the against side as in v6.12 (K1): making +11.0% (+6.5% volume), alpha per 1M -474 vs v6.12's -513;
+  out of sample (sim 43,917-46,430) making +18.7%, alpha -295 vs -335.  Moving the against side's ladder deeper or
+  withdrawing it, halving its bound or unwinding faster improved alpha per unit but cost making out of sample.
 
 Why (mainnet, sim 20260929_2015, measured 10-03 JST on UID 237's observatory and a poll of the validator's page;
 scratchpad k12/fp, v70/vm70.py):
@@ -25,9 +34,9 @@ scratchpad k12/fp, v70/vm70.py):
 The rule (one switch, ``research_v70_fundamental``):
 
 * On a book whose fundamental sits at least theta from the mid, the level-0 deep order on the side that trades TOWARD
-  it rests at TOWARD_DEPTH_FACTOR of the book's depth, the other side's at the full depth (the v6.12 reducing-side pull
-  does not apply against the fundamental), and the toward side may hold TOWARD_BOUND_FACTOR x the book's inventory
-  bound.  Below theta, without a fresh fundamental of this simulation, or inside a blown-out spread (v6.4 vacuum), the
+  it rests at TOWARD_DEPTH_FACTOR of the book's depth (also when it adds to the position) and that side may hold
+  TOWARD_BOUND_FACTOR x the book's inventory bound; the other side keeps what v6.12 gives it (the full depth, or half of
+  it when it unwinds the position -- v7.1).  Below theta, without a fresh fundamental of this simulation, or inside a blown-out spread (v6.4 vacuum), the
   book is exactly v6.12.
 * STRUCTURAL: theta = THETA_Z x sqrt(sigma_s^2 x staleness + half_spread^2) in bps -- the fundamental's own diffusion
   since its publication (sigma per sim-second from the simulation's fp_sigma over its duration, both in the state's
@@ -54,7 +63,7 @@ from typing import Any, Callable
 
 from research_v633_deep_layer import SIDE_BUY, SIDE_SELL
 
-V70_FUNDAMENTAL_VERSION = "fundamental_anchor_v7_0"
+V70_FUNDAMENTAL_VERSION = "fundamental_anchor_v7_1"
 
 FEED_URL = "http://84.32.70.8:9091/metrics/books"   # the validator's public metrics page (GET only)
 CACHE_DIR = "/tmp/orthoxplus_fundamental"           # one cache per host, shared by every agent on it
@@ -193,12 +202,17 @@ def book_anchor(snapshot: Any, book_id: Any, bid: Any, ask: Any, *, state_ts_ns:
 
 
 def level0_depths(eff_side: Any, depth: Any, toward: Any, *, factor: Any = TOWARD_DEPTH_FACTOR) -> Any:
-    """Each side's level-0 distance (ticks) on an anchored book: the toward side at ``depth x factor``, the other side
-    at the full depth.  No toward side, or a depth or factor that cannot be read, leaves ``eff_side`` as it is."""
+    """Each side's level-0 distance (ticks) on an anchored book: the toward side at ``depth x factor``; the other side
+    keeps what v6.12 gave it in ``eff_side`` (the full depth, or half of it when it unwinds the position -- v7.1).  No
+    toward side, an unreadable ``eff_side``, depth or factor leaves ``eff_side`` as it is."""
     d, f = _finite(depth), _finite(factor)
     if toward not in (SIDE_BUY, SIDE_SELL) or d is None or f is None or not (0.0 < f <= 1.0) or d <= 0.0:
         return eff_side
-    return {s_: (d * f if s_ == toward else d) for s_ in (SIDE_BUY, SIDE_SELL)}
+    try:
+        kept = {s_: float(eff_side[s_]) for s_ in (SIDE_BUY, SIDE_SELL)}
+    except (TypeError, KeyError, ValueError):
+        return eff_side
+    return {s_: (d * f if s_ == toward else kept[s_]) for s_ in (SIDE_BUY, SIDE_SELL)}
 
 
 def side_bound(side: Any, bound: Any, toward: Any, *, factor: Any = TOWARD_BOUND_FACTOR) -> Any:

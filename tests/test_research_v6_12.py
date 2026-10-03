@@ -192,9 +192,9 @@ def test_the_switch_ships_on_and_agrees_with_the_agent_default():
 
 
 def test_the_v612_block_is_gated_preflighted_and_listed():
-    assert "; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V7_0_BUILD=0\n" in LAUNCHER       # v7.0 appends its own
+    assert "; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_13_BUILD=0; V7_0_BUILD=0\n" in LAUNCHER   # later builds append
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_11_BUILD=1; V6_12_BUILD=1; V7_0_BUILD=1"), arm
+    assert arm.endswith("; V6_11_BUILD=1; V6_12_BUILD=1; V6_13_BUILD=1; V7_0_BUILD=1"), arm
     assert 'if [[ "${V6_12_BUILD:-0}" == "1" ]]; then' in LAUNCHER
     assert 'echo "[preflight] v6.12 reducing-side depth PASS (factor 0.5)"' in LAUNCHER
     assert "tests/test_research_v6_12.py" in LAUNCHER

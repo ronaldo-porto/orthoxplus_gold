@@ -73,7 +73,7 @@ def test_gap_sigma_and_theta():
     assert math.isclose(fa.theta_bps(1.0, -5.0, 0.5), 1.0)                            # negative staleness: none
     assert fa.theta_bps(None, 8.0, 0.5) is None and fa.theta_bps(1.0, 8.0, None) is None
     assert fa.THETA_Z == 2.0 and fa.TOWARD_DEPTH_FACTOR == 0.5 and fa.TOWARD_BOUND_FACTOR == 2.0
-    assert fa.V70_FUNDAMENTAL_VERSION == "fundamental_anchor_v7_0" and fa.MAX_STALE_SIM_S == 20.0
+    assert fa.V70_FUNDAMENTAL_VERSION == "fundamental_anchor_v7_1" and fa.MAX_STALE_SIM_S == 20.0
 
 
 def test_only_a_page_of_this_simulation_anchors():
@@ -125,10 +125,13 @@ def test_every_unusable_input_leaves_the_book_unanchored():
     assert fa.book_anchor(snap, 3, 100.0, 100.03, state_ts_ns=now, **KW)[:2] == (BUY, "armed")
 
 
-def test_the_toward_side_moves_to_the_factor_and_the_other_side_keeps_the_depth():
+def test_the_toward_side_moves_to_the_factor_and_the_other_side_keeps_v612():
     v612 = {BUY: 30.0, SELL: 15.0}                                                     # long: v6.12 pulls the ask
-    assert fa.level0_depths(v612, 30.0, BUY) == {BUY: 15.0, SELL: 30.0}                # the pull is not against fp
+    assert fa.level0_depths(v612, 30.0, BUY) == {BUY: 15.0, SELL: 15.0}                # v7.1: the pull stays
     assert fa.level0_depths(v612, 30.0, SELL) == {BUY: 30.0, SELL: 15.0}
+    assert fa.level0_depths({BUY: 30.0, SELL: 30.0}, 30.0, BUY) == {BUY: 15.0, SELL: 30.0}    # flat: the full depth
+    for bad in (None, {BUY: 30.0}, {BUY: "x", SELL: 30.0}):
+        assert fa.level0_depths(bad, 30.0, BUY) is bad, bad
     for toward in (None, "x"):
         assert fa.level0_depths(v612, 30.0, toward) is v612
     for depth in (None, "x", 0.0, -3.0):
@@ -288,11 +291,11 @@ def test_an_anchored_flat_book_rests_the_toward_side_at_half_the_depth():
     assert t63._placed(resp) == {(3, "BUY", 40031, _px(30.0, BUY), 2.0), (3, "SELL", 40032, _px(15.0, SELL), 2.0)}
 
 
-def test_the_v612_pull_never_applies_against_the_fundamental():
-    # long book, fundamental above: v6.12 would rest the ask (reducing) at 15; anchored, the bid is at 15, the ask at 30
+def test_the_side_against_the_fundamental_keeps_the_v612_pull():
+    # long book, fundamental above: the bid (toward) at 15; the ask (against, reducing) keeps v6.12's half depth (v7.1)
     agent = _agent(toward=BUY, venue={3: 3.0})
     resp = t64._run(agent, {3: t63._book()})
-    assert t63._placed(resp) == {(3, "BUY", 40031, _px(15.0, BUY), 2.0), (3, "SELL", 40032, _px(30.0, SELL), 2.0)}
+    assert t63._placed(resp) == {(3, "BUY", 40031, _px(15.0, BUY), 2.0), (3, "SELL", 40032, _px(15.0, SELL), 2.0)}
     assert "placed_reducing_l0" not in agent._v633_counts
     # long book, fundamental below: the reducing side is also the toward side
     agent = _agent(toward=SELL, venue={3: 3.0})
@@ -326,7 +329,7 @@ def test_the_toward_side_may_hold_twice_the_bound_and_the_other_side_does_not():
     assert {p[1] for p in t63._placed(t64._run(agent, {3: t63._book()}))} == {"SELL"}
     agent = _agent(toward=BUY, venue={3: bound})
     assert t63._placed(t64._run(agent, {3: t63._book()})) == {(3, "BUY", 40031, _px(15.0, BUY), 2.0),
-                                                                (3, "SELL", 40032, _px(30.0, SELL), 2.0)}
+                                                                (3, "SELL", 40032, _px(15.0, SELL), 2.0)}
     # short at the bound with the fundamental above: the ask is the against side and keeps the plain bound
     agent = _agent(toward=BUY, venue={3: -bound})
     assert {p[1] for p in t63._placed(t64._run(agent, {3: t63._book()}))} == {"BUY"}
@@ -387,7 +390,7 @@ def test_the_agent_reads_the_simulation_sigma_and_duration_from_the_state_config
     assert agent._v70_toward(3, 100.00, 100.03, cfg) is None
     assert agent._v70_counts == {"book_armed": 1, "book_other_sim": 1, "book_no_theta": 1}
     snap = scope["_v70_snapshot"](types.SimpleNamespace(_v70_counts={"book_armed": 1}, _v70_errors=0, _v70_feed=feed))
-    assert snap == {"version": "fundamental_anchor_v7_0", "counts": {"book_armed": 1}, "errors": 0, "feed": {"books": 1}}
+    assert snap == {"version": "fundamental_anchor_v7_1", "counts": {"book_armed": 1}, "errors": 0, "feed": {"books": 1}}
 
 
 # ---- 5. wiring --------------------------------------------------------------------------------------------------------
@@ -412,27 +415,27 @@ def test_the_switch_ships_on_and_agrees_with_the_agent_default():
 
 
 def test_the_v70_block_is_gated_preflighted_and_listed():
-    assert "; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V7_0_BUILD=0\n" in LAUNCHER
+    assert "; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_13_BUILD=0; V7_0_BUILD=0\n" in LAUNCHER
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_12_BUILD=1; V7_0_BUILD=1"), arm
+    assert arm.endswith("; V6_13_BUILD=1; V7_0_BUILD=1"), arm
     assert 'if [[ "${V7_0_BUILD:-0}" == "1" ]]; then' in LAUNCHER
-    assert 'echo "[preflight] v7.0 fundamental anchor PASS (theta 2 sd, toward depth 0.5, toward bound 2.0)"' in LAUNCHER
+    assert 'echo "[preflight] v7.1 fundamental anchor PASS (theta 2 sd, toward depth 0.5, toward bound 2.0, against side v6.12)"' in LAUNCHER
     assert "tests/test_research_v7_0.py" in LAUNCHER
 
 
 def test_every_v70_preflight_pattern_is_in_the_file_it_checks():
     import re
     start = LAUNCHER.index('if [[ "${V7_0_BUILD:-0}" == "1" ]]; then')
-    block = LAUNCHER[start:LAUNCHER.index('echo "[preflight] v7.0 fundamental anchor PASS', start)]
+    block = LAUNCHER[start:LAUNCHER.index('echo "[preflight] v7.1 fundamental anchor PASS', start)]
     pats = re.findall(r"grep -qF '([^']+)' \"\$AGENT_PATH/([^\"]+)\"", block)
-    assert len(pats) == 6, pats
+    assert len(pats) == 7, pats
     for pat, name in pats:
         assert pat in (STRATEGY / name).read_text(), (pat, name)
 
 
 def _run_block(params, agent_path=STRATEGY):
     start = LAUNCHER.index("# v7.0 S1.")
-    stop = LAUNCHER.index('echo "[preflight] v7.0 fundamental anchor PASS', start)
+    stop = LAUNCHER.index('echo "[preflight] v7.1 fundamental anchor PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PARAMS": params, "AGENT_PATH": str(agent_path),
            "V7_0_BUILD": "1"}
@@ -441,7 +444,7 @@ def _run_block(params, agent_path=STRATEGY):
 
 def test_the_v70_block_passes_the_shipped_params_and_refuses_the_switch_off():
     out = _run_block(_shipped())
-    assert out.returncode == 0 and "[preflight] v7.0 fundamental anchor PASS" in out.stdout, out.stderr
+    assert out.returncode == 0 and "[preflight] v7.1 fundamental anchor PASS" in out.stdout, out.stderr
     for bad in ("research_v70_fundamental=0", "research_v70_fundamental=10", ""):
         out = _run_block(_shipped().replace("research_v70_fundamental=1", bad))
         assert out.returncode == 1 and "v7.0 S1 build without research_v70_fundamental=1" in out.stderr, repr(bad)
@@ -459,7 +462,8 @@ def test_the_v70_block_refuses_an_agent_without_the_rule_or_a_module_with_other_
     (tmp_path / "Strategy1_Research_Simple.py").write_text(SIMPLE)
     for old, new, msg in (("THETA_Z = 2.0 ", "THETA_Z = 1.0 ", "two standard deviations"),
                           ("TOWARD_DEPTH_FACTOR = 0.5 ", "TOWARD_DEPTH_FACTOR = 0.25 ", "toward depth 0.5"),
-                          ("TOWARD_BOUND_FACTOR = 2.0 ", "TOWARD_BOUND_FACTOR = 4.0 ", "toward bound 2.0")):
+                          ("TOWARD_BOUND_FACTOR = 2.0 ", "TOWARD_BOUND_FACTOR = 4.0 ", "toward bound 2.0"),
+                          ("(d * f if s_ == toward else kept[s_])", "(d * f if s_ == toward else d)", "does not keep v6.12")):
         (tmp_path / "research_v70_fundamental.py").write_text(module.replace(old, new))
         out = _run_block(_shipped(), agent_path=tmp_path)
         assert out.returncode == 1 and msg in out.stderr, (old, out.stderr)
