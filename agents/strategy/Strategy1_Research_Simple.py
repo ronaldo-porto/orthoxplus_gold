@@ -696,6 +696,18 @@ from research_v614_book_floor import (  # noqa: E402
     V614_BOOK_FLOOR_VERSION,
     paper_floor_on as v614_paper_floor_on,
 )
+from research_v615_launch import (  # noqa: E402
+    LaunchPaceLine as V615LaunchPaceLine,
+    V615_LAUNCH_VERSION,
+    launch_clip as v615_launch_clip,
+)
+from research_v616_fair_value import (  # noqa: E402
+    SharedFeed as V616SharedFeed,
+    V616_FAIR_VALUE_VERSION,
+    book_fundamental as v616_book_fundamental,
+    needs_reprice as v616_needs_reprice,
+    side_centres as v616_side_centres,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1895,6 +1907,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self.research_v614_book_floor_off = self._as_bool(getattr(self.config, "research_v614_book_floor_off", True))
         self._v614_counts: dict[str, int] = {}
         self._v614_errors = 0
+        # v6.15: a book first seen on an empty volume window (a new UID) launches -- its budget line spends one making
+        # window at twice the sustainable rate with twice the deep clip, and pays it back before the assessment window
+        # rolls.  STRUCTURAL: see research_v615_launch.
+        self.research_v615_launch = self._as_bool(getattr(self.config, "research_v615_launch", True))
+        self._v615_counts: dict[str, int] = {}
+        self._v615_errors = 0
+        # v6.16: on a book with a fresh published fundamental the deep side trading toward it is centred on it, at most
+        # one level-0 depth from the mid; the other side keeps the mid.  STRUCTURAL: see research_v616_fair_value.
+        self.research_v616_fair_value = self._as_bool(getattr(self.config, "research_v616_fair_value", True))
+        self._v616_counts: dict[str, int] = {}
+        self._v616_errors = 0
+        self._v616_feed = None
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -10740,6 +10764,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if pace is None:
             # v6.8 S5: the line on the validator's rolling window; v6.6's runs to the cap at the simulation's end
             pace = V68RollingPaceLine() if bool(getattr(self, "research_v68_rolling_budget", False)) else V66PaceLine()
+            if bool(getattr(self, "research_v615_launch", False)) and isinstance(pace, V68RollingPaceLine):
+                pace = V615LaunchPaceLine()          # v6.15: a book first seen on an empty window launches
             self._v66_pace = pace
         return pace
 
@@ -11023,6 +11049,74 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return {"version": V614_BOOK_FLOOR_VERSION, "counts": dict(getattr(self, "_v614_counts", {}) or {}),
                 "errors": int(getattr(self, "_v614_errors", 0) or 0)}
 
+    def _v615_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v615_counts", None)
+        if counts is None:
+            counts = {}
+            self._v615_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v615_snapshot(self) -> dict:
+        pace = getattr(self, "_v66_pace", None)
+        line = pace.snapshot().get("launch") if isinstance(pace, V615LaunchPaceLine) else None
+        return {"version": V615_LAUNCH_VERSION, "counts": dict(getattr(self, "_v615_counts", {}) or {}),
+                "errors": int(getattr(self, "_v615_errors", 0) or 0), "line": line or {}}
+
+    def _v616_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v616_counts", None)
+        if counts is None:
+            counts = {}
+            self._v616_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v616_feed_ref(self):
+        """v6.16: the host's shared fundamental feed, started on first use (a daemon thread; a response never waits)."""
+        feed = getattr(self, "_v616_feed", None)
+        if feed is None:
+            feed = V616SharedFeed()
+            feed.start()
+            self._v616_feed = feed
+        return feed
+
+    def _v616_book(self, book_id: int, raw_bid, raw_ask, depth, tick_size, cfg):
+        """v6.16: each side's centre for this book -- the side trading toward its fundamental on it, at most one depth from
+        the mid -- or None when the book has no fresh fundamental of this simulation (the book is then v6.15 exactly)."""
+        feed = self._v616_feed_ref()
+        sim_id = getattr(cfg, "simulation_id", None) if cfg is not None else None
+        if not sim_id and cfg is not None:
+            log_dir = getattr(cfg, "logDir", None)
+            sim_id = str(log_dir).replace("\\", "/").rstrip("/").split("/")[-1] if log_dir else None
+        fp, reason = v616_book_fundamental(
+            feed.snapshot(), int(book_id), raw_bid, raw_ask,
+            state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id)
+        self._v616_count("book_" + str(reason))
+        if fp is None:
+            return None
+        return v616_side_centres(0.5 * (float(raw_bid) + float(raw_ask)), fp, depth, tick_size)
+
+    def _v616_target(self, side: str, level: int, level_d, centre, eff_side, vac, raw_bid, raw_ask, tick_size, dec):
+        """v6.16: the price this level of this side wants -- v6.15's price around the side's centre instead of the mid."""
+        c = float(centre[side])
+        if level:
+            return v633_deep_price(c, level_d, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+        if vac is not None:
+            return v64_vacuum_price(c, vac, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+        return v633_deep_price(c, eff_side[side], side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+
+    def _v616_judged(self, row, side: str, level: int, centre, eff_side, level_depth, tick_size) -> bool:
+        """v6.16: True when a resting deep order of an armed book left v6.3.3's band around its side's centre."""
+        d = float(eff_side[side]) if level == 0 else float(level_depth.get(level, 0.0))
+        try:
+            return bool(v616_needs_reprice(float(row.price), float(centre[side]), d, tick_size))
+        except Exception:
+            self._v616_errors = int(getattr(self, "_v616_errors", 0) or 0) + 1
+            return True
+
+    def _v616_snapshot(self) -> dict:
+        feed = getattr(self, "_v616_feed", None)
+        return {"version": V616_FAIR_VALUE_VERSION, "counts": dict(getattr(self, "_v616_counts", {}) or {}),
+                "errors": int(getattr(self, "_v616_errors", 0) or 0), "feed": (feed.status() if feed is not None else {})}
+
     def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,
                    tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False,
                    bound_scale: float = 1.0) -> int:
@@ -11055,6 +11149,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
                 eff_side = {V63_SIDE_BUY: eff, V63_SIDE_SELL: eff}
+        # v6.16: with a fresh fundamental of this simulation the side trading toward it is centred on it, at most one
+        # level-0 depth from the mid; without one the book is v6.15 exactly.
+        centre = None
+        if bool(getattr(self, "research_v616_fair_value", False)):
+            try:
+                centre = self._v616_book(book_id, raw_bid, raw_ask, depth, tick_size, cfg)
+            except Exception:
+                self._v616_errors = int(getattr(self, "_v616_errors", 0) or 0) + 1
+                centre = None
         # v6.6 S1: a side that would grow a held position rests only a full depth (eff) beyond its last add.
         unspaced: set[str] = set()
         if bool(getattr(self, "research_v66_add_spacing", False)) and self._v66_spacing_on():
@@ -11063,10 +11166,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 for side in (V63_SIDE_BUY, V63_SIDE_SELL):
                     if not v66_adds_to_position(side, inv):
                         continue
+                    c_ = float(centre[side]) if centre is not None else mid    # v6.16: the add is priced around its centre
                     if vac is not None:
-                        want = v64_vacuum_price(mid, vac, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+                        want = v64_vacuum_price(c_, vac, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
                     else:
-                        want = v633_deep_price(mid, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+                        want = v633_deep_price(c_, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
                     if not spacing.allows(book_id, side, want, inv, eff, tick_size):
                         unspaced.add(side)
             except Exception:
@@ -11120,6 +11224,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             elif level == 0 and side in unspaced:
                 doomed.append((row, V66_CANCEL_SPACING))    # v6.6 S1: not a full depth beyond the last add
                 self._v66_count("cancel_spacing")
+            elif centre is not None and self._v616_judged(row, side, level, centre, eff_side, level_depth, tick_size):
+                doomed.append((row, V633_CANCEL_REPRICE))   # v6.16: out of the band around its side's centre
+                self._v616_count("cancel_centre_reprice")
+            elif centre is not None:
+                resting[(side, level) if ladder else side] = row
             elif v633_needs_reprice(float(row.price), mid, eff_side[side] if level == 0 else level_depth.get(level, 0.0),
                                     tick_size):
                 doomed.append((row, V633_CANCEL_REPRICE))
@@ -11195,6 +11304,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 else:
                     price = v633_deep_price(mid, eff_side[side], side, bid=raw_bid, ask=raw_ask, tick=tick_size,
                                             decimals=dec)
+                if centre is not None:
+                    # v6.16: the side trading toward the fundamental is priced around its centre instead of the mid
+                    try:
+                        price = self._v616_target(side, level, level_d, centre, eff_side, vac, raw_bid, raw_ask, tick_size, dec)
+                        self._v616_count("placed_centred" if abs(float(centre[side]) - mid) > 1e-12 else "placed_mid")
+                    except Exception:
+                        self._v616_errors = int(getattr(self, "_v616_errors", 0) or 0) + 1
                 if self._v691_free_base_on():
                     # v6.9.1 C2: the level's size is what the account can still reserve for it, never more.  A level
                     # the account cannot fund at the minimum order takes nothing this request (and spends no
@@ -11606,6 +11722,23 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 except Exception:
                     self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
             if deep_open:
+                clip_b = deep.clip
+                if bool(getattr(self, "research_v615_launch", False)) and pace is not None:
+                    try:
+                        clip_b = v615_launch_clip(deep.clip, pace, book_id, now_ts)
+                    except Exception:
+                        self._v615_errors = int(getattr(self, "_v615_errors", 0) or 0) + 1
+                        clip_b = deep.clip
+                if clip_b > deep.clip + 1e-12:
+                    # v6.15: inside its launch window a book's deep orders carry the launch rate's clip (the bound stays);
+                    # every other book takes the call below at the deep layer's clip, unchanged (v6.5 S1).
+                    self._v615_count("launch_clip_book_states")
+                    placed_total += self._v633_book(
+                        response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
+                        tick_size=tick_size, dec=dec, clip=clip_b, min_order=min_order, budget=budget, expiry=expiry,
+                        cfg=cfg, paced=paced, bound_scale=bound_scale,
+                    )
+                    continue
                 placed_total += self._v633_book(
                     response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
                     tick_size=tick_size, dec=dec, clip=deep.clip, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
@@ -11820,6 +11953,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             deep_layer=self._v633_snapshot(),
             book_floor_off_on=int(bool(getattr(self, "research_v614_book_floor_off", False))),
             book_floor=(self._v614_snapshot() if getattr(self, "research_v614_book_floor_off", None) is not None else {}),
+            launch_on=int(bool(getattr(self, "research_v615_launch", False))),
+            launch=(self._v615_snapshot() if getattr(self, "research_v615_launch", None) is not None else {}),
+            fair_value_on=int(bool(getattr(self, "research_v616_fair_value", False))),
+            fair_value=(self._v616_snapshot() if getattr(self, "research_v616_fair_value", None) is not None else {}),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),

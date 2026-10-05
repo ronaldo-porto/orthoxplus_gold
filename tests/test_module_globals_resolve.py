@@ -25,6 +25,8 @@ STRATEGY = ROOT / "agents" / "strategy"
 MODULES = [
     "Strategy1_Research_Simple.py",
     "research_v614_book_floor.py",
+    "research_v615_launch.py",
+    "research_v616_fair_value.py",
     "research_v6214_touch_life.py",
     "research_v6215_order_life.py",
     "research_v63_trend_target.py",
