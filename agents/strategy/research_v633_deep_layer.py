@@ -292,13 +292,17 @@ class DeepLayer:
             db.paper.place(0.5 * (bid + ask), d, bid=bid, ask=ask, tick=tick, decimals=decimals)
         return d
 
-    def book_open(self, book_id: int, floor: float, inventory: float, *, inventory_bound: bool = True) -> bool:
-        """v6.4 S2 passes inventory_bound=False: the layer keeps a book over the limit, on its reducing side (room)."""
+    def book_open(self, book_id: int, floor: float, inventory: float, *, inventory_bound: bool = True,
+                  paper_floor: bool = True) -> bool:
+        """v6.4 S2 passes inventory_bound=False: the layer keeps a book over the limit, on its reducing side (room).
+        v6.14 passes paper_floor=False: the book's own paper alpha no longer closes it (the depth and bound still do)."""
         db = self.books.get(int(book_id))
         if (not self.board_open and not self.per_book_gate) or db is None or self.depth(book_id) is None:
             return False
         if inventory_bound and abs(float(inventory)) > self.max_clips * self.clip + 1e-9:
             return False
+        if not paper_floor:
+            return True
         return db.paper.alpha() >= -OWN_FLOOR_FRACTION * float(floor)
 
     def room(self, side: str, inventory: float, limit: float | None = None) -> bool:

@@ -692,6 +692,10 @@ from research_v612_reduce_depth import (  # noqa: E402
     V612_REDUCE_DEPTH_VERSION,
     level0_depth as v612_level0_depth,
 )
+from research_v614_book_floor import (  # noqa: E402
+    V614_BOOK_FLOOR_VERSION,
+    paper_floor_on as v614_paper_floor_on,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1886,6 +1890,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # v6.12: on a held book the side that reduces the position rests its level-0 deep order at
         # V612_REDUCE_DEPTH_FACTOR of the depth.  STRUCTURAL: see research_v612_reduce_depth.
         self.research_v612_reduce_depth = self._as_bool(getattr(self.config, "research_v612_reduce_depth", True))
+        # v6.14: the deep layer opens a book on its depth and inventory, not on its paper alpha (the 0.6.2 skill floor's
+        # per-book rule; the making half pays every book's capture).  STRUCTURAL: see research_v614_book_floor.
+        self.research_v614_book_floor_off = self._as_bool(getattr(self.config, "research_v614_book_floor_off", True))
+        self._v614_counts: dict[str, int] = {}
+        self._v614_errors = 0
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11003,6 +11012,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         out["version"] = V633_DEEP_LAYER_VERSION
         return out
 
+    def _v614_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v614_counts", None)
+        if counts is None:
+            counts = {}
+            self._v614_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v614_snapshot(self) -> dict:
+        return {"version": V614_BOOK_FLOOR_VERSION, "counts": dict(getattr(self, "_v614_counts", {}) or {}),
+                "errors": int(getattr(self, "_v614_errors", 0) or 0)}
+
     def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,
                    tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False,
                    bound_scale: float = 1.0) -> int:
@@ -11577,6 +11597,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if deep is not None and depth is not None:
                 try:
                     deep_open = bool(deep.book_open(book_id, floor, inv, inventory_bound=not owns_on))
+                    v614_off = bool(getattr(self, "research_v614_book_floor_off", False))
+                    if not deep_open and not v614_paper_floor_on(v614_off):
+                        # v6.14: the book's paper alpha no longer closes it (its depth and inventory bound still do).
+                        deep_open = bool(deep.book_open(book_id, floor, inv, inventory_bound=not owns_on, paper_floor=False))
+                        if deep_open:
+                            self._v614_count("opened_past_paper_floor")
                 except Exception:
                     self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
             if deep_open:
@@ -11792,6 +11818,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             v69=(self._v69_snapshot() if getattr(self, "research_v69_deep_ladder", None) is not None else {}),
             board=(self._v64_snapshot() if bool(getattr(self, "research_v64_vacuum", False) or getattr(self, "research_v64_board_owns", False)) else {}),
             deep_layer=self._v633_snapshot(),
+            book_floor_off_on=int(bool(getattr(self, "research_v614_book_floor_off", False))),
+            book_floor=(self._v614_snapshot() if getattr(self, "research_v614_book_floor_off", None) is not None else {}),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
