@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -407,7 +407,8 @@ research_v610_behind_max_clips=${BEHIND_MAX_CLIPS} \
 research_v612_reduce_depth=1 \
 research_v614_book_floor_off=1 \
 research_v615_launch=1 \
-research_v616_fair_value=1"
+research_v616_fair_value=1 \
+research_v617_touch_quote=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2764,6 +2765,46 @@ if [[ "${V6_16_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.16 fair value PASS (toward side centred on the fundamental, at most one depth from the mid)"
 fi
 
+# v6.17 S1.  On a deep-layer book with a fresh fundamental of this simulation (v6.16's feed) ONE post-only order joins
+# the touch on the side trading toward it, one deep clip, while its own price is at least the validator's alpha hurdle
+# (2.3 bps) on the safe side of it; it rests within two ticks of the touch, follows the volume line and the deep layer's
+# bound, owns its own slot (43000 + 10 x book + 1|2) and never shares a request with a deep placement on its side
+# (research_v617_touch_quote).  Without one the book is v6.16 exactly.  STRUCTURAL: the anchored makers' side (the
+# simulator's reversion target) at the touch; the hurdle is the validator's.  OBSERVED 10-06 (replay k21/vm617 with the
+# live order rules, vs v6.16): new simulation making share +32.0%, alpha +556 vs +8; previous simulation (quiet
+# trend) +3.1%, ahead in 5 of 7 windows, alpha -16.2k vs -26.7k; improving the touch and 2-4 clips refuted.
+if [[ "${V6_17_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v617_touch_quote import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.17 S1 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already,' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.17 S1 the deep layer's books take no touch quote." >&2
+    exit 1
+  }
+  grep -qF 'if toward in v617_placed_sides(getattr(response, "instructions", None) or (), book_id):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.17 S1 the touch quote does not check the sides this response already placed on." >&2
+    exit 1
+  }
+  grep -qF 'deep_slot = V617_TOUCH_SLOT' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.17 S1 the final validator does not give the touch quote its own slot." >&2
+    exit 1
+  }
+  grep -qF 'return v617_live_slots(rows)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.17 S1 a touch quote would hold its whole side against the deep ladder." >&2
+    exit 1
+  }
+  grep -qF 'def verdict(side: str, price: Any, *, toward: str | None, bid: Any, ask: Any, fundamental: Any, tick: Any,' "$AGENT_PATH/research_v617_touch_quote.py" || {
+    echo "ERROR: v6.17 S1 research_v617_touch_quote has no verdict." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v617_touch_quote=1 "* ]] || {
+    echo "ERROR: v6.17 S1 build without research_v617_touch_quote=1 in PARAMS." >&2
+    exit 1
+  }
+  echo "[preflight] v6.17 touch quote PASS (one toward-side quote at the touch, past the hurdle, its own slot, deep first)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -2868,6 +2909,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_14.py \
       tests/test_research_v6_15.py \
       tests/test_research_v6_16.py \
+      tests/test_research_v6_17.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

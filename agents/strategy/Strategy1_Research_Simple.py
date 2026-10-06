@@ -708,6 +708,24 @@ from research_v616_fair_value import (  # noqa: E402
     needs_reprice as v616_needs_reprice,
     side_centres as v616_side_centres,
 )
+from research_v617_touch_quote import (  # noqa: E402
+    CANCEL_BOUND as V617_CANCEL_BOUND,
+    CANCEL_NO_FP as V617_CANCEL_NO_FP,
+    CANCEL_PACED as V617_CANCEL_PACED,
+    CANCEL_SHUT as V617_CANCEL_SHUT,
+    CLIP_DEEP_CLIPS as V617_CLIP_DEEP_CLIPS,
+    TOUCH_SLOT as V617_TOUCH_SLOT,
+    V617_TOUCH_QUOTE_VERSION,
+    caps_extra as v617_caps_extra,
+    client_ids as v617_client_ids,
+    is_touch_client_id as v617_is_touch_client_id,
+    live_slots as v617_live_slots,
+    placed_sides as v617_placed_sides,
+    room as v617_room,
+    toward_side as v617_toward_side,
+    verdict as v617_verdict,
+    wanted_price as v617_wanted_price,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1919,6 +1937,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v616_counts: dict[str, int] = {}
         self._v616_errors = 0
         self._v616_feed = None
+        # v6.17: on a deep-layer book with a fresh published fundamental ONE post-only order joins the touch on the side
+        # trading toward it while its own price clears the validator's alpha hurdle on the safe side of it.
+        # STRUCTURAL: see research_v617_touch_quote.
+        self.research_v617_touch_quote = self._as_bool(getattr(self.config, "research_v617_touch_quote", True))
+        self._v617_counts: dict[str, int] = {}
+        self._v617_errors = 0
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -10522,6 +10546,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if self._v69_ladder_on():
                 # v6.9 S1: a book inside its bound may rest every level of one side at once -- bound plus all in flight.
                 deep_caps = v69_caps_for(n, clip=self._v65_deep_clip(), max_clips=self._v610_caps_clips())
+            if bool(getattr(self, "research_v617_touch_quote", False)):
+                # v6.17: one touch quote per book in flight on top (its fill stays inside the deep layer's bound)
+                extra = v617_caps_extra(n, float(V617_CLIP_DEEP_CLIPS) * float(self._v65_deep_clip()))
+                deep_caps = {key: float(value) + extra for key, value in deep_caps.items()}
             caps = {key: max(float(value), float(deep_caps.get(key, 0.0))) for key, value in caps.items()}
         changed = False
         for key, value in caps.items():
@@ -10941,6 +10969,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     cid = None
             rows.append((getattr(order, "side", None), cid))
         rows.extend((key[2], key[1]) for key in self._direct_pending_ledger() if int(key[0]) == bid)
+        if bool(getattr(self, "research_v617_touch_quote", False)):
+            return v617_live_slots(rows)            # v6.17: a touch quote holds its own slot, not its whole side
         return v69_live_slots(rows)
 
     def _v69_snapshot(self) -> dict:
@@ -11116,6 +11146,170 @@ class Strategy1_Research_Simple(Strategy1_Research):
         feed = getattr(self, "_v616_feed", None)
         return {"version": V616_FAIR_VALUE_VERSION, "counts": dict(getattr(self, "_v616_counts", {}) or {}),
                 "errors": int(getattr(self, "_v616_errors", 0) or 0), "feed": (feed.status() if feed is not None else {})}
+
+    def _v617_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v617_counts", None)
+        if counts is None:
+            counts = {}
+            self._v617_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v617_fundamental(self, book_id: int, raw_bid, raw_ask, cfg):
+        """v6.17: this book's fresh fundamental of this simulation (v6.16's feed and rule), or None."""
+        feed = self._v616_feed_ref()
+        sim_id = getattr(cfg, "simulation_id", None) if cfg is not None else None
+        if not sim_id and cfg is not None:
+            log_dir = getattr(cfg, "logDir", None)
+            sim_id = str(log_dir).replace("\\", "/").rstrip("/").split("/")[-1] if log_dir else None
+        fp, reason = v616_book_fundamental(
+            feed.snapshot(), int(book_id), raw_bid, raw_ask,
+            state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id)
+        self._v617_count("book_" + str(reason))
+        return fp
+
+    def _v617_cancel(self, response, book_id: int, doomed: list, req, budget: int) -> set:
+        """v6.17: cancel these touch quotes in one instruction; the sides whose quote was cancelled."""
+        if not doomed or self._count_book_instructions(response, book_id) >= budget:
+            if doomed:
+                self._v617_count("cancel_budget_deferred")
+            return set()
+        ids = [int(row.order_id) for row, _why in doomed]
+        try:
+            response.cancel_orders(book_id=book_id, order_ids=ids, delay=0)
+        except Exception:
+            self._v617_errors = int(getattr(self, "_v617_errors", 0) or 0) + 1
+            return set()
+        req["cancels"] = int(req.get("cancels", 0) or 0) + 1
+        sides = set()
+        for row, why in doomed:
+            self._v617_count("cancel_" + str(why).lower())
+            sides.add(V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL)
+        try:
+            self._a19_note_exit_cancel(book_id, ids, ABSENT_REPRICE_CANCEL)
+        except Exception:
+            pass
+        return sides
+
+    def _v617_shut(self, response, book_id: int, touch_rows, already, req, *, budget: int) -> None:
+        """v6.17: a book the deep layer does not trade keeps no touch quote."""
+        doomed = [(row, V617_CANCEL_SHUT) for row in touch_rows if int(row.order_id) not in already]
+        self._v617_cancel(response, book_id, doomed, req, budget)
+
+    def _v617_touch(self, response, book_id: int, deep, raw_bid, raw_ask, inv, touch_rows, already, req, *,
+                    tick_size, min_order, budget, expiry, cfg, paced: bool) -> int:
+        """v6.17: the book's touch quote -- ONE post-only order joining the touch on the side that trades toward the
+        book's fresh fundamental, while its own price is THRESHOLD_BPS on the safe side of it.
+
+        A resting quote that flipped side, lost its edge, fell REST_TICKS behind the touch, would add while the book runs
+        ahead of its volume line, or whose fill would pass the deep layer's bound is cancelled.  A side takes a new
+        quote only with no quote of ours live or pending on it, none cancelled on it this request (A1.7.4.3.1), and no
+        placement of this response on it (the deep layer places first).  Returns the placements added (0 or 1).
+        """
+        fp = self._v617_fundamental(book_id, raw_bid, raw_ask, cfg)
+        mid = 0.5 * (float(raw_bid) + float(raw_ask))
+        toward = v617_toward_side(mid, fp) if fp is not None else None
+        clip = float(V617_CLIP_DEEP_CLIPS) * float(getattr(deep, "clip", 0.0) or 0.0)
+        bound = self._v610_bound_base(deep, paced)
+        doomed = []
+        kept = 0
+        for row in touch_rows:
+            if int(row.order_id) in already:
+                continue
+            side = V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL
+            if fp is None:
+                why = V617_CANCEL_NO_FP
+            else:
+                why = v617_verdict(side, float(row.price), toward=toward, bid=raw_bid, ask=raw_ask, fundamental=fp,
+                                   tick=tick_size)
+            if why is None and paced and v641_adds(side, inv):
+                why = V617_CANCEL_PACED        # ahead of its volume line, no adding order (v6.4.1)
+            if why is None and not v617_room(side, inv, clip, bound):
+                why = V617_CANCEL_BOUND
+            if why is None:
+                kept += 1
+            else:
+                doomed.append((row, why))
+        cancelled = self._v617_cancel(response, book_id, doomed, req, budget)
+        if kept or toward is None:
+            return 0
+        if toward in cancelled:
+            self._v617_count("wait_cancel_seen")
+            return 0
+        if toward in v617_placed_sides(getattr(response, "instructions", None) or (), book_id):
+            self._v617_count("yield_to_deep")      # one maker order per book side per response; the deep layer's first
+            return 0
+        if paced and v641_adds(toward, inv):
+            self._v617_count("paced_states")
+            return 0
+        if not v617_room(toward, inv, clip, bound):
+            self._v617_count("bound_states")
+            return 0
+        try:
+            if V617_TOUCH_SLOT in (self._v69_live_slots(book_id).get(toward) or frozenset()):
+                self._v617_count("slot_in_flight")
+                return 0
+        except Exception:
+            self._v617_errors = int(getattr(self, "_v617_errors", 0) or 0) + 1
+            return 0
+        price = v617_wanted_price(toward, bid=raw_bid, ask=raw_ask, fundamental=fp, tick=tick_size,
+                                  safety_ticks=int(getattr(self, "research_post_only_safety_ticks", 2) or 2))
+        if price is None:
+            self._v617_count("no_price")
+            return 0
+        q = v62_lot_quantity(clip, getattr(cfg, "volumeDecimals", 4))
+        if q + 1e-12 < min_order:
+            self._v617_count("below_min_order")
+            return 0
+        if self._v691_free_base_on():
+            # v6.9.1 C2: never more than the account can still reserve for it
+            try:
+                free = self._v691_free_for(book_id, toward, price)
+                sized = v691_quantity_within_free(q, free, min_order, getattr(cfg, "volumeDecimals", 4))
+            except Exception:
+                self._v617_errors = int(getattr(self, "_v617_errors", 0) or 0) + 1
+                free, sized = None, q
+            if free is not None and sized + 1e-12 < q:
+                if sized <= 0.0:
+                    self._v617_count("no_free")
+                    return 0
+                self._v617_count("sized_by_free")
+                q = sized
+        if self._count_book_instructions(response, book_id) >= budget:
+            self._v617_count("budget_deferred")
+            return 0
+        buy_cid, sell_cid = v617_client_ids(book_id)
+        try:
+            response.limit_order(
+                book_id=book_id,
+                direction=OrderDirection.BUY if toward == V63_SIDE_BUY else OrderDirection.SELL,
+                quantity=q, price=float(price),
+                clientOrderId=buy_cid if toward == V63_SIDE_BUY else sell_cid,
+                stp=STP.CANCEL_BOTH, postOnly=True, timeInForce=TimeInForce.GTT, expiryPeriod=expiry,
+                leverage=0.0, settlement_option=LoanSettlementOption.NONE, delay=0,
+            )
+        except Exception:
+            self._v617_errors = int(getattr(self, "_v617_errors", 0) or 0) + 1
+            return 0
+        req["placed_touch"] = int(req.get("placed_touch", 0) or 0) + 1
+        self._v617_count("placed_" + str(toward))
+        return 1
+
+    def _v617_book(self, response, book_id: int, deep, raw_bid, raw_ask, inv, touch_rows, already, req, *,
+                   tick_size, min_order, budget, expiry, cfg, paced: bool) -> int:
+        """v6.17: the switch and the error guard around the book's touch quote (switch off: v6.16 exactly)."""
+        if not bool(getattr(self, "research_v617_touch_quote", False)):
+            return 0
+        try:
+            return int(self._v617_touch(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already, req,
+                                        tick_size=tick_size, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
+                                        paced=paced))
+        except Exception:
+            self._v617_errors = int(getattr(self, "_v617_errors", 0) or 0) + 1
+            return 0
+
+    def _v617_snapshot(self) -> dict:
+        return {"version": V617_TOUCH_QUOTE_VERSION, "counts": dict(getattr(self, "_v617_counts", {}) or {}),
+                "errors": int(getattr(self, "_v617_errors", 0) or 0)}
 
     def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,
                    tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False,
@@ -11698,6 +11892,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             want = v63_wanted(inv, target, clip=clip, making_width=0.0 if idle else width)
             rows = []
             deep_rows = []
+            touch_rows = []
+            touch_on = bool(getattr(self, "research_v617_touch_quote", False))
             own_ids: set[int] = set()
             if ledger is not None:
                 for row in ledger.live_orders(book_id):
@@ -11709,6 +11905,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         rows.append(row)
                     elif v633_is_deep_client_id(getattr(row, "client_id", None)):
                         deep_rows.append(row)
+                    elif touch_on and v617_is_touch_client_id(getattr(row, "client_id", None)):
+                        touch_rows.append(row)       # v6.17: this book's touch quote (its own slot)
             deep_open = False
             if deep is not None and depth is not None:
                 try:
@@ -11738,13 +11936,26 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         tick_size=tick_size, dec=dec, clip=clip_b, min_order=min_order, budget=budget, expiry=expiry,
                         cfg=cfg, paced=paced, bound_scale=bound_scale,
                     )
+                    if touch_on:                        # v6.17: after the deep layer, which places first
+                        placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows,
+                                                        already, req, tick_size=tick_size, min_order=min_order,
+                                                        budget=budget, expiry=expiry, cfg=cfg, paced=paced)
                     continue
                 placed_total += self._v633_book(
                     response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
                     tick_size=tick_size, dec=dec, clip=deep.clip, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
                     paced=paced, bound_scale=bound_scale,
                 )
+                if touch_on:                            # v6.17: after the deep layer, which places first
+                    placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already,
+                                                    req, tick_size=tick_size, min_order=min_order, budget=budget,
+                                                    expiry=expiry, cfg=cfg, paced=paced)
                 continue
+            if touch_rows and touch_on:
+                try:
+                    self._v617_shut(response, book_id, touch_rows, already, req, budget=budget)
+                except Exception:
+                    self._v617_errors = int(getattr(self, "_v617_errors", 0) or 0) + 1
             if board_owns or no_fallback:
                 # v6.4 S2: the open board trades no book at the touch; one it does not open quotes nothing.
                 # v6.8 S1: nor does one the layer does not open under a shut board.
@@ -11957,6 +12168,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             launch=(self._v615_snapshot() if getattr(self, "research_v615_launch", None) is not None else {}),
             fair_value_on=int(bool(getattr(self, "research_v616_fair_value", False))),
             fair_value=(self._v616_snapshot() if getattr(self, "research_v616_fair_value", None) is not None else {}),
+            touch_quote_on=int(bool(getattr(self, "research_v617_touch_quote", False))),
+            touch_quote=(self._v617_snapshot() if getattr(self, "research_v617_touch_quote", None) is not None else {}),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
@@ -14914,6 +15127,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             deep_slot = (
                 v633_deep_level(self._get(instruction, "clientOrderId", "client_order_id")) if v69_level_owned else None
             )
+            if (deep_slot is None and v69_level_owned and bool(getattr(self, "research_v617_touch_quote", False))
+                    and v617_is_touch_client_id(self._get(instruction, "clientOrderId", "client_order_id"))):
+                deep_slot = V617_TOUCH_SLOT          # v6.17: the touch quote owns its own slot on its side
             if deep_slot is not None:
                 if book_id in preexisting_order_books and book_id not in preexisting_order_slots:
                     preexisting_order_slots[book_id] = self._v69_live_slots(book_id)

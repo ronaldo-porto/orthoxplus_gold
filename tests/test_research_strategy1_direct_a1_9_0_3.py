@@ -109,7 +109,8 @@ def test_all_three_cancel_paths_register_a_reason():
     # v6.3: the trend-target pass registers its own cancels (unwanted, thin, just-hit, fee-capped, paused).
     # v6.3.3: the deep layer's open-book cancel (v6.3 orders on a deep book, drifted or bounded deep orders) registers too.
     # v6.4: the open board's idle-book cancel (touch and deep orders on a book the layer does not open) registers too.
-    assert SRC.count("_a19_note_exit_cancel(") == 11
+    # v6.17: the touch quote's cancel (flipped, edge, left, paced, bound, no fundamental, shut book) registers too.
+    assert SRC.count("_a19_note_exit_cancel(") == 12
     for reason in (
         "ABSENT_WAIT_CANCEL", "ABSENT_ENTRY_QUOTE_CANCEL",
         "ABSENT_PARTIAL_REMAINDER_CANCEL", "ABSENT_REPRICE_CANCEL",
