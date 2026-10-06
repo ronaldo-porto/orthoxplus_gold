@@ -726,6 +726,10 @@ from research_v617_touch_quote import (  # noqa: E402
     verdict as v617_verdict,
     wanted_price as v617_wanted_price,
 )
+from research_v618_centre_off import (  # noqa: E402
+    V618_CENTRE_OFF_VERSION,
+    centre_on as v618_centre_on,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1943,6 +1947,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self.research_v617_touch_quote = self._as_bool(getattr(self.config, "research_v617_touch_quote", True))
         self._v617_counts: dict[str, int] = {}
         self._v617_errors = 0
+        # v6.18: the v6.16 centre is off -- every book's deep ladder keeps the mid (v6.15); the v6.17 touch quote keeps the
+        # published fundamental (it reads the feed itself).  STRUCTURAL: see research_v618_centre_off.
+        self.research_v618_centre_off = self._as_bool(getattr(self.config, "research_v618_centre_off", True))
+        self._v618_counts: dict[str, int] = {}
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11311,6 +11319,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return {"version": V617_TOUCH_QUOTE_VERSION, "counts": dict(getattr(self, "_v617_counts", {}) or {}),
                 "errors": int(getattr(self, "_v617_errors", 0) or 0)}
 
+    def _v618_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v618_counts", None)
+        if counts is None:
+            counts = {}
+            self._v618_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v618_snapshot(self) -> dict:
+        return {"version": V618_CENTRE_OFF_VERSION, "counts": dict(getattr(self, "_v618_counts", {}) or {})}
+
     def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,
                    tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False,
                    bound_scale: float = 1.0) -> int:
@@ -11346,7 +11364,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # v6.16: with a fresh fundamental of this simulation the side trading toward it is centred on it, at most one
         # level-0 depth from the mid; without one the book is v6.15 exactly.
         centre = None
-        if bool(getattr(self, "research_v616_fair_value", False)):
+        v618_off = bool(getattr(self, "research_v618_centre_off", False))
+        if v618_off and bool(getattr(self, "research_v616_fair_value", False)):
+            self._v618_count("centre_off_books")      # v6.18: this book's ladder keeps the mid (research_v618_centre_off)
+        if v618_centre_on(getattr(self, "research_v616_fair_value", False), v618_off):
             try:
                 centre = self._v616_book(book_id, raw_bid, raw_ask, depth, tick_size, cfg)
             except Exception:
@@ -12170,6 +12191,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             fair_value=(self._v616_snapshot() if getattr(self, "research_v616_fair_value", None) is not None else {}),
             touch_quote_on=int(bool(getattr(self, "research_v617_touch_quote", False))),
             touch_quote=(self._v617_snapshot() if getattr(self, "research_v617_touch_quote", None) is not None else {}),
+            centre_off_on=int(bool(getattr(self, "research_v618_centre_off", False))),
+            centre_off=(self._v618_snapshot() if getattr(self, "research_v618_centre_off", None) is not None else {}),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),

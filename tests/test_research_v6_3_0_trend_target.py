@@ -34,6 +34,7 @@ import research_v69_deep_ladder as d69  # noqa: E402
 import research_v610_paced_bound as d610  # noqa: E402
 import research_v612_reduce_depth as d612  # noqa: E402
 import research_v614_book_floor as d614  # noqa: E402
+import research_v618_centre_off as d618  # noqa: E402
 from research_session_state import extract_simulation_id  # noqa: E402
 from research_direct_exit_ledger import DirectExitLedger  # noqa: E402
 from research_direct_exit_refresh import ABSENT_REPRICE_CANCEL  # noqa: E402
@@ -247,6 +248,8 @@ def _pass_agent(**kwargs):
         "v612_level0_depth": d612.level0_depth,
         # v6.14 S1: the switch is unset here, so the per-book paper floor still applies
         "v614_paper_floor_on": d614.paper_floor_on,
+        # v6.18 S1: the switch is unset here, so the v6.16 centre keeps its own switch
+        "v618_centre_on": d618.centre_on,
     })
     cls = type("P", (_PassAgent,), {})
     for name in ("_v63_pass", "_v63_count", "_v63_clip", "_v63_apply_caps", "_v63_snapshot", "_v63_book_alphas",
@@ -258,7 +261,9 @@ def _pass_agent(**kwargs):
                  # v6.10 S2: the bound _v633_book judges every level against
                  "_v610_behind_clips", "_v610_caps_clips", "_v610_bound_base",
                  # v6.14 S1: the count of books opened past the paper floor
-                 "_v614_count"):
+                 "_v614_count",
+                 # v6.18 S1: the count of books whose ladder kept the mid
+                 "_v618_count"):
         exec(compile(ast.Module(body=[ast.parse(_simple(name)).body[0]], type_ignores=[]), "<v63>", "exec"), ns)
         setattr(cls, name, ns[name])
     return cls(**kwargs)
