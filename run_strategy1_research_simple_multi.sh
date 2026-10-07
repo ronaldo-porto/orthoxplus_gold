@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -411,7 +411,10 @@ research_v616_fair_value=1 \
 research_v617_touch_quote=1 \
 research_v618_centre_off=1 \
 research_v619_surplus_hold=1 \
-research_v620_room_pace=1"
+research_v620_room_pace=1 \
+research_v621_rolloff_guard=1 \
+research_v621_pace_persist=1 \
+research_v621_even_spend=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2904,6 +2907,73 @@ if [[ "${V6_20_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.20 room pace PASS (the room up to the cap-bound threshold spread over one assessment period; smaller orders ahead of it)"
 fi
 
+# v6.21 S1-S3.  The young window, whose start t_w is the latest time the book (or every book of the UID) was seen empty --
+# its own first report, the session file, or the UID's own earliest log of the simulation (research_v621_window_start).
+# S1 (research_v621_rolloff_guard): a fall of the venue's volume ages a book only if it is at least one minimum fill at the
+# book's price, on a state whose clock moved on, and -- t_w known -- not before t_w + 86,400 s - 600 s.  S2
+# (research_v621_pace_persist): every book's pace state rides in the UID's session file and a restart of the same UID and
+# simulation continues the same line and size factor.  S3 (research_v621_even_spend): a young book with a known t_w spends
+# its room evenly to the aim at its own roll-off (band = one making window at its own rate), starting one steady lead below
+# its usage without a saved anchor; a launching book keeps v6.15's launch line and pays back to the aim at the roll-off.
+# Unknown t_w or aged: v6.20 exactly; without the switches the build is v6.20.  STRUCTURAL: the validator's 600-s volume
+# keys, its assessment period, making window and cap, the venue's minimum order.  Evidence (scratchpad k36): UID 22's false
+# aging 15/20/26 books -> 0 in replay; 172-like book at 70%: lowest 3-h making +41%, cap at its roll-off 92.5% -> 97.0%
+# (max 98.8%); a restart with the saved line identical to none; see research_v621_young_window.
+if [[ "${V6_21_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v621_young_window import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.21 S1-S3 the young-window module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'from research_v621_window_start import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.21 S2 the window-start module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'pace = V621YoungWindowLine(launch=pace.launch_on,' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.21 S1-S3 the young-window line is not installed." >&2
+    exit 1
+  }
+  grep -qF 'self._v621_pass(pace, state, now_ts, pace_duration)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.21 S2 the line is not prepared in the pass." >&2
+    exit 1
+  }
+  grep -qF 'pace.observe(book_id, now_ts, reading, min_order * 0.5 * (raw_bid + raw_ask))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.21 S1 the line does not get the minimum fill at the book's price." >&2
+    exit 1
+  }
+  grep -qF 'self._v621_restore_payload = raw.get(V621_PACE_SESSION_KEY)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.21 S2 the saved pace state is not read from the session file." >&2
+    exit 1
+  }
+  grep -qF 'payload[V621_PACE_SESSION_KEY] = v621_state' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.21 S2 the pace state is not saved in the session file." >&2
+    exit 1
+  }
+  grep -qF 'def fall_kind(prev: Any, used: Any, ts: Any, last_ts: Any, floor: Any, rolloff: Any) -> str | None:' "$AGENT_PATH/research_v621_young_window.py" || {
+    echo "ERROR: v6.21 S1 research_v621_young_window has no fall_kind." >&2
+    exit 1
+  }
+  grep -qF 'def no_burst_anchor(cap: Any, used: Any, now_ns: int, roll_ns: int, *, making_ns: int = MAKING_WINDOW_NS,' "$AGENT_PATH/research_v621_young_window.py" || {
+    echo "ERROR: v6.21 S3 research_v621_young_window has no no_burst_anchor." >&2
+    exit 1
+  }
+  grep -qF 'def restore_pace(line: Any, payload: Any, *, uid: Any, sim_id: Any, now_ns: Any, duration_ns: Any = None,' "$AGENT_PATH/research_v621_young_window.py" || {
+    echo "ERROR: v6.21 S2 research_v621_young_window has no restore_pace." >&2
+    exit 1
+  }
+  grep -qF 'def derive_window_start(log_dir: str, uid: Any, sim_id: Any, n_books: int, *, exclude: str | None = None,' "$AGENT_PATH/research_v621_window_start.py" || {
+    echo "ERROR: v6.21 S2 research_v621_window_start has no derive_window_start." >&2
+    exit 1
+  }
+  for key in research_v621_rolloff_guard research_v621_pace_persist research_v621_even_spend research_v620_room_pace \
+             research_v641_volume_pace research_v66_pace_line research_v68_rolling_budget; do
+    [[ " $PARAMS " == *" $key=1 "* ]] || {
+      echo "ERROR: v6.21 S1-S3 build without $key=1 in PARAMS (the young-window line builds on v6.20's room line)." >&2
+      exit 1
+    }
+  done
+  echo "[preflight] v6.21 young window PASS (a fall ages a book only past its window's roll-off and by a minimum fill; the line survives a restart; a known window spends evenly to its own roll-off)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -3012,6 +3082,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_18.py \
       tests/test_research_v6_19.py \
       tests/test_research_v6_20.py \
+      tests/test_research_v6_21.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

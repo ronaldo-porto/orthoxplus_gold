@@ -31,6 +31,8 @@ MODULES = [
     "research_v618_centre_off.py",
     "research_v619_surplus_hold.py",
     "research_v620_room_pace.py",
+    "research_v621_young_window.py",
+    "research_v621_window_start.py",
     "research_v6214_touch_life.py",
     "research_v6215_order_life.py",
     "research_v63_trend_target.py",

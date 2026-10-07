@@ -742,6 +742,20 @@ from research_v620_room_pace import (  # noqa: E402
     V620_ROOM_PACE_VERSION,
     scaled_quantity as v620_scaled_quantity,
 )
+from research_v621_young_window import (  # noqa: E402
+    PACE_SESSION_KEY as V621_PACE_SESSION_KEY,
+    V621_YOUNG_WINDOW_VERSION,
+    WINDOW_OWN_EMPTY_START as V621_WINDOW_OWN_EMPTY_START,
+    YoungWindowLine as V621YoungWindowLine,
+    empty_window as v621_empty_window,
+    pace_state as v621_pace_state,
+    restore_pace as v621_restore_pace,
+)
+from research_v621_window_start import (  # noqa: E402
+    V621_WINDOW_START_VERSION,
+    derive_window_start as v621_derive_window_start,
+    window_of as v621_window_of,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1977,6 +1991,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v620_counts: dict[str, int] = {}
         self._v620_errors = 0
         self._v620_scale_sum = 0.0
+        # v6.21: the young window, whose start is the latest time the book (or every book) was seen empty.  S1 a fall
+        # of the venue's volume ages a book only past its window's earliest roll-off and by at least one minimum fill;
+        # S2 the pace line rides in the session file, and without it the window start comes from the UID's own earliest
+        # log of the simulation; S3 a young book whose window start is known spends its room evenly to the aim at its own
+        # roll-off, starting without a burst.  Unknown start or aged: v6.20 exactly.  STRUCTURAL: see
+        # research_v621_young_window and research_v621_window_start.
+        self.research_v621_rolloff_guard = self._as_bool(getattr(self.config, "research_v621_rolloff_guard", True))
+        self.research_v621_pace_persist = self._as_bool(getattr(self.config, "research_v621_pace_persist", True))
+        self.research_v621_even_spend = self._as_bool(getattr(self.config, "research_v621_even_spend", True))
+        self._v621_counts: dict[str, int] = {}
+        self._v621_errors = 0
+        self._v621_prepared = False
+        self._v621_restore_payload: Any = None
+        self._v621_window: dict[str, Any] = {}
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -10831,6 +10859,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if bool(getattr(self, "research_v620_room_pace", False)) and isinstance(pace, V68RollingPaceLine):
                 # v6.20: the room line (v6.15's launch line kept when it is on, never above the cap-bound threshold)
                 pace = V620RoomPaceLine(launch=isinstance(pace, V615LaunchPaceLine))
+            if (bool(getattr(self, "research_v621_rolloff_guard", False))
+                    or bool(getattr(self, "research_v621_pace_persist", False))
+                    or bool(getattr(self, "research_v621_even_spend", False))) and isinstance(pace, V620RoomPaceLine):
+                # v6.21: the young window's line (S1 the roll-off guard, S2 a restart's state, S3 the even spend)
+                pace = V621YoungWindowLine(launch=pace.launch_on,
+                                           guard=bool(getattr(self, "research_v621_rolloff_guard", False)),
+                                           even=bool(getattr(self, "research_v621_even_spend", False)))
             self._v66_pace = pace
         return pace
 
@@ -11431,6 +11466,96 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "mean_scale_when_scaled": (round(float(getattr(self, "_v620_scale_sum", 0.0) or 0.0) / n, 4) if n else None),
                 "room_line": int(isinstance(pace, V620RoomPaceLine))}
 
+    def _v621_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v621_counts", None)
+        if counts is None:
+            counts = {}
+            self._v621_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v621_pass(self, pace, state, now_ts: int, duration) -> None:
+        """v6.21: every request the line's clock (its simulation and length); at the first request of the process (S2)
+        a restart's saved pace state, and without a window start the UID's own from its logs.  Never raises."""
+        try:
+            sim = extract_simulation_id(state)
+            if sim:
+                pace.sim_id = str(sim)
+            pace.sim_duration_ns = duration
+            if getattr(self, "_v621_prepared", False):
+                return
+            self._v621_prepared = True
+            if not bool(getattr(self, "research_v621_pace_persist", False)):
+                return
+            books = getattr(state, "books", None) or {}
+            readings: dict[int, float] = {}
+            for raw_id in books:
+                try:
+                    reading = self._v621_reading(int(raw_id))
+                except Exception:
+                    continue
+                if reading is not None:
+                    readings[int(raw_id)] = reading
+            payload = getattr(self, "_v621_restore_payload", None)
+            self._v621_restore_payload = None
+            how = v621_restore_pace(pace, payload, uid=getattr(self, "uid", None), sim_id=pace.sim_id, now_ns=now_ts,
+                                    duration_ns=duration, readings=readings)
+            self._v621_count("restore_" + str(how))
+            if pace.window_status is None:
+                self._v621_window_start(pace, len(books), readings, now_ts, duration)
+        except Exception:
+            self._v621_errors = int(getattr(self, "_v621_errors", 0) or 0) + 1
+
+    def _v621_reading(self, book_id: int) -> float | None:
+        """v6.21: the book's venue volume, or None when the state carries no account for it (the venue's reader returns
+        0 for a missing account: no reading, never an empty window)."""
+        accounts = getattr(self, "accounts", None)
+        if isinstance(accounts, dict) and int(book_id) not in accounts and str(int(book_id)) not in accounts:
+            return None
+        return float(self._research_book_traded_volume(int(book_id)) or 0.0)
+
+    def _v621_window_start(self, pace, n_books: int, readings: dict, now_ts: int, duration) -> None:
+        """v6.21 S2: the UID's window start for a process without a saved one -- none needed when its first state reads
+        every book empty (each book starts its own window there), else the latest all-empty start in its own logs."""
+        if v621_empty_window(readings, n_books):
+            pace.set_window(None, V621_WINDOW_OWN_EMPTY_START)
+            self._v621_window = {"status": V621_WINDOW_OWN_EMPTY_START}
+            self._v621_count("window_" + V621_WINDOW_OWN_EMPTY_START.lower())
+            return
+        res = v621_derive_window_start(str(getattr(self, "research_output_dir", "") or ""), getattr(self, "uid", None),
+                                       pace.sim_id, n_books, exclude=getattr(self, "_research_output_file", None),
+                                       old_end_ns=duration, now_ns=now_ts)
+        pace.set_window(*v621_window_of(res))
+        keys = ("status", "t_w_ns", "anchor", "carry", "no_rolloff_before_ns", "bytes", "ms")
+        summary = {k: res.get(k) for k in keys}
+        summary["files"] = len(res.get("files") or ())
+        self._v621_window = summary
+        self._v621_count("window_" + str(res.get("status")).lower())
+        try:
+            self._emit("V621_WINDOW_START", force=True, tick=int(getattr(self, "_tick", 0) or 0),
+                       version=V621_WINDOW_START_VERSION, uid=getattr(self, "uid", None), sim_id=pace.sim_id, **summary)
+        except Exception:
+            pass
+
+    def _v621_session_state(self):
+        """v6.21 S2: the pace state the session file carries -- the live line once this process has prepared it, else
+        the saved state it has not applied yet (a save before the first request must not drop it)."""
+        try:
+            pace = getattr(self, "_v66_pace", None)
+            if isinstance(pace, V621YoungWindowLine) and getattr(self, "_v621_prepared", False):
+                return v621_pace_state(pace, uid=getattr(self, "uid", None))
+            stash = getattr(self, "_v621_restore_payload", None)
+            return stash if isinstance(stash, dict) else None
+        except Exception:
+            self._v621_errors = int(getattr(self, "_v621_errors", 0) or 0) + 1
+            return None
+
+    def _v621_snapshot(self) -> dict:
+        pace = getattr(self, "_v66_pace", None)
+        line = pace.snapshot().get("young") if isinstance(pace, V621YoungWindowLine) else None
+        return {"version": V621_YOUNG_WINDOW_VERSION, "counts": dict(getattr(self, "_v621_counts", {}) or {}),
+                "errors": int(getattr(self, "_v621_errors", 0) or 0),
+                "window": dict(getattr(self, "_v621_window", {}) or {}), "line": line or {}}
+
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
         mirror = getattr(self, "_v62_mirror", None)
@@ -11916,6 +12041,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 pace = None
         # v6.20 S1: the room line's size factor applies only with that line in place (research_v620_room_pace).
         v620_on = bool(getattr(self, "research_v620_room_pace", False)) and isinstance(pace, V620RoomPaceLine)
+        # v6.21: the young window's line takes the clock's simulation and length every request, and at the first one a
+        # restart's saved state or the window start from the UID's own logs (research_v621_young_window).
+        v621_on = (bool(getattr(self, "research_v621_rolloff_guard", False))
+                   or bool(getattr(self, "research_v621_pace_persist", False))
+                   or bool(getattr(self, "research_v621_even_spend", False))) and isinstance(pace, V621YoungWindowLine)
+        if v621_on:
+            self._v621_pass(pace, state, now_ts, pace_duration)
         # v6.19 S1: the making mirror's window and the cap, read once per request (research_v619_surplus_hold).
         v619_on = bool(getattr(self, "research_v619_surplus_hold", False))
         v619_mirror, v619_mature, v619_cap = None, False, 0.0
@@ -12029,7 +12161,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if pace is not None:
                 try:
                     used = float(self._research_book_traded_volume(book_id) or 0.0)
-                    pace.observe(book_id, now_ts, used)
+                    if v621_on:
+                        # v6.21 S1: a fall smaller than one minimum fill at the book's price is no roll-off; a book the
+                        # state carries no account for reads 0 -- no reading, not an empty window
+                        reading = self._v621_reading(book_id)
+                        if reading is not None:
+                            pace.observe(book_id, now_ts, reading, min_order * 0.5 * (raw_bid + raw_ask))
+                        else:
+                            self._v621_count("no_account_states")
+                    else:
+                        pace.observe(book_id, now_ts, used)
                     paced = bool(pace.paced(book_id, now_ts, used, pace_cap, pace_duration))
                 except Exception:
                     self._v641_errors = int(getattr(self, "_v641_errors", 0) or 0) + 1
@@ -12345,6 +12486,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             surplus_hold=(self._v619_snapshot() if getattr(self, "research_v619_surplus_hold", None) is not None else {}),
             room_pace_on=int(bool(getattr(self, "research_v620_room_pace", False))),
             room_pace=(self._v620_snapshot() if getattr(self, "research_v620_room_pace", None) is not None else {}),
+            rolloff_guard_on=int(bool(getattr(self, "research_v621_rolloff_guard", False))),
+            pace_persist_on=int(bool(getattr(self, "research_v621_pace_persist", False))),
+            even_spend_on=int(bool(getattr(self, "research_v621_even_spend", False))),
+            young_window=(self._v621_snapshot() if getattr(self, "research_v621_rolloff_guard", None) is not None else {}),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
@@ -13789,6 +13934,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v68_deep_restore = raw.get(V68_DEEP_SESSION_KEY) if bool(getattr(self, "research_v68_deep_persist", False)) else None
         if getattr(self, "_v633_deep", None) is not None:
             self._v68_apply_deep_restore(self._v633_deep)
+        # v6.21 S2: this UID's pace line for this simulation, put back at its first request (research_v621_young_window)
+        if bool(getattr(self, "research_v621_pace_persist", False)) and not getattr(self, "_v621_prepared", False):
+            self._v621_restore_payload = raw.get(V621_PACE_SESSION_KEY)
         direct = raw.get("direct_maker_quality_a1_5_1")
         same_version = isinstance(direct, dict)
         if not isinstance(direct, dict):
@@ -13874,6 +14022,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # v6.8 S3: the deep layer's sweep depths and paper record, so a restart does not start it over.
             if bool(getattr(self, "research_v68_deep_persist", False)) and getattr(self, "_v633_deep", None) is not None:
                 payload[V68_DEEP_SESSION_KEY] = v68_deep_state(self._v633_deep)
+            # v6.21 S2: every book's pace line, so a restart continues the same line and size factor.
+            if bool(getattr(self, "research_v621_pace_persist", False)):
+                v621_state = self._v621_session_state()
+                if v621_state is not None:
+                    payload[V621_PACE_SESSION_KEY] = v621_state
             payload["direct_maker_quality_a1_5_1"] = {
                 "version": DIRECT_QUALITY_VERSION,
                 "global": getattr(self, "_direct_maker_quality_global", MakerLifecycleStats()).as_state(),
