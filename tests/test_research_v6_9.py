@@ -292,7 +292,9 @@ def _paced(agent, inv, *, deep_first=True):
     rows = [r for r in agent.ledger.live_orders(3) if dl.is_deep_client_id(r.client_id)]
     agent._v633_book(resp, 3, agent._v633_deep, 30.0, 100.00, 100.03, inv, [], rows, set(), req, tick_size=TICK,
                      dec=2, clip=2.0, min_order=0.25, budget=5, expiry=EXPIRY,
-                     cfg=types.SimpleNamespace(volumeDecimals=4), paced=True, bound_scale=1.0)
+                     cfg=types.SimpleNamespace(volumeDecimals=4), paced=True, bound_scale=1.0,
+                     held=frozenset(),       # v6.19: no side held (the harness copy loses keyword defaults)
+                     size_scale=1.0)         # v6.20: full size (same reason)
     return resp
 
 

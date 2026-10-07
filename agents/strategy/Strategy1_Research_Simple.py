@@ -730,6 +730,18 @@ from research_v618_centre_off import (  # noqa: E402
     V618_CENTRE_OFF_VERSION,
     centre_on as v618_centre_on,
 )
+from research_v619_surplus_hold import (  # noqa: E402
+    CANCEL_SURPLUS as V619_CANCEL_SURPLUS,
+    MirrorAge as V619MirrorAge,
+    V619_SURPLUS_HOLD_VERSION,
+    cap_bound as v619_cap_bound,
+    held_side as v619_held_side,
+)
+from research_v620_room_pace import (  # noqa: E402
+    RoomPaceLine as V620RoomPaceLine,
+    V620_ROOM_PACE_VERSION,
+    scaled_quantity as v620_scaled_quantity,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -1951,6 +1963,20 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # published fundamental (it reads the feed itself).  STRUCTURAL: see research_v618_centre_off.
         self.research_v618_centre_off = self._as_bool(getattr(self.config, "research_v618_centre_off", True))
         self._v618_counts: dict[str, int] = {}
+        # v6.19: a cap-bound book's leading side stops adding -- once the making mirror holds a whole making window, the side
+        # whose window capture leads places nothing that would add while the book's cap room is below one making window of
+        # sustainable volume.  STRUCTURAL: see research_v619_surplus_hold.
+        self.research_v619_surplus_hold = self._as_bool(getattr(self.config, "research_v619_surplus_hold", True))
+        self._v619_counts: dict[str, int] = {}
+        self._v619_errors = 0
+        # v6.20: while a book's window is young (its venue volume has not fallen since its first report) it spends the room
+        # it has left up to the cap-bound threshold over one assessment period (the room line), and every order it places
+        # shrinks as it runs ahead of that line -- full size at the line, the venue's minimum one making window of the cap
+        # ahead.  An aged book is v6.19 exactly.  STRUCTURAL: see research_v620_room_pace.
+        self.research_v620_room_pace = self._as_bool(getattr(self.config, "research_v620_room_pace", True))
+        self._v620_counts: dict[str, int] = {}
+        self._v620_errors = 0
+        self._v620_scale_sum = 0.0
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -10802,6 +10828,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             pace = V68RollingPaceLine() if bool(getattr(self, "research_v68_rolling_budget", False)) else V66PaceLine()
             if bool(getattr(self, "research_v615_launch", False)) and isinstance(pace, V68RollingPaceLine):
                 pace = V615LaunchPaceLine()          # v6.15: a book first seen on an empty window launches
+            if bool(getattr(self, "research_v620_room_pace", False)) and isinstance(pace, V68RollingPaceLine):
+                # v6.20: the room line (v6.15's launch line kept when it is on, never above the cap-bound threshold)
+                pace = V620RoomPaceLine(launch=isinstance(pace, V615LaunchPaceLine))
             self._v66_pace = pace
         return pace
 
@@ -11204,7 +11233,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v617_cancel(response, book_id, doomed, req, budget)
 
     def _v617_touch(self, response, book_id: int, deep, raw_bid, raw_ask, inv, touch_rows, already, req, *,
-                    tick_size, min_order, budget, expiry, cfg, paced: bool) -> int:
+                    tick_size, min_order, budget, expiry, cfg, paced: bool, held: frozenset = frozenset(),
+                    size_scale: float = 1.0) -> int:
         """v6.17: the book's touch quote -- ONE post-only order joining the touch on the side that trades toward the
         book's fresh fundamental, while its own price is THRESHOLD_BPS on the safe side of it.
 
@@ -11231,6 +11261,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                                    tick=tick_size)
             if why is None and paced and v641_adds(side, inv):
                 why = V617_CANCEL_PACED        # ahead of its volume line, no adding order (v6.4.1)
+            if why is None and side in held:
+                why = V619_CANCEL_SURPLUS      # v6.19: the cap-bound leading side keeps no adding order
             if why is None and not v617_room(side, inv, clip, bound):
                 why = V617_CANCEL_BOUND
             if why is None:
@@ -11249,6 +11281,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if paced and v641_adds(toward, inv):
             self._v617_count("paced_states")
             return 0
+        if toward in held:
+            self._v619_count("touch_held_states")
+            return 0
         if not v617_room(toward, inv, clip, bound):
             self._v617_count("bound_states")
             return 0
@@ -11264,7 +11299,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if price is None:
             self._v617_count("no_price")
             return 0
-        q = v62_lot_quantity(clip, getattr(cfg, "volumeDecimals", 4))
+        q_ = v620_scaled_quantity(clip, size_scale, min_order) if size_scale < 1.0 else clip   # v6.20: ahead of its line
+        q = v62_lot_quantity(q_, getattr(cfg, "volumeDecimals", 4))
         if q + 1e-12 < min_order:
             self._v617_count("below_min_order")
             return 0
@@ -11303,14 +11339,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return 1
 
     def _v617_book(self, response, book_id: int, deep, raw_bid, raw_ask, inv, touch_rows, already, req, *,
-                   tick_size, min_order, budget, expiry, cfg, paced: bool) -> int:
+                   tick_size, min_order, budget, expiry, cfg, paced: bool, held: frozenset = frozenset(),
+                   size_scale: float = 1.0) -> int:
         """v6.17: the switch and the error guard around the book's touch quote (switch off: v6.16 exactly)."""
         if not bool(getattr(self, "research_v617_touch_quote", False)):
             return 0
         try:
             return int(self._v617_touch(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already, req,
                                         tick_size=tick_size, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
-                                        paced=paced))
+                                        paced=paced, held=held, size_scale=size_scale))
         except Exception:
             self._v617_errors = int(getattr(self, "_v617_errors", 0) or 0) + 1
             return 0
@@ -11329,9 +11366,83 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _v618_snapshot(self) -> dict:
         return {"version": V618_CENTRE_OFF_VERSION, "counts": dict(getattr(self, "_v618_counts", {}) or {})}
 
+    def _v619_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v619_counts", None)
+        if counts is None:
+            counts = {}
+            self._v619_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v619_context(self, state, now_ts: int):
+        """v6.19: the making mirror, whether it holds a whole making window yet, and the volume cap per book."""
+        age = getattr(self, "_v619_age", None)
+        if age is None:
+            age = V619MirrorAge()
+            self._v619_age = age
+        mirror = getattr(self, "_v62_mirror", None)
+        if mirror is None:
+            return None, False, 0.0
+        age.observe(getattr(mirror, "last_ts", None) or now_ts, getattr(mirror, "rebases", 0))
+        return mirror, bool(age.mature(now_ts)), float(self._research_volume_cap_quote(state) or 0.0)
+
+    def _v619_side(self, book_id: int, mirror, mature: bool, cap: float, inv) -> str | None:
+        """v6.19: the side this book withholds now (research_v619_surplus_hold), or None."""
+        if mirror is None or not mature:
+            return None
+        used = float(self._research_book_traded_volume(int(book_id)) or 0.0)
+        if not v619_cap_bound(cap, used):
+            return None
+        self._v619_count("cap_bound_book_states")
+        buy, sell = mirror.book_capture(int(book_id))
+        side = v619_held_side(cap, used, buy, sell, inv, mature=mature)
+        if side is not None:
+            self._v619_count("held_" + str(side))
+        return side
+
+    def _v620_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v620_counts", None)
+        if counts is None:
+            counts = {}
+            self._v620_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v620_scale(self, pace, book_id: int, now_ts: int, used: float, cap: float, duration) -> float:
+        """v6.20: this paced book's order-size factor now (research_v620_room_pace); 1.0 on any error."""
+        try:
+            f = float(pace.scale(book_id, now_ts, used, cap, duration))
+        except Exception:
+            self._v620_errors = int(getattr(self, "_v620_errors", 0) or 0) + 1
+            return 1.0
+        if not f < 1.0:
+            return 1.0
+        f = max(0.0, f)
+        self._v620_count("scaled_book_states")
+        if f <= 0.0:
+            self._v620_count("minimum_book_states")
+        self._v620_scale_sum = float(getattr(self, "_v620_scale_sum", 0.0) or 0.0) + f
+        return f
+
+    def _v620_snapshot(self) -> dict:
+        counts = dict(getattr(self, "_v620_counts", {}) or {})
+        n = int(counts.get("scaled_book_states", 0) or 0)
+        pace = getattr(self, "_v66_pace", None)
+        return {"version": V620_ROOM_PACE_VERSION, "counts": counts,
+                "errors": int(getattr(self, "_v620_errors", 0) or 0),
+                "mean_scale_when_scaled": (round(float(getattr(self, "_v620_scale_sum", 0.0) or 0.0) / n, 4) if n else None),
+                "room_line": int(isinstance(pace, V620RoomPaceLine))}
+
+    def _v619_snapshot(self) -> dict:
+        age = getattr(self, "_v619_age", None)
+        mirror = getattr(self, "_v62_mirror", None)
+        last = getattr(mirror, "last_ts", None) if mirror is not None else None
+        return {"version": V619_SURPLUS_HOLD_VERSION, "counts": dict(getattr(self, "_v619_counts", {}) or {}),
+                "errors": int(getattr(self, "_v619_errors", 0) or 0),
+                "mirror_mature": int(bool(age is not None and last is not None and age.mature(last))),
+                "mirror_age": (age.snapshot() if age is not None else {})}
+
     def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,
                    tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False,
-                   bound_scale: float = 1.0) -> int:
+                   bound_scale: float = 1.0, held: frozenset = frozenset(), size_scale: float = 1.0) -> int:
         """v6.3.3: an open book's two sides are the deep layer's -- one order per side, as the A1.7.4.3 contract requires.
 
         Its v6.3 orders are cancelled; a deep order that drifted out of [0.5, 1.5] x depth from the mid or has no room
@@ -11430,6 +11541,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             level = int(v633_deep_level(getattr(row, "client_id", None)) or 0)
             if level and not ladder:
                 doomed.append((row, V69_CANCEL_LEVEL_OFF))  # v6.9: a ladder order the layer no longer places
+            elif side in held:
+                doomed.append((row, V619_CANCEL_SURPLUS))   # v6.19: the cap-bound leading side keeps no adding order
             elif not _room(side):
                 doomed.append((row, V633_CANCEL_NO_ROOM))
                 if _plain(side):
@@ -11491,6 +11604,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         for side in (V63_SIDE_BUY, V63_SIDE_SELL):
             if spent:
                 break
+            if side in held:
+                continue                                     # v6.19: the cap-bound leading side adds nothing
             if not ladder and (side in resting or side in live_sides or side in cancelled):
                 continue
             if not _plain(side):
@@ -11508,7 +11623,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if level == 0 and side in unspaced:
                     self._v66_count("placement_spaced_out")
                     continue
-                q = v62_lot_quantity(v69_level_quantity(clip, level) if level else clip, getattr(cfg, "volumeDecimals", 4))
+                q_ = v69_level_quantity(clip, level) if level else clip
+                if size_scale < 1.0:
+                    q_ = v620_scaled_quantity(q_, size_scale, min_order)    # v6.20: ahead of its line, a smaller order
+                q = v62_lot_quantity(q_, getattr(cfg, "volumeDecimals", 4))
                 if q + 1e-12 < min_order:
                     self._v633_count("below_min_order")
                     continue
@@ -11796,6 +11914,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 self._v641_errors = int(getattr(self, "_v641_errors", 0) or 0) + 1
                 pace = None
+        # v6.20 S1: the room line's size factor applies only with that line in place (research_v620_room_pace).
+        v620_on = bool(getattr(self, "research_v620_room_pace", False)) and isinstance(pace, V620RoomPaceLine)
+        # v6.19 S1: the making mirror's window and the cap, read once per request (research_v619_surplus_hold).
+        v619_on = bool(getattr(self, "research_v619_surplus_hold", False))
+        v619_mirror, v619_mature, v619_cap = None, False, 0.0
+        if v619_on:
+            try:
+                v619_mirror, v619_mature, v619_cap = self._v619_context(state, now_ts)
+            except Exception:
+                self._v619_errors = int(getattr(self, "_v619_errors", 0) or 0) + 1
+                v619_on = False
         req: dict[str, Any] = {
             "books": len(books), "long": 0, "short": 0, "flat": 0, "paused": 0, "no_signal": 0, "gated": 0,
             "placed_toward": 0, "placed_making": 0, "cancels": 0, "fee_cap_bps": fee_cap,
@@ -11896,6 +12025,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 except Exception:
                     self._v66_errors = int(getattr(self, "_v66_errors", 0) or 0) + 1
             paced = False
+            size_scale = 1.0
             if pace is not None:
                 try:
                     used = float(self._research_book_traded_volume(book_id) or 0.0)
@@ -11904,6 +12034,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 except Exception:
                     self._v641_errors = int(getattr(self, "_v641_errors", 0) or 0) + 1
                     paced = False
+                if paced and v620_on:
+                    # v6.20: ahead of its line every order of the book is smaller (full size at the line, the minimum
+                    # order one making window of the cap ahead); pacing still holds its adding orders (v6.4.1)
+                    size_scale = self._v620_scale(pace, book_id, now_ts, used, pace_cap, pace_duration)
                 if paced:
                     # v6.4.1: ahead of its volume pace the book only reduces its inventory (no target, no making).
                     req["volume_paced"] += 1
@@ -11911,6 +12045,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     target = 0.0
                     idle = True
             want = v63_wanted(inv, target, clip=clip, making_width=0.0 if idle else width)
+            held: frozenset = frozenset()
+            if v619_on:
+                try:
+                    side_h = self._v619_side(book_id, v619_mirror, v619_mature, v619_cap, inv)
+                except Exception:
+                    self._v619_errors = int(getattr(self, "_v619_errors", 0) or 0) + 1
+                    side_h = None
+                if side_h is not None:
+                    # v6.19: the cap-bound book's leading side places nothing that would add -- in every layer on the book
+                    held = frozenset((side_h,))
+                    want = dict(want)
+                    want[side_h] = 0.0
             rows = []
             deep_rows = []
             touch_rows = []
@@ -11955,22 +12101,24 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     placed_total += self._v633_book(
                         response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
                         tick_size=tick_size, dec=dec, clip=clip_b, min_order=min_order, budget=budget, expiry=expiry,
-                        cfg=cfg, paced=paced, bound_scale=bound_scale,
+                        cfg=cfg, paced=paced, bound_scale=bound_scale, held=held, size_scale=size_scale,
                     )
                     if touch_on:                        # v6.17: after the deep layer, which places first
                         placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows,
                                                         already, req, tick_size=tick_size, min_order=min_order,
-                                                        budget=budget, expiry=expiry, cfg=cfg, paced=paced)
+                                                        budget=budget, expiry=expiry, cfg=cfg, paced=paced, held=held,
+                                                        size_scale=size_scale)
                     continue
                 placed_total += self._v633_book(
                     response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
                     tick_size=tick_size, dec=dec, clip=deep.clip, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
-                    paced=paced, bound_scale=bound_scale,
+                    paced=paced, bound_scale=bound_scale, held=held, size_scale=size_scale,
                 )
                 if touch_on:                            # v6.17: after the deep layer, which places first
                     placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already,
                                                     req, tick_size=tick_size, min_order=min_order, budget=budget,
-                                                    expiry=expiry, cfg=cfg, paced=paced)
+                                                    expiry=expiry, cfg=cfg, paced=paced, held=held,
+                                                    size_scale=size_scale)
                 continue
             if touch_rows and touch_on:
                 try:
@@ -12193,6 +12341,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             touch_quote=(self._v617_snapshot() if getattr(self, "research_v617_touch_quote", None) is not None else {}),
             centre_off_on=int(bool(getattr(self, "research_v618_centre_off", False))),
             centre_off=(self._v618_snapshot() if getattr(self, "research_v618_centre_off", None) is not None else {}),
+            surplus_hold_on=int(bool(getattr(self, "research_v619_surplus_hold", False))),
+            surplus_hold=(self._v619_snapshot() if getattr(self, "research_v619_surplus_hold", None) is not None else {}),
+            room_pace_on=int(bool(getattr(self, "research_v620_room_pace", False))),
+            room_pace=(self._v620_snapshot() if getattr(self, "research_v620_room_pace", None) is not None else {}),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
