@@ -294,7 +294,8 @@ def _paced(agent, inv, *, deep_first=True):
                      dec=2, clip=2.0, min_order=0.25, budget=5, expiry=EXPIRY,
                      cfg=types.SimpleNamespace(volumeDecimals=4), paced=True, bound_scale=1.0,
                      held=frozenset(),       # v6.19: no side held (the harness copy loses keyword defaults)
-                     size_scale=1.0)         # v6.20: full size (same reason)
+                     size_scale=1.0,         # v6.20: full size (same reason)
+                     cap_skip=False)         # v6.22: no book at its cap (same reason)
     return resp
 
 

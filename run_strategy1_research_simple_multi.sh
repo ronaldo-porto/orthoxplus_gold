@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -414,7 +414,10 @@ research_v619_surplus_hold=1 \
 research_v620_room_pace=1 \
 research_v621_rolloff_guard=1 \
 research_v621_pace_persist=1 \
-research_v621_even_spend=1"
+research_v621_even_spend=1 \
+research_v622_cap_window_pace=1 \
+research_v622_unknown_aged=1 \
+research_v622_cap_skip=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2974,6 +2977,69 @@ if [[ "${V6_21_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.21 young window PASS (a fall ages a book only past its window's roll-off and by a minimum fill; the line survives a restart; a known window spends evenly to its own roll-off)"
 fi
 
+# v6.22 S1-S3.  Aged books near and at the cap (research_v622_aged_cap).  S1 (research_v622_cap_window_pace): a book on
+# the v6.8 rolling line -- aged, v6.20's young() False -- whose room under the cap is below one making window of it is
+# paced: v6.4.1 holds its adding orders, v6.10 gives it v6.9's bound (8 base, not the 48 of a book behind its line),
+# v6.9 S3 keeps only its deepest level, the v6.17 touch quote places no adding quote.  The line alone never paces it once
+# it reaches the cap, since roll-off keeps freeing room.  S2 (research_v622_unknown_aged): on a UID whose window started
+# before its own logs (v6.21 UNKNOWN_NO_EMPTY_START), once its window is seen to roll (a book of it aged by v6.21's
+# guarded roll-off), every book without a window start of its own is aged; a known window is unchanged, and a young one
+# cannot roll.  S3 (research_v622_cap_skip): with v6.6 S4 on, a book at its cap builds no new order in the deep layer or
+# the touch quote -- the final validator would drop every one with a FINAL_CONTRACT_REJECT row -- and keeps every
+# cancel; unless four of the book's instructions are left in its budget (the deep layer's three, then the touch quote's
+# cancel) it builds as v6.21.  Without the switches the build is v6.21.  STRUCTURAL: the validator's volume cap and
+# making window, v6.21's window start and roll-off guard, the validator's refusal at the cap and the per-book budget.
+# Evidence (scratchpad k44 R2, the calibrated replay of UID 237 from its v6.21 restart): making +71%, alpha -1,159 ->
+# +311, touch adds 45% -> 5% of notional; young UID 22 byte-identical; live 10-08: 8-12 books per aged UID young after
+# 14-17 h, ~95 dropped placements a request.
+if [[ "${V6_22_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v622_aged_cap import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.22 S1-S3 the aged-cap module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'paced = self._v6_22_cap_window(pace, book_id, pace_cap, used, v6_22_room)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.22 S1 a book within one making window of its cap is not paced in the pass." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_22_age_unknown(pace, book_id)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.22 S2 the books of an unknown window are not aged in the pass." >&2
+    exit 1
+  }
+  grep -qF 'cap_skip = bool(v6_22_skip and self._v6_22_cap_skip(state, response, book_id, budget))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.22 S3 the pass does not decide which book is at its cap." >&2
+    exit 1
+  }
+  grep -qF "return 0                   # v6.22 S3: at its cap the book's cancels went out" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.22 S3 the deep layer still builds new orders at the cap." >&2
+    exit 1
+  }
+  grep -qF "return 0                   # v6.22 S3: at its cap the quote's cancel went out" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.22 S3 the touch quote still builds a new quote at the cap." >&2
+    exit 1
+  }
+  grep -qF 'def cap_window_paced(pace: Any, book_id: int, cap: Any, used: Any, *, room_on: Any) -> bool:' "$AGENT_PATH/research_v622_aged_cap.py" || {
+    echo "ERROR: v6.22 S1 research_v622_aged_cap has no cap_window_paced." >&2
+    exit 1
+  }
+  grep -qF 'def ages_unknown(pace: Any, book_id: int) -> bool:' "$AGENT_PATH/research_v622_aged_cap.py" || {
+    echo "ERROR: v6.22 S2 research_v622_aged_cap has no ages_unknown." >&2
+    exit 1
+  }
+  grep -qF 'def skip_keeps_budget(count: Any, budget: Any) -> bool:' "$AGENT_PATH/research_v622_aged_cap.py" || {
+    echo "ERROR: v6.22 S3 research_v622_aged_cap has no skip_keeps_budget." >&2
+    exit 1
+  }
+  for key in research_v622_cap_window_pace research_v622_unknown_aged research_v622_cap_skip research_v621_rolloff_guard \
+             research_v621_pace_persist research_v620_room_pace research_v66_cap_closed research_v641_volume_pace \
+             research_v66_pace_line research_v68_rolling_budget research_v69_deep_ladder research_v69_deep_first_pace; do
+    [[ " $PARAMS " == *" $key=1 "* ]] || {
+      echo "ERROR: v6.22 S1-S3 build without $key=1 in PARAMS (the aged-cap rules build on v6.20's room line, v6.21's window start and roll-off guard, v6.9's deep-first ladder and v6.6 S4's cap guard)." >&2
+      exit 1
+    }
+  done
+  echo "[preflight] v6.22 aged cap PASS (an aged book within one making window of its cap is paced; an unknown window's books are aged; a book at its cap builds no new order)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -3083,6 +3149,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_19.py \
       tests/test_research_v6_20.py \
       tests/test_research_v6_21.py \
+      tests/test_research_v6_22.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

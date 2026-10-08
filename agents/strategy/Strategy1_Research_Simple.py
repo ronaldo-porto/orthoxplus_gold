@@ -756,6 +756,13 @@ from research_v621_window_start import (  # noqa: E402
     derive_window_start as v621_derive_window_start,
     window_of as v621_window_of,
 )
+from research_v622_aged_cap import (  # noqa: E402
+    V622_AGED_CAP_VERSION,
+    ages_unknown as v622_ages_unknown,
+    at_cap as v622_at_cap,
+    cap_window_paced as v622_cap_window_paced,
+    skip_keeps_budget as v622_skip_keeps_budget,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2005,6 +2012,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v621_prepared = False
         self._v621_restore_payload: Any = None
         self._v621_window: dict[str, Any] = {}
+        # v6.22: aged books near and at the cap.  S1 a book on the v6.8 rolling line (aged) within one making window of
+        # its cap is paced; S2 on a UID whose window started before its own logs (v6.21 UNKNOWN_NO_EMPTY_START) and is
+        # seen to roll (a book of it aged by a genuine roll-off) a book without a window start of its own is aged; S3 a
+        # book at its cap builds no new order (the final validator drops every one) and keeps its cancels.  STRUCTURAL:
+        # see research_v622_aged_cap.
+        self.research_v622_cap_window_pace = self._as_bool(getattr(self.config, "research_v622_cap_window_pace", True))
+        self.research_v622_unknown_aged = self._as_bool(getattr(self.config, "research_v622_unknown_aged", True))
+        self.research_v622_cap_skip = self._as_bool(getattr(self.config, "research_v622_cap_skip", True))
+        self._v6_22_counts: dict[str, int] = {}
+        self._v6_22_errors = 0
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11269,7 +11286,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _v617_touch(self, response, book_id: int, deep, raw_bid, raw_ask, inv, touch_rows, already, req, *,
                     tick_size, min_order, budget, expiry, cfg, paced: bool, held: frozenset = frozenset(),
-                    size_scale: float = 1.0) -> int:
+                    size_scale: float = 1.0, cap_skip: bool = False) -> int:
         """v6.17: the book's touch quote -- ONE post-only order joining the touch on the side that trades toward the
         book's fresh fundamental, while its own price is THRESHOLD_BPS on the safe side of it.
 
@@ -11305,6 +11322,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             else:
                 doomed.append((row, why))
         cancelled = self._v617_cancel(response, book_id, doomed, req, budget)
+        if cap_skip:
+            return 0                   # v6.22 S3: at its cap the quote's cancel went out; a new quote would be dropped
         if kept or toward is None:
             return 0
         if toward in cancelled:
@@ -11375,14 +11394,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _v617_book(self, response, book_id: int, deep, raw_bid, raw_ask, inv, touch_rows, already, req, *,
                    tick_size, min_order, budget, expiry, cfg, paced: bool, held: frozenset = frozenset(),
-                   size_scale: float = 1.0) -> int:
+                   size_scale: float = 1.0, cap_skip: bool = False) -> int:
         """v6.17: the switch and the error guard around the book's touch quote (switch off: v6.16 exactly)."""
         if not bool(getattr(self, "research_v617_touch_quote", False)):
             return 0
         try:
             return int(self._v617_touch(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already, req,
                                         tick_size=tick_size, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
-                                        paced=paced, held=held, size_scale=size_scale))
+                                        paced=paced, held=held, size_scale=size_scale, cap_skip=cap_skip))
         except Exception:
             self._v617_errors = int(getattr(self, "_v617_errors", 0) or 0) + 1
             return 0
@@ -11556,6 +11575,63 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "errors": int(getattr(self, "_v621_errors", 0) or 0),
                 "window": dict(getattr(self, "_v621_window", {}) or {}), "line": line or {}}
 
+    def _v6_22_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v6_22_counts", None)
+        if counts is None:
+            counts = {}
+            self._v6_22_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v6_22_cap_window(self, pace, book_id: int, cap: float, used: float, room_on: bool) -> bool:
+        """v6.22 S1: is this book, unpaced by its line, paced for its cap (research_v622_cap_window_pace)?  On the v6.8
+        rolling line (aged) with less than one making window of the cap left; its pace keeps it in paced_now.  Never
+        raises."""
+        try:
+            if not v622_cap_window_paced(pace, book_id, cap, used, room_on=room_on):
+                return False
+            pace.paced_now.add(int(book_id))
+            self._v6_22_count("cap_window_paced_states")
+            return True
+        except Exception:
+            self._v6_22_errors = int(getattr(self, "_v6_22_errors", 0) or 0) + 1
+            return False
+
+    def _v6_22_age_unknown(self, pace, book_id: int) -> None:
+        """v6.22 S2: age this book if its UID's window started before its own logs and is seen to roll, and the book has
+        no window start of its own (research_v622_unknown_aged).  The aged mark rides in the session file (v6.21 S2).
+        Never raises."""
+        try:
+            if v622_ages_unknown(pace, book_id):
+                pace.aged.add(int(book_id))
+                self._v6_22_count("unknown_aged_books")
+        except Exception:
+            self._v6_22_errors = int(getattr(self, "_v6_22_errors", 0) or 0) + 1
+
+    def _v6_22_cap_skip(self, state, response, book_id: int, budget: int) -> bool:
+        """v6.22 S3: does this book build no new order this request (research_v622_cap_skip)?  Only at its cap with
+        v6.6 S4 on -- the final validator then drops every placement on it, read from the same state -- and only while
+        leaving out the deep layer's new orders cannot change what the touch quote's cancel sees of the book's
+        instruction budget.  Never raises: no reading is room, as the final validator reads it."""
+        try:
+            try:
+                headroom = float(self._research_volume_cap_headroom(state, book_id))
+            except Exception:
+                return False
+            if not v622_at_cap(headroom, getattr(self, "research_v66_cap_closed", False)):
+                return False
+            if not v622_skip_keeps_budget(self._count_book_instructions(response, book_id), budget):
+                self._v6_22_count("cap_skip_budget_kept")      # built as v6.21 does; the final validator drops them
+                return False
+            self._v6_22_count("cap_skip_book_states")
+            return True
+        except Exception:
+            self._v6_22_errors = int(getattr(self, "_v6_22_errors", 0) or 0) + 1
+            return False
+
+    def _v6_22_snapshot(self) -> dict:
+        return {"version": V622_AGED_CAP_VERSION, "counts": dict(getattr(self, "_v6_22_counts", {}) or {}),
+                "errors": int(getattr(self, "_v6_22_errors", 0) or 0)}
+
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
         mirror = getattr(self, "_v62_mirror", None)
@@ -11566,7 +11642,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "mirror_age": (age.snapshot() if age is not None else {})}
 
     def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,
-                   tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False,
+                   tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False, cap_skip: bool = False,
                    bound_scale: float = 1.0, held: frozenset = frozenset(), size_scale: float = 1.0) -> int:
         """v6.3.3: an open book's two sides are the deep layer's -- one order per side, as the A1.7.4.3 contract requires.
 
@@ -11710,6 +11786,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     self._a19_note_exit_cancel(book_id, ids, ABSENT_REPRICE_CANCEL)
                 except Exception:
                     pass
+        if cap_skip:
+            return 0                   # v6.22 S3: at its cap the book's cancels went out; a new order would be dropped
         live_sides: set = set()
         slots: dict = {}
         if ladder:
@@ -12048,6 +12126,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                    or bool(getattr(self, "research_v621_even_spend", False))) and isinstance(pace, V621YoungWindowLine)
         if v621_on:
             self._v621_pass(pace, state, now_ts, pace_duration)
+        # v6.22: aged books near and at the cap (research_v622_aged_cap) -- S1 a book on the v6.8 rolling line within
+        # one making window of its cap is paced; S2 on a UID whose window started before its own logs a book without a
+        # window start of its own is aged; S3 a book at its cap builds no new order (the final validator drops them).
+        v6_22_pace = bool(getattr(self, "research_v622_cap_window_pace", False))
+        v6_22_room = bool(getattr(self, "research_v620_room_pace", False))
+        v6_22_aged = bool(getattr(self, "research_v622_unknown_aged", False)) and v621_on
+        v6_22_skip = bool(getattr(self, "research_v622_cap_skip", False))
         # v6.19 S1: the making mirror's window and the cap, read once per request (research_v619_surplus_hold).
         v619_on = bool(getattr(self, "research_v619_surplus_hold", False))
         v619_mirror, v619_mature, v619_cap = None, False, 0.0
@@ -12171,7 +12256,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
                             self._v621_count("no_account_states")
                     else:
                         pace.observe(book_id, now_ts, used)
+                    if v6_22_aged:
+                        # v6.22 S2: the UID's window started before its own logs and rolls -- a book without a start of
+                        # its own is aged (research_v622_unknown_aged)
+                        self._v6_22_age_unknown(pace, book_id)
                     paced = bool(pace.paced(book_id, now_ts, used, pace_cap, pace_duration))
+                    if v6_22_pace and not paced:
+                        # v6.22 S1: on the v6.8 rolling line, whose cap never paces it while roll-off frees room, a book
+                        # within one making window of its cap is paced (research_v622_cap_window_pace)
+                        paced = self._v6_22_cap_window(pace, book_id, pace_cap, used, v6_22_room)
                 except Exception:
                     self._v641_errors = int(getattr(self, "_v641_errors", 0) or 0) + 1
                     paced = False
@@ -12228,6 +12321,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 except Exception:
                     self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
             if deep_open:
+                # v6.22 S3: at its cap a book keeps its cancels and builds no new order -- the final validator would
+                # drop every one (research_v622_cap_skip)
+                cap_skip = bool(v6_22_skip and self._v6_22_cap_skip(state, response, book_id, budget))
                 clip_b = deep.clip
                 if bool(getattr(self, "research_v615_launch", False)) and pace is not None:
                     try:
@@ -12243,23 +12339,24 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
                         tick_size=tick_size, dec=dec, clip=clip_b, min_order=min_order, budget=budget, expiry=expiry,
                         cfg=cfg, paced=paced, bound_scale=bound_scale, held=held, size_scale=size_scale,
+                        cap_skip=cap_skip,
                     )
                     if touch_on:                        # v6.17: after the deep layer, which places first
                         placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows,
                                                         already, req, tick_size=tick_size, min_order=min_order,
                                                         budget=budget, expiry=expiry, cfg=cfg, paced=paced, held=held,
-                                                        size_scale=size_scale)
+                                                        size_scale=size_scale, cap_skip=cap_skip)
                     continue
                 placed_total += self._v633_book(
                     response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
                     tick_size=tick_size, dec=dec, clip=deep.clip, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
-                    paced=paced, bound_scale=bound_scale, held=held, size_scale=size_scale,
+                    paced=paced, bound_scale=bound_scale, held=held, size_scale=size_scale, cap_skip=cap_skip,
                 )
                 if touch_on:                            # v6.17: after the deep layer, which places first
                     placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already,
                                                     req, tick_size=tick_size, min_order=min_order, budget=budget,
                                                     expiry=expiry, cfg=cfg, paced=paced, held=held,
-                                                    size_scale=size_scale)
+                                                    size_scale=size_scale, cap_skip=cap_skip)
                 continue
             if touch_rows and touch_on:
                 try:
@@ -12490,6 +12587,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             pace_persist_on=int(bool(getattr(self, "research_v621_pace_persist", False))),
             even_spend_on=int(bool(getattr(self, "research_v621_even_spend", False))),
             young_window=(self._v621_snapshot() if getattr(self, "research_v621_rolloff_guard", None) is not None else {}),
+            cap_window_pace_on=int(bool(getattr(self, "research_v622_cap_window_pace", False))),
+            unknown_aged_on=int(bool(getattr(self, "research_v622_unknown_aged", False))),
+            cap_skip_on=int(bool(getattr(self, "research_v622_cap_skip", False))),
+            aged_cap=(self._v6_22_snapshot() if getattr(self, "research_v622_cap_skip", None) is not None else {}),
             trend_target=self._v63_snapshot(),
             maker_ceiling=self._v627_snapshot(),
             counts=dict(getattr(self, "_v62_counts", {}) or {}),
