@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -423,7 +423,8 @@ research_v623_against_levels=deep \
 research_v623_against_gap_bps=2.3 \
 research_v623_against_adding=1 \
 research_v623_class_guard=1 \
-research_v623_start_once=1"
+research_v623_start_once=1 \
+research_v624_pay_basis=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -3145,6 +3146,49 @@ if [[ "${V6_23_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.23 validator 0.6.3 PASS (S1 realized_mode=${_v623_mode} levels=${_v623_levels} adding=${_v623_adding} gap=${_v623_gap}bps: from a 0.6.3 validator the deep side trading against a book's fundamental holds no order on those levels, 0 = off; S2 a book of another asset class takes no new order; S3 one PnL reset per run start, never failing the request)"
 fi
 
+# v6.24 S4.  The pay-basis switch (research_v624_pay_basis).  0.6.3 publishes both making bases and pays ONE: the
+# validator's launch flag --scoring.debeta.making_basis picks it (upstream default realized; its reward.py pays the
+# realized sums only on 'realized', any other value the captured ones).  v6.23 S1's auto mode keys on the release (the
+# state's version >= 63), so it has been on since the validator restarted on 0.6.3 (23:55 JST 10-09) while that
+# validator pays CAPTURED (its config page: config_scoring_debeta_making_basis="captured"), costing captured making (the
+# k48 replay -7.6%, live about -6%) under a basis that does not pay for it.  With S4, auto keys on the PAYING basis the
+# validator publishes: realized -> S1 active, captured -> inactive, whatever the release; while the host has never read
+# it, v6.23's release rule.  The basis comes from the validator's public config page through a per-host shared cache
+# (one GET per 5 min per host; the last known basis is kept across failed GETs and agent restarts; no response waits on
+# it).  Modes 1 / 0 and S1's rule itself are unchanged; with the switch off the build is v6.23.  STRUCTURAL: the
+# validator's own published paying basis, read as its reward.py reads it.
+if [[ "${V6_24_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v624_pay_basis import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.24 S4 the pay-basis module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self.research_v624_pay_basis = self._as_bool(getattr(self.config, "research_v624_pay_basis", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.24 S4 the agent does not read research_v624_pay_basis (default on)." >&2
+    exit 1
+  }
+  grep -qF 'active = bool(v624_realized_active(v6_24_mode, spec, self._v6_24_basis))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.24 S4 _v6_23_observe does not decide S1 from the validator's paying basis." >&2
+    exit 1
+  }
+  grep -qF 'def parse_basis(text: Any) -> str | None:' "$AGENT_PATH/research_v624_pay_basis.py" || {
+    echo "ERROR: v6.24 S4 research_v624_pay_basis has no parse_basis." >&2
+    exit 1
+  }
+  grep -qF 'def realized_active(mode: Any, spec: Any, basis: Any) -> bool:' "$AGENT_PATH/research_v624_pay_basis.py" || {
+    echo "ERROR: v6.24 S4 research_v624_pay_basis has no realized_active." >&2
+    exit 1
+  }
+  grep -qF 'class SharedBasis:' "$AGENT_PATH/research_v624_pay_basis.py" || {
+    echo "ERROR: v6.24 S4 research_v624_pay_basis has no SharedBasis." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v624_pay_basis=1 "* ]] || {
+    echo "ERROR: v6.24 S4 build without research_v624_pay_basis=1 in PARAMS." >&2
+    exit 1
+  }
+  echo "[preflight] v6.24 pay basis PASS (S1's auto mode keys on the making basis the validator publishes as paying: realized -> active, captured -> inactive, never read on this host -> v6.23's release rule; one GET of its config page per 5 min per host)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -3256,6 +3300,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_21.py \
       tests/test_research_v6_22.py \
       tests/test_research_v6_23.py \
+      tests/test_research_v6_24.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

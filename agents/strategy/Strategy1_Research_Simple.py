@@ -781,6 +781,11 @@ from research_v623_validator_063 import (  # noqa: E402
     validator_spec as v623_validator_spec,
     withheld as v623_withheld,
 )
+from research_v624_pay_basis import (  # noqa: E402
+    SharedBasis as V624SharedBasis,
+    reads_basis as v624_reads_basis,
+    realized_active as v624_realized_active,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2065,6 +2070,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6_23_start_key: tuple | None = None
         self._v6_23_update_seq = 0
         self._v6_23_start_error: str | None = None
+        # v6.24: S4 S1's auto mode keys on the making basis the validator publishes as paying -- its config page's
+        # config_scoring_debeta_making_basis, read through a per-host shared cache that keeps the last known value:
+        # realized -> active, captured -> inactive, whatever its release; while this host has never read one, v6.23's
+        # release rule.  Modes 1 / 0 and S1's rule itself are unchanged; off, the build is v6.23.  STRUCTURAL: see
+        # research_v624_pay_basis.
+        self.research_v624_pay_basis = self._as_bool(getattr(self.config, "research_v624_pay_basis", True))
+        self._v6_24_basis_feed = None
+        self._v6_24_basis: str | None = None
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11722,13 +11735,22 @@ class Strategy1_Research_Simple(Strategy1_Research):
         """v6.23: this state's validator release (S1, research_v623_realized_mode) and asset classes (S2,
         research_v623_class_guard), read once per request before any decision; a V623_STATE row at the first request, on
         a change of either, at the request after a simulation start and every V62_STATE_EVERY_TICKS ticks.  Never raises:
-        an error leaves S1 inactive and no book foreign (v6.22)."""
+        an error leaves S1 inactive and no book foreign (v6.22).  v6.24 S4 (research_v624_pay_basis): auto follows the
+        making basis the validator publishes as paying once this host has read it (realized: active, captured: inactive,
+        whatever the release; a change that flips S1 is an activation / deactivation row), v6.23's release rule until
+        then."""
         tick = int(getattr(self, "_tick", 0) or 0) + 1          # this request's tick (respond() counts it later)
         was_active = bool(getattr(self, "_v6_23_active", False))
         was_foreign = getattr(self, "_v6_23_foreign", None) or frozenset()
         try:
             spec = v623_validator_spec(getattr(state, "version", None))
-            active = bool(v623_realized_active(getattr(self, "research_v623_realized_mode", None), spec))
+            if bool(getattr(self, "research_v624_pay_basis", False)):
+                # v6.24 S4: only auto reads the basis (the host's shared reading; never read: None, v6.23's rule)
+                v6_24_mode = getattr(self, "research_v623_realized_mode", None)
+                self._v6_24_basis = self._v6_24_basis_ref().basis() if v624_reads_basis(v6_24_mode) else None
+                active = bool(v624_realized_active(v6_24_mode, spec, self._v6_24_basis))
+            else:
+                active = bool(v623_realized_active(getattr(self, "research_v623_realized_mode", None), spec))
         except Exception:
             self._v6_23_errors = int(getattr(self, "_v6_23_errors", 0) or 0) + 1
             spec, active = None, False
@@ -11814,6 +11836,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _v6_23_snapshot(self) -> dict:
         foreign = sorted(getattr(self, "_v6_23_foreign", None) or ())
+        v6_24_feed = getattr(self, "_v6_24_basis_feed", None)          # v6.24 S4: the host's reading of the basis
+        v6_24_status = (v6_24_feed.status() if v6_24_feed is not None else None) or {}
         return {"version": V623_VALIDATOR_063_VERSION,
                 "mode": str(getattr(self, "research_v623_realized_mode", "") or ""),
                 "spec": getattr(self, "_v6_23_spec", None), "active": int(bool(getattr(self, "_v6_23_active", False))),
@@ -11826,7 +11850,24 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "foreign_range": ([foreign[0], foreign[-1]] if foreign else []),
                 "counts": dict(getattr(self, "_v6_23_counts", {}) or {}),
                 "errors": int(getattr(self, "_v6_23_errors", 0) or 0),
-                "start_error": getattr(self, "_v6_23_start_error", None)}
+                "start_error": getattr(self, "_v6_23_start_error", None),
+                "pay_basis_on": int(bool(getattr(self, "research_v624_pay_basis", False))),
+                "basis": getattr(self, "_v6_24_basis", None),
+                "basis_seen_age_s": v6_24_status.get("seen_age_s"),
+                "basis_attempt_age_s": v6_24_status.get("attempt_age_s"),
+                "basis_fetches": int(v6_24_status.get("fetches", 0) or 0),
+                "basis_fetch_errors": int(v6_24_status.get("fetch_errors", 0) or 0)}
+
+    def _v6_24_basis_ref(self):
+        """v6.24 S4: the host's shared reading of the validator's paying basis, started on first use -- it loads the
+        host's cache at once (a restarted agent starts from the last known basis), then a daemon thread keeps it; a
+        response never waits on the page."""
+        feed = getattr(self, "_v6_24_basis_feed", None)
+        if feed is None:
+            feed = V624SharedBasis()
+            feed.start()
+            self._v6_24_basis_feed = feed
+        return feed
 
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)

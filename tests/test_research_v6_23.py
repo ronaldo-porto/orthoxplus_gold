@@ -943,6 +943,11 @@ V623_IDENTIFIERS = (
     {"against"} | {k for k in V623_NAMES if k.startswith(("V623_", "v623_"))}
     | {"research_v623_realized_mode", "research_v623_against_levels", "research_v623_against_gap_bps",
        "research_v623_against_adding", "research_v623_class_guard", "research_v623_start_once"})
+# v6.24 (S4, research_v624_pay_basis) only adds too -- its import, its _v6_24_ methods and statements naming its switch,
+# the names it imports or a _v6_24_ / v6_24_ name, inside v6.23's own _v6_23_observe and _v6_23_snapshot as well
+# (tests/test_research_v6_24.py strips them against the committed v6.23) -- so they go with v6.23's additions here and
+# every v6.22 statement stays pinned.
+V624_IDENTIFIERS = {"research_v624_pay_basis", "V624SharedBasis", "v624_reads_basis", "v624_realized_active"}
 
 
 def _v622(rel):
@@ -960,21 +965,23 @@ def _mentions(node):
     for n in ast.walk(node):
         name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
             n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
-        if isinstance(name, str) and (name in V623_IDENTIFIERS or name.startswith(("_v6_23_", "v6_23_"))):
+        if isinstance(name, str) and (name in V623_IDENTIFIERS or name in V624_IDENTIFIERS
+                                      or name.startswith(("_v6_23_", "v6_23_", "_v6_24_", "v6_24_"))):
             return True
     return False
 
 
 class _Strip623(ast.NodeTransformer):
-    """Removes what v6.23 adds and nothing else: its import, its methods, statements naming its identifiers (an if on
-    one keeps its else), the against keyword and argument, and every docstring (v6.23 extended one)."""
+    """Removes what v6.23 (and v6.24 after it) adds and nothing else: its import, its methods, statements naming its
+    identifiers (an if on one keeps its else), the against keyword and argument, and every docstring (v6.23 extended
+    one)."""
 
     def _stmts(self, stmts):
         out = []
         for st in stmts:
-            if isinstance(st, ast.ImportFrom) and st.module == "research_v623_validator_063":
+            if isinstance(st, ast.ImportFrom) and st.module in ("research_v623_validator_063", "research_v624_pay_basis"):
                 continue
-            if isinstance(st, ast.FunctionDef) and (st.name == "onStart" or st.name.startswith("_v6_23_")):
+            if isinstance(st, ast.FunctionDef) and (st.name == "onStart" or st.name.startswith(("_v6_23_", "_v6_24_"))):
                 continue
             if isinstance(st, ast.If) and _mentions(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -1097,9 +1104,9 @@ def test_each_rule_is_wired_once_and_in_its_place():
 
 
 def test_the_v623_block_is_gated_preflighted_and_listed():
-    assert "; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0\n" in LAUNCHER
+    assert "; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0\n" in LAUNCHER
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1"), arm
+    assert arm.endswith("; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1"), arm
     assert 'if [[ "${V6_23_BUILD:-0}" == "1" ]]; then' in LAUNCHER
     assert "      tests/test_research_v6_23.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.22 aged cap PASS') < LAUNCHER.index("# v6.23 S1-S3.")
