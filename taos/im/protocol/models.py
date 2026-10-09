@@ -241,6 +241,12 @@ class MarketSimulationConfig(BaseModel):
 
     books_per_block : int
     book_count : int
+    # Miner-side addition (orthoxplus v6.23 S2, research_v623_class_guard): a 0.6.3 validator's multi-asset layout,
+    # kept raw -- a list of {name, books, priceDecimals, volumeDecimals, config} as taos 0.6.3 serialises its
+    # AssetClass list (protocol/config.py) -- so the agent can tell a book of another asset class.  None on a single
+    # market and from a 0.6.2 validator.  Typed Any: no shape a validator sends can fail the config's validation (a
+    # failure there would leave the state without a config).
+    classes : Any = None
     book_levels : int
     detailed_book_levels : int = 5
 

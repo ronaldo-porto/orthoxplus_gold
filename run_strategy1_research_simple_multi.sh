@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -417,7 +417,13 @@ research_v621_pace_persist=1 \
 research_v621_even_spend=1 \
 research_v622_cap_window_pace=1 \
 research_v622_unknown_aged=1 \
-research_v622_cap_skip=1"
+research_v622_cap_skip=1 \
+research_v623_realized_mode=auto \
+research_v623_against_levels=deep \
+research_v623_against_gap_bps=2.3 \
+research_v623_against_adding=1 \
+research_v623_class_guard=1 \
+research_v623_start_once=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -3040,6 +3046,105 @@ if [[ "${V6_22_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.22 aged cap PASS (an aged book within one making window of its cap is paced; an unknown window's books are aged; a book at its cap builds no new order)"
 fi
 
+# v6.23 S1-S3.  The validator's 0.6.3 release (research_v623_validator_063).  S1 (research_v623_realized_mode, auto):
+# while the state's version says its validator runs 0.6.3 -- whose realized making basis pays a fill's captured spread
+# only as far as it is still there 20 s later -- the deep side trading against a book's fresh fundamental (the sell side
+# when it is above the mid, the buy side below) holds no level-0 order: a resting one is cancelled, none is placed; levels
+# 1/2, the other side and the touch quote are unchanged (research_v623_against_levels L0 | deep withholds every level,
+# research_v623_against_gap_bps a minimum |log(fp / mid)|, research_v623_against_adding=1 only while the side's fill would
+# add to |inventory|).  S2 (research_v623_class_guard): a book of another asset
+# class -- its minimum order or grid differs from the top-level configuration's, which every size, cap and bound here
+# is in -- keeps its cancels and takes no new order; the vendored protocol keeps the configuration's classes for it.
+# S3 (research_v623_start_once): one PnL reset per state carrying a run's start notices (0.6.3 sends one per
+# realization, all in the run's first state), and an exception out of it (the frozen restore branch's bt NameError, armed
+# by the previous run's session carry) never fails the request or drops the rest of its notices.  Inactive (a 0.6.2
+# validator), on a single market and with one start notice the build is v6.22.  STRUCTURAL: the validator's release
+# number and making basis, the simulator's reversion target, the class grid and minimum, the start notice's simulation.
+# Evidence (scratchpad k47): on our live tape q = 0.00-0.08 and the making share 5.2% -> 0.95% under 0.6.3; level-0
+# fills keep -0.05..-0.19 of their spread at 20 s, the touch quote 0.78-0.92.  SHIPPED: S1 auto with levels=deep,
+# adding=1 and gap 2.3 bps (the v6.17 touch threshold, where the replay exercised it) -- no deep order at any level on the
+# against side while its fill would open or grow a position against the fundamental (k48's agdeep=2, the calibrated 0.6.3 replay of 10-09 07:53: making63 +16.7% over six timeline-windows,
+# 6 of 6 won, 3 of 4 robustness variants positive; static what-if on our live fills +29..+45%).  Level 0 alone (L0,
+# adding=0) LOSES there (-13.2%, 1 of 6): the against level-0 fill and the toward touch fill are the two legs of one
+# round trip.  Under a 0.6.2 validator auto keeps S1 off (v6.22 exactly); realized_mode=0 turns it off everywhere.
+if [[ "${V6_23_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v623_validator_063 import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.23 S1-S3 the validator-0.6.3 module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_23_observe(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.23 S1-S2 respond does not read the state's validator release and asset classes." >&2
+    exit 1
+  }
+  grep -qF 'against = (self._v6_23_against(book_id, raw_bid, raw_ask, cfg, inv)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.23 S1 the pass does not withhold the side trading against the fundamental." >&2
+    exit 1
+  }
+  grep -qF 'doomed.append((row, V623_CANCEL_AGAINST))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.23 S1 the deep layer keeps a resting order on the side trading against the fundamental." >&2
+    exit 1
+  }
+  grep -qF 'continue                    # v6.23 S1: no order on the side trading against the fundamental' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.23 S1 the deep layer still places on the side trading against the fundamental." >&2
+    exit 1
+  }
+  grep -qF 'cap_skip = self._v6_23_foreign_skip(book_id)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.23 S2 the pass builds new orders on a book of another asset class." >&2
+    exit 1
+  }
+  grep -qF 'book_id, side, None, None, None, V623_REJECT_FOREIGN, False,' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.23 S2 the final validator passes a placement on a book of another asset class." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_23_count("starts_skipped")' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.23 S3 every start notice of a simulation resets the PnL state." >&2
+    exit 1
+  }
+  grep -qF 'def realized_active(mode: Any, spec: Any) -> bool:' "$AGENT_PATH/research_v623_validator_063.py" || {
+    echo "ERROR: v6.23 S1 research_v623_validator_063 has no realized_active." >&2
+    exit 1
+  }
+  grep -qF 'def class_layout(config: Any) -> tuple[frozenset, str]:' "$AGENT_PATH/research_v623_validator_063.py" || {
+    echo "ERROR: v6.23 S2 research_v623_validator_063 has no class_layout." >&2
+    exit 1
+  }
+  grep -qF '    classes : Any = None' "$SCRIPT_DIR/taos/im/protocol/models.py" || {
+    echo "ERROR: v6.23 S2 the vendored protocol drops the configuration's asset classes." >&2
+    exit 1
+  }
+  _v623_re=' research_v623_realized_mode=(auto|1|0) '
+  [[ " $PARAMS " =~ $_v623_re ]] || {
+    echo "ERROR: v6.23 S1 build without research_v623_realized_mode=auto, 1 or 0 in PARAMS (the shipped state of the realized rule must be explicit)." >&2
+    exit 1
+  }
+  _v623_mode="${BASH_REMATCH[1]}"
+  _v623_re=' research_v623_against_levels=(L0|deep) '
+  [[ " $PARAMS " =~ $_v623_re ]] || {
+    echo "ERROR: v6.23 S1 build without research_v623_against_levels=L0 (or deep) in PARAMS." >&2
+    exit 1
+  }
+  _v623_levels="${BASH_REMATCH[1]}"
+  _v623_re=' research_v623_against_gap_bps=([0-9]+(\.[0-9]+)?) '
+  [[ " $PARAMS " =~ $_v623_re ]] || {
+    echo "ERROR: v6.23 S1 build without a research_v623_against_gap_bps >= 0 in PARAMS." >&2
+    exit 1
+  }
+  _v623_gap="${BASH_REMATCH[1]}"
+  _v623_re=' research_v623_against_adding=(0|1) '
+  [[ " $PARAMS " =~ $_v623_re ]] || {
+    echo "ERROR: v6.23 S1 build without research_v623_against_adding=0 or 1 in PARAMS." >&2
+    exit 1
+  }
+  _v623_adding="${BASH_REMATCH[1]}"
+  for key in research_v623_class_guard research_v623_start_once research_v617_touch_quote research_v69_deep_ladder; do
+    [[ " $PARAMS " == *" $key=1 "* ]] || {
+      echo "ERROR: v6.23 S1-S3 build without $key=1 in PARAMS (S1 withholds a level of v6.9's ladder beside the v6.17 touch quote; S2 and S3 ship on)." >&2
+      exit 1
+    }
+  done
+  echo "[preflight] v6.23 validator 0.6.3 PASS (S1 realized_mode=${_v623_mode} levels=${_v623_levels} adding=${_v623_adding} gap=${_v623_gap}bps: from a 0.6.3 validator the deep side trading against a book's fundamental holds no order on those levels, 0 = off; S2 a book of another asset class takes no new order; S3 one PnL reset per run start, never failing the request)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -3150,6 +3255,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_20.py \
       tests/test_research_v6_21.py \
       tests/test_research_v6_22.py \
+      tests/test_research_v6_23.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

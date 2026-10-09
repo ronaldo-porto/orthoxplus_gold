@@ -34,6 +34,7 @@ MODULES = [
     "research_v621_young_window.py",
     "research_v621_window_start.py",
     "research_v622_aged_cap.py",
+    "research_v623_validator_063.py",
     "research_v6214_touch_life.py",
     "research_v6215_order_life.py",
     "research_v63_trend_target.py",

@@ -763,6 +763,24 @@ from research_v622_aged_cap import (  # noqa: E402
     cap_window_paced as v622_cap_window_paced,
     skip_keeps_budget as v622_skip_keeps_budget,
 )
+from research_v623_validator_063 import (  # noqa: E402
+    CANCEL_AGAINST as V623_CANCEL_AGAINST,
+    GAP_BPS_DEFAULT as V623_GAP_BPS_DEFAULT,
+    LAYOUT_SINGLE as V623_LAYOUT_SINGLE,
+    LAYOUT_UNREADABLE as V623_LAYOUT_UNREADABLE,
+    LEVELS_L0 as V623_LEVELS_L0,
+    REJECT_FOREIGN as V623_REJECT_FOREIGN,
+    V623_VALIDATOR_063_VERSION,
+    against_side as v623_against_side,
+    class_layout as v623_class_layout,
+    parse_gap_bps as v623_parse_gap_bps,
+    parse_levels as v623_parse_levels,
+    parse_mode as v623_parse_mode,
+    realized_active as v623_realized_active,
+    start_key as v623_start_key,
+    validator_spec as v623_validator_spec,
+    withheld as v623_withheld,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2022,6 +2040,31 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self.research_v622_cap_skip = self._as_bool(getattr(self.config, "research_v622_cap_skip", True))
         self._v6_22_counts: dict[str, int] = {}
         self._v6_22_errors = 0
+        # v6.23: the validator's 0.6.3 release.  S1 under its realized making basis (auto: from a 0.6.3 validator on,
+        # read from each state's version) the deep side trading against a book's fresh fundamental holds no order on its
+        # withheld levels (shipped: every level, only while its fill would add to |inv|, past the touch quote's 2.3-bps
+        # threshold -- k48's agdeep=2); S2 a book of
+        # another asset class (its minimum order or grid differs from the top-level configuration's) takes no new order;
+        # S3 a run's start resets the PnL state once and never fails the request.  Inactive, on a single market and with
+        # one start notice the build is v6.22.  STRUCTURAL: see research_v623_validator_063.
+        self.research_v623_realized_mode = v623_parse_mode(getattr(self.config, "research_v623_realized_mode", "auto"))
+        self.research_v623_against_levels = v623_parse_levels(getattr(self.config, "research_v623_against_levels", "deep"))
+        self.research_v623_against_gap_bps = v623_parse_gap_bps(
+            getattr(self.config, "research_v623_against_gap_bps", V623_GAP_BPS_DEFAULT))
+        self.research_v623_against_adding = self._as_bool(getattr(self.config, "research_v623_against_adding", True))
+        self.research_v623_class_guard = self._as_bool(getattr(self.config, "research_v623_class_guard", True))
+        self.research_v623_start_once = self._as_bool(getattr(self.config, "research_v623_start_once", True))
+        self._v6_23_counts: dict[str, int] = {}
+        self._v6_23_errors = 0
+        self._v6_23_spec: int | None = None
+        self._v6_23_active = False
+        self._v6_23_foreign: frozenset = frozenset()
+        self._v6_23_layout = V623_LAYOUT_SINGLE
+        self._v6_23_reported = False
+        self._v6_23_report: str | None = None
+        self._v6_23_start_key: tuple | None = None
+        self._v6_23_update_seq = 0
+        self._v6_23_start_error: str | None = None
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -2327,6 +2370,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return super()._format_human(record)
 
     def update(self, state) -> None:
+        # v6.23 S3: one count per state, so the start notices one state carries are told from a later state's
+        # (research_v623_start_once; the request tick stands still while the v5.0.3 quiet gate holds).
+        self._v6_23_update_seq = int(getattr(self, "_v6_23_update_seq", 0) or 0) + 1
         # A1.9.6.1: the framework ingests this state's trades inside update(),
         # before respond().  The venue's BASE precision must be known first, or
         # the fee residue of the first fills after a restart would be skipped.
@@ -2368,6 +2414,39 @@ class Strategy1_Research_Simple(Strategy1_Research):
         except Exception:
             self._v632_errors = int(getattr(self, "_v632_errors", 0) or 0) + 1
         return super().update(state)
+
+    def onStart(self, event) -> None:
+        """v6.23 S3 (research_v623_start_once): a run's start resets the PnL state once, and never fails the request.
+
+        The 0.6.3 engine puts the start notice (ESS) into the first state of a run, one per realization (eight on the
+        96 + 32 layout), and the framework calls onStart for each.  The first of the state runs the reset -- with
+        Strategy1_Research.onStart's restore when the session carry armed its preserve flag (one state after the
+        previous run's start: 0.6.3's first state carries no simulation id) -- and every further one of the same state
+        (update()'s count and the state's timestamp) is counted and skipped, so what it restored survives.  An
+        exception out of the reset is counted instead of failing the request: the frozen restore branch logs through
+        ``bt``, which its module never imports (NameError), after the restore itself has run.  Off: v6.22 (every notice
+        resets, and that NameError fails the request and the rest of its notices).
+        """
+        if not bool(getattr(self, "research_v623_start_once", False)):
+            super().onStart(event)
+            return
+        key = None
+        try:
+            key = v623_start_key(getattr(self, "_v6_23_update_seq", None), getattr(self, "_scoring_timestamp", None))
+        except Exception:
+            self._v6_23_errors = int(getattr(self, "_v6_23_errors", 0) or 0) + 1
+        if key is not None and key == getattr(self, "_v6_23_start_key", None):
+            self._v6_23_count("starts_skipped")         # another realization's notice of the same start
+            return
+        if key is not None:
+            self._v6_23_start_key = key
+        self._v6_23_count("starts_reset")
+        self._v6_23_report = "simulation_start"         # the next request's V623_STATE row
+        try:
+            super().onStart(event)
+        except Exception as exc:
+            self._v6_23_count("start_errors")
+            self._v6_23_start_error = type(exc).__name__
 
     # ------------------------------------------------------------------
     # A1.5.1 Maker lifecycle learning.  Learn NET realized downside, including
@@ -11632,6 +11711,123 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return {"version": V622_AGED_CAP_VERSION, "counts": dict(getattr(self, "_v6_22_counts", {}) or {}),
                 "errors": int(getattr(self, "_v6_22_errors", 0) or 0)}
 
+    def _v6_23_count(self, key: str, n: int = 1) -> None:
+        counts = getattr(self, "_v6_23_counts", None)
+        if counts is None:
+            counts = {}
+            self._v6_23_counts = counts
+        counts[key] = int(counts.get(key, 0) or 0) + int(n)
+
+    def _v6_23_observe(self, state) -> None:
+        """v6.23: this state's validator release (S1, research_v623_realized_mode) and asset classes (S2,
+        research_v623_class_guard), read once per request before any decision; a V623_STATE row at the first request, on
+        a change of either, at the request after a simulation start and every V62_STATE_EVERY_TICKS ticks.  Never raises:
+        an error leaves S1 inactive and no book foreign (v6.22)."""
+        tick = int(getattr(self, "_tick", 0) or 0) + 1          # this request's tick (respond() counts it later)
+        was_active = bool(getattr(self, "_v6_23_active", False))
+        was_foreign = getattr(self, "_v6_23_foreign", None) or frozenset()
+        try:
+            spec = v623_validator_spec(getattr(state, "version", None))
+            active = bool(v623_realized_active(getattr(self, "research_v623_realized_mode", None), spec))
+        except Exception:
+            self._v6_23_errors = int(getattr(self, "_v6_23_errors", 0) or 0) + 1
+            spec, active = None, False
+        foreign, layout = frozenset(), V623_LAYOUT_SINGLE
+        if bool(getattr(self, "research_v623_class_guard", False)):
+            try:
+                foreign, layout = v623_class_layout(getattr(state, "config", None))
+            except Exception:
+                self._v6_23_errors = int(getattr(self, "_v6_23_errors", 0) or 0) + 1
+                foreign, layout = frozenset(), V623_LAYOUT_UNREADABLE
+            if layout == V623_LAYOUT_UNREADABLE:
+                self._v6_23_count("layout_unreadable_states")
+        self._v6_23_spec, self._v6_23_active = spec, active
+        self._v6_23_foreign, self._v6_23_layout = foreign, layout
+        if active:
+            self._v6_23_count("active_requests")
+        if active != was_active:
+            self._v6_23_count("activations" if active else "deactivations")
+        if not getattr(self, "_v6_23_reported", False):
+            reason = "start"
+        elif active != was_active:
+            reason = "activation" if active else "deactivation"
+        elif foreign != was_foreign:
+            reason = "layout"
+        elif getattr(self, "_v6_23_report", None):
+            reason = str(self._v6_23_report)
+        elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+            reason = "periodic"
+        else:
+            return
+        self._v6_23_reported = True
+        self._v6_23_report = None
+        row = dict(self._v6_23_snapshot(), reason=reason, tick=tick)
+        work = getattr(self, "_v629_request_work", None)
+        if work is not None:
+            work.add("v623_state_row", lambda: self._emit("V623_STATE", force=True, **row))   # after the reply (v6.2.9)
+        else:
+            self._emit("V623_STATE", force=True, **row)
+
+    def _v6_23_fundamental(self, book_id: int, raw_bid, raw_ask, cfg):
+        """v6.23 S1: (fundamental, reason) of this book -- v6.16's feed and freshness rule, read exactly as the v6.17 touch
+        quote reads it (_v617_fundamental), on v6.23's own counters."""
+        feed = self._v616_feed_ref()
+        sim_id = getattr(cfg, "simulation_id", None) if cfg is not None else None
+        if not sim_id and cfg is not None:
+            log_dir = getattr(cfg, "logDir", None)
+            sim_id = str(log_dir).replace("\\", "/").rstrip("/").split("/")[-1] if log_dir else None
+        return v616_book_fundamental(
+            feed.snapshot(), int(book_id), raw_bid, raw_ask,
+            state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id)
+
+    def _v6_23_against(self, book_id: int, raw_bid, raw_ask, cfg, inv=0.0) -> frozenset:
+        """v6.23 S1: the (side, level) pairs the deep layer holds no order on for this book this request -- the side
+        trading against its fresh fundamental, level 0 (or every level with research_v623_against_levels=deep), past the
+        gap gate, and with research_v623_against_adding only while its fill would add to |inv|.  Empty without a fresh
+        fundamental, at the mid, inside the gap, for an unwinding side (adding) or on an error (v6.22).  Never raises."""
+        try:
+            fp, reason = self._v6_23_fundamental(book_id, raw_bid, raw_ask, cfg)
+            self._v6_23_count("fp_" + str(reason))
+            if fp is None:
+                return frozenset()
+            side = v623_against_side(0.5 * (float(raw_bid) + float(raw_ask)), fp,
+                                     getattr(self, "research_v623_against_gap_bps", 0.0))
+            if side is None:
+                self._v6_23_count("no_against_states")          # at the mid or inside the gap
+                return frozenset()
+            pairs = v623_withheld(side, getattr(self, "research_v623_against_levels", V623_LEVELS_L0),
+                                  adding_only=bool(getattr(self, "research_v623_against_adding", False)), inventory=inv)
+            if not pairs:
+                self._v6_23_count("unwinding_kept_states")      # the against side unwinds a position built toward fp
+                return frozenset()
+            for s_, k in sorted(pairs):
+                self._v6_23_count("withheld_%s_l%d" % (s_, k))
+            return pairs
+        except Exception:
+            self._v6_23_errors = int(getattr(self, "_v6_23_errors", 0) or 0) + 1
+            return frozenset()
+
+    def _v6_23_foreign_skip(self, book_id: int) -> bool:
+        """v6.23 S2: a book of another asset class keeps its cancels and builds no new order this request."""
+        self._v6_23_count("foreign_skip_book_states")
+        return True
+
+    def _v6_23_snapshot(self) -> dict:
+        foreign = sorted(getattr(self, "_v6_23_foreign", None) or ())
+        return {"version": V623_VALIDATOR_063_VERSION,
+                "mode": str(getattr(self, "research_v623_realized_mode", "") or ""),
+                "spec": getattr(self, "_v6_23_spec", None), "active": int(bool(getattr(self, "_v6_23_active", False))),
+                "against_levels": str(getattr(self, "research_v623_against_levels", "") or ""),
+                "against_gap_bps": float(getattr(self, "research_v623_against_gap_bps", 0.0) or 0.0),
+                "against_adding_on": int(bool(getattr(self, "research_v623_against_adding", False))),
+                "class_guard_on": int(bool(getattr(self, "research_v623_class_guard", False))),
+                "start_once_on": int(bool(getattr(self, "research_v623_start_once", False))),
+                "layout": getattr(self, "_v6_23_layout", None), "foreign_books": len(foreign),
+                "foreign_range": ([foreign[0], foreign[-1]] if foreign else []),
+                "counts": dict(getattr(self, "_v6_23_counts", {}) or {}),
+                "errors": int(getattr(self, "_v6_23_errors", 0) or 0),
+                "start_error": getattr(self, "_v6_23_start_error", None)}
+
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
         mirror = getattr(self, "_v62_mirror", None)
@@ -11643,6 +11839,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,
                    tick_size, dec, clip, min_order, budget, expiry, cfg, paced: bool = False, cap_skip: bool = False,
+                   against: frozenset = frozenset(),
                    bound_scale: float = 1.0, held: frozenset = frozenset(), size_scale: float = 1.0) -> int:
         """v6.3.3: an open book's two sides are the deep layer's -- one order per side, as the A1.7.4.3 contract requires.
 
@@ -11654,6 +11851,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         same band on its own depth; ownership is per (side, level), so a resting level does not keep the next out,
         and a side still takes one new order per request (shallow first).  S3: ahead of its volume line, the adding
         side keeps its deepest level only.
+
+        v6.23 S1: ``against`` names the (side, level) pairs that hold no order this request -- the side trading against
+        the book's fresh fundamental under the 0.6.3 realized basis; a resting one is cancelled, none is placed.  Empty
+        (the default): v6.22.
         """
         req["deep_books"] += 1
         mid = 0.5 * (float(raw_bid) + float(raw_ask))
@@ -11742,6 +11943,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             level = int(v633_deep_level(getattr(row, "client_id", None)) or 0)
             if level and not ladder:
                 doomed.append((row, V69_CANCEL_LEVEL_OFF))  # v6.9: a ladder order the layer no longer places
+            elif against and (side, level) in against:
+                doomed.append((row, V623_CANCEL_AGAINST))   # v6.23 S1: on the side trading against the fundamental
             elif side in held:
                 doomed.append((row, V619_CANCEL_SURPLUS))   # v6.19: the cap-bound leading side keeps no adding order
             elif not _room(side):
@@ -11818,6 +12021,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 continue
             adding = bool(paced and v641_adds(side, inv))
             for level, level_d in candidates[side]:
+                if against and (side, level) in against:
+                    continue                    # v6.23 S1: no order on the side trading against the fundamental
                 if ladder and ((side, level) in resting or v69_slot_taken(slots, side, level)
                                or (side, level) in cancelled or (side, V69_WHOLE_SIDE) in cancelled):
                     continue
@@ -12133,6 +12338,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         v6_22_room = bool(getattr(self, "research_v620_room_pace", False))
         v6_22_aged = bool(getattr(self, "research_v622_unknown_aged", False)) and v621_on
         v6_22_skip = bool(getattr(self, "research_v622_cap_skip", False))
+        # v6.23: S1 the 0.6.3 realized basis is active for this state (research_v623_realized_mode) and S2 the books of
+        # another asset class (research_v623_class_guard) -- both read once per request by _v6_23_observe.
+        v6_23_active = bool(getattr(self, "_v6_23_active", False))
+        v6_23_foreign = getattr(self, "_v6_23_foreign", None) or frozenset()
         # v6.19 S1: the making mirror's window and the cap, read once per request (research_v619_surplus_hold).
         v619_on = bool(getattr(self, "research_v619_surplus_hold", False))
         v619_mirror, v619_mature, v619_cap = None, False, 0.0
@@ -12324,6 +12533,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 # v6.22 S3: at its cap a book keeps its cancels and builds no new order -- the final validator would
                 # drop every one (research_v622_cap_skip)
                 cap_skip = bool(v6_22_skip and self._v6_22_cap_skip(state, response, book_id, budget))
+                v6_23_book_foreign = bool(v6_23_foreign) and book_id in v6_23_foreign
+                if v6_23_book_foreign:
+                    # v6.23 S2: a book of another asset class keeps its cancels and builds no new order -- every size,
+                    # cap and bound here is in the top-level class's units (research_v623_class_guard)
+                    cap_skip = self._v6_23_foreign_skip(book_id)
+                # v6.23 S1: under the 0.6.3 realized basis the deep side trading against the book's fresh fundamental
+                # holds no level-0 order (research_v623_realized_mode); inactive or without one nothing is withheld
+                against = (self._v6_23_against(book_id, raw_bid, raw_ask, cfg, inv)
+                           if v6_23_active and not v6_23_book_foreign else frozenset())
                 clip_b = deep.clip
                 if bool(getattr(self, "research_v615_launch", False)) and pace is not None:
                     try:
@@ -12339,7 +12557,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
                         tick_size=tick_size, dec=dec, clip=clip_b, min_order=min_order, budget=budget, expiry=expiry,
                         cfg=cfg, paced=paced, bound_scale=bound_scale, held=held, size_scale=size_scale,
-                        cap_skip=cap_skip,
+                        cap_skip=cap_skip, against=against,
                     )
                     if touch_on:                        # v6.17: after the deep layer, which places first
                         placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows,
@@ -12351,6 +12569,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
                     tick_size=tick_size, dec=dec, clip=deep.clip, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
                     paced=paced, bound_scale=bound_scale, held=held, size_scale=size_scale, cap_skip=cap_skip,
+                    against=against,
                 )
                 if touch_on:                            # v6.17: after the deep layer, which places first
                     placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already,
@@ -12757,6 +12976,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # diagnostic only and does not gate trading.
         self._direct_current_state_timestamp_ns = int(getattr(state, "timestamp", 0) or 0)
         self._direct_request_wall_started = time.perf_counter()
+        # v6.23: this state's validator release and asset classes, before any decision reads them
+        # (research_v623_validator_063: S1 the realized basis, S2 the class guard).
+        try:
+            self._v6_23_observe(state)
+        except Exception:
+            self._v6_23_errors = int(getattr(self, "_v6_23_errors", 0) or 0) + 1
+            self._v6_23_active, self._v6_23_foreign = False, frozenset()     # v6.22 for this request
+            self._v6_23_layout = V623_LAYOUT_UNREADABLE
         try:
             self._a1961_note_base_decimals(state)
         except Exception:
@@ -15523,6 +15750,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         }
 
         validated_ids: set[int] = set()
+        # v6.23 S2: the books of another asset class, read once per request by _v6_23_observe (research_v623_class_guard)
+        v6_23_foreign = getattr(self, "_v6_23_foreign", None) or frozenset()
         for instruction in placements:
             raw_book = self._get(instruction, "bookId", "book_id")
             try:
@@ -15530,6 +15759,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except (TypeError, ValueError):
                 continue
             side = self._research_instruction_side(instruction)
+            if v6_23_foreign and book_id in v6_23_foreign:
+                # v6.23 S2: a book of another asset class takes no new order, whichever path built it -- its minimum and
+                # grid are not the top-level class's (research_v623_class_guard)
+                self._v6_23_count("foreign_dropped")
+                self._research_log_final_contract_reject(
+                    book_id, side, None, None, None, V623_REJECT_FOREIGN, False,
+                )
+                continue
             qty = self._get(instruction, "quantity", "qty", "size")
             try:
                 qty_f = round_volume(float(qty), vol_dec)

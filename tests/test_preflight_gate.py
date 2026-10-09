@@ -117,8 +117,10 @@ def test_every_key_the_launcher_ships_today_resolves():
     # +1 research_v616_fair_value (v6.16 S1), +1 research_v617_touch_quote (v6.17 S1), +1 research_v618_centre_off (v6.18 S1),
     # +1 research_v619_surplus_hold (v6.19 S1), +1 research_v620_room_pace (v6.20 S1), +3 research_v621_rolloff_guard,
     # research_v621_pace_persist, research_v621_even_spend (v6.21 S1-S3), +3 research_v622_cap_window_pace,
-    # research_v622_unknown_aged, research_v622_cap_skip (v6.22 S1-S3).
-    assert len(keys) == 188, len(keys)
+    # research_v622_unknown_aged, research_v622_cap_skip (v6.22 S1-S3), +6 research_v623_realized_mode,
+    # research_v623_against_levels, research_v623_against_gap_bps, research_v623_against_adding,
+    # research_v623_class_guard, research_v623_start_once (v6.23 S1-S3).
+    assert len(keys) == 194, len(keys)
     out = _run_guard(" ".join(f"{k}=x" for k in keys))
     assert out.returncode == 0, out.stderr
-    assert "(188 keys)" in out.stdout
+    assert "(194 keys)" in out.stdout
