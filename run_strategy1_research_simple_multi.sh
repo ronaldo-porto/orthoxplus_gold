@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -427,7 +427,8 @@ research_v623_start_once=1 \
 research_v624_pay_basis=1 \
 research_v625_lean=1 \
 research_v625_lean_slope=1.0 \
-research_v625_lean_cap=48"
+research_v625_lean_cap=48 \
+research_v626_feed_clock=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -3277,6 +3278,67 @@ if [[ "${V6_25_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.25 fundamental lean PASS (S5 slope=${_v625_slope} base per ${_v625_gap}-bps gap unit, cap=${_v625_cap} base: with a fresh fundamental at least one unit from the mid every making decision of the pass reads inventory - tau, tau = sign(fp - mid) x min(cap, slope x |gap| / unit); the final validator, the A1.9 exit layer, the dust paths and every ledger keep the true inventory)"
 fi
 
+# v6.26 S6.  The feed clock (research_v626_feed_clock).  v6.16 calls the validator's fundamental page stale once the
+# state is more than MAX_STALE_SIM_S = 20 sim-s past the page's sim time -- v7.0's number (OBSERVED at ~0.165 sim-s per
+# wall-s: ~121 wall-s).  The page's age is two clocks: the page publishes every 10 sim-s, but the feed carrying it runs on
+# WALL time (FETCH_PERIOD_S + POLL_S + FETCH_TIMEOUT_S).  At today's ~0.23-0.24 sim-s per wall-s the feed's normal
+# on-schedule cycle crosses 20 sim-s: ~10% of requests saw a stale page (UID 115 on v6.25, 10-12), dropped S5's lean and
+# S1's hold, and unwound toward-fp inventory against the fundamental (orders at page age 20-25 sim-s -12.8 bps vs fp,
+# 75% filled against it; 15-20 sim-s +3.9 bps).  S6: limit = 2 page steps (sim-s) + the feed's wall cycle x the sim-s per
+# wall-s the agent measures from its own requests (state-time span / wall span; a state clock that runs back starts the
+# window over), v6.16's 20 sim-s until the rate is known; every reader of the page (v6.17's touch quote, v6.23 S1 and
+# v6.25 S5 through it, v6.16's centre) judges the page with that limit.  Replayed on the recorded pages and live request
+# times: stale requests 10.7% -> 0.35% (10-12 sim), 10.1% -> 0.12% (10-10 sim).  A dead feed still goes stale (its age
+# keeps growing).  Off, no limit is set: v6.25.  STRUCTURAL wall cycle (the feed's own constants, imported) and two page
+# steps; OBSERVED page step (10 sim-s).
+if [[ "${V6_26_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v626_feed_clock import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.26 S6 the feed-clock module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self.research_v626_feed_clock = self._as_bool(getattr(self.config, "research_v626_feed_clock", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.26 S6 the agent does not read research_v626_feed_clock (default on)." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_26_observe(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.26 S6 respond does not feed the sim rate." >&2
+    exit 1
+  }
+  [[ "$(grep -cF 'max_stale_sim_s=getattr(self, "_v6_26_limit", None))' "$AGENT_PATH/Strategy1_Research_Simple.py")" == "3" ]] || {
+    echo "ERROR: v6.26 S6 the three readers of the fundamental page do not all judge it with the feed clock's limit." >&2
+    exit 1
+  }
+  [[ "$(grep -cF 'v616_book_fundamental(' "$AGENT_PATH/Strategy1_Research_Simple.py")" == "3" ]] || {
+    echo "ERROR: v6.26 S6 a reader of the fundamental page was added or lost: each must judge it with the feed clock's limit." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_26_report()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.26 S6 the pass emits no V626_STATE row." >&2
+    exit 1
+  }
+  grep -qF 'WALL_CYCLE_S = FETCH_PERIOD_S + POLL_S + FETCH_TIMEOUT_S' "$AGENT_PATH/research_v626_feed_clock.py" || {
+    echo "ERROR: v6.26 S6 the wall cycle is not the feed's own constants." >&2
+    exit 1
+  }
+  grep -qF 'return PAGE_STEPS * PAGE_STEP_SIM_S + max(0.0, r) * WALL_CYCLE_S' "$AGENT_PATH/research_v626_feed_clock.py" || {
+    echo "ERROR: v6.26 S6 the limit is not page steps + rate x the feed's wall cycle." >&2
+    exit 1
+  }
+  grep -qF 'sim_id: Any, max_stale_sim_s: Any = None) -> tuple[float | None, str]:' "$AGENT_PATH/research_v616_fair_value.py" || {
+    echo "ERROR: v6.26 S6 book_fundamental takes no freshness limit." >&2
+    exit 1
+  }
+  grep -qF 'if max(0.0, (now_ts - page_ts) / 1e9) > limit:' "$AGENT_PATH/research_v616_fair_value.py" || {
+    echo "ERROR: v6.26 S6 book_fundamental does not judge the page with the limit it is handed." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v626_feed_clock=1 "* ]] || {
+    echo "ERROR: v6.26 S6 build without research_v626_feed_clock=1 in PARAMS." >&2
+    exit 1
+  }
+  echo "[preflight] v6.26 feed clock PASS (S6: the fundamental page is stale beyond 2 page steps in sim-s + the feed's wall cycle (fetch period + poll + fetch timeout) x the sim-s per wall-s the agent measures from its own requests, v6.16's 20 sim-s until the rate is known; all 3 readers of the page judge it with that limit)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -3390,6 +3452,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_23.py \
       tests/test_research_v6_24.py \
       tests/test_research_v6_25.py \
+      tests/test_research_v6_26.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

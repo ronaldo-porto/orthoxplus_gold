@@ -797,6 +797,13 @@ from research_v625_lean import (  # noqa: E402
     parse_slope as v625_parse_lean_slope,
     summary as v625_lean_summary,
 )
+from research_v626_feed_clock import (  # noqa: E402
+    SimRate as V626SimRate,
+    V626_FEED_CLOCK_VERSION,
+    page_verdict as v626_page_verdict,
+    stale_limit_sim_s as v626_stale_limit,
+    state_sim_id as v626_state_sim_id,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2104,6 +2111,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6_25_last: dict[str, Any] = {}
         self._v6_25_reported = False
         self._v6_25_erring = False
+        # v6.26: S6 the feed clock.  The fundamental page's age is judged in its own clocks: two page steps (sim-s) plus
+        # the feed's on-schedule wall cycle (fetch period + poll + one slow fetch) at the sim-s per wall-s this agent
+        # measures from its own requests -- v6.16's 20 sim-s until that rate is known.  Every reader of the page (the
+        # touch quote, S1, S5 through S1's reader, the v6.16 centre) judges it with this request's limit; off, none is
+        # set (v6.25).  STRUCTURAL wall cycle and rate, OBSERVED page step: see research_v626_feed_clock.
+        self.research_v626_feed_clock = self._as_bool(getattr(self.config, "research_v626_feed_clock", True))
+        self._v6_26_rate = V626SimRate()
+        self._v6_26_limit: float | None = None
+        self._v6_26_counts: dict[str, int] = {}
+        self._v6_26_errors = 0
+        self._v6_26_errors_seen = 0
+        self._v6_26_reported = False
+        self._v6_26_erring = False
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11325,7 +11345,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             sim_id = str(log_dir).replace("\\", "/").rstrip("/").split("/")[-1] if log_dir else None
         fp, reason = v616_book_fundamental(
             feed.snapshot(), int(book_id), raw_bid, raw_ask,
-            state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id)
+            state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id,
+            max_stale_sim_s=getattr(self, "_v6_26_limit", None))
         self._v616_count("book_" + str(reason))
         if fp is None:
             return None
@@ -11370,7 +11391,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             sim_id = str(log_dir).replace("\\", "/").rstrip("/").split("/")[-1] if log_dir else None
         fp, reason = v616_book_fundamental(
             feed.snapshot(), int(book_id), raw_bid, raw_ask,
-            state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id)
+            state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id,
+            max_stale_sim_s=getattr(self, "_v6_26_limit", None))
         self._v617_count("book_" + str(reason))
         return fp
 
@@ -11826,7 +11848,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             sim_id = str(log_dir).replace("\\", "/").rstrip("/").split("/")[-1] if log_dir else None
         return v616_book_fundamental(
             feed.snapshot(), int(book_id), raw_bid, raw_ask,
-            state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id)
+            state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id,
+            max_stale_sim_s=getattr(self, "_v6_26_limit", None))
 
     def _v6_23_against(self, book_id: int, raw_bid, raw_ask, cfg, inv=0.0) -> frozenset:
         """v6.23 S1: the (side, level) pairs the deep layer holds no order on for this book this request -- the side
@@ -11966,6 +11989,87 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "mean_abs_tau": last.get("mean_abs_tau"), "mean_abs_inv_minus_tau": last.get("mean_abs_inv_minus_tau"),
                 "max_abs_tau": float(last.get("max_abs_tau", 0.0) or 0.0), "fresh_fp_share": last.get("fresh_fp_share"),
                 "errors": int(getattr(self, "_v6_25_errors", 0) or 0)}
+
+    def _v6_26_observe(self, state) -> None:
+        """v6.26 S6 (research_v626_feed_clock), once per request where its state time is set: the request's (wall,
+        state time) pair feeds the sim-s per wall-s rate (a state time that ran back -- a new simulation -- starts it
+        over), and _v6_26_limit becomes this request's freshness limit for the fundamental page, which every reader of
+        the page hands v616_book_fundamental: two page steps plus the feed's wall cycle at that rate, v6.16's
+        MAX_STALE_SIM_S until the rate is known.  Then the request's page is tallied for the state row (fresh / rescued
+        -- v6.16 would have called it stale / stale / no page).  Never raises: an error in the limit counts and the
+        limit is v6.16's; an error in the tally only counts."""
+        measured = None
+        try:
+            rate = getattr(self, "_v6_26_rate", None)
+            if rate is None:
+                rate = V626SimRate()
+                self._v6_26_rate = rate
+            rate.observe(getattr(self, "_direct_request_wall_started", None),
+                         int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0))
+            measured = rate.rate()
+            limit = v626_stale_limit(measured)
+        except Exception:
+            self._v6_26_errors = int(getattr(self, "_v6_26_errors", 0) or 0) + 1
+            measured, limit = None, v626_stale_limit(None)
+        self._v6_26_limit = limit
+        try:
+            feed = getattr(self, "_v616_feed", None)
+            verdict = v626_page_verdict(feed.snapshot() if feed is not None else None,
+                                        state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0),
+                                        sim_id=v626_state_sim_id(getattr(state, "config", None)), limit_sim_s=limit)
+            counts = getattr(self, "_v6_26_counts", None)
+            if counts is None:
+                counts = {}
+                self._v6_26_counts = counts
+            for key in ("requests", verdict) + (("rate_unknown",) if measured is None else ()):
+                counts[key] = int(counts.get(key, 0) or 0) + 1
+        except Exception:
+            self._v6_26_errors = int(getattr(self, "_v6_26_errors", 0) or 0) + 1
+
+    def _v6_26_report(self) -> None:
+        """v6.26 S6: the V626_STATE row -- the switch, the measured rate and the request's limit, the rate window, and the
+        running tally of requests by their page's verdict -- at the first pass, at the first request with an error after
+        one without, and every V62_STATE_EVERY_TICKS ticks; after the reply when the request defers its telemetry
+        (v6.2.9).  Never raises."""
+        try:
+            tick = int(getattr(self, "_tick", 0) or 0)
+            errors = int(getattr(self, "_v6_26_errors", 0) or 0)
+            erring = errors > int(getattr(self, "_v6_26_errors_seen", 0) or 0)
+            was_erring = bool(getattr(self, "_v6_26_erring", False))
+            self._v6_26_errors_seen, self._v6_26_erring = errors, erring
+            if not getattr(self, "_v6_26_reported", False):
+                reason = "start"
+            elif erring and not was_erring:
+                reason = "error"
+            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+                reason = "periodic"
+            else:
+                return
+            self._v6_26_reported = True
+            row = dict(self._v6_26_snapshot(), reason=reason, tick=tick)
+            work = getattr(self, "_v629_request_work", None)
+            if work is not None:
+                work.add("v626_state_row", lambda: self._emit("V626_STATE", force=True, **row))   # after the reply
+            else:
+                self._emit("V626_STATE", force=True, **row)
+        except Exception:
+            self._v6_26_errors = int(getattr(self, "_v6_26_errors", 0) or 0) + 1
+
+    def _v6_26_snapshot(self) -> dict:
+        rate = getattr(self, "_v6_26_rate", None)
+        measured = rate.rate() if rate is not None else None
+        limit = getattr(self, "_v6_26_limit", None)
+        counts = dict(getattr(self, "_v6_26_counts", None) or {})
+        return {"version": V626_FEED_CLOCK_VERSION,
+                "feed_clock_on": int(bool(getattr(self, "research_v626_feed_clock", False))),
+                "rate": (round(float(measured), 5) if measured is not None else None),
+                "limit_sim_s": (round(float(limit), 3) if limit is not None else None),
+                "points": int(getattr(rate, "points", 0) or 0), "resets": int(getattr(rate, "resets", 0) or 0),
+                "requests": int(counts.get("requests", 0) or 0), "rate_unknown": int(counts.get("rate_unknown", 0) or 0),
+                "fresh": int(counts.get("fresh", 0) or 0), "rescued": int(counts.get("rescued", 0) or 0),
+                "stale": int(counts.get("stale", 0) or 0),
+                "no_page": int(counts.get("no_feed", 0) or 0) + int(counts.get("other_sim", 0) or 0),
+                "errors": int(getattr(self, "_v6_26_errors", 0) or 0)}
 
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
@@ -12859,6 +12963,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         stats["quoted"] = int(req["placed_toward"] + req["placed_making"])
         if getattr(self, "research_v625_lean", None) is not None:
             self._v6_25_report(v6_25_req, v6_25_errors)     # v6.25 S5: its V625_STATE row, on or off (never raises)
+        if getattr(self, "research_v626_feed_clock", None) is not None:
+            self._v6_26_report()                            # v6.26 S6: its V626_STATE row, on or off (never raises)
         return placed_total
 
     def _v62_telemetry(self, state) -> None:
@@ -13131,6 +13237,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # diagnostic only and does not gate trading.
         self._direct_current_state_timestamp_ns = int(getattr(state, "timestamp", 0) or 0)
         self._direct_request_wall_started = time.perf_counter()
+        # v6.26 S6: this request's (wall, state time) pair -> the sim-s per wall-s rate and this request's freshness
+        # limit for the fundamental page, read by each of its readers (research_v626_feed_clock).  Never raises; off,
+        # no limit is set and the readers keep v6.16's.
+        if bool(getattr(self, "research_v626_feed_clock", False)):
+            self._v6_26_observe(state)
         # v6.23: this state's validator release and asset classes, before any decision reads them
         # (research_v623_validator_063: S1 the realized basis, S2 the class guard).
         try:

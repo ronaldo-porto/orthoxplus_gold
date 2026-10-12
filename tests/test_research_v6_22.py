@@ -622,9 +622,9 @@ def test_each_rule_is_wired_once_and_in_its_place_in_the_pass():
 
 
 def test_the_v622_block_is_gated_preflighted_and_listed():
-    assert "; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0\n" in LAUNCHER
+    assert "; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0\n" in LAUNCHER
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1"), arm
+    assert arm.endswith("; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1"), arm
     assert 'if [[ "${V6_22_BUILD:-0}" == "1" ]]; then' in LAUNCHER
     assert "      tests/test_research_v6_22.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.21 young window PASS') < LAUNCHER.index("# v6.22 S1-S3.")

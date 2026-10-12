@@ -118,9 +118,10 @@ def same_simulation(page_sim_id: Any, sim_id: Any) -> bool:
 
 
 def book_fundamental(snapshot: Any, book_id: Any, bid: Any, ask: Any, *, state_ts_ns: Any,
-                     sim_id: Any) -> tuple[float | None, str]:
+                     sim_id: Any, max_stale_sim_s: Any = None) -> tuple[float | None, str]:
     """(fundamental, reason) for one book in one state; the fundamental is None unless it is usable.
-    Reasons: no_feed, other_sim, stale, no_fundamental, no_book, armed."""
+    Reasons: no_feed, other_sim, stale, no_fundamental, no_book, armed.  The page is stale more than ``max_stale_sim_s``
+    sim-s behind the state (v6.26 S6's feed clock); None, or anything but a number >= 0, is MAX_STALE_SIM_S (v6.16)."""
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get("fp"), dict):
         return None, "no_feed"
     if not same_simulation(snapshot.get("sim_id"), sim_id):
@@ -128,7 +129,10 @@ def book_fundamental(snapshot: Any, book_id: Any, bid: Any, ask: Any, *, state_t
     page_ts, now_ts = _finite(snapshot.get("sim_ts_ns")), _finite(state_ts_ns)
     if page_ts is None or now_ts is None or now_ts <= 0.0:
         return None, "stale"
-    if max(0.0, (now_ts - page_ts) / 1e9) > MAX_STALE_SIM_S:
+    limit = None if isinstance(max_stale_sim_s, bool) else _finite(max_stale_sim_s)
+    if limit is None or limit < 0.0:
+        limit = MAX_STALE_SIM_S
+    if max(0.0, (now_ts - page_ts) / 1e9) > limit:
         return None, "stale"
     fp = snapshot["fp"].get(book_id)
     if fp is None:
