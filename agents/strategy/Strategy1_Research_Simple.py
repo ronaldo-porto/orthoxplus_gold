@@ -786,6 +786,17 @@ from research_v624_pay_basis import (  # noqa: E402
     reads_basis as v624_reads_basis,
     realized_active as v624_realized_active,
 )
+from research_v625_lean import (  # noqa: E402
+    LEAN_CAP as V625_LEAN_CAP,
+    LEAN_SLOPE as V625_LEAN_SLOPE,
+    V625_LEAN_VERSION,
+    lean_target as v625_lean_target,
+    new_request as v625_lean_request,
+    note_book as v625_lean_note,
+    parse_cap as v625_parse_lean_cap,
+    parse_slope as v625_parse_lean_slope,
+    summary as v625_lean_summary,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2078,6 +2089,21 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self.research_v624_pay_basis = self._as_bool(getattr(self.config, "research_v624_pay_basis", True))
         self._v6_24_basis_feed = None
         self._v6_24_basis: str | None = None
+        # v6.25: S5 the fundamental-lean inventory target.  Per book, with a fresh fundamental at least S1's gap
+        # (research_v623_against_gap_bps) from the mid, every making decision of the pass reads (inventory - tau),
+        # tau = sign(fp - mid) x min(cap, slope x |gap| / gap) base: the side toward the fundamental builds up to tau
+        # plus its usual room, the side against it unwinds down to tau.  Hard limits, the legacy A1.9 exit layer, the
+        # dust paths and every ledger keep the true inventory.  Off, or a book's tau 0, the build is v6.24.  STRUCTURAL
+        # cap, OBSERVED slope: see research_v625_lean.
+        self.research_v625_lean = self._as_bool(getattr(self.config, "research_v625_lean", True))
+        self.research_v625_lean_slope = v625_parse_lean_slope(
+            getattr(self.config, "research_v625_lean_slope", V625_LEAN_SLOPE))
+        self.research_v625_lean_cap = v625_parse_lean_cap(getattr(self.config, "research_v625_lean_cap", V625_LEAN_CAP))
+        self._v6_25_taus: dict[int, tuple[float, int]] = {}
+        self._v6_25_errors = 0
+        self._v6_25_last: dict[str, Any] = {}
+        self._v6_25_reported = False
+        self._v6_25_erring = False
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11869,6 +11895,78 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v6_24_basis_feed = feed
         return feed
 
+    def _v6_25_lean(self, book_id: int, raw_bid, raw_ask, cfg, inv, now_ts: int, req) -> tuple:
+        """v6.25 S5 (research_v625_lean): (inv - tau, inv - tau_prev) for this book this request.  tau is the book's
+        fundamental lean -- with its fresh fundamental of this simulation (read exactly as v6.23 S1 reads it) at least
+        S1's gap (research_v623_against_gap_bps) from the mid, sign(fp - mid) x min(cap, slope x |gap| / gap) base,
+        else 0 -- and tau_prev the lean the previous request set for the book (0 at the first, or once the clock ran
+        back): the one this state's fills rested under, which v6.6's fill-side record reads.  A zero lean hands back inv
+        itself.  Tallies the book for the state row.  Never raises: an error counts and the book leans nothing this
+        request."""
+        tau = prev = 0.0
+        fresh = False
+        try:
+            taus = getattr(self, "_v6_25_taus", None)
+            if taus is None:
+                taus = {}
+                self._v6_25_taus = taus
+            last = taus.get(int(book_id))
+            if last is not None and int(last[1]) <= int(now_ts):
+                prev = float(last[0])
+            taus[int(book_id)] = (0.0, int(now_ts))           # an error below leaves this request's lean at 0
+            fp, _reason = self._v6_23_fundamental(book_id, raw_bid, raw_ask, cfg)
+            if fp is not None:
+                fresh = True
+                tau = float(v625_lean_target(0.5 * (float(raw_bid) + float(raw_ask)), fp,
+                                             getattr(self, "research_v623_against_gap_bps", 0.0),
+                                             getattr(self, "research_v625_lean_slope", 0.0),
+                                             getattr(self, "research_v625_lean_cap", 0.0)))
+            taus[int(book_id)] = (tau, int(now_ts))
+        except Exception:
+            self._v6_25_errors = int(getattr(self, "_v6_25_errors", 0) or 0) + 1
+            tau = 0.0
+        v625_lean_note(req, fresh=fresh, tau=tau, inventory=inv)
+        return (inv - tau if tau else inv), (inv - prev if prev else inv)
+
+    def _v6_25_report(self, req, errors_before: int = 0) -> None:
+        """v6.25 S5: the V625_STATE row -- the switch, its values and this request's tally -- at the first pass, at the
+        first request with an error after one without, and every V62_STATE_EVERY_TICKS ticks; after the reply when the
+        request defers its telemetry (v6.2.9).  Never raises."""
+        try:
+            tick = int(getattr(self, "_tick", 0) or 0)
+            erring = int(getattr(self, "_v6_25_errors", 0) or 0) > int(errors_before or 0)
+            was_erring = bool(getattr(self, "_v6_25_erring", False))
+            self._v6_25_erring = erring
+            self._v6_25_last = v625_lean_summary(req)
+            if not getattr(self, "_v6_25_reported", False):
+                reason = "start"
+            elif erring and not was_erring:
+                reason = "error"
+            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+                reason = "periodic"
+            else:
+                return
+            self._v6_25_reported = True
+            row = dict(self._v6_25_snapshot(), reason=reason, tick=tick)
+            work = getattr(self, "_v629_request_work", None)
+            if work is not None:
+                work.add("v625_state_row", lambda: self._emit("V625_STATE", force=True, **row))   # after the reply
+            else:
+                self._emit("V625_STATE", force=True, **row)
+        except Exception:
+            self._v6_25_errors = int(getattr(self, "_v6_25_errors", 0) or 0) + 1
+
+    def _v6_25_snapshot(self) -> dict:
+        last = dict(getattr(self, "_v6_25_last", None) or {})
+        return {"version": V625_LEAN_VERSION, "lean_on": int(bool(getattr(self, "research_v625_lean", False))),
+                "slope": float(getattr(self, "research_v625_lean_slope", 0.0) or 0.0),
+                "cap": float(getattr(self, "research_v625_lean_cap", 0.0) or 0.0),
+                "gap_bps": float(getattr(self, "research_v623_against_gap_bps", 0.0) or 0.0),
+                "books": int(last.get("books", 0) or 0), "tau_books": int(last.get("tau_books", 0) or 0),
+                "mean_abs_tau": last.get("mean_abs_tau"), "mean_abs_inv_minus_tau": last.get("mean_abs_inv_minus_tau"),
+                "max_abs_tau": float(last.get("max_abs_tau", 0.0) or 0.0), "fresh_fp_share": last.get("fresh_fp_share"),
+                "errors": int(getattr(self, "_v6_25_errors", 0) or 0)}
+
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
         mirror = getattr(self, "_v62_mirror", None)
@@ -12383,6 +12481,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # another asset class (research_v623_class_guard) -- both read once per request by _v6_23_observe.
         v6_23_active = bool(getattr(self, "_v6_23_active", False))
         v6_23_foreign = getattr(self, "_v6_23_foreign", None) or frozenset()
+        # v6.25 S5: the fundamental-lean inventory target (research_v625_lean) -- each book's making decisions below
+        # read (inv - tau), tau leaning toward its fresh fundamental; off, every one reads inv (v6.24).  Tallied for the
+        # V625_STATE row.
+        v6_25_on = bool(getattr(self, "research_v625_lean", False))
+        v6_25_req = v625_lean_request() if v6_25_on else None
+        v6_25_errors = int(getattr(self, "_v6_25_errors", 0) or 0)
         # v6.19 S1: the making mirror's window and the cap, read once per request (research_v619_surplus_hold).
         v619_on = bool(getattr(self, "research_v619_surplus_hold", False))
         v619_mirror, v619_mature, v619_cap = None, False, 0.0
@@ -12485,10 +12589,18 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     inv = float(self._direct_signed_inventory(book_id))
                 except Exception:
                     inv = 0.0
+            # v6.25 S5: v6_25_inv = inv - tau, the inventory every making decision of this book reads below (the touch
+            # quote, S1, S2m, pacing's adding side, the bound, v6.12's half depth, v6.6's spacing); v6_25_fills = inv -
+            # the previous request's tau, the one this state's fills rested under (v6.6's fill-side record).  Off, on a
+            # foreign book or without a lean both are inv; the true inv stays for the v6.3 fallback, the layer's gate
+            # and every ledger.
+            v6_25_inv = v6_25_fills = inv
+            if v6_25_on and book_id not in v6_23_foreign:
+                v6_25_inv, v6_25_fills = self._v6_25_lean(book_id, raw_bid, raw_ask, cfg, inv, now_ts, v6_25_req)
             if spacing is not None:
                 # v6.6 S1: our fills in this state's prints, against the inventory they left, mark each side's last add.
                 try:
-                    spacing.note(book_id, book_trades, getattr(self, "uid", None), inv, eps=eps)
+                    spacing.note(book_id, book_trades, getattr(self, "uid", None), v6_25_fills, eps=eps)
                 except Exception:
                     self._v66_errors = int(getattr(self, "_v66_errors", 0) or 0) + 1
             paced = False
@@ -12532,7 +12644,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
             held: frozenset = frozenset()
             if v619_on:
                 try:
-                    side_h = self._v619_side(book_id, v619_mirror, v619_mature, v619_cap, inv)
+                    side_h = self._v619_side(book_id, v619_mirror, v619_mature, v619_cap, v6_25_inv)
                 except Exception:
                     self._v619_errors = int(getattr(self, "_v619_errors", 0) or 0) + 1
                     side_h = None
@@ -12581,7 +12693,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     cap_skip = self._v6_23_foreign_skip(book_id)
                 # v6.23 S1: under the 0.6.3 realized basis the deep side trading against the book's fresh fundamental
                 # holds no level-0 order (research_v623_realized_mode); inactive or without one nothing is withheld
-                against = (self._v6_23_against(book_id, raw_bid, raw_ask, cfg, inv)
+                against = (self._v6_23_against(book_id, raw_bid, raw_ask, cfg, v6_25_inv)
                            if v6_23_active and not v6_23_book_foreign else frozenset())
                 clip_b = deep.clip
                 if bool(getattr(self, "research_v615_launch", False)) and pace is not None:
@@ -12595,25 +12707,25 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     # every other book takes the call below at the deep layer's clip, unchanged (v6.5 S1).
                     self._v615_count("launch_clip_book_states")
                     placed_total += self._v633_book(
-                        response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
+                        response, book_id, deep, depth, raw_bid, raw_ask, v6_25_inv, rows, deep_rows, already, req,
                         tick_size=tick_size, dec=dec, clip=clip_b, min_order=min_order, budget=budget, expiry=expiry,
                         cfg=cfg, paced=paced, bound_scale=bound_scale, held=held, size_scale=size_scale,
                         cap_skip=cap_skip, against=against,
                     )
                     if touch_on:                        # v6.17: after the deep layer, which places first
-                        placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows,
+                        placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, v6_25_inv, touch_rows,
                                                         already, req, tick_size=tick_size, min_order=min_order,
                                                         budget=budget, expiry=expiry, cfg=cfg, paced=paced, held=held,
                                                         size_scale=size_scale, cap_skip=cap_skip)
                     continue
                 placed_total += self._v633_book(
-                    response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,
+                    response, book_id, deep, depth, raw_bid, raw_ask, v6_25_inv, rows, deep_rows, already, req,
                     tick_size=tick_size, dec=dec, clip=deep.clip, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg,
                     paced=paced, bound_scale=bound_scale, held=held, size_scale=size_scale, cap_skip=cap_skip,
                     against=against,
                 )
                 if touch_on:                            # v6.17: after the deep layer, which places first
-                    placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already,
+                    placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, v6_25_inv, touch_rows, already,
                                                     req, tick_size=tick_size, min_order=min_order, budget=budget,
                                                     expiry=expiry, cfg=cfg, paced=paced, held=held,
                                                     size_scale=size_scale, cap_skip=cap_skip)
@@ -12745,6 +12857,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v63_last = req
         stats["candidates"] = int(req["long"] + req["short"])
         stats["quoted"] = int(req["placed_toward"] + req["placed_making"])
+        if getattr(self, "research_v625_lean", None) is not None:
+            self._v6_25_report(v6_25_req, v6_25_errors)     # v6.25 S5: its V625_STATE row, on or off (never raises)
         return placed_total
 
     def _v62_telemetry(self, state) -> None:

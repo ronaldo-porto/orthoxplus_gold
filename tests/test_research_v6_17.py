@@ -35,7 +35,8 @@ S = 1_000_000_000
 NOW = t616.NOW
 TICK = 0.01
 BUY, SELL = tq.SIDE_BUY, tq.SIDE_SELL
-CALL_LINE = "placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already,"
+# v6.25 S5 hands the touch quote the leaned inventory (v6_25_inv = inv - tau; inv itself without a lean)
+CALL_LINE = "placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, v6_25_inv, touch_rows, already,"
 SIDES_LINE = 'if toward in v617_placed_sides(getattr(response, "instructions", None) or (), book_id):'
 SLOT_LINE = "deep_slot = V617_TOUCH_SLOT"
 LIVE_LINE = "return v617_live_slots(rows)"
@@ -382,9 +383,9 @@ def test_the_switch_ships_on_and_agrees_with_the_agent_default():
 
 
 def test_the_v617_block_is_gated_preflighted_and_listed():
-    assert "; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0\n" in LAUNCHER
+    assert "; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0\n" in LAUNCHER
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1"), arm
+    assert arm.endswith("; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1"), arm
     assert 'if [[ "${V6_17_BUILD:-0}" == "1" ]]; then' in LAUNCHER
     assert "tests/test_research_v6_17.py" in LAUNCHER
 

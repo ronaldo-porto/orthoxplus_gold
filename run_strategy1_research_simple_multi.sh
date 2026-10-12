@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -424,7 +424,10 @@ research_v623_against_gap_bps=2.3 \
 research_v623_against_adding=1 \
 research_v623_class_guard=1 \
 research_v623_start_once=1 \
-research_v624_pay_basis=1"
+research_v624_pay_basis=1 \
+research_v625_lean=1 \
+research_v625_lean_slope=1.0 \
+research_v625_lean_cap=48"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -2429,7 +2432,7 @@ if [[ "$V63_BUILD" == "1" ]]; then
     echo "ERROR: v6.6 modules are not imported." >&2
     exit 1
   }
-  grep -qF 'spacing.note(book_id, book_trades, getattr(self, "uid", None), inv, eps=eps)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'spacing.note(book_id, book_trades, getattr(self, "uid", None), v6_25_fills, eps=eps)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.6 S1 the pass does not record each side's last add." >&2
     exit 1
   }
@@ -2794,7 +2797,7 @@ if [[ "${V6_17_BUILD:-0}" == "1" ]]; then
     echo "ERROR: v6.17 S1 module is not imported." >&2
     exit 1
   }
-  grep -qF 'placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already,' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, v6_25_inv, touch_rows, already,' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.17 S1 the deep layer's books take no touch quote." >&2
     exit 1
   }
@@ -3077,7 +3080,7 @@ if [[ "${V6_23_BUILD:-0}" == "1" ]]; then
     echo "ERROR: v6.23 S1-S2 respond does not read the state's validator release and asset classes." >&2
     exit 1
   }
-  grep -qF 'against = (self._v6_23_against(book_id, raw_bid, raw_ask, cfg, inv)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+  grep -qF 'against = (self._v6_23_against(book_id, raw_bid, raw_ask, cfg, v6_25_inv)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.23 S1 the pass does not withhold the side trading against the fundamental." >&2
     exit 1
   }
@@ -3187,6 +3190,91 @@ if [[ "${V6_24_BUILD:-0}" == "1" ]]; then
     exit 1
   }
   echo "[preflight] v6.24 pay basis PASS (S1's auto mode keys on the making basis the validator publishes as paying: realized -> active, captured -> inactive, never read on this host -> v6.23's release rule; one GET of its config page per 5 min per host)"
+fi
+
+# v6.25 S5.  The fundamental-lean inventory target (research_v625_lean).  The validator pays 0.5 x making rank + 0.5 x
+# SKILL rank, and all eleven UIDs score negative skill (rank 0) while aged fp-anchored makers with our making earn ~2x
+# through skill rank ~0.5: skill is the kappa of the drift-stripped per-book alpha, which only the covariance of the
+# inventory with the NEXT move pays, and the expected move toward the published fundamental grows with its gap from the
+# mid.  The best makers hold +6..+14 base toward it, growing with the gap; we hold none.  Per book, with a fresh
+# fundamental at least S1's gap (research_v623_against_gap_bps, 2.3 bps) from the mid, tau = sign(fp - mid) x min(cap,
+# slope x |gap| / gap) base and every MAKING decision of the pass reads (inventory - tau): the touch quote's adding test
+# and bound, S1's adding test, S2m, pacing's adding side, the deep bound (and v6.6.1's scaled one), v6.12's half depth and
+# v6.6's spacing (its fill-side record with the previous request's tau) -- the toward side builds up to tau, the against
+# side unwinds down to tau.  The final validator's caps, the free base / quote, the legacy A1.9 exit layer, the dust
+# paths and every ledger keep the true inventory.  Replay (k57 vm657 ltau, real fp, 1.8 h): 237 skill -0.27 -> +0.33,
+# trading 0.29 -> 0.44, making62 +22%; 209 skill -0.35 -> +1.33, trading 0.40 -> 0.66; skill > 0 in 12 of 12 robustness
+# cases.  v6.25 renamed the inventory argument of the v6.6 note, the v6.17 touch call and the v6.23 S1 call to the leaned
+# one (their blocks above check the new text).  Off, or a book's tau 0, the build is v6.24.  STRUCTURAL cap (48 base =
+# the deep / touch bound behind the volume line), OBSERVED slope (1.0 base per gap unit = the best makers' lean).
+if [[ "${V6_25_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v625_lean import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.25 S5 the fundamental-lean module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self.research_v625_lean = self._as_bool(getattr(self.config, "research_v625_lean", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.25 S5 the agent does not read research_v625_lean (default on)." >&2
+    exit 1
+  }
+  grep -qF 'v6_25_inv, v6_25_fills = self._v6_25_lean(book_id, raw_bid, raw_ask, cfg, inv, now_ts, v6_25_req)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.25 S5 the pass does not compute each book's lean." >&2
+    exit 1
+  }
+  grep -qF 'side_h = self._v619_side(book_id, v619_mirror, v619_mature, v619_cap, v6_25_inv)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.25 S5 the cap-bound surplus hold does not read the leaned inventory." >&2
+    exit 1
+  }
+  [[ "$(grep -cF 'raw_bid, raw_ask, v6_25_inv, rows, deep_rows, already, req,' "$AGENT_PATH/Strategy1_Research_Simple.py")" == "2" ]] || {
+    echo "ERROR: v6.25 S5 the deep layer does not read the leaned inventory on both of its calls." >&2
+    exit 1
+  }
+  [[ "$(grep -cF 'self._v617_book(response, book_id, deep, raw_bid, raw_ask, v6_25_inv, touch_rows,' "$AGENT_PATH/Strategy1_Research_Simple.py")" == "2" ]] || {
+    echo "ERROR: v6.25 S5 the touch quote does not read the leaned inventory on both of its calls." >&2
+    exit 1
+  }
+  grep -qE '^[[:space:]]+response, book_id, deep, depth, raw_bid, raw_ask, inv,' "$AGENT_PATH/Strategy1_Research_Simple.py" && {
+    echo "ERROR: v6.25 S5 a deep-layer call still reads the true inventory." >&2
+    exit 1
+  }
+  grep -qF 'self._v617_book(response, book_id, deep, raw_bid, raw_ask, inv,' "$AGENT_PATH/Strategy1_Research_Simple.py" && {
+    echo "ERROR: v6.25 S5 a touch-quote call still reads the true inventory." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_25_report(v6_25_req, v6_25_errors)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.25 S5 the pass emits no V625_STATE row." >&2
+    exit 1
+  }
+  grep -qF 'def lean_target(mid: Any, fundamental: Any, gap_bps: Any, slope: Any, cap: Any) -> float:' "$AGENT_PATH/research_v625_lean.py" || {
+    echo "ERROR: v6.25 S5 research_v625_lean has no lean_target." >&2
+    exit 1
+  }
+  grep -qF 'return math.copysign(min(c, k * abs(gap) / g), gap)' "$AGENT_PATH/research_v625_lean.py" || {
+    echo "ERROR: v6.25 S5 lean_target is not sign(fp - mid) x min(cap, slope x |gap| / gap)." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v625_lean=1 "* ]] || {
+    echo "ERROR: v6.25 S5 build without research_v625_lean=1 in PARAMS." >&2
+    exit 1
+  }
+  _v625_re=' research_v625_lean_slope=([0-9]+(\.[0-9]+)?) '
+  [[ " $PARAMS " =~ $_v625_re ]] && awk -v v="${BASH_REMATCH[1]}" 'BEGIN { exit !(v + 0 > 0) }' || {
+    echo "ERROR: v6.25 S5 build without a research_v625_lean_slope > 0 in PARAMS." >&2
+    exit 1
+  }
+  _v625_slope="${BASH_REMATCH[1]}"
+  _v625_re=' research_v625_lean_cap=([0-9]+(\.[0-9]+)?) '
+  [[ " $PARAMS " =~ $_v625_re ]] && awk -v v="${BASH_REMATCH[1]}" 'BEGIN { exit !(v + 0 > 0) }' || {
+    echo "ERROR: v6.25 S5 build without a research_v625_lean_cap > 0 in PARAMS." >&2
+    exit 1
+  }
+  _v625_cap="${BASH_REMATCH[1]}"
+  _v625_re=' research_v623_against_gap_bps=([0-9]+(\.[0-9]+)?) '
+  [[ " $PARAMS " =~ $_v625_re ]] && awk -v v="${BASH_REMATCH[1]}" 'BEGIN { exit !(v + 0 > 0) }' || {
+    echo "ERROR: v6.25 S5 build without a research_v623_against_gap_bps > 0 in PARAMS (the lean's gap unit)." >&2
+    exit 1
+  }
+  _v625_gap="${BASH_REMATCH[1]}"
+  echo "[preflight] v6.25 fundamental lean PASS (S5 slope=${_v625_slope} base per ${_v625_gap}-bps gap unit, cap=${_v625_cap} base: with a fresh fundamental at least one unit from the mid every making decision of the pass reads inventory - tau, tau = sign(fp - mid) x min(cap, slope x |gap| / unit); the final validator, the A1.9 exit layer, the dust paths and every ledger keep the true inventory)"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -3301,6 +3389,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_22.py \
       tests/test_research_v6_23.py \
       tests/test_research_v6_24.py \
+      tests/test_research_v6_25.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

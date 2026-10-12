@@ -1045,9 +1045,9 @@ def test_the_young_window_line_is_installed_prepared_fed_saved_and_restored_once
 
 
 def test_the_v621_block_is_gated_preflighted_and_listed():
-    assert "; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0\n" in LAUNCHER
+    assert "; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0\n" in LAUNCHER
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1"), arm
+    assert arm.endswith("; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1"), arm
     assert 'if [[ "${V6_21_BUILD:-0}" == "1" ]]; then' in LAUNCHER
     assert "tests/test_research_v6_21.py" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.20 room pace PASS') < LAUNCHER.index("# v6.21 S1-S3.")

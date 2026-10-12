@@ -65,7 +65,8 @@ BUY, SELL = dl.SIDE_BUY, dl.SIDE_SELL
 ABOVE, BELOW = 100.40, 99.60          # book 3 (100.00 / 100.03, mid 100.015): 38 bps above / below
 OBSERVE_LINE = "self._v6_23_observe(state)"
 FOREIGN_LINE = "cap_skip = self._v6_23_foreign_skip(book_id)"
-AGAINST_LINE = "against = (self._v6_23_against(book_id, raw_bid, raw_ask, cfg, inv)"
+# v6.25 S5 hands S1 the leaned inventory (v6_25_inv = inv - tau; inv itself without a lean)
+AGAINST_LINE = "against = (self._v6_23_against(book_id, raw_bid, raw_ask, cfg, v6_25_inv)"
 JUDGE_LINE = "doomed.append((row, V623_CANCEL_AGAINST))"
 SKIP_LINE = "continue                    # v6.23 S1: no order on the side trading against the fundamental"
 DROP_LINE = "book_id, side, None, None, None, V623_REJECT_FOREIGN, False,"
@@ -948,6 +949,14 @@ V623_IDENTIFIERS = (
 # (tests/test_research_v6_24.py strips them against the committed v6.23) -- so they go with v6.23's additions here and
 # every v6.22 statement stays pinned.
 V624_IDENTIFIERS = {"research_v624_pay_basis", "V624SharedBasis", "v624_reads_basis", "v624_realized_active"}
+# v6.25 (S5, research_v625_lean) adds its import, its _v6_25_ methods, its switches and per-request statements, and hands
+# the making decisions the leaned inventory: v6_25_inv / v6_25_fills where v6.24 read inv (each is inv itself without a
+# lean).  The strip takes its additions out and reads those two names back as inv (tests/test_research_v6_25.py strips
+# them against the committed v6.24), so every v6.22 statement stays pinned.
+V625_IDENTIFIERS = {"research_v625_lean", "research_v625_lean_slope", "research_v625_lean_cap", "V625_LEAN_CAP",
+                    "V625_LEAN_SLOPE", "V625_LEAN_VERSION", "v625_lean_target", "v625_lean_request", "v625_lean_note",
+                    "v625_parse_lean_cap", "v625_parse_lean_slope", "v625_lean_summary"}
+V625_LEANED = {"v6_25_inv", "v6_25_fills"}
 
 
 def _v622(rel):
@@ -963,25 +972,30 @@ def _v622(rel):
 
 def _mentions(node):
     for n in ast.walk(node):
+        if isinstance(n, ast.Name) and n.id in V625_LEANED and not isinstance(n.ctx, ast.Store):
+            continue                                                         # read back as inv (visit_Name)
         name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
             n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
-        if isinstance(name, str) and (name in V623_IDENTIFIERS or name in V624_IDENTIFIERS
-                                      or name.startswith(("_v6_23_", "v6_23_", "_v6_24_", "v6_24_"))):
+        if isinstance(name, str) and (name in V623_IDENTIFIERS or name in V624_IDENTIFIERS or name in V625_IDENTIFIERS
+                                      or name.startswith(("_v6_23_", "v6_23_", "_v6_24_", "v6_24_", "_v6_25_",
+                                                          "v6_25_"))):
             return True
     return False
 
 
 class _Strip623(ast.NodeTransformer):
-    """Removes what v6.23 (and v6.24 after it) adds and nothing else: its import, its methods, statements naming its
-    identifiers (an if on one keeps its else), the against keyword and argument, and every docstring (v6.23 extended
-    one)."""
+    """Removes what v6.23 (and v6.24 and v6.25 after it) adds and nothing else: its import, its methods, statements
+    naming its identifiers (an if on one keeps its else), the against keyword and argument, and every docstring (v6.23
+    extended one); v6.25's leaned inventory reads back as inv."""
 
     def _stmts(self, stmts):
         out = []
         for st in stmts:
-            if isinstance(st, ast.ImportFrom) and st.module in ("research_v623_validator_063", "research_v624_pay_basis"):
+            if isinstance(st, ast.ImportFrom) and st.module in ("research_v623_validator_063", "research_v624_pay_basis",
+                                                                "research_v625_lean"):
                 continue
-            if isinstance(st, ast.FunctionDef) and (st.name == "onStart" or st.name.startswith(("_v6_23_", "_v6_24_"))):
+            if isinstance(st, ast.FunctionDef) and (st.name == "onStart"
+                                                    or st.name.startswith(("_v6_23_", "_v6_24_", "_v6_25_"))):
                 continue
             if isinstance(st, ast.If) and _mentions(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -1017,6 +1031,11 @@ class _Strip623(ast.NodeTransformer):
     def visit_Call(self, node):
         node.keywords = [k for k in node.keywords if k.arg != "against"]
         return self.generic_visit(node)
+
+    def visit_Name(self, node):
+        if node.id in V625_LEANED and not isinstance(node.ctx, ast.Store):
+            node.id = "inv"                                                  # v6.25: v6.24's inv
+        return node
 
     def visit_arguments(self, node):
         pairs = [(a, d) for a, d in zip(node.kwonlyargs, node.kw_defaults) if a.arg != "against"]
@@ -1104,9 +1123,9 @@ def test_each_rule_is_wired_once_and_in_its_place():
 
 
 def test_the_v623_block_is_gated_preflighted_and_listed():
-    assert "; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0\n" in LAUNCHER
+    assert "; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0\n" in LAUNCHER
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1"), arm
+    assert arm.endswith("; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1"), arm
     assert 'if [[ "${V6_23_BUILD:-0}" == "1" ]]; then' in LAUNCHER
     assert "      tests/test_research_v6_23.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.22 aged cap PASS') < LAUNCHER.index("# v6.23 S1-S3.")

@@ -673,7 +673,7 @@ def test_the_basis_reader_starts_on_first_use_in_auto_only_and_once():
 def test_the_switch_ships_on_and_agrees_with_its_agent_default():
     params = t617._params()
     assert "research_v624_pay_basis=1 " in t617._shipped() + " " and params.count("research_v624_pay_basis=") == 1
-    assert 'research_v623_start_once=1 \\\nresearch_v624_pay_basis=1"\n' in LAUNCHER     # after v6.23's keys, last
+    assert 'research_v623_start_once=1 \\\nresearch_v624_pay_basis=1 \\\n' in LAUNCHER   # after v6.23's keys (v6.25's next)
     assert SIMPLE.count(SWITCH_LINE) == 1
     init = _src("_init_build_switches")
     assert init.index("self._v6_23_start_error: str | None = None") < init.index(SWITCH_LINE) < \
@@ -734,6 +734,10 @@ def test_the_state_row_gains_exactly_the_six_fields():
 
 V623_COMMIT = "2cdc0be"
 V624_IDENTIFIERS = {"research_v624_pay_basis"} | set(V624_NAMES)
+# v6.25 (S5, research_v625_lean) only adds too, except that its making decisions read the leaned inventory v6_25_inv /
+# v6_25_fills where v6.24 read inv (each is inv itself without a lean): the strip takes v6.25's additions out as well
+# and reads those two names back as inv (tests/test_research_v6_25.py strips them against the committed v6.24).
+V625_IDENTIFIERS, V625_LEANED = t623.V625_IDENTIFIERS, t623.V625_LEANED
 
 
 def _v623(rel):
@@ -749,23 +753,27 @@ def _v623(rel):
 
 def _mentions(node):
     for n in ast.walk(node):
+        if isinstance(n, ast.Name) and n.id in V625_LEANED and not isinstance(n.ctx, ast.Store):
+            continue                                                         # read back as inv (visit_Name)
         name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
             n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
-        if isinstance(name, str) and (name in V624_IDENTIFIERS or name.startswith(("_v6_24_", "v6_24_"))):
+        if isinstance(name, str) and (name in V624_IDENTIFIERS or name in V625_IDENTIFIERS
+                                      or name.startswith(("_v6_24_", "v6_24_", "_v6_25_", "v6_25_"))):
             return True
     return False
 
 
 class _Strip624(ast.NodeTransformer):
-    """Removes what v6.24 adds and nothing else: its import, its methods, statements naming its identifiers (an if on
-    one keeps its else), dict entries naming them, and every docstring (v6.24 extended one)."""
+    """Removes what v6.24 (and v6.25 after it) adds and nothing else: its import, its methods, statements naming its
+    identifiers (an if on one keeps its else), dict entries naming them, and every docstring (v6.24 extended one);
+    v6.25's leaned inventory reads back as inv."""
 
     def _stmts(self, stmts):
         out = []
         for st in stmts:
-            if isinstance(st, ast.ImportFrom) and st.module == "research_v624_pay_basis":
+            if isinstance(st, ast.ImportFrom) and st.module in ("research_v624_pay_basis", "research_v625_lean"):
                 continue
-            if isinstance(st, ast.FunctionDef) and st.name.startswith("_v6_24_"):
+            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_24_", "_v6_25_")):
                 continue
             if isinstance(st, ast.If) and _mentions(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -804,6 +812,15 @@ class _Strip624(ast.NodeTransformer):
         node.keys, node.values = [k for k, _v in pairs], [v for _k, v in pairs]
         return self.generic_visit(node)
 
+    def visit_Name(self, node):
+        if node.id in V625_LEANED and not isinstance(node.ctx, ast.Store):
+            node.id = "inv"                                                  # v6.25: v6.24's inv
+        return node
+
+    def visit_IfExp(self, node):                                             # its body / orelse are expressions
+        node.test, node.body, node.orelse = self.visit(node.test), self.visit(node.body), self.visit(node.orelse)
+        return node
+
 
 def _stripped(text):
     return ast.dump(_Strip624().visit(ast.parse(text)))
@@ -824,7 +841,8 @@ def test_every_v623_statement_is_in_v624_unchanged_and_v624_only_adds():
 
 def test_the_launcher_only_adds_to_v623s():
     """The committed v6.23 launcher line by line: three lines extended (the flag defaults, the v6_3_0 arm, PARAMS'
-    last key), the rest added -- the v6.24 block and its gate entry."""
+    last key), the rest added -- the v6.24 block and its gate entry.  v6.25 extends the same three lines, adds its block
+    and gate entry, and re-points three greps (v6.6, v6.17, v6.23) at the leaned inventory its pass hands over."""
     old, new = _v623("run_strategy1_research_simple_multi.sh").splitlines(), LAUNCHER.splitlines()
     removed, added = [], []
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
@@ -834,20 +852,30 @@ def test_the_launcher_only_adds_to_v623s():
             added += new[j1:j2]
     defaults = next(ln for ln in old if ln.startswith("A19X_BUILD=0;"))
     arm = next(ln for ln in old if ln.startswith("  strategy1_direct_v6_3_0)"))
-    assert removed == [defaults, arm, 'research_v623_start_once=1"']
-    start = LAUNCHER.index("# v6.24 S4.")
-    block = LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
-    assert sorted(added) == sorted([defaults + "; V6_24_BUILD=0", arm + "; V6_24_BUILD=1",
-                                    "research_v623_start_once=1 \\", 'research_v624_pay_basis=1"',
-                                    "      tests/test_research_v6_24.py \\", *block])
+    greps = (('spacing.note(book_id, book_trades, getattr(self, "uid", None), {}, eps=eps)', "v6_25_fills"),
+             ("placed_total += self._v617_book(response, book_id, deep, raw_bid, raw_ask, {}, touch_rows, already,",
+              "v6_25_inv"),
+             ("against = (self._v6_23_against(book_id, raw_bid, raw_ask, cfg, {})", "v6_25_inv"))
+    v625_greps = [next(ln for ln in old if f"grep -qF '{g.format('inv')}'" in ln) for g, _name in greps]
+    assert removed == [defaults, arm, 'research_v623_start_once=1"', *v625_greps]
+    blocks = []
+    for head in ("# v6.24 S4.", "# v6.25 S5."):
+        start = LAUNCHER.index(head)
+        blocks += LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
+    leaned = [ln.replace(f"'{g.format('inv')}'", f"'{g.format(name)}'") for ln, (g, name) in zip(v625_greps, greps)]
+    assert sorted(added) == sorted([defaults + "; V6_24_BUILD=0; V6_25_BUILD=0", arm + "; V6_24_BUILD=1; V6_25_BUILD=1",
+                                    "research_v623_start_once=1 \\", "research_v624_pay_basis=1 \\",
+                                    "research_v625_lean=1 \\", "research_v625_lean_slope=1.0 \\",
+                                    'research_v625_lean_cap=48"', *leaned, "      tests/test_research_v6_24.py \\",
+                                    "      tests/test_research_v6_25.py \\", *blocks])
 
 
 # ---- 6. the launcher -----------------------------------------------------------------------------------------------
 
 def test_the_v624_block_is_gated_preflighted_and_listed():
-    assert "; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0\n" in LAUNCHER
+    assert "; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0\n" in LAUNCHER
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1"), arm
+    assert arm.endswith("; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1"), arm
     assert LAUNCHER.count('if [[ "${V6_24_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_24_BUILD=") == 2
     assert "      tests/test_research_v6_23.py \\\n      tests/test_research_v6_24.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.23 validator 0.6.3 PASS') < LAUNCHER.index("# v6.24 S4.") < \
