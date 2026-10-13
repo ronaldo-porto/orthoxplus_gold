@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -428,7 +428,8 @@ research_v624_pay_basis=1 \
 research_v625_lean=1 \
 research_v625_lean_slope=1.0 \
 research_v625_lean_cap=48 \
-research_v626_feed_clock=1"
+research_v626_feed_clock=1 \
+research_v627_touch_centre=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -3339,6 +3340,61 @@ if [[ "${V6_26_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.26 feed clock PASS (S6: the fundamental page is stale beyond 2 page steps in sim-s + the feed's wall cycle (fetch period + poll + fetch timeout) x the sim-s per wall-s the agent measures from its own requests, v6.16's 20 sim-s until the rate is known; all 3 readers of the page judge it with that limit)"
 fi
 
+# v6.27 S7.  The touch quote holds to the lean centre (research_v627_touch_centre).  v6.25 S5 makes every making decision
+# read inventory - tau; the v6.17 touch quote adds while a fill of one touch clip keeps |inventory - tau| inside v6.10's
+# bound, which behind the volume line is 24 deep clips (48 base) -- a paced book already places no adding touch quote
+# (v6.4.1) -- so on UID 115 (10-12/13) the touch alone bought +57.5 base on book 95 while tau was +2..+8, and books
+# 95/73/28 carried 99% of the skill (kappa) downside (skill 0.85 -> 0.17).  S7: while S5 leans the book this request
+# (tau != 0, noted in the pass right after S5 sets it; every request's notes start empty) the touch quote's bound is one
+# touch clip -- its own size, never above v6.10's bound -- so it adds only up to the centre (inv - tau + clip <= clip,
+# the rule a paced book already follows) and a resting quote whose fill would pass it is cancelled by its own room
+# check.  Without a lean the touch quote is v6.26's; the deep layer, S1, S5 and S6 are unchanged.  STRUCTURAL: the
+# touch's own clip and S5's tau, no new number.  OBSERVED (replay k65 vm665 $V626 + ltbt=2, UID 115's young phase, vs
+# v6.26): E +12.3..+17.7% over 5 conditions, every third ahead; skill 0.42-0.54 -> 0.92-1.32; |inventory| max 94 -> 53.
+if [[ "${V6_27_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v627_touch_centre import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.27 S7 the touch-centre module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self.research_v627_touch_centre = self._as_bool(getattr(self.config, "research_v627_touch_centre", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.27 S7 the agent does not read research_v627_touch_centre (default on)." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_27_taus = {}' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.27 S7 the pass does not start each request's leans empty: a lean of an earlier request could arm it." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_27_note(book_id, now_ts)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.27 S7 the pass does not note the lean S5 set for the touch quote." >&2
+    exit 1
+  }
+  grep -qF 'v6_27_wide, bound = bound, self._v6_27_bound(book_id, clip, bound)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.27 S7 the touch quote's bound does not follow the lean." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_27_report()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.27 S7 the pass emits no V627_STATE row." >&2
+    exit 1
+  }
+  grep -qF 'if isinstance(ts, bool) or isinstance(now_ts, bool) or int(ts) != int(now_ts):' "$AGENT_PATH/research_v627_touch_centre.py" || {
+    echo "ERROR: v6.27 S7 a lean recorded at another request's state time could arm the rule." >&2
+    exit 1
+  }
+  grep -qF 'return min(b, c)' "$AGENT_PATH/research_v627_touch_centre.py" || {
+    echo "ERROR: v6.27 S7 the bound is not one touch clip within v6.10's bound." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v627_touch_centre=1 "* ]] || {
+    echo "ERROR: v6.27 S7 build without research_v627_touch_centre=1 in PARAMS." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v625_lean=1 "* && " $PARAMS " == *" research_v617_touch_quote=1 "* ]] || {
+    echo "ERROR: v6.27 S7 ties S5's lean to the touch quote: it needs research_v625_lean=1 and research_v617_touch_quote=1 or it does nothing." >&2
+    exit 1
+  }
+  echo "[preflight] v6.27 touch centre PASS (S7: while S5 leans a book this request the touch quote's bound is one touch clip -- its own size, never above v6.10's bound -- so it adds only up to the lean centre and a resting quote whose fill would pass it is cancelled; without a lean the touch quote is v6.26's)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -3453,6 +3509,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_24.py \
       tests/test_research_v6_25.py \
       tests/test_research_v6_26.py \
+      tests/test_research_v6_27.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

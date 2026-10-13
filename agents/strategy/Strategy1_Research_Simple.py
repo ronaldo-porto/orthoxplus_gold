@@ -804,6 +804,11 @@ from research_v626_feed_clock import (  # noqa: E402
     stale_limit_sim_s as v626_stale_limit,
     state_sim_id as v626_state_sim_id,
 )
+from research_v627_touch_centre import (  # noqa: E402
+    V627_TOUCH_CENTRE_VERSION,
+    request_lean as v627_request_lean,
+    touch_bound as v627_touch_bound,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2124,6 +2129,19 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6_26_errors_seen = 0
         self._v6_26_reported = False
         self._v6_26_erring = False
+        # v6.27: S7 the touch quote holds to the lean centre.  While S5 leans a book this request (its tau != 0) the
+        # v6.17 touch quote's bound is one touch clip -- the quote's own size, never above v6.10's bound -- instead of
+        # v6.10's bound: the side toward the fundamental adds only up to the centre (inv - tau + clip <= clip), the rule
+        # a paced book already follows, and a resting quote whose fill would pass it is cancelled by the quote's room
+        # check.  Without a lean, or off, the touch quote is v6.26's.  STRUCTURAL: the touch's own clip and S5's tau;
+        # see research_v627_touch_centre.
+        self.research_v627_touch_centre = self._as_bool(getattr(self.config, "research_v627_touch_centre", True))
+        self._v6_27_taus: dict[int, float] = {}
+        self._v6_27_counts: dict[str, int] = {}
+        self._v6_27_errors = 0
+        self._v6_27_errors_seen = 0
+        self._v6_27_reported = False
+        self._v6_27_erring = False
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11440,6 +11458,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         toward = v617_toward_side(mid, fp) if fp is not None else None
         clip = float(V617_CLIP_DEEP_CLIPS) * float(getattr(deep, "clip", 0.0) or 0.0)
         bound = self._v610_bound_base(deep, paced)
+        v6_27_wide = None
+        if bool(getattr(self, "research_v627_touch_centre", False)):
+            # v6.27 S7: while S5 leans the book this request the bound is one touch clip -- the quote adds only up to
+            # the lean centre and a resting one whose fill would pass it is cancelled below (research_v627_touch_centre);
+            # v6.10's bound is kept to tell S7's decisions apart in its tally
+            v6_27_wide, bound = bound, self._v6_27_bound(book_id, clip, bound)
         doomed = []
         kept = 0
         for row in touch_rows:
@@ -11457,6 +11481,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 why = V619_CANCEL_SURPLUS      # v6.19: the cap-bound leading side keeps no adding order
             if why is None and not v617_room(side, inv, clip, bound):
                 why = V617_CANCEL_BOUND
+                if v6_27_wide is not None and v617_room(side, inv, clip, v6_27_wide):
+                    self._v6_27_count("cancel_centre")      # v6.27 S7: past the lean centre, inside v6.10's bound
             if why is None:
                 kept += 1
             else:
@@ -11480,6 +11506,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return 0
         if not v617_room(toward, inv, clip, bound):
             self._v617_count("bound_states")
+            if v6_27_wide is not None and v617_room(toward, inv, clip, v6_27_wide):
+                self._v6_27_count("refused_centre")         # v6.27 S7: past the lean centre, inside v6.10's bound
             return 0
         try:
             if V617_TOUCH_SLOT in (self._v69_live_slots(book_id).get(toward) or frozenset()):
@@ -12071,6 +12099,90 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "no_page": int(counts.get("no_feed", 0) or 0) + int(counts.get("other_sim", 0) or 0),
                 "errors": int(getattr(self, "_v6_26_errors", 0) or 0)}
 
+    def _v6_27_note(self, book_id: int, now_ts: int) -> None:
+        """v6.27 S7 (research_v627_touch_centre), in the pass right after S5 set the book's lean: the lean S5 set for
+        this request -- read from S5's own (tau, state time) record, and only when that record carries this request's
+        state time (v627_request_lean) -- is noted for the book's touch quote; without a lean nothing is noted.  The
+        pass starts every request's notes empty, so a lean of an earlier request never reaches a touch quote.  Never
+        raises: an error counts and the book is not noted (its touch quote is v6.26's)."""
+        try:
+            tau = v627_request_lean((getattr(self, "_v6_25_taus", None) or {}).get(int(book_id)), now_ts)
+            if tau:
+                notes = getattr(self, "_v6_27_taus", None)
+                if notes is None:
+                    notes = {}
+                    self._v6_27_taus = notes
+                notes[int(book_id)] = tau
+        except Exception:
+            self._v6_27_errors = int(getattr(self, "_v6_27_errors", 0) or 0) + 1
+
+    def _v6_27_bound(self, book_id: int, clip, bound):
+        """v6.27 S7: the touch quote's bound for this book this request -- one touch clip (``clip``, the quote's own
+        size; never above v6.10's ``bound``, v627_touch_bound) while S5 leans the book this request (_v6_27_note),
+        v6.10's ``bound`` otherwise.  Tallies the decision.  Never raises: an error counts and the bound is v6.10's
+        (v6.26)."""
+        try:
+            self._v6_27_count("touch_decisions")
+            if not (getattr(self, "_v6_27_taus", None) or {}).get(int(book_id)):
+                return bound
+            self._v6_27_count("armed")
+            return v627_touch_bound(bound, clip)
+        except Exception:
+            self._v6_27_errors = int(getattr(self, "_v6_27_errors", 0) or 0) + 1
+            return bound
+
+    def _v6_27_count(self, key: str, n: int = 1) -> None:
+        """v6.27 S7's tally.  Never raises: an error counts."""
+        try:
+            counts = getattr(self, "_v6_27_counts", None)
+            if counts is None:
+                counts = {}
+                self._v6_27_counts = counts
+            counts[key] = int(counts.get(key, 0) or 0) + int(n)
+        except Exception:
+            self._v6_27_errors = int(getattr(self, "_v6_27_errors", 0) or 0) + 1
+
+    def _v6_27_report(self) -> None:
+        """v6.27 S7: the V627_STATE row -- the switch, the books leaned at the last request, and the running tally of
+        touch decisions, those with the lean armed, and the placements refused and resting quotes cancelled at the
+        centre that v6.10's bound would have let through -- at the first pass, at the first request with an error after
+        one without, and every V62_STATE_EVERY_TICKS ticks; after the reply when the request defers its telemetry
+        (v6.2.9).  Never raises."""
+        try:
+            tick = int(getattr(self, "_tick", 0) or 0)
+            errors = int(getattr(self, "_v6_27_errors", 0) or 0)
+            erring = errors > int(getattr(self, "_v6_27_errors_seen", 0) or 0)
+            was_erring = bool(getattr(self, "_v6_27_erring", False))
+            self._v6_27_errors_seen, self._v6_27_erring = errors, erring
+            if not getattr(self, "_v6_27_reported", False):
+                reason = "start"
+            elif erring and not was_erring:
+                reason = "error"
+            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+                reason = "periodic"
+            else:
+                return
+            self._v6_27_reported = True
+            row = dict(self._v6_27_snapshot(), reason=reason, tick=tick)
+            work = getattr(self, "_v629_request_work", None)
+            if work is not None:
+                work.add("v627_state_row", lambda: self._emit("V627_STATE", force=True, **row))   # after the reply
+            else:
+                self._emit("V627_STATE", force=True, **row)
+        except Exception:
+            self._v6_27_errors = int(getattr(self, "_v6_27_errors", 0) or 0) + 1
+
+    def _v6_27_snapshot(self) -> dict:
+        counts = dict(getattr(self, "_v6_27_counts", None) or {})
+        return {"version": V627_TOUCH_CENTRE_VERSION,
+                "touch_centre_on": int(bool(getattr(self, "research_v627_touch_centre", False))),
+                "leaned_books": len(getattr(self, "_v6_27_taus", None) or {}),
+                "touch_decisions": int(counts.get("touch_decisions", 0) or 0),
+                "armed": int(counts.get("armed", 0) or 0),
+                "refused_centre": int(counts.get("refused_centre", 0) or 0),
+                "cancel_centre": int(counts.get("cancel_centre", 0) or 0),
+                "errors": int(getattr(self, "_v6_27_errors", 0) or 0)}
+
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
         mirror = getattr(self, "_v62_mirror", None)
@@ -12591,6 +12703,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         v6_25_on = bool(getattr(self, "research_v625_lean", False))
         v6_25_req = v625_lean_request() if v6_25_on else None
         v6_25_errors = int(getattr(self, "_v6_25_errors", 0) or 0)
+        # v6.27 S7: the touch quote holds to the lean centre on a book S5 leans this request (research_v627_touch_centre)
+        # -- this request's leans, noted book by book right after S5 sets each one, so a lean of an earlier request never
+        # reaches a touch quote.  Tallied for the V627_STATE row.
+        v6_27_on = bool(getattr(self, "research_v627_touch_centre", False))
+        if v6_27_on:
+            self._v6_27_taus = {}
         # v6.19 S1: the making mirror's window and the cap, read once per request (research_v619_surplus_hold).
         v619_on = bool(getattr(self, "research_v619_surplus_hold", False))
         v619_mirror, v619_mature, v619_cap = None, False, 0.0
@@ -12701,6 +12819,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             v6_25_inv = v6_25_fills = inv
             if v6_25_on and book_id not in v6_23_foreign:
                 v6_25_inv, v6_25_fills = self._v6_25_lean(book_id, raw_bid, raw_ask, cfg, inv, now_ts, v6_25_req)
+                if v6_27_on:
+                    self._v6_27_note(book_id, now_ts)        # v6.27 S7: the lean S5 just set, for the touch quote
             if spacing is not None:
                 # v6.6 S1: our fills in this state's prints, against the inventory they left, mark each side's last add.
                 try:
@@ -12965,6 +13085,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v6_25_report(v6_25_req, v6_25_errors)     # v6.25 S5: its V625_STATE row, on or off (never raises)
         if getattr(self, "research_v626_feed_clock", None) is not None:
             self._v6_26_report()                            # v6.26 S6: its V626_STATE row, on or off (never raises)
+        if getattr(self, "research_v627_touch_centre", None) is not None:
+            self._v6_27_report()                            # v6.27 S7: its V627_STATE row, on or off (never raises)
         return placed_total
 
     def _v62_telemetry(self, state) -> None:
