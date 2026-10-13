@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -430,7 +430,8 @@ research_v625_lean_slope=1.0 \
 research_v625_lean_cap=48 \
 research_v626_feed_clock=1 \
 research_v627_touch_centre=1 \
-research_v628_flat_launch=1"
+research_v628_flat_launch=1 \
+research_v629_touch_fp_move=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -3455,6 +3456,81 @@ if [[ "${V6_28_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.28 flat launch PASS (S8: a launch this process starts runs at the sustainable rate with the deep layer's clip and keeps that rate across a restart; a launch restored without a rate, or begun before this process, keeps v6.15's 2x line and clip)"
 fi
 
+# v6.29 S9.  The touch on the fundamental's move (research_v629_touch_fp_move).  The anchored makers (UIDs 255 / 248 / 216)
+# fill at q ~0.9 by trading on the side the fundamental just moved toward (80-84% of their notional; ours 46-55%, and
+# 23-25% of ours sat against the gap and against the move at q -0.16..-0.21).  S9: the v6.17 touch quote (S7's centre
+# rule unchanged) rests only while the fundamental's move over the look-back is not against its side -- a buy touch is
+# withheld (not placed, a resting one cancelled) while the fundamental fell, a sell touch while it rose; no move, no page
+# that old, a stale page or an error: no gate (v6.28).  The move is this request's fundamental minus the book's on the
+# page current W sim-s ago (the newest page the agent first saw at or before the state time minus W: k71 vm671's
+# usable-time reference).  W = this request's S6 limit (v6.16's 20 sim-s without one).  STRUCTURAL: the feed's own
+# freshness horizon and the move's sign.  OBSERVED (replay k71 vm671 fmg=4 on UID 115's payback, H 30 sim-s): E +7.3%
+# (60 s +10.2%, not shipped); 78's launch +27.8%; out of sample +0.8..+2.2%; every deep-layer gate refuted (-8..-70%).
+# With it, S8's first save: the first flat launch S8 records asks for one session save at the request's own save path (a
+# save earlier in the request carries the previous tick, so the one after the pass skipped and the flat rates first
+# reached the file ~100 requests later; a restart in between rebuilt the launch at 2x).
+if [[ "${V6_29_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v6_29_touch_move import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.29 S9 the touch-move module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self.research_v629_touch_fp_move = self._as_bool(getattr(self.config, "research_v629_touch_fp_move", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.29 S9 the agent does not read research_v629_touch_fp_move (default on)." >&2
+    exit 1
+  }
+  grep -qF 'v6_29_held = self._v6_29_held(book_id, fp, cfg)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.29 S9 the touch quote does not read the fundamental's move." >&2
+    exit 1
+  }
+  grep -qF 'why = V6_29_CANCEL_FP_MOVE' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.29 S9 a resting touch quote the fundamental moved against is not cancelled." >&2
+    exit 1
+  }
+  grep -qF 'if toward == v6_29_held:' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.29 S9 a touch quote the fundamental moved against is still placed." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_29_report()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.29 S9 the pass emits no V6_29_STATE row." >&2
+    exit 1
+  }
+  grep -qF 'return SIDE_BUY if d < 0.0 else SIDE_SELL' "$AGENT_PATH/research_v6_29_touch_move.py" || {
+    echo "ERROR: v6.29 S9 the withheld side is not the one the fundamental's move is against." >&2
+    exit 1
+  }
+  grep -qF 'if self.pages[i][0] <= cut:' "$AGENT_PATH/research_v6_29_touch_move.py" || {
+    echo "ERROR: v6.29 S9 the reference is not the page first seen a look-back ago." >&2
+    exit 1
+  }
+  grep -qF 'v6_29_launches = self._v6_29_launches(pace)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.29 S8's first save: the pass does not count S8's launches before its books." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_29_first_launch(pace)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.29 S8's first save: S8's first flat launch asks for no session save." >&2
+    exit 1
+  }
+  grep -qF 'force = force or bool(getattr(self, "_v6_29_save_due", False))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.29 S8's first save: the save S8's first flat launch asked for is not forced." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_29_saved()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.29 S8's first save: a written session file does not end the request (it would force every save)." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v629_touch_fp_move=1 "* ]] || {
+    echo "ERROR: v6.29 S9 build without research_v629_touch_fp_move=1 in PARAMS." >&2
+    exit 1
+  }
+  for key in research_v617_touch_quote research_v626_feed_clock research_v628_flat_launch research_v621_pace_persist; do
+    [[ " $PARAMS " == *" $key=1 "* ]] || {
+      echo "ERROR: v6.29 build without $key=1 in PARAMS (S9 gates v6.17's touch quote over S6's look-back; S8's first save keeps S8's rates in v6.21's saved pace state)." >&2
+      exit 1
+    }
+  done
+  echo "[preflight] v6.29 touch on the fp move PASS (S9: the touch quote toward the fundamental is withheld, and a resting one cancelled, while the fundamental's move over S6's look-back is against its side; no move, no page that old or a stale page: v6.28's quote; S8's first flat launch asks for one session save)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -3571,6 +3647,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_26.py \
       tests/test_research_v6_27.py \
       tests/test_research_v6_28.py \
+      tests/test_research_v6_29.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

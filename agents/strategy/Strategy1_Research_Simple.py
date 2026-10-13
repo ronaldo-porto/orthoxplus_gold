@@ -816,6 +816,13 @@ from research_v628_flat_launch import (  # noqa: E402
     restore_rates as v628_restore_rates,
     save_rates as v628_save_rates,
 )
+from research_v6_29_touch_move import (  # noqa: E402
+    CANCEL_FP_MOVE as V6_29_CANCEL_FP_MOVE,
+    PageHistory as V6_29PageHistory,
+    V6_29_TOUCH_MOVE_VERSION,
+    launch_records as v6_29_launch_records,
+    lookback_sim_s as v6_29_lookback,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2160,6 +2167,26 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6_28_errors_seen = 0
         self._v6_28_reported = False
         self._v6_28_erring = False
+        # v6.29: S9 the touch on the fundamental's move.  The v6.17 touch quote (S7's centre rule unchanged) rests only
+        # while the fundamental's move over the look-back -- this request's S6 limit -- is not against its side: a buy
+        # touch is withheld (not placed, a resting one cancelled) while the fundamental fell, a sell touch while it
+        # rose; no move, no page that old, a stale page or an error: no gate.  Off, the touch quote is v6.28's.
+        # STRUCTURAL: the feed's own freshness horizon and the move's sign; see research_v6_29_touch_move.
+        self.research_v629_touch_fp_move = self._as_bool(getattr(self.config, "research_v629_touch_fp_move", True))
+        self._v6_29_pages = V6_29PageHistory()
+        self._v6_29_lookback: float | None = None
+        self._v6_29_counts: dict[str, int] = {}
+        self._v6_29_errors = 0
+        self._v6_29_errors_seen = 0
+        self._v6_29_reported = False
+        self._v6_29_erring = False
+        # v6.29, S8's first save (under research_v628_flat_launch, no switch of its own): the first flat launch S8
+        # records asks for one session save at the request's own save path, so a restart before the first periodic
+        # save (research_session_save_every_n requests later) keeps its rate.
+        self._v6_29_launches_seen: int | None = None
+        self._v6_29_save_due = False
+        self._v6_29_save_asked: int | None = None
+        self._v6_29_save_done: int | None = None
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11486,6 +11513,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # the lean centre and a resting one whose fill would pass it is cancelled below (research_v627_touch_centre);
             # v6.10's bound is kept to tell S7's decisions apart in its tally
             v6_27_wide, bound = bound, self._v6_27_bound(book_id, clip, bound)
+        v6_29_held = None
+        if bool(getattr(self, "research_v629_touch_fp_move", False)):
+            # v6.29 S9: the side whose touch quote the fundamental's move over the look-back is against -- not placed
+            # below, and a resting one cancelled (research_v629_touch_fp_move); None: no gate, the quote is v6.28's
+            v6_29_held = self._v6_29_held(book_id, fp, cfg)
         doomed = []
         kept = 0
         for row in touch_rows:
@@ -11505,6 +11537,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 why = V617_CANCEL_BOUND
                 if v6_27_wide is not None and v617_room(side, inv, clip, v6_27_wide):
                     self._v6_27_count("cancel_centre")      # v6.27 S7: past the lean centre, inside v6.10's bound
+            if why is None and side == v6_29_held:
+                why = V6_29_CANCEL_FP_MOVE                  # v6.29 S9: the fundamental's move is against it
+                self._v6_29_count("cancelled")
             if why is None:
                 kept += 1
             else:
@@ -11530,6 +11565,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v617_count("bound_states")
             if v6_27_wide is not None and v617_room(toward, inv, clip, v6_27_wide):
                 self._v6_27_count("refused_centre")         # v6.27 S7: past the lean centre, inside v6.10's bound
+            return 0
+        if toward == v6_29_held:
+            self._v6_29_count("withheld")                   # v6.29 S9: the fundamental moved against this side
             return 0
         try:
             if V617_TOUCH_SLOT in (self._v69_live_slots(book_id).get(toward) or frozenset()):
@@ -12324,6 +12362,139 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "flat_clip_book_states": int(counts.get("flat_clip_book_states", 0) or 0),
                 "errors": self._v6_28_error_total()}
 
+    def _v6_29_held(self, book_id: int, fp, cfg):
+        """v6.29 S9 (research_v629_touch_fp_move), in the touch quote right after v6.17 read the book's fundamental
+        ``fp`` (None: its page is stale or missing): the side whose touch quote the fundamental's move over the
+        look-back is against -- BUY when it fell, SELL when it rose -- or None (no gate).  The move is ``fp`` minus the
+        book's fundamental on the page that was current W sim-s ago: the newest page this agent first saw at or before
+        this request's state time minus W, from the page history the feed's snapshot feeds here (V6_29PageHistory:
+        distinct pages by their own sim time, only what W needs).  W is this request's S6 limit (v6.16's
+        MAX_STALE_SIM_S without one).  Tallies the decision and why there is no gate (no page that old, no fresh
+        fundamental, no move).  Never raises: an error counts and the book has no gate (v6.28)."""
+        try:
+            self._v6_29_count("touch_decisions")
+            pages = getattr(self, "_v6_29_pages", None)
+            if pages is None:
+                pages = V6_29PageHistory()
+                self._v6_29_pages = pages
+            now_ts = int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0)
+            feed = getattr(self, "_v616_feed", None)
+            pages.observe(feed.snapshot() if feed is not None else None, now_ts, v626_state_sim_id(cfg))
+            lookback = v6_29_lookback(getattr(self, "_v6_26_limit", None))
+            self._v6_29_lookback = lookback
+            side, why = pages.decide(book_id, fp, now_ts, lookback)
+            self._v6_29_count(why)
+            return side
+        except Exception:
+            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
+            return None
+
+    def _v6_29_count(self, key: str, n: int = 1) -> None:
+        """v6.29's tally.  Never raises: an error counts."""
+        try:
+            counts = getattr(self, "_v6_29_counts", None)
+            if counts is None:
+                counts = {}
+                self._v6_29_counts = counts
+            counts[key] = int(counts.get(key, 0) or 0) + int(n)
+        except Exception:
+            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
+
+    def _v6_29_launches(self, pace):
+        """v6.29, S8's first save (research_v628_flat_launch), in the pass before its books are seen: the launch records
+        S8's line holds (v6_29_launch_records), or None without S8's line.  The process's first pass keeps that number
+        as the records already accounted for -- a restart's, restored from the session file that carries them.  Never
+        raises: an error counts and is None (no save is asked for: v6.28's cadence)."""
+        try:
+            if not isinstance(pace, V628FlatLaunchLine):
+                return None
+            n = v6_29_launch_records(pace)
+            if n is not None and getattr(self, "_v6_29_launches_seen", None) is None:
+                self._v6_29_launches_seen = n
+            return n
+        except Exception:
+            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
+            return None
+
+    def _v6_29_first_launch(self, pace) -> None:
+        """v6.29, S8's first save, in the pass after its books: more launch records than at the last look are launches
+        S8 recorded -- flat, each a book first seen on an empty window -- and the first time there are, one session save
+        is asked for (_v6_29_save_due): the request's own save path (_research_save_session, after the pass) forces it,
+        then the normal cadence (research_session_save_every_n) runs on from it.  k72: a save earlier in the request
+        (the session sync's on a reset, v5.0.3's gate as it opens) carries the previous tick -- respond counts the
+        request's own -- so the save path after the pass skipped and the first save carrying a fresh UID's flat rates
+        came a whole cadence later (~100 requests, ~8 wall-min); a restart in between rebuilt the launch at v6.15's 2x.
+        Never raises: an error counts and no save is asked for (v6.28)."""
+        try:
+            n = v6_29_launch_records(pace) if isinstance(pace, V628FlatLaunchLine) else None
+            seen = getattr(self, "_v6_29_launches_seen", None)
+            if n is None or seen is None:
+                return
+            if n > seen and getattr(self, "_v6_29_save_asked", None) is None:
+                tick = int(getattr(self, "_tick", 0) or 0)
+                self._v6_29_save_due, self._v6_29_save_asked = True, tick
+            self._v6_29_launches_seen = n
+        except Exception:
+            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
+
+    def _v6_29_saved(self) -> None:
+        """v6.29, S8's first save: the session file was written while the save S8's first flat launch asked for was due
+        -- it carries the line's rates now, so that save is done.  Never raises."""
+        try:
+            tick = int(getattr(self, "_tick", 0) or 0)
+            self._v6_29_save_due, self._v6_29_save_done = False, tick
+        except Exception:
+            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
+
+    def _v6_29_report(self) -> None:
+        """v6.29: the V6_29_STATE row -- S9's switch, the look-back it used last and the pages it keeps, the running
+        tally of touch decisions, those the fundamental's move armed (it fell / rose), placements withheld and resting
+        quotes cancelled, and the decisions without a gate (no page that old, no fresh fundamental, no move); S8's
+        first save (asked for / done at which tick); the errors -- at the first pass, at the first request with an
+        error after one without, and every V62_STATE_EVERY_TICKS ticks; after the reply when the request defers its
+        telemetry (v6.2.9).  Never raises."""
+        try:
+            tick = int(getattr(self, "_tick", 0) or 0)
+            errors = int(getattr(self, "_v6_29_errors", 0) or 0)
+            erring = errors > int(getattr(self, "_v6_29_errors_seen", 0) or 0)
+            was_erring = bool(getattr(self, "_v6_29_erring", False))
+            self._v6_29_errors_seen, self._v6_29_erring = errors, erring
+            if not getattr(self, "_v6_29_reported", False):
+                reason = "start"
+            elif erring and not was_erring:
+                reason = "error"
+            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+                reason = "periodic"
+            else:
+                return
+            self._v6_29_reported = True
+            row = dict(self._v6_29_snapshot(), reason=reason, tick=tick)
+            work = getattr(self, "_v629_request_work", None)
+            if work is not None:
+                work.add("v6_29_state_row", lambda: self._emit("V6_29_STATE", force=True, **row))   # after the reply
+            else:
+                self._emit("V6_29_STATE", force=True, **row)
+        except Exception:
+            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
+
+    def _v6_29_snapshot(self) -> dict:
+        counts = dict(getattr(self, "_v6_29_counts", None) or {})
+        pages = getattr(self, "_v6_29_pages", None)
+        lookback = getattr(self, "_v6_29_lookback", None)
+        return {"version": V6_29_TOUCH_MOVE_VERSION,
+                "touch_fp_move_on": int(bool(getattr(self, "research_v629_touch_fp_move", False))),
+                "lookback_sim_s": (round(float(lookback), 3) if lookback is not None else None),
+                "pages": len(getattr(pages, "pages", None) or ()), "page_resets": int(getattr(pages, "resets", 0) or 0),
+                "touch_decisions": int(counts.get("touch_decisions", 0) or 0),
+                "fp_fell": int(counts.get("fp_fell", 0) or 0), "fp_rose": int(counts.get("fp_rose", 0) or 0),
+                "withheld": int(counts.get("withheld", 0) or 0), "cancelled": int(counts.get("cancelled", 0) or 0),
+                "no_history": int(counts.get("no_history", 0) or 0), "stale": int(counts.get("stale", 0) or 0),
+                "zero_move": int(counts.get("zero_move", 0) or 0),
+                "s8_save_due": int(bool(getattr(self, "_v6_29_save_due", False))),
+                "s8_save_asked": getattr(self, "_v6_29_save_asked", None),
+                "s8_save_done": getattr(self, "_v6_29_save_done", None),
+                "errors": int(getattr(self, "_v6_29_errors", 0) or 0)}
+
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
         mirror = getattr(self, "_v62_mirror", None)
@@ -12853,6 +13024,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # v6.28 S8: the deep layer's clip follows the rate each book's launch runs at (research_v628_flat_launch) -- the
         # layer's clip in a flat launch window.  Tallied for the V628_STATE row.
         v6_28_on = bool(getattr(self, "research_v628_flat_launch", False))
+        # v6.29, S8's first save (under research_v628_flat_launch): the launch records S8's line holds before the books
+        # are seen; more after them are flat launches S8 recorded, and the first such pass asks for one session save
+        # (_v6_29_first_launch) -- on an agent that carries v6.29's state (None: v6.28's cadence alone).
+        v6_29_launches = None
+        if v6_28_on and getattr(self, "_v6_29_save_due", None) is not None:
+            v6_29_launches = self._v6_29_launches(pace)
         # v6.19 S1: the making mirror's window and the cap, read once per request (research_v619_surplus_hold).
         v619_on = bool(getattr(self, "research_v619_surplus_hold", False))
         v619_mirror, v619_mature, v619_cap = None, False, 0.0
@@ -13237,6 +13414,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v6_27_report()                            # v6.27 S7: its V627_STATE row, on or off (never raises)
         if getattr(self, "research_v628_flat_launch", None) is not None:
             self._v6_28_report()                            # v6.28 S8: its V628_STATE row, on or off (never raises)
+        if v6_29_launches is not None:
+            self._v6_29_first_launch(pace)                  # v6.29: S8's first flat launch asks for one session save
+        if getattr(self, "research_v629_touch_fp_move", None) is not None:
+            self._v6_29_report()                            # v6.29 S9: its V6_29_STATE row, on or off (never raises)
         return placed_total
 
     def _v62_telemetry(self, state) -> None:
@@ -14862,6 +15043,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return raw
 
     def _research_save_session(self, force: bool = False) -> None:
+        # v6.29: the one session save S8's first flat launch asked for is forced at this save; then the normal cadence
+        force = force or bool(getattr(self, "_v6_29_save_due", False))
         super()._research_save_session(force=force)
         identity = getattr(self, "_research_session_identity", None)
         if identity is None or not getattr(identity, "simulation_id", None):
@@ -14918,6 +15101,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             with open(tmp, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
             os.replace(tmp, path)
+            if getattr(self, "_v6_29_save_due", False):
+                self._v6_29_saved()             # v6.29: the file now carries S8's first flat launch (never raises)
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             pass
 
