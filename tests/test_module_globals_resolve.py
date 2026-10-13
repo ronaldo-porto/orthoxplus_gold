@@ -39,6 +39,7 @@ MODULES = [
     "research_v625_lean.py",
     "research_v626_feed_clock.py",
     "research_v627_touch_centre.py",
+    "research_v628_flat_launch.py",
     "research_v6214_touch_life.py",
     "research_v6215_order_life.py",
     "research_v63_trend_target.py",

@@ -809,6 +809,13 @@ from research_v627_touch_centre import (  # noqa: E402
     request_lean as v627_request_lean,
     touch_bound as v627_touch_bound,
 )
+from research_v628_flat_launch import (  # noqa: E402
+    FlatLaunchLine as V628FlatLaunchLine,
+    V628_FLAT_LAUNCH_VERSION,
+    launch_clip as v628_launch_clip,
+    restore_rates as v628_restore_rates,
+    save_rates as v628_save_rates,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2142,6 +2149,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6_27_errors_seen = 0
         self._v6_27_reported = False
         self._v6_27_erring = False
+        # v6.28: S8 the flat launch.  A book whose launch starts in this process (first seen on an empty volume window)
+        # launches at the sustainable rate: v6.15's launch line and v6.21's even payback at rate 1, and the deep layer's
+        # clip, not twice it.  Its rate rides in its v6.21 pace-state row, so a restart keeps it; a launch restored
+        # without a rate (every one saved before v6.28) or begun before this process keeps v6.15's rate, line and clip
+        # (v6.27).  Off, the build is v6.27.  STRUCTURAL: the sustainable rate; see research_v628_flat_launch.
+        self.research_v628_flat_launch = self._as_bool(getattr(self.config, "research_v628_flat_launch", True))
+        self._v6_28_counts: dict[str, int] = {}
+        self._v6_28_errors = 0
+        self._v6_28_errors_seen = 0
+        self._v6_28_reported = False
+        self._v6_28_erring = False
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11039,6 +11057,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 pace = V621YoungWindowLine(launch=pace.launch_on,
                                            guard=bool(getattr(self, "research_v621_rolloff_guard", False)),
                                            even=bool(getattr(self, "research_v621_even_spend", False)))
+            if bool(getattr(self, "research_v628_flat_launch", False)) and isinstance(pace, V621YoungWindowLine):
+                # v6.28 S8: the same line, each book's launch at the rate it started with -- the sustainable rate for
+                # one this process starts, v6.15's for one restored without a rate (research_v628_flat_launch)
+                pace = self._v6_28_line(pace)
             self._v66_pace = pace
         return pace
 
@@ -11687,6 +11709,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             how = v621_restore_pace(pace, payload, uid=getattr(self, "uid", None), sim_id=pace.sim_id, now_ns=now_ts,
                                     duration_ns=duration, readings=readings)
             self._v621_count("restore_" + str(how))
+            if bool(getattr(self, "research_v628_flat_launch", False)):
+                self._v6_28_restore(pace, payload, how)         # v6.28 S8: each restored launch's rate (never raises)
             if pace.window_status is None:
                 self._v621_window_start(pace, len(books), readings, now_ts, duration)
         except Exception:
@@ -12182,6 +12206,123 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "refused_centre": int(counts.get("refused_centre", 0) or 0),
                 "cancel_centre": int(counts.get("cancel_centre", 0) or 0),
                 "errors": int(getattr(self, "_v6_27_errors", 0) or 0)}
+
+    def _v6_28_line(self, pace):
+        """v6.28 S8 (research_v628_flat_launch), where the pace line is built: v6.21's young-window line ``pace``
+        becomes V628FlatLaunchLine with the same switches and rate -- each book's launch at the rate it started with:
+        the sustainable rate for a launch this process starts, ``pace``'s own (v6.15's) for one without a record.
+        Never raises: an error counts and the line is ``pace`` (v6.27)."""
+        try:
+            return V628FlatLaunchLine(launch=pace.launch_on, guard=pace.guard_on, even=pace.even_on, rate=pace.rate)
+        except Exception:
+            self._v6_28_errors = int(getattr(self, "_v6_28_errors", 0) or 0) + 1
+            return pace
+
+    def _v6_28_restore(self, pace, payload, how) -> None:
+        """v6.28 S8, at the first request right after v6.21 S2 put the saved pace state back (``how``): each restored
+        book's launch rate from its row (v628_restore_rates) -- a row without one, every one saved before v6.28, leaves
+        the book on v6.15's rate.  Tallies what it found.  Never raises: an error counts and every book it did not reach
+        keeps v6.15's rate (v6.27)."""
+        try:
+            if not isinstance(pace, V628FlatLaunchLine):
+                return
+            for key, n in v628_restore_rates(pace, payload, how).items():
+                if n:
+                    self._v6_28_count("restored_" + str(key), int(n))
+        except Exception:
+            self._v6_28_errors = int(getattr(self, "_v6_28_errors", 0) or 0) + 1
+
+    def _v6_28_save(self, state) -> None:
+        """v6.28 S8, in the session save right after v6.21 S2's pace state: each recorded launch rate goes into its
+        book's row of ``state`` (v628_save_rates) -- only for the live line's state (a saved state not applied yet
+        carries its own rows).  Never raises: an error counts and the rows are v6.21's (no rate: v6.15's after a
+        restart)."""
+        try:
+            pace = getattr(self, "_v66_pace", None)
+            if isinstance(pace, V628FlatLaunchLine) and getattr(self, "_v621_prepared", False):
+                v628_save_rates(pace, state)
+        except Exception:
+            self._v6_28_errors = int(getattr(self, "_v6_28_errors", 0) or 0) + 1
+
+    def _v6_28_clip(self, clip, v627_clip, pace, book_id: int, now_ts: int):
+        """v6.28 S8: the book's deep clip -- v6.15's launch clip at the rate its launch runs at (v628_launch_clip): the
+        deep layer's ``clip`` in a flat launch window, v6.15's in one restored without a rate.  Tallies the book-states
+        a flat launch keeps below ``v627_clip`` (v6.15's launch clip).  Never raises: an error counts and the clip is
+        ``v627_clip``."""
+        try:
+            if not isinstance(pace, V628FlatLaunchLine):
+                return v627_clip
+            got = float(v628_launch_clip(clip, pace, book_id, now_ts))
+            if got < float(v627_clip) - 1e-12:
+                self._v6_28_count("flat_clip_book_states")
+            return got
+        except Exception:
+            self._v6_28_errors = int(getattr(self, "_v6_28_errors", 0) or 0) + 1
+            return v627_clip
+
+    def _v6_28_count(self, key: str, n: int = 1) -> None:
+        """v6.28 S8's tally.  Never raises: an error counts."""
+        try:
+            counts = getattr(self, "_v6_28_counts", None)
+            if counts is None:
+                counts = {}
+                self._v6_28_counts = counts
+            counts[key] = int(counts.get(key, 0) or 0) + int(n)
+        except Exception:
+            self._v6_28_errors = int(getattr(self, "_v6_28_errors", 0) or 0) + 1
+
+    def _v6_28_error_total(self) -> int:
+        """v6.28 S8's errors: the agent's and the line's own (a book's rate it could not read or record)."""
+        pace = getattr(self, "_v66_pace", None)
+        line = int(getattr(pace, "errors", 0) or 0) if isinstance(pace, V628FlatLaunchLine) else 0
+        return int(getattr(self, "_v6_28_errors", 0) or 0) + line
+
+    def _v6_28_report(self) -> None:
+        """v6.28 S8: the V628_STATE row -- the switch, the books on a launch at the flat rate and at v6.15's (and of
+        them those inside their launch window), the rates the first request restored, the book-states a flat launch
+        kept at the deep layer's clip, and the errors -- at the first pass, at the first request with an error after
+        one without, and every V62_STATE_EVERY_TICKS ticks; after the reply when the request defers its telemetry
+        (v6.2.9).  Never raises."""
+        try:
+            tick = int(getattr(self, "_tick", 0) or 0)
+            errors = self._v6_28_error_total()
+            erring = errors > int(getattr(self, "_v6_28_errors_seen", 0) or 0)
+            was_erring = bool(getattr(self, "_v6_28_erring", False))
+            self._v6_28_errors_seen, self._v6_28_erring = errors, erring
+            if not getattr(self, "_v6_28_reported", False):
+                reason = "start"
+            elif erring and not was_erring:
+                reason = "error"
+            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+                reason = "periodic"
+            else:
+                return
+            self._v6_28_reported = True
+            row = dict(self._v6_28_snapshot(), reason=reason, tick=tick)
+            work = getattr(self, "_v629_request_work", None)
+            if work is not None:
+                work.add("v628_state_row", lambda: self._emit("V628_STATE", force=True, **row))   # after the reply
+            else:
+                self._emit("V628_STATE", force=True, **row)
+        except Exception:
+            self._v6_28_errors = int(getattr(self, "_v6_28_errors", 0) or 0) + 1
+
+    def _v6_28_snapshot(self) -> dict:
+        counts = dict(getattr(self, "_v6_28_counts", None) or {})
+        pace = getattr(self, "_v66_pace", None)
+        flat_line = isinstance(pace, V628FlatLaunchLine)
+        line = pace.rates_summary() if flat_line else {}
+        return {"version": V628_FLAT_LAUNCH_VERSION,
+                "flat_launch_on": int(bool(getattr(self, "research_v628_flat_launch", False))),
+                "flat_line": int(flat_line),
+                "launch_flat": int(line.get("flat", 0) or 0), "launch_legacy": int(line.get("legacy", 0) or 0),
+                "open_flat": int(line.get("open_flat", 0) or 0), "open_legacy": int(line.get("open_legacy", 0) or 0),
+                "restored_flat": int(counts.get("restored_flat", 0) or 0),
+                "restored_legacy": int(counts.get("restored_legacy", 0) or 0),
+                "restored_unrecorded": int(counts.get("restored_unrecorded", 0) or 0),
+                "restored_invalid": int(counts.get("restored_invalid", 0) or 0),
+                "flat_clip_book_states": int(counts.get("flat_clip_book_states", 0) or 0),
+                "errors": self._v6_28_error_total()}
 
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
@@ -12709,6 +12850,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         v6_27_on = bool(getattr(self, "research_v627_touch_centre", False))
         if v6_27_on:
             self._v6_27_taus = {}
+        # v6.28 S8: the deep layer's clip follows the rate each book's launch runs at (research_v628_flat_launch) -- the
+        # layer's clip in a flat launch window.  Tallied for the V628_STATE row.
+        v6_28_on = bool(getattr(self, "research_v628_flat_launch", False))
         # v6.19 S1: the making mirror's window and the cap, read once per request (research_v619_surplus_hold).
         v619_on = bool(getattr(self, "research_v619_surplus_hold", False))
         v619_mirror, v619_mature, v619_cap = None, False, 0.0
@@ -12926,6 +13070,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     except Exception:
                         self._v615_errors = int(getattr(self, "_v615_errors", 0) or 0) + 1
                         clip_b = deep.clip
+                    if v6_28_on:
+                        # v6.28 S8: the launch clip at the rate the book's launch runs at -- the deep layer's clip in a
+                        # flat launch window, v6.15's in one restored without a rate (never raises: else v6.27's)
+                        clip_b = self._v6_28_clip(deep.clip, clip_b, pace, book_id, now_ts)
                 if clip_b > deep.clip + 1e-12:
                     # v6.15: inside its launch window a book's deep orders carry the launch rate's clip (the bound stays);
                     # every other book takes the call below at the deep layer's clip, unchanged (v6.5 S1).
@@ -13087,6 +13235,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v6_26_report()                            # v6.26 S6: its V626_STATE row, on or off (never raises)
         if getattr(self, "research_v627_touch_centre", None) is not None:
             self._v6_27_report()                            # v6.27 S7: its V627_STATE row, on or off (never raises)
+        if getattr(self, "research_v628_flat_launch", None) is not None:
+            self._v6_28_report()                            # v6.28 S8: its V628_STATE row, on or off (never raises)
         return placed_total
 
     def _v62_telemetry(self, state) -> None:
@@ -14743,6 +14893,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 v621_state = self._v621_session_state()
                 if v621_state is not None:
                     payload[V621_PACE_SESSION_KEY] = v621_state
+                    if bool(getattr(self, "research_v628_flat_launch", False)):
+                        self._v6_28_save(v621_state)            # v6.28 S8: each launch's rate in its row (never raises)
             payload["direct_maker_quality_a1_5_1"] = {
                 "version": DIRECT_QUALITY_VERSION,
                 "global": getattr(self, "_direct_maker_quality_global", MakerLifecycleStats()).as_state(),

@@ -641,7 +641,7 @@ def test_off_the_row_says_so_and_an_agent_without_the_build_has_none():
 def test_the_switch_ships_on_and_agrees_with_its_agent_default():
     params = t617._params()
     assert "research_v627_touch_centre=1 " in t617._shipped() + " " and params.count("research_v627_touch_centre=") == 1
-    assert 'research_v626_feed_clock=1 \\\nresearch_v627_touch_centre=1"\n' in LAUNCHER     # after v6.26's key, last
+    assert 'research_v626_feed_clock=1 \\\nresearch_v627_touch_centre=1 \\\n' in LAUNCHER   # after v6.26's key (v6.28's next)
     init = _src("_init_build_switches")
     lines = (SWITCH_LINE, "self._v6_27_taus: dict[int, float] = {}", "self._v6_27_counts: dict[str, int] = {}",
              "self._v6_27_errors = 0", "self._v6_27_errors_seen = 0", "self._v6_27_reported = False",
@@ -701,6 +701,57 @@ def test_each_line_is_wired_once_in_its_place():
 # ---- 8. v6.26's code, statement by statement (the committed v6.26: eb25bdf) -------------------------------------------------
 
 V626_COMMIT = "eb25bdf"
+# v6.28 (S8, research_v628_flat_launch) only adds -- its import, its _v6_28_ methods, its switch and state, and
+# statements naming them where the pace line is built, restored and saved and in the pass -- so the method-by-method
+# check reads v6.27 with v6.28 taken out (_Drop628; tests/test_research_v6_28.py strips it against the committed v6.27),
+# and t626's _Drop627 takes v6.28's additions out with v6.27's.
+V628_IDENTIFIERS = t623.V628_IDENTIFIERS
+
+
+def _mentions628(node):
+    for n in ast.walk(node):
+        name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
+            n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
+        if isinstance(name, str) and (name in V628_IDENTIFIERS or name.startswith(("_v6_28_", "v6_28_"))):
+            return True
+    return False
+
+
+class _Drop628(ast.NodeTransformer):
+    """Takes out what v6.28 adds and nothing else -- its import, its _v6_28_ methods, statements naming its
+    identifiers (an if on one keeps its else) -- keeping every docstring: v6.27 as committed, for the method-by-method
+    check against v6.26."""
+
+    def _stmts(self, stmts):
+        out = []
+        for st in stmts:
+            if isinstance(st, ast.ImportFrom) and st.module == "research_v628_flat_launch":
+                continue
+            if isinstance(st, ast.FunctionDef) and st.name.startswith("_v6_28_"):
+                continue
+            if isinstance(st, ast.If) and _mentions628(st.test):
+                out.extend(self._stmts(st.orelse))
+                continue
+            st = self.visit(st)
+            if isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr)) and _mentions628(st):
+                continue
+            out.append(st)
+        return out
+
+    def generic_visit(self, node):
+        for field in ("body", "orelse", "finalbody"):
+            if isinstance(getattr(node, field, None), list):
+                setattr(node, field, self._stmts(getattr(node, field)))
+        for h in getattr(node, "handlers", None) or []:
+            h.body = self._stmts(h.body)
+        for name, value in ast.iter_fields(node):
+            if name in ("body", "orelse", "finalbody", "handlers"):
+                continue
+            if isinstance(value, list):
+                setattr(node, name, [self.visit(v) if isinstance(v, ast.AST) else v for v in value])
+            elif isinstance(value, ast.AST):
+                setattr(node, name, self.visit(value))
+        return node
 
 
 def _v626(rel):
@@ -738,7 +789,9 @@ def test_only_the_switch_block_the_pass_and_the_touch_quote_changed_and_five_met
             if isinstance(n, ast.FunctionDef):
                 out.setdefault(n.name, []).append(ast.dump(n))
         return out
-    a, b = methods(ast.parse(old)), methods(ast.parse(SIMPLE))
+    assert not _mentions628(ast.parse(old))
+    a, b = methods(ast.parse(old)), methods(_Drop628().visit(ast.parse(SIMPLE)))     # v6.27: v6.28 taken out
+    assert not _mentions628(_Drop628().visit(ast.parse(SIMPLE)))
     assert set(b) - set(a) == set(METHODS) and not set(a) - set(b)
     changed = {k for k in a if a[k] != b[k]}
     assert changed == {"_init_build_switches", "_v63_pass", "_v617_touch"}, changed
@@ -753,7 +806,8 @@ def test_only_the_switch_block_the_pass_and_the_touch_quote_changed_and_five_met
 
 def test_the_launcher_only_adds_to_v626s():
     """The committed v6.26 launcher line by line: three lines extended (the flag defaults, the v6_3_0 arm, PARAMS' last
-    key), the rest added -- the v6.27 block and its gate entry."""
+    key), the rest added -- the v6.27 block and its gate entry.  v6.28 extends the same three lines and adds its block
+    and gate entry."""
     old, new = _v626("run_strategy1_research_simple_multi.sh").splitlines(), LAUNCHER.splitlines()
     removed, added = [], []
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
@@ -764,18 +818,22 @@ def test_the_launcher_only_adds_to_v626s():
     defaults = next(x for x in old if x.startswith("A19X_BUILD=0;"))
     arm = next(x for x in old if x.startswith("  strategy1_direct_v6_3_0)"))
     assert removed == [defaults, arm, 'research_v626_feed_clock=1"']
-    start = LAUNCHER.index("# v6.27 S7.")
-    block = LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
-    assert sorted(added) == sorted([defaults + "; V6_27_BUILD=0", arm + "; V6_27_BUILD=1", "research_v626_feed_clock=1 \\",
-                                    'research_v627_touch_centre=1"', "      tests/test_research_v6_27.py \\", *block])
+    block = []
+    for head in ("# v6.27 S7.", "# v6.28 S8."):
+        start = LAUNCHER.index(head)
+        block += LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
+    assert sorted(added) == sorted([defaults + "; V6_27_BUILD=0; V6_28_BUILD=0", arm + "; V6_27_BUILD=1; V6_28_BUILD=1",
+                                    "research_v626_feed_clock=1 \\", "research_v627_touch_centre=1 \\",
+                                    'research_v628_flat_launch=1"', "      tests/test_research_v6_27.py \\",
+                                    "      tests/test_research_v6_28.py \\", *block])
 
 
 # ---- 9. the launcher -----------------------------------------------------------------------------------------------------
 
 def test_the_v627_block_is_gated_preflighted_and_listed():
-    assert "; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0\n" in LAUNCHER
+    assert "; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0\n" in LAUNCHER
     arm = next(x for x in LAUNCHER.splitlines() if x.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1"), arm
+    assert arm.endswith("; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1"), arm
     assert LAUNCHER.count('if [[ "${V6_27_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_27_BUILD=") == 2
     assert "      tests/test_research_v6_26.py \\\n      tests/test_research_v6_27.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.26 feed clock PASS') < LAUNCHER.index("# v6.27 S7.") < \

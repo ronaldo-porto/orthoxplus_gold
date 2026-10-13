@@ -121,8 +121,8 @@ def test_every_key_the_launcher_ships_today_resolves():
     # research_v623_against_levels, research_v623_against_gap_bps, research_v623_against_adding,
     # research_v623_class_guard, research_v623_start_once (v6.23 S1-S3), +1 research_v624_pay_basis (v6.24 S4),
     # +3 research_v625_lean, research_v625_lean_slope, research_v625_lean_cap (v6.25 S5), +1 research_v626_feed_clock
-    # (v6.26 S6), +1 research_v627_touch_centre (v6.27 S7).
-    assert len(keys) == 200, len(keys)
+    # (v6.26 S6), +1 research_v627_touch_centre (v6.27 S7), +1 research_v628_flat_launch (v6.28 S8).
+    assert len(keys) == 201, len(keys)
     out = _run_guard(" ".join(f"{k}=x" for k in keys))
     assert out.returncode == 0, out.stderr
-    assert "(200 keys)" in out.stdout
+    assert "(201 keys)" in out.stdout
