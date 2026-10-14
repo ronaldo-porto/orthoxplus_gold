@@ -698,6 +698,9 @@ V628_IDENTIFIERS = t623.V628_IDENTIFIERS
 # v6.29 (S9, research_v629_touch_fp_move, and S8's first save) only adds: both strips take its additions out as well
 # (tests/test_research_v6_29.py checks them against v6.28's footprint).
 V6_29_IDENTIFIERS = t623.V6_29_IDENTIFIERS
+# v6.30 (the identity profile: D1 research_v630_deep_tier, D2 research_v630_s9_lookback) only adds: both strips take its
+# additions out as well (tests/test_research_v6_30.py checks them against the committed v6.29).
+V6_30_IDENTIFIERS = t623.V6_30_IDENTIFIERS
 
 
 def _v624(rel):
@@ -719,16 +722,18 @@ def _mentions(node):
             n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
         if isinstance(name, str) and (name in V625_IDENTIFIERS or name in V626_IDENTIFIERS or name in V627_IDENTIFIERS
                                       or name in V628_IDENTIFIERS or name in V6_29_IDENTIFIERS
+                                      or name in V6_30_IDENTIFIERS
                                       or name.startswith(("_v6_25_", "v6_25_", "_v6_26_", "v6_26_", "_v6_27_",
-                                                          "v6_27_", "_v6_28_", "v6_28_", "_v6_29_", "v6_29_"))):
+                                                          "v6_27_", "_v6_28_", "v6_28_", "_v6_29_", "v6_29_",
+                                                          "_v6_30_", "v6_30_"))):
             return True
     return False
 
 
 class _Strip625(ast.NodeTransformer):
-    """Removes what v6.25 (and v6.26, v6.27, v6.28 and v6.29 after it) adds and nothing else -- its import, its _v6_25_
-    methods, statements naming its identifiers (an if on one keeps its else), v6.26's limit keyword and every docstring
-    -- and reads the leaned inventory (v6_25_inv, v6_25_fills) back as v6.24's inv."""
+    """Removes what v6.25 (and v6.26, v6.27, v6.28, v6.29 and v6.30 after it) adds and nothing else -- its import, its
+    _v6_25_ methods, statements naming its identifiers (an if on one keeps its else), v6.26's limit keyword and every
+    docstring -- and reads the leaned inventory (v6_25_inv, v6_25_fills) back as v6.24's inv."""
 
     def _stmts(self, stmts):
         out = []
@@ -736,10 +741,11 @@ class _Strip625(ast.NodeTransformer):
             if isinstance(st, ast.ImportFrom) and st.module in ("research_v625_lean", "research_v626_feed_clock",
                                                                 "research_v627_touch_centre",
                                                                 "research_v628_flat_launch",
-                                                                "research_v6_29_touch_move"):
+                                                                "research_v6_29_touch_move",
+                                                                "research_v630_identity_profile"):
                 continue
             if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_25_", "_v6_26_", "_v6_27_", "_v6_28_",
-                                                                       "_v6_29_")):
+                                                                       "_v6_29_", "_v6_30_")):
                 continue
             if isinstance(st, ast.If) and _mentions(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -791,26 +797,28 @@ def _mentions626(node):
         name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
             n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
         if isinstance(name, str) and (name in V626_IDENTIFIERS or name in V627_IDENTIFIERS or name in V628_IDENTIFIERS
-                                      or name in V6_29_IDENTIFIERS
+                                      or name in V6_29_IDENTIFIERS or name in V6_30_IDENTIFIERS
                                       or name.startswith(("_v6_26_", "v6_26_", "_v6_27_", "v6_27_", "_v6_28_",
-                                                          "v6_28_", "_v6_29_", "v6_29_"))):
+                                                          "v6_28_", "_v6_29_", "v6_29_", "_v6_30_", "v6_30_"))):
             return True
     return False
 
 
 class _Drop626(ast.NodeTransformer):
-    """Takes out what v6.26 (and v6.27, v6.28 and v6.29 after it) adds and nothing else -- its import, its _v6_26_
-    methods, statements naming its identifiers (an if on one keeps its else) and the limit keyword it hands each reader
-    of the page -- keeping every docstring: v6.25 as committed, for the method-by-method check against v6.24."""
+    """Takes out what v6.26 (and v6.27, v6.28, v6.29 and v6.30 after it) adds and nothing else -- its import, its
+    _v6_26_ methods, statements naming its identifiers (an if on one keeps its else) and the limit keyword it hands each
+    reader of the page -- keeping every docstring: v6.25 as committed, for the method-by-method check against v6.24."""
 
     def _stmts(self, stmts):
         out = []
         for st in stmts:
             if isinstance(st, ast.ImportFrom) and st.module in ("research_v626_feed_clock", "research_v627_touch_centre",
                                                                 "research_v628_flat_launch",
-                                                                "research_v6_29_touch_move"):
+                                                                "research_v6_29_touch_move",
+                                                                "research_v630_identity_profile"):
                 continue
-            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_26_", "_v6_27_", "_v6_28_", "_v6_29_")):
+            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_26_", "_v6_27_", "_v6_28_", "_v6_29_",
+                                                                       "_v6_30_")):
                 continue
             if isinstance(st, ast.If) and _mentions626(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -908,8 +916,8 @@ def test_with_a_lean_of_zero_the_pass_is_the_committed_v624s():
 def test_the_launcher_only_adds_to_v624s():
     """The committed v6.24 launcher line by line: three lines extended (the flag defaults, the v6_3_0 arm, PARAMS' last
     key), three greps re-pointed at the leaned inventory (v6.6's note, v6.17's call, v6.23's S1 call), the rest added --
-    the v6.25 block and its gate entry.  v6.26, v6.27, v6.28 and v6.29 each extend the same three lines and add their
-    block and gate entry."""
+    the v6.25 block and its gate entry.  v6.26, v6.27, v6.28, v6.29 and v6.30 each extend the same three lines and add
+    their block and gate entry."""
     old, new = _v624("run_strategy1_research_simple_multi.sh").splitlines(), LAUNCHER.splitlines()
     removed, added = [], []
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
@@ -926,27 +934,31 @@ def test_the_launcher_only_adds_to_v624s():
     olds = [next(x for x in old if f"grep -qF '{g.format('inv')}'" in x) for g, _n in greps]
     assert removed == [defaults, arm, 'research_v624_pay_basis=1"', *olds]
     block = []
-    for head in ("# v6.25 S5.", "# v6.26 S6.", "# v6.27 S7.", "# v6.28 S8.", "# v6.29 S9."):
+    for head in ("# v6.25 S5.", "# v6.26 S6.", "# v6.27 S7.", "# v6.28 S8.", "# v6.29 S9.", "# v6.30."):
         start = LAUNCHER.index(head)
         block += LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
     leaned = [x.replace(f"'{g.format('inv')}'", f"'{g.format(n)}'") for x, (g, n) in zip(olds, greps)]
-    assert sorted(added) == sorted([defaults + "; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0",
-                                    arm + "; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1",
+    assert sorted(added) == sorted([defaults + "; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0"
+                                    "; V6_30_BUILD=0",
+                                    arm + "; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1"
+                                    "; V6_30_BUILD=1",
                                     "research_v624_pay_basis=1 \\", "research_v625_lean=1 \\",
                                     "research_v625_lean_slope=1.0 \\", "research_v625_lean_cap=48 \\",
                                     "research_v626_feed_clock=1 \\", "research_v627_touch_centre=1 \\",
-                                    "research_v628_flat_launch=1 \\", 'research_v629_touch_fp_move=1"', *leaned,
+                                    "research_v628_flat_launch=1 \\", "research_v629_touch_fp_move=1 \\",
+                                    "research_v630_deep_tier=1 \\", 'research_v630_s9_lookback=1"', *leaned,
                                     "      tests/test_research_v6_25.py \\", "      tests/test_research_v6_26.py \\",
                                     "      tests/test_research_v6_27.py \\", "      tests/test_research_v6_28.py \\",
-                                    "      tests/test_research_v6_29.py \\", *block])
+                                    "      tests/test_research_v6_29.py \\", "      tests/test_research_v6_30.py \\",
+                                    *block])
 
 
 # ---- 9. the launcher -----------------------------------------------------------------------------------------------------
 
 def test_the_v625_block_is_gated_preflighted_and_listed():
-    assert "; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0\n" in LAUNCHER
+    assert "; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0\n" in LAUNCHER
     arm = next(x for x in LAUNCHER.splitlines() if x.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1"), arm
+    assert arm.endswith("; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1"), arm
     assert LAUNCHER.count('if [[ "${V6_25_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_25_BUILD=") == 2
     assert "      tests/test_research_v6_24.py \\\n      tests/test_research_v6_25.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.24 pay basis PASS') < LAUNCHER.index("# v6.25 S5.") < \

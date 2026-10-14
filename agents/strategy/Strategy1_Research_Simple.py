@@ -823,6 +823,21 @@ from research_v6_29_touch_move import (  # noqa: E402
     launch_records as v6_29_launch_records,
     lookback_sim_s as v6_29_lookback,
 )
+from research_v630_identity_profile import (  # noqa: E402
+    D1 as V6_30_D1,
+    D2 as V6_30_D2,
+    Identity as V6_30Identity,
+    KeepHorizon as V6_30KeepHorizon,
+    CLAMPED_BAND as V6_30_CLAMPED_BAND,
+    CLAMPED_TOUCH as V6_30_CLAMPED_TOUCH,
+    DEEPER as V6_30_DEEPER,
+    PROFILE_VERSION as V6_30_PROFILE_VERSION,
+    V6_30_IDENTITY_PROFILE_VERSION,
+    addressee as v6_30_addressee,
+    deeper_target as v6_30_deeper_target,
+    page_history as v6_30_page_history,
+    paper_for as v6_30_paper_for,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2187,6 +2202,29 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6_29_save_due = False
         self._v6_29_save_asked: int | None = None
         self._v6_29_save_done: int | None = None
+        # v6.30: the identity profile (orthox-profile-v1, pre-registered 10-14).  Each UID draws per book, from its OWN
+        # UID only (the UID this agent was constructed with: taos sets self.uid before initialize()), D1 the deep tier
+        # -- every deep level one venue tick further from the mid on a tier-1 book (research_v630_deep_tier) -- and D2
+        # the S9 look-back multiple, W x 1 or W x 2 (research_v630_s9_lookback).  No fleet list, no shared schedule, no
+        # reading of another agent, no RNG.  A UID unknown or negative here or at the first request, or one that differs
+        # later, keeps both switches on v6.29 for the process.  Off, the build is v6.29.  STRUCTURAL independence, the
+        # venue tick and v6.3.3's band; see research_v630_identity_profile.
+        self.research_v630_deep_tier = self._as_bool(getattr(self.config, "research_v630_deep_tier", True))
+        self.research_v630_s9_lookback = self._as_bool(getattr(self.config, "research_v630_s9_lookback", True))
+        self._v6_30_identity = V6_30Identity()
+        self._v6_30_identity.fix(getattr(self, "uid", None))
+        self._v6_30_on = False
+        self._v6_30_counts: dict[str, int] = {}
+        self._v6_30_errors = 0
+        self._v6_30_errors_seen = 0
+        self._v6_30_reported = False
+        self._v6_30_erring = False
+        self._v6_30_off_logged: str | None = None
+        self._v6_30_drawn_seen = 0
+        if self.research_v630_s9_lookback:
+            # D2: v6.29's page history with KeepHorizon mixed in -- one lookup never drops a page a longer look-back of
+            # the same request still needs (its keep_s stays None, v6.29's prune, while the profile is off)
+            self._v6_29_pages = v6_30_page_history(V6_29PageHistory)
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -12382,7 +12420,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
             pages.observe(feed.snapshot() if feed is not None else None, now_ts, v626_state_sim_id(cfg))
             lookback = v6_29_lookback(getattr(self, "_v6_26_limit", None))
             self._v6_29_lookback = lookback
-            side, why = pages.decide(book_id, fp, now_ts, lookback)
+            v6_30_decision = None
+            if bool(getattr(self, "research_v630_s9_lookback", False)):
+                # v6.30 D2: this book's look-back is m x W, m its multiple in this UID's identity profile, by v6.29's
+                # reference rule (None: no profile this request -- W, v6.29's decision) (research_v630_s9_lookback)
+                v6_30_decision = self._v6_30_decide(pages, book_id, fp, now_ts, lookback)
+            if v6_30_decision is not None:
+                side, why = v6_30_decision
+            else:
+                side, why = pages.decide(book_id, fp, now_ts, lookback)
             self._v6_29_count(why)
             return side
         except Exception:
@@ -12495,6 +12541,184 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "s8_save_done": getattr(self, "_v6_29_save_done", None),
                 "errors": int(getattr(self, "_v6_29_errors", 0) or 0)}
 
+    def _v6_30_request(self, state) -> None:
+        """v6.30, in the pass once per request before its books: is the identity profile on for this request?  The UID
+        this process fixed (at init from self.uid; else here from self.uid, else the state's addressee) must still be
+        self.uid and the addressee -- unknown, negative or another UID turns the profile off for the rest of the process
+        (D1 and D2 then run v6.29; the state row says why).  On, every book of the state has its draw (drawn once, from
+        this UID alone), and with D2 on S9's history holds what the longest look-back in use needs: the largest
+        multiple x W, never shrinking while the profile is on (KeepHorizon.hold); once the profile is off, None (v6.29's
+        prune).  Never raises: an error counts, the request runs v6.29 and the history's horizon is left as it was."""
+        try:
+            ident = self._v6_30_identity
+            on = bool(ident.check(getattr(self, "uid", None), v6_30_addressee(getattr(state, "accounts", None))))
+            keep = None
+            if on:
+                ident.extend(getattr(state, "books", None) or ())
+                if bool(getattr(self, "research_v630_s9_lookback", False)):
+                    keep = float(ident.max_m) * float(v6_29_lookback(getattr(self, "_v6_26_limit", None)))
+            pages = getattr(self, "_v6_29_pages", None)
+            if isinstance(pages, V6_30KeepHorizon):
+                if ident.off is not None:
+                    pages.keep_s = None                     # the profile is off for good: v6.29's prune
+                elif keep is not None:
+                    pages.hold(keep)                        # never shrinks while the profile is on
+            self._v6_30_on = on
+        except Exception:
+            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
+            self._v6_30_on = False                          # this request runs v6.29; the horizon stays as it was
+
+    def _v6_30_tier(self, book_id: int) -> int:
+        """v6.30 D1 (research_v630_deep_tier): the book's deep tier this request -- its draw in the identity profile while
+        the profile is on (1: one venue tick deeper), else 0 (v6.29's prices).  Never raises: an error counts and is 0."""
+        try:
+            if not bool(getattr(self, "_v6_30_on", False)):
+                return 0
+            return 1 if self._v6_30_identity.value(V6_30_D1, book_id) == 1 else 0
+        except Exception:
+            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
+            return 0
+
+    def _v6_30_deeper(self, price, side: str, ticks: int, ref, depth, vacuum: bool, raw_bid, raw_ask, tick_size, dec):
+        """v6.30 D1: (target, why) -- ``price``, a deep level's v6.29 target, ``ticks`` venue ticks further from the mid
+        (a buy lower, a sell higher) when that stays inside v6.3.3's keep band at ``depth`` around ``ref`` (the reference
+        the resting order is judged against), off its edge, and, for a ``vacuum`` order, strictly inside the touch;
+        else ``price`` with why (v6_30_deeper_target).  Never raises: an error counts and is (``price``, "error")."""
+        try:
+            return v6_30_deeper_target(price, side, ref=ref, depth=depth, tick=tick_size, decimals=dec, ticks=ticks,
+                                       inside=(raw_bid, raw_ask) if vacuum else None)
+        except Exception:
+            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
+            return price, "error"
+
+    def _v6_30_placed(self, level: int, why) -> None:
+        """v6.30 D1's tally, by level: a deep order of a tier-1 book placed one tick deeper, at v6.29's price because the
+        band (or its edge) or the touch clamped it, or at v6.29's price because an input was unreadable or an error
+        fell back.  Never raises."""
+        try:
+            kind = "deeper" if why == V6_30_DEEPER else "clamped" if why in (V6_30_CLAMPED_BAND, V6_30_CLAMPED_TOUCH) \
+                else "error"
+            self._v6_30_count("%s_l%d" % (kind, int(level)))
+        except Exception:
+            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
+
+    def _v6_30_paper(self, deep, book_id: int) -> None:
+        """v6.30 D1, in the pass right before the deep layer observes the book: the book's paper record is the kind its
+        tier rests -- a TierPaper, its paper orders one tick deeper, on tier 1; v6.3.3's PaperDeep otherwise; the same
+        record either way (v6_30_paper_for) -- so v6.8's per-book gate judges the level the book trades.  A book the
+        layer has not seen yet places no paper order on its first state (it has no depth), so it is the right kind
+        before its first paper order.  Never raises: an error counts and the record stays as it is."""
+        try:
+            db = (getattr(deep, "books", None) or {}).get(int(book_id))
+            if db is None:
+                return
+            ticks = self._v6_30_tier(book_id)
+            paper = v6_30_paper_for(db.paper, ticks)
+            if paper is not db.paper:
+                db.paper = paper
+                self._v6_30_count("paper_tier1" if ticks else "paper_tier0")
+        except Exception:
+            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
+
+    def _v6_30_decide(self, pages, book_id: int, fp, now_ts: int, lookback):
+        """v6.30 D2 (research_v630_s9_lookback), inside v6.29's S9 decision: (side, why) of v6.29's rule on its history
+        with this book's look-back, m x ``lookback`` (exactly v6.29's W), m the book's multiple in the identity profile;
+        None while the profile is off this request, for a book without a draw, or a history without KeepHorizon (v6.29's
+        decision at W then).  Tallies the decisions, the gates and why there is none, per m.  Never raises: an error
+        counts and is None."""
+        try:
+            if not bool(getattr(self, "_v6_30_on", False)) or not isinstance(pages, V6_30KeepHorizon):
+                return None
+            m = self._v6_30_identity.value(V6_30_D2, book_id)
+            if m is None:
+                return None
+            side, why = pages.decide(book_id, fp, now_ts, float(m) * float(lookback))
+            self._v6_30_count("s9_m%d_decisions" % m)
+            self._v6_30_count("s9_m%d_%s" % (m, "gated" if side is not None else why))
+            return side, why
+        except Exception:
+            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
+            return None
+
+    def _v6_30_count(self, key: str, n: int = 1) -> None:
+        """v6.30's tally.  Never raises: an error counts."""
+        try:
+            counts = getattr(self, "_v6_30_counts", None)
+            if counts is None:
+                counts = {}
+                self._v6_30_counts = counts
+            counts[key] = int(counts.get(key, 0) or 0) + int(n)
+        except Exception:
+            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
+
+    def _v6_30_report(self) -> None:
+        """v6.30: the V6_30_STATE row -- both switches, whether the profile is on, the UID fixed for this process and
+        where it came from, why the profile is off when it is, the table (its books, sha256, D1's tier-1 and D2's m = 2
+        counts, the draws), D1's placements one tick deeper / clamped by level and the paper records converted, S9's
+        decisions, gates and missing references by m and the history's keep horizon, and the errors -- at the first
+        pass, at the first request with an error after one without, at the request the profile turned off or the table
+        grew, and every V62_STATE_EVERY_TICKS ticks; after the reply when the request defers its telemetry (v6.2.9).
+        Never raises."""
+        try:
+            tick = int(getattr(self, "_tick", 0) or 0)
+            errors = int(getattr(self, "_v6_30_errors", 0) or 0)
+            erring = errors > int(getattr(self, "_v6_30_errors_seen", 0) or 0)
+            was_erring = bool(getattr(self, "_v6_30_erring", False))
+            self._v6_30_errors_seen, self._v6_30_erring = errors, erring
+            ident = getattr(self, "_v6_30_identity", None)
+            off = getattr(ident, "off", None)
+            drawn = len(getattr(ident, "table", None) or {})
+            if not getattr(self, "_v6_30_reported", False):
+                reason = "start"
+            elif erring and not was_erring:
+                reason = "error"
+            elif off is not None and off != getattr(self, "_v6_30_off_logged", None):
+                reason = "off"
+            elif drawn != int(getattr(self, "_v6_30_drawn_seen", 0) or 0):
+                reason = "table"
+            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+                reason = "periodic"
+            else:
+                return
+            self._v6_30_reported = True
+            self._v6_30_off_logged, self._v6_30_drawn_seen = off, drawn
+            row = dict(self._v6_30_snapshot(), reason=reason, tick=tick)
+            work = getattr(self, "_v629_request_work", None)
+            if work is not None:
+                work.add("v6_30_state_row", lambda: self._emit("V6_30_STATE", force=True, **row))   # after the reply
+            else:
+                self._emit("V6_30_STATE", force=True, **row)
+        except Exception:
+            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
+
+    def _v6_30_snapshot(self) -> dict:
+        ident = getattr(self, "_v6_30_identity", None)
+        counts = dict(getattr(self, "_v6_30_counts", None) or {})
+        pages = getattr(self, "_v6_29_pages", None)
+        keep = getattr(pages, "keep_s", None)
+        row = {"version": V6_30_IDENTITY_PROFILE_VERSION, "profile": V6_30_PROFILE_VERSION,
+               "deep_tier_on": int(bool(getattr(self, "research_v630_deep_tier", False))),
+               "s9_lookback_on": int(bool(getattr(self, "research_v630_s9_lookback", False))),
+               "profile_on": int(bool(getattr(self, "_v6_30_on", False)))}
+        row.update(ident.snapshot() if ident is not None else {})
+        row.update({
+            "deep_shifted": sum(int(v or 0) for k, v in counts.items() if k.startswith("deeper_l")),
+            "deep_clamped": sum(int(v or 0) for k, v in counts.items() if k.startswith("clamped_l")),
+            "deep_unchanged_error": sum(int(v or 0) for k, v in counts.items() if k.startswith("error_l")),
+            "deep_by_level": {k: int(v or 0) for k, v in sorted(counts.items())
+                              if k.startswith(("deeper_l", "clamped_l", "error_l"))},
+            "paper_tier1": int(counts.get("paper_tier1", 0) or 0), "paper_tier0": int(counts.get("paper_tier0", 0) or 0),
+            "s9_m1_decisions": int(counts.get("s9_m1_decisions", 0) or 0),
+            "s9_m1_gated": int(counts.get("s9_m1_gated", 0) or 0),
+            "s9_m1_no_history": int(counts.get("s9_m1_no_history", 0) or 0),
+            "s9_m2_decisions": int(counts.get("s9_m2_decisions", 0) or 0),
+            "s9_m2_gated": int(counts.get("s9_m2_gated", 0) or 0),
+            "s9_m2_no_history": int(counts.get("s9_m2_no_history", 0) or 0),
+            "s9_by_m": {k: int(v or 0) for k, v in sorted(counts.items()) if k.startswith("s9_m")},
+            "s9_keep_sim_s": (round(float(keep), 3) if keep is not None else None),
+            "errors": int(getattr(self, "_v6_30_errors", 0) or 0)})
+        return row
+
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
         mirror = getattr(self, "_v62_mirror", None)
@@ -12525,6 +12749,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         """
         req["deep_books"] += 1
         mid = 0.5 * (float(raw_bid) + float(raw_ask))
+        # v6.30 D1 (research_v630_deep_tier): the book's deep tier in this UID's identity profile -- 1: every deep level
+        # below targets one venue tick further from the mid than v6.29's price; 0, off or no profile: v6.29's prices.
+        v6_30_tier = 0
+        if bool(getattr(self, "research_v630_deep_tier", False)):
+            v6_30_tier = self._v6_30_tier(book_id)
         # v6.4 S1: in a blown-out spread the order rests inside the gap, and is judged against that distance.
         vac = None
         if bool(getattr(self, "research_v64_vacuum", False)) and self._v64_vacuum_on():
@@ -12566,6 +12795,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         want = v64_vacuum_price(c_, vac, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
                     else:
                         want = v633_deep_price(c_, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
+                    if v6_30_tier:
+                        # v6.30 D1: the spacing judges the level-0 target this side places -- one tick deeper on tier 1
+                        want = self._v6_30_deeper(want, side, v6_30_tier, c_, eff_side[side], vac is not None, raw_bid,
+                                                  raw_ask, tick_size, dec)[0]
                     if not spacing.allows(book_id, side, want, inv, eff, tick_size):
                         unspaced.add(side)
             except Exception:
@@ -12719,6 +12952,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         self._v616_count("placed_centred" if abs(float(centre[side]) - mid) > 1e-12 else "placed_mid")
                     except Exception:
                         self._v616_errors = int(getattr(self, "_v616_errors", 0) or 0) + 1
+                v6_30_why = None
+                if v6_30_tier:
+                    # v6.30 D1: on a tier-1 book this deep level targets one venue tick further from the mid -- kept inside
+                    # v6.3.3's keep band around the reference it is judged against, off its edge (a vacuum order inside
+                    # the touch), else v6.29's price (research_v630_deep_tier)
+                    price, v6_30_why = self._v6_30_deeper(
+                        price, side, v6_30_tier, centre[side] if centre is not None else mid,
+                        level_d if level else eff_side[side], level == 0 and vac is not None, raw_bid, raw_ask, tick_size,
+                        dec)
                 if self._v691_free_base_on():
                     # v6.9.1 C2: the level's size is what the account can still reserve for it, never more.  A level
                     # the account cannot fund at the minimum order takes nothing this request (and spends no
@@ -12754,6 +12996,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     continue
                 placed += 1
                 req["placed_deep"] += 1
+                if v6_30_why is not None:
+                    self._v6_30_placed(level, v6_30_why)            # v6.30 D1: one tick deeper, clamped or unchanged
                 if level:
                     self._v69_count("placed_l%d" % level)
                     if adding:
@@ -13030,6 +13274,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         v6_29_launches = None
         if v6_28_on and getattr(self, "_v6_29_save_due", None) is not None:
             v6_29_launches = self._v6_29_launches(pace)
+        # v6.30: the identity profile, once per request before the books -- the UID fixed for this process must still be
+        # the agent's own and the state's addressee (else D1 and D2 run v6.29 for the rest of the process), every book of
+        # the state has its draw, and S9's history keeps what the longest look-back of this request needs.
+        if getattr(self, "_v6_30_identity", None) is not None:
+            self._v6_30_request(state)
         # v6.19 S1: the making mirror's window and the cap, read once per request (research_v619_surplus_hold).
         v619_on = bool(getattr(self, "research_v619_surplus_hold", False))
         v619_mirror, v619_mature, v619_cap = None, False, 0.0
@@ -13071,6 +13320,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 try:
                     trades = [t for t in (v633_trade_of(ev) for ev in (getattr(book, "events", None) or ())) if t is not None]
                     book_trades = trades
+                    if bool(getattr(self, "research_v630_deep_tier", False)):
+                        # v6.30 D1: the book's paper record rests its paper orders where its live deep orders go, so
+                        # v6.8's gate judges the level the book trades (research_v630_deep_tier)
+                        self._v6_30_paper(deep, book_id)
                     depth = deep.observe(book_id, now_ts, trades, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
                 except Exception:
                     self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
@@ -13418,6 +13671,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v6_29_first_launch(pace)                  # v6.29: S8's first flat launch asks for one session save
         if getattr(self, "research_v629_touch_fp_move", None) is not None:
             self._v6_29_report()                            # v6.29 S9: its V6_29_STATE row, on or off (never raises)
+        if getattr(self, "_v6_30_identity", None) is not None:
+            self._v6_30_report()                            # v6.30: its V6_30_STATE row, on or off (never raises)
         return placed_total
 
     def _v62_telemetry(self, state) -> None:

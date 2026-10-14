@@ -998,7 +998,7 @@ def test_without_v629_state_the_save_path_is_v628s(tmp_path):
 def test_the_switch_ships_on_and_agrees_with_its_agent_default():
     params = t617._params()
     assert "research_v629_touch_fp_move=1 " in t617._shipped() + " " and params.count("research_v629_touch_fp_move=") == 1
-    assert 'research_v628_flat_launch=1 \\\nresearch_v629_touch_fp_move=1"\n' in LAUNCHER     # after v6.28's key, last
+    assert 'research_v628_flat_launch=1 \\\nresearch_v629_touch_fp_move=1 \\\n' in LAUNCHER    # after v6.28's (v6.30's next)
     for key in ("research_v617_touch_quote=1", "research_v626_feed_clock=1", "research_v628_flat_launch=1",
                 "research_v621_pace_persist=1", "research_v616_fair_value=1"):
         assert f" {key} " in f" {t617._shipped()} ", key                                      # what v6.29 sits on
@@ -1072,6 +1072,57 @@ def test_each_line_is_wired_once_in_its_place():
 # ---- 6. v6.28's code, statement by statement (the committed v6.28: 410cdd4) -------------------------------------------
 
 V628_COMMIT = "410cdd4"       # the user's v6.28 commit (10-13 21:45 JST): its 22 paths are k72's verified ones
+# v6.30 (the identity profile: D1 research_v630_deep_tier, D2 research_v630_s9_lookback) only adds -- its import, its
+# _v6_30_ methods, its switches and state, and statements naming them in the deep layer, the pass and S9's decision (the
+# if there keeps its else: v6.29's call) -- so the method-by-method checks below read v6.29 with v6.30 taken out
+# (_Drop630; tests/test_research_v6_30.py checks it against the committed v6.29), and t628's _Drop629 takes v6.30's
+# additions out with v6.29's.
+V6_30_IDENTIFIERS = t623.V6_30_IDENTIFIERS
+
+
+def _mentions630(node):
+    for n in ast.walk(node):
+        name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
+            n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
+        if isinstance(name, str) and (name in V6_30_IDENTIFIERS or name.startswith(("_v6_30_", "v6_30_"))):
+            return True
+    return False
+
+
+class _Drop630(ast.NodeTransformer):
+    """Takes out what v6.30 adds and nothing else -- its import, its _v6_30_ methods, statements naming its
+    identifiers (an if on one keeps its else) -- keeping every docstring: v6.29 as committed (f72d9a3)."""
+
+    def _stmts(self, stmts):
+        out = []
+        for st in stmts:
+            if isinstance(st, ast.ImportFrom) and st.module == "research_v630_identity_profile":
+                continue
+            if isinstance(st, ast.FunctionDef) and st.name.startswith("_v6_30_"):
+                continue
+            if isinstance(st, ast.If) and _mentions630(st.test):
+                out.extend(self._stmts(st.orelse))
+                continue
+            st = self.visit(st)
+            if isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr)) and _mentions630(st):
+                continue
+            out.append(st)
+        return out
+
+    def generic_visit(self, node):
+        for field in ("body", "orelse", "finalbody"):
+            if isinstance(getattr(node, field, None), list):
+                setattr(node, field, self._stmts(getattr(node, field)))
+        for h in getattr(node, "handlers", None) or []:
+            h.body = self._stmts(h.body)
+        for name, value in ast.iter_fields(node):
+            if name in ("body", "orelse", "finalbody", "handlers"):
+                continue
+            if isinstance(value, list):
+                setattr(node, name, [self.visit(v) if isinstance(v, ast.AST) else v for v in value])
+            elif isinstance(value, ast.AST):
+                setattr(node, name, self.visit(value))
+        return node
 
 
 def _committed(rel):
@@ -1095,12 +1146,13 @@ def _methods(tree):
 
 
 def test_v629s_strip_takes_out_its_seven_methods_and_its_statements_in_four_and_v627_is_under_both_strips():
-    """Without git: Simple with v6.29's additions taken out (t628's _Drop629) has the same methods but v6.29's seven,
-    and only the switch block, the touch quote, the pass and the session save carry v6.29 statements; v6.28's own
-    methods name nothing of v6.29; with v6.28 taken out as well (t627's _Drop628) it is the committed v6.27."""
+    """Without git: Simple with v6.29's additions taken out (t628's _Drop629, v6.30's with them) has the same methods as
+    v6.29 (Simple with v6.30 taken out, _Drop630) but v6.29's seven, and only the switch block, the touch quote, the
+    pass and the session save carry v6.29 statements; v6.28's own methods name nothing of v6.29; with v6.28 taken out as
+    well (t627's _Drop628) it is the committed v6.27."""
     stripped = t628._Drop629().visit(ast.parse(SIMPLE))
     assert not t628._mentions629(stripped)
-    a, b = _methods(stripped), _methods(ast.parse(SIMPLE))
+    a, b = _methods(stripped), _methods(_Drop630().visit(ast.parse(SIMPLE)))
     assert set(b) - set(a) == set(METHODS) and not set(a) - set(b)
     changed = {k for k in a if a[k] != b[k]}
     assert changed == {"_init_build_switches", "_v617_touch", "_v63_pass", "_research_save_session"}, changed
@@ -1127,7 +1179,7 @@ def test_every_v628_statement_is_in_v629_unchanged_and_v629_only_adds():
 
 def test_only_the_switch_block_the_touch_quote_the_pass_and_the_save_changed_and_seven_methods_were_added():
     old = _committed("agents/strategy/Strategy1_Research_Simple.py")
-    a, b = _methods(ast.parse(old)), _methods(ast.parse(SIMPLE))
+    a, b = _methods(ast.parse(old)), _methods(_Drop630().visit(ast.parse(SIMPLE)))     # v6.29: v6.30 taken out
     assert set(b) - set(a) == set(METHODS) and not set(a) - set(b)
     changed = {k for k in a if a[k] != b[k]}
     assert changed == {"_init_build_switches", "_v617_touch", "_v63_pass", "_research_save_session"}, changed
@@ -1144,7 +1196,8 @@ def test_only_the_switch_block_the_touch_quote_the_pass_and_the_save_changed_and
 
 def test_the_launcher_only_adds_to_v628s():
     """The committed v6.28 launcher line by line: three lines extended (the flag defaults, the v6_3_0 arm, PARAMS' last
-    key), the rest added -- the v6.29 block and its gate entry."""
+    key), the rest added -- the v6.29 block and its gate entry.  v6.30 extends the same three lines and adds its block,
+    two PARAMS keys and its gate entry."""
     old, new = _committed("run_strategy1_research_simple_multi.sh").splitlines(), LAUNCHER.splitlines()
     removed, added = [], []
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
@@ -1155,19 +1208,23 @@ def test_the_launcher_only_adds_to_v628s():
     defaults = next(x for x in old if x.startswith("A19X_BUILD=0;"))
     arm = next(x for x in old if x.startswith("  strategy1_direct_v6_3_0)"))
     assert removed == [defaults, arm, 'research_v628_flat_launch=1"']
-    start = LAUNCHER.index("# v6.29 S9.")
-    block = LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
-    assert sorted(added) == sorted([defaults + "; V6_29_BUILD=0", arm + "; V6_29_BUILD=1",
-                                    "research_v628_flat_launch=1 \\", 'research_v629_touch_fp_move=1"',
-                                    "      tests/test_research_v6_29.py \\", *block])
+    block = []
+    for head in ("# v6.29 S9.", "# v6.30."):
+        start = LAUNCHER.index(head)
+        block += LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
+    assert sorted(added) == sorted([defaults + "; V6_29_BUILD=0; V6_30_BUILD=0", arm + "; V6_29_BUILD=1; V6_30_BUILD=1",
+                                    "research_v628_flat_launch=1 \\", "research_v629_touch_fp_move=1 \\",
+                                    "research_v630_deep_tier=1 \\", 'research_v630_s9_lookback=1"',
+                                    "      tests/test_research_v6_29.py \\", "      tests/test_research_v6_30.py \\",
+                                    *block])
 
 
 # ---- 7. the launcher -------------------------------------------------------------------------------------------------
 
 def test_the_v629_block_is_gated_preflighted_and_listed():
-    assert "; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0\n" in LAUNCHER
+    assert "; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0\n" in LAUNCHER
     arm = next(x for x in LAUNCHER.splitlines() if x.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1"), arm
+    assert arm.endswith("; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1"), arm
     assert LAUNCHER.count('if [[ "${V6_29_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_29_BUILD=") == 2
     assert "      tests/test_research_v6_28.py \\\n      tests/test_research_v6_29.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.28 flat launch PASS') < LAUNCHER.index("# v6.29 S9.") < \

@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -431,7 +431,9 @@ research_v625_lean_cap=48 \
 research_v626_feed_clock=1 \
 research_v627_touch_centre=1 \
 research_v628_flat_launch=1 \
-research_v629_touch_fp_move=1"
+research_v629_touch_fp_move=1 \
+research_v630_deep_tier=1 \
+research_v630_s9_lookback=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -3531,6 +3533,107 @@ if [[ "${V6_29_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.29 touch on the fp move PASS (S9: the touch quote toward the fundamental is withheld, and a resting one cancelled, while the fundamental's move over S6's look-back is against its side; no move, no page that old or a stale page: v6.28's quote; S8's first flat launch asks for one session save)"
 fi
 
+# v6.30.  The identity profile (orthox-profile-v1, pre-registered 10-14 JST): D1 research_v630_deep_tier, D2
+# research_v630_s9_lookback.  Our UIDs ran identical code on identical inputs and quoted as one agent (10-14 JST, all six
+# on v6.29: 91-97% of resting L1 orders shared with another of ours, 87.5-89.7% of the older UIDs' deep order-states, 45%
+# of the taker groups that filled us hit two or more of ours, S9's same-state co-withdrawal 59-74%).  Each UID now draws
+# per book from its OWN UID only -- value = VALUES[dim][int(SHA-256('orthox-profile-v1|dim|uid|book')[:8], 16) mod k] --
+# D1: on a tier-1 book every deep level (L0, L1, L2, the v6.12 reducing order, the paper record that gates the layer)
+# targets one venue tick further from the mid, inside v6.3.3's keep band; D2: S9's look-back is m x W, m in (1, 2).  No
+# fleet list, no shared schedule, no reading of another agent, no lock, cache, socket or RNG; the UID is the one the agent
+# was constructed with, fixed once per process -- unknown, negative or changed keeps both switches on v6.29.  STRUCTURAL:
+# independence, the venue tick and v6.3.3's band, S6's limit; design choices: k = 2, D1 deeper-only, D2's m = 2 (it
+# coincides with k71's OBSERVED 60-s optimum).  Ties: refused here, not degraded -- D1 without the deep layer it moves
+# (research_v633_deep_layer=1), D2 without S9 and S6, whose look-back it multiplies (research_v629_touch_fp_move=1,
+# research_v626_feed_clock=1): a build must not report a switch its code cannot act on.  The agent itself falls back to
+# v6.29 per switch (D1 has no deep order to move; D2 multiplies v6.16's 20 sim-s without S6 and is never asked without
+# S9).
+if [[ "${V6_30_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v630_identity_profile import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.30 the identity-profile module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self.research_v630_deep_tier = self._as_bool(getattr(self.config, "research_v630_deep_tier", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.30 D1 the agent does not read research_v630_deep_tier (default on)." >&2
+    exit 1
+  }
+  grep -qF 'self.research_v630_s9_lookback = self._as_bool(getattr(self.config, "research_v630_s9_lookback", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.30 D2 the agent does not read research_v630_s9_lookback (default on)." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_30_identity.fix(getattr(self, "uid", None))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.30 the profile's UID is not the one the agent was constructed with." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_30_request(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.30 the pass does not check the profile's UID before its books (a changed UID would keep its profile)." >&2
+    exit 1
+  }
+  grep -qF 'v6_30_tier = self._v6_30_tier(book_id)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.30 D1 the deep layer does not read the book's tier." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_30_paper(deep, book_id)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.30 D1 the paper record that gates the layer does not rest where the book's deep orders go." >&2
+    exit 1
+  }
+  grep -qF 'v6_30_decision = self._v6_30_decide(pages, book_id, fp, now_ts, lookback)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.30 D2 S9 does not read the book's look-back multiple." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_29_pages = v6_30_page_history(V6_29PageHistory)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.30 D2 S9's history would drop the page a 2W book needs after a W lookup." >&2
+    exit 1
+  }
+  grep -qF 'pages.hold(keep)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.30 D2 S9's keep horizon may shrink (a look-back that grows back would miss its page)." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_30_report()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.30 the pass emits no V6_30_STATE row." >&2
+    exit 1
+  }
+  grep -qF 'PROFILE_VERSION = "orthox-profile-v1"' "$AGENT_PATH/research_v630_identity_profile.py" || {
+    echo "ERROR: v6.30 the profile's version string is not the pre-registered one." >&2
+    exit 1
+  }
+  grep -qF 'VALUES = {D1: (0, 1), D2: (1, 2)}' "$AGENT_PATH/research_v630_identity_profile.py" || {
+    echo "ERROR: v6.30 the profile's value sets are not the pre-registered ones." >&2
+    exit 1
+  }
+  grep -qF 'h = hashlib.sha256(f"{PROFILE_VERSION}|{dim}|{uid}|{book}".encode()).hexdigest()' "$AGENT_PATH/research_v630_identity_profile.py" || {
+    echo "ERROR: v6.30 the profile's draw is not the pre-registered formula." >&2
+    exit 1
+  }
+  grep -qF 'return values[int(h[:8], 16) % len(values)]' "$AGENT_PATH/research_v630_identity_profile.py" || {
+    echo "ERROR: v6.30 the profile's draw does not pick by the hash's first 8 hex digits." >&2
+    exit 1
+  }
+  grep -qF 'if needs_reprice(q, r, d, t):' "$AGENT_PATH/research_v630_identity_profile.py" || {
+    echo "ERROR: v6.30 D1 a deeper target is not kept inside v6.3.3's keep band." >&2
+    exit 1
+  }
+  grep -qF 'if abs(q - r) / t > REPRICE_HIGH * d - 1e-9:' "$AGENT_PATH/research_v630_identity_profile.py" || {
+    echo "ERROR: v6.30 D1 a deeper target on the band's edge is not clamped (rounding noise would decide)." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v630_deep_tier=1 "* ]] || {
+    echo "ERROR: v6.30 build without research_v630_deep_tier=1 in PARAMS." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v630_s9_lookback=1 "* ]] || {
+    echo "ERROR: v6.30 build without research_v630_s9_lookback=1 in PARAMS." >&2
+    exit 1
+  }
+  for key in research_v633_deep_layer research_v629_touch_fp_move research_v626_feed_clock; do
+    [[ " $PARAMS " == *" $key=1 "* ]] || {
+      echo "ERROR: v6.30 build without $key=1 in PARAMS (D1 moves the deep layer's orders; D2 multiplies S9's look-back, S6's limit)." >&2
+      exit 1
+    }
+  done
+  echo "[preflight] v6.30 identity profile PASS (each UID draws per book from its own UID only: D1 a tier-1 book's deep levels one venue tick further from the mid inside v6.3.3's band, D2 S9's look-back m x W; unknown, negative or changed UID: v6.29)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -3648,6 +3751,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_27.py \
       tests/test_research_v6_28.py \
       tests/test_research_v6_29.py \
+      tests/test_research_v6_30.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
