@@ -42,6 +42,7 @@ MODULES = [
     "research_v628_flat_launch.py",
     "research_v6_29_touch_move.py",
     "research_v630_identity_profile.py",
+    "research_v631_touch_improve.py",
     "research_v6214_touch_life.py",
     "research_v6215_order_life.py",
     "research_v63_trend_target.py",

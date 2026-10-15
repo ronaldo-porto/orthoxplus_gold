@@ -838,6 +838,13 @@ from research_v630_identity_profile import (  # noqa: E402
     page_history as v6_30_page_history,
     paper_for as v6_30_paper_for,
 )
+from research_v631_touch_improve import (  # noqa: E402
+    REASONS as V6_31_REASONS,
+    STAGE_SUFFIX as V6_31_STAGE_SUFFIX,
+    V631_SINGLE_WRITE_SAVE_VERSION as V6_31_SINGLE_WRITE_SAVE_VERSION,
+    V631_TOUCH_IMPROVE_VERSION as V6_31_TOUCH_IMPROVE_VERSION,
+    improved_touch_price as v6_31_improved_touch_price,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2225,6 +2232,24 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # D2: v6.29's page history with KeepHorizon mixed in -- one lookup never drops a page a longer look-back of
             # the same request still needs (its keep_s stays None, v6.29's prune, while the profile is off)
             self._v6_29_pages = v6_30_page_history(V6_29PageHistory)
+        # v6.31 S12b (research_v631_touch_improve): a NEW v6.17 touch quote goes one tick better than the OTHERS' best
+        # on its side when v6.2.10's geometry accepts it (strictly inside every opposite order and strictly on our side
+        # of the others' mid), it beats v6.17's join and its edge vs the fresh fundamental is still v6.17's hurdle; else
+        # the join.  Side, size, gates and the rest / cancel verdict stay v6.17's.  STRUCTURAL: the venue tick, the
+        # others' book, v6.17's hurdle; see research_v631_touch_improve.
+        # v6.31 (research_v631_single_write_save, a STRUCTURAL bug fix): the session file is replaced only by a complete
+        # payload -- v6.30's whole save runs on a stage file, renamed into place in one os.replace when it carries the
+        # owner and the maker quality, so a stop between v6.30's two writes no longer leaves an owner-less file.
+        self.research_v631_touch_improve = self._as_bool(getattr(self.config, "research_v631_touch_improve", True))
+        self.research_v631_single_write_save = self._as_bool(
+            getattr(self.config, "research_v631_single_write_save", True))
+        self._v6_31_noted = None
+        self._v6_31_stage: str | None = None
+        self._v6_31_counts: dict[str, int] = {}
+        self._v6_31_errors = 0
+        self._v6_31_errors_seen = 0
+        self._v6_31_reported = False
+        self._v6_31_erring = False
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -8079,6 +8104,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
     # ---- v5.0.4 H1: one session file per UID ---------------------------------------------------
 
     def _research_session_path(self, identity) -> str:
+        if getattr(self, "_v6_31_stage", None) is not None:
+            return self._v6_31_stage    # v6.31: inside a staged save every read and write of the session is the stage's
         path = super()._research_session_path(identity)
         if not bool(getattr(self, "research_v504_session_per_uid", True)):
             return path
@@ -11619,6 +11646,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         if price is None:
             self._v617_count("no_price")
             return 0
+        if bool(getattr(self, "research_v631_touch_improve", False)):
+            # v6.31 S12b: one tick better than the others' best when v6.2.10's geometry accepts it (strictly inside
+            # every opposite order, strictly our side of the others' mid), it beats this join and its edge is still
+            # v6.17's hurdle; else the join (research_v631_touch_improve)
+            price = self._v6_31_price(book_id, toward, price, fp, tick_size)
         q_ = v620_scaled_quantity(clip, size_scale, min_order) if size_scale < 1.0 else clip   # v6.20: ahead of its line
         q = v62_lot_quantity(q_, getattr(cfg, "volumeDecimals", 4))
         if q + 1e-12 < min_order:
@@ -12719,6 +12751,158 @@ class Strategy1_Research_Simple(Strategy1_Research):
             "errors": int(getattr(self, "_v6_30_errors", 0) or 0)})
         return row
 
+    def _v6_31_note(self, book_id: int, book, own_ids, touch_on: bool) -> None:
+        """v6.31 S12b (research_v631_touch_improve), in the pass right after the book's ledger rows are read: notes the
+        book as this request shows it and our live order ids on it (the ledger's), with the book and the request, for
+        _v6_31_price -- which takes the others' touch from them only when a new touch quote is priced: a few books a
+        request, where taking it here would walk every book's best levels on every request (latency gates making).
+        Off, or without the touch quote: nothing noted.  Never raises: an error counts and leaves nothing noted."""
+        try:
+            if not bool(getattr(self, "research_v631_touch_improve", False)) or not touch_on:
+                self._v6_31_noted = None
+                return
+            self._v6_31_noted = (int(book_id), int(getattr(self, "_tick", 0) or 0), book, set(own_ids or ()))
+        except Exception:
+            self._v6_31_errors = int(getattr(self, "_v6_31_errors", 0) or 0) + 1
+            self._v6_31_noted = None
+
+    def _v6_31_price(self, book_id: int, side: str, join_px, fp, tick_size):
+        """v6.31 S12b (research_v631_touch_improve), in v6.17's touch quote right after it chose its join price: the
+        price a NEW quote on ``side`` takes -- one tick better than the others' best when v6.2.10's geometry accepts it
+        (strictly inside every opposite order, ours included, and strictly on our side of the others' mid), it is
+        strictly better than ``join_px`` and its edge vs the fresh fundamental ``fp`` is still v6.17's hurdle
+        (v6_31_improved_touch_price); else ``join_px``.  The others' touch is v6.2.10's touch view of the book
+        _v6_31_note noted for this book this request (none noted: the join), every order of ours left out -- by the
+        ledger's live order ids and by our client ids: v6.3's roles, v6.2's entries, v6.2.14's exits, v6.3.3's deep
+        layer and v6.17's own touch quote.  Tallies why.  Off: ``join_px``.  Never raises: an error counts,
+        ``join_px``."""
+        try:
+            if not bool(getattr(self, "research_v631_touch_improve", False)):
+                return join_px
+            noted = getattr(self, "_v6_31_noted", None)
+            view = None
+            if noted is not None and noted[0] == int(book_id) and noted[1] == int(getattr(self, "_tick", 0) or 0):
+                own_cids = (
+                    v63_own_client_ids(book_id) | set(v62_entry_client_ids(book_id))
+                    | set(v6214_exit_client_ids(book_id)) | v633_own_client_ids(book_id) | set(v617_client_ids(book_id))
+                )
+                view = v6210_touch_view(noted[2], own_ids=noted[3], own_cids=own_cids)
+            price, why = v6_31_improved_touch_price(side, view, fp, tick_size, join_price=join_px)
+            self._v6_31_count(why)
+            return join_px if price is None else price
+        except Exception:
+            self._v6_31_errors = int(getattr(self, "_v6_31_errors", 0) or 0) + 1
+            return join_px
+
+    def _v6_31_staged_save(self, force: bool) -> bool:
+        """v6.31 (research_v631_single_write_save), first in the session save: runs v6.30's whole save -- the frozen
+        base's payload write, then v6.30's re-read and owner / v6.8 deep / v6.1 lots / v6.21 pace / maker quality
+        rewrite -- with every read and write of the session file on a stage file (_research_session_path returns it
+        while it is set), and replaces the session file with the stage in ONE os.replace, only when the stage is whole:
+        it parses, carries the owner record (with research_v504_session_per_uid) and the maker quality.  A stop before
+        the rename leaves the previous whole file in place: v6.30 replaced the file twice, and pm2's SIGKILL (1.6 s
+        after its SIGINT) between the two writes left a file without its owner -- UNOWNED_REFUSED and a cold start
+        (UID 115, 10-14).  v6.29's _v6_29_saved now runs inside the body, microseconds before the rename.  No stage
+        written this call (the cadence skipped the save): nothing is renamed.  A stage left by a stopped save is removed
+        first, never renamed.  An incomplete stage or an error: counted, the stage removed, the session file untouched.
+        False (v6.30's save as it is) when off, when re-entered from the staged run itself, or without a session
+        identity; True otherwise.  Never raises; the stage is always reset."""
+        if not bool(getattr(self, "research_v631_single_write_save", False)):
+            return False
+        if getattr(self, "_v6_31_stage", None) is not None:
+            return False                                # re-entered: this is the staged run of v6.30's save
+        identity = getattr(self, "_research_session_identity", None)
+        if identity is None or not getattr(identity, "simulation_id", None):
+            return False
+        stage = None
+        try:
+            real = self._research_session_path(identity)
+            stage = real + V6_31_STAGE_SUFFIX
+            try:
+                os.unlink(stage)                        # a stage a stopped save left behind is never renamed
+            except OSError:
+                pass
+            self._v6_31_stage = stage
+            try:
+                self._research_save_session(force=force)            # v6.30's whole save, every write on the stage
+            finally:
+                self._v6_31_stage = None
+            if not os.path.isfile(stage):
+                return True                             # nothing written this call: the session file stays as it is
+            try:
+                with open(stage, encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except (OSError, TypeError, ValueError):
+                payload = None
+            whole = (isinstance(payload, dict) and "direct_maker_quality_a1_5_1" in payload
+                     and (OWNER_KEY in payload or not bool(getattr(self, "research_v504_session_per_uid", True))))
+            if whole:
+                os.replace(stage, real)                 # the one write of the session file
+                self._v6_31_count("staged_saves")
+                return True
+            self._v6_31_count("stage_incomplete")
+        except Exception:
+            self._v6_31_errors = int(getattr(self, "_v6_31_errors", 0) or 0) + 1
+        self._v6_31_stage = None
+        if stage is not None:
+            try:
+                os.unlink(stage)
+            except OSError:
+                pass
+        return True
+
+    def _v6_31_count(self, key: str, n: int = 1) -> None:
+        """v6.31's tally.  Never raises: an error counts."""
+        try:
+            counts = getattr(self, "_v6_31_counts", None)
+            if counts is None:
+                counts = {}
+                self._v6_31_counts = counts
+            counts[key] = int(counts.get(key, 0) or 0) + int(n)
+        except Exception:
+            self._v6_31_errors = int(getattr(self, "_v6_31_errors", 0) or 0) + 1
+
+    def _v6_31_report(self) -> None:
+        """v6.31: the V6_31_STATE row -- both switches and versions, S12b's new touch-quote prices by why (improved
+        buy / sell; joined: not inside, our own best, edge short, no view), the staged saves renamed into place and the
+        stages found incomplete, and the errors -- at the first pass, at the first request with an error after one
+        without, and every V62_STATE_EVERY_TICKS ticks; after the reply when the request defers its telemetry (v6.2.9).
+        Never raises."""
+        try:
+            tick = int(getattr(self, "_tick", 0) or 0)
+            errors = int(getattr(self, "_v6_31_errors", 0) or 0)
+            erring = errors > int(getattr(self, "_v6_31_errors_seen", 0) or 0)
+            was_erring = bool(getattr(self, "_v6_31_erring", False))
+            self._v6_31_errors_seen, self._v6_31_erring = errors, erring
+            if not getattr(self, "_v6_31_reported", False):
+                reason = "start"
+            elif erring and not was_erring:
+                reason = "error"
+            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+                reason = "periodic"
+            else:
+                return
+            self._v6_31_reported = True
+            row = dict(self._v6_31_snapshot(), reason=reason, tick=tick)
+            work = getattr(self, "_v629_request_work", None)
+            if work is not None:
+                work.add("v6_31_state_row", lambda: self._emit("V6_31_STATE", force=True, **row))   # after the reply
+            else:
+                self._emit("V6_31_STATE", force=True, **row)
+        except Exception:
+            self._v6_31_errors = int(getattr(self, "_v6_31_errors", 0) or 0) + 1
+
+    def _v6_31_snapshot(self) -> dict:
+        counts = dict(getattr(self, "_v6_31_counts", None) or {})
+        row = {"version": V6_31_TOUCH_IMPROVE_VERSION, "save_version": V6_31_SINGLE_WRITE_SAVE_VERSION,
+               "touch_improve_on": int(bool(getattr(self, "research_v631_touch_improve", False))),
+               "single_write_save_on": int(bool(getattr(self, "research_v631_single_write_save", False)))}
+        row.update({why: int(counts.get(why, 0) or 0) for why in V6_31_REASONS})
+        row.update({"staged_saves": int(counts.get("staged_saves", 0) or 0),
+                    "stage_incomplete": int(counts.get("stage_incomplete", 0) or 0),
+                    "errors": int(getattr(self, "_v6_31_errors", 0) or 0)})
+        return row
+
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
         mirror = getattr(self, "_v62_mirror", None)
@@ -13468,6 +13652,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                         deep_rows.append(row)
                     elif touch_on and v617_is_touch_client_id(getattr(row, "client_id", None)):
                         touch_rows.append(row)       # v6.17: this book's touch quote (its own slot)
+            if bool(getattr(self, "research_v631_touch_improve", False)):
+                # v6.31 S12b: this book and our live order ids on it, for the touch quote's price below -- the
+                # others' touch (every order of ours left out) is taken only if a new quote is priced
+                # (research_v631_touch_improve)
+                self._v6_31_note(book_id, book, own_ids, touch_on)
             deep_open = False
             if deep is not None and depth is not None:
                 try:
@@ -13673,6 +13862,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v6_29_report()                            # v6.29 S9: its V6_29_STATE row, on or off (never raises)
         if getattr(self, "_v6_30_identity", None) is not None:
             self._v6_30_report()                            # v6.30: its V6_30_STATE row, on or off (never raises)
+        if getattr(self, "_v6_31_counts", None) is not None:
+            self._v6_31_report()                            # v6.31: its V6_31_STATE row, on or off (never raises)
         return placed_total
 
     def _v62_telemetry(self, state) -> None:
@@ -15300,6 +15491,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _research_save_session(self, force: bool = False) -> None:
         # v6.29: the one session save S8's first flat launch asked for is forced at this save; then the normal cadence
         force = force or bool(getattr(self, "_v6_29_save_due", False))
+        if bool(getattr(self, "research_v631_single_write_save", False)) and self._v6_31_staged_save(force):
+            return                      # v6.31: this whole save ran on a stage file, renamed into place only when whole
         super()._research_save_session(force=force)
         identity = getattr(self, "_research_session_identity", None)
         if identity is None or not getattr(identity, "simulation_id", None):

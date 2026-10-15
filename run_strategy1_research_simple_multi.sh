@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -433,7 +433,9 @@ research_v627_touch_centre=1 \
 research_v628_flat_launch=1 \
 research_v629_touch_fp_move=1 \
 research_v630_deep_tier=1 \
-research_v630_s9_lookback=1"
+research_v630_s9_lookback=1 \
+research_v631_touch_improve=1 \
+research_v631_single_write_save=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -3634,6 +3636,113 @@ if [[ "${V6_30_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.30 identity profile PASS (each UID draws per book from its own UID only: D1 a tier-1 book's deep levels one venue tick further from the mid inside v6.3.3's band, D2 S9's look-back m x W; unknown, negative or changed UID: v6.29)"
 fi
 
+# v6.31.  S12b research_v631_touch_improve and the single-write session save research_v631_single_write_save.
+# S12b: the leaders take 14-19% of their notional by improving the best by exactly one tick inside wide spreads, at q
+# 0.8-0.96; we take 0.3-2.9% (k87, 10-15 JST, both simulations).  A NEW v6.17 touch quote goes one tick better than the
+# OTHERS' best on its side (every order of ours left out, by the ledger's ids and our client ids) when v6.2.10's geometry
+# accepts it -- strictly inside every opposite order, ours included, and strictly on our side of the others' mid, so a
+# spread under 3 ticks is joined (the replay's imp3=1) -- it beats v6.17's join and its edge vs the fresh fundamental is
+# still v6.17's hurdle; else v6.30's join.  Side, size, gates and the rest / cancel verdict stay v6.17's.  The replay
+# (k87/vm687.py, 3 regimes x 5 cells x d30/40/50, the pre-registered rule R1-R5) PASSED: E +3.6..+19.8%, making/1M
+# -3..+17%, balance worst -0.017; it cannot model a faster maker re-improving over us: canary first.  The save: v6.30
+# wrote the session file twice (the frozen base's payload, then the owner / deep / lots / pace / quality rewrite), and a
+# stop between the writes left an owner-less file -> UNOWNED_REFUSED and a cold start (UID 115, 10-14 JST).  v6.30's
+# whole save now runs on a stage file, renamed into place in one os.replace only when it parses and carries the owner and
+# the maker quality.  STRUCTURAL both: the venue tick, the others' book, v6.17's hurdle; the atomic rename.  Tie: refused
+# here, not degraded -- S12b prices v6.17's touch quote (research_v617_touch_quote=1): a build must not report a switch
+# its code cannot act on.  The agent itself falls back per switch (no touch quote, no improve; off, v6.30's save).
+if [[ "${V6_31_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v631_touch_improve import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 the touch-improve module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self.research_v631_touch_improve = self._as_bool(getattr(self.config, "research_v631_touch_improve", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 S12b the agent does not read research_v631_touch_improve (default on)." >&2
+    exit 1
+  }
+  grep -qF 'getattr(self.config, "research_v631_single_write_save", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 the agent does not read research_v631_single_write_save (default on)." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_31_note(book_id, book, own_ids, touch_on)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 S12b the pass takes no view of the others' touch per book." >&2
+    exit 1
+  }
+  grep -qF '| v633_own_client_ids(book_id) | set(v617_client_ids(book_id))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 S12b the others' touch would count our own touch quote (it would improve over itself)." >&2
+    exit 1
+  }
+  grep -qF 'price = self._v6_31_price(book_id, toward, price, fp, tick_size)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 S12b the touch quote does not price a new quote off the others' best." >&2
+    exit 1
+  }
+  grep -qF 'price, why = v6_31_improved_touch_price(side, view, fp, tick_size, join_price=join_px)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 S12b the price is not the module's rule against the join." >&2
+    exit 1
+  }
+  grep -qF 'cand = improved_bid(others_bid=ob, others_ask=oa, raw_ask=getattr(view, "raw_ask", None), tick=t)' "$AGENT_PATH/research_v631_touch_improve.py" || {
+    echo "ERROR: v6.31 S12b a buy is not priced by v6.2.10's improved_bid." >&2
+    exit 1
+  }
+  grep -qF 'cand = improved_ask(others_bid=ob, others_ask=oa, raw_bid=getattr(view, "raw_bid", None), tick=t)' "$AGENT_PATH/research_v631_touch_improve.py" || {
+    echo "ERROR: v6.31 S12b a sell is not priced by v6.2.10's improved_ask." >&2
+    exit 1
+  }
+  grep -qF 'if cand < ra - 0.5 * t and cand < mid - 1e-12:' "$AGENT_PATH/research_v6210_touch_improve.py" || {
+    echo "ERROR: v6.31 S12b an improved bid is not kept strictly below every ask and the others' mid." >&2
+    exit 1
+  }
+  grep -qF 'if cand > rb + 0.5 * t and cand > mid + 1e-12:' "$AGENT_PATH/research_v6210_touch_improve.py" || {
+    echo "ERROR: v6.31 S12b an improved ask is not kept strictly above every bid and the others' mid." >&2
+    exit 1
+  }
+  grep -qF 'better = cand > join + 0.5 * t if side == SIDE_BUY else cand < join - 0.5 * t' "$AGENT_PATH/research_v631_touch_improve.py" || {
+    echo "ERROR: v6.31 S12b an improved price need not beat the join (it could walk over our own order)." >&2
+    exit 1
+  }
+  grep -qF 'if e is None or e < float(threshold_bps) - 1e-9:' "$AGENT_PATH/research_v631_touch_improve.py" || {
+    echo "ERROR: v6.31 S12b an improved price is not held to v6.17's edge hurdle." >&2
+    exit 1
+  }
+  grep -qF 'return self._v6_31_stage' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 the staged save does not redirect the session path to its stage." >&2
+    exit 1
+  }
+  grep -qF 'if bool(getattr(self, "research_v631_single_write_save", False)) and self._v6_31_staged_save(force):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 the session save does not run staged." >&2
+    exit 1
+  }
+  grep -qF 'whole = (isinstance(payload, dict) and "direct_maker_quality_a1_5_1" in payload' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 a stage without the maker quality could replace the session file." >&2
+    exit 1
+  }
+  grep -qF 'and (OWNER_KEY in payload or not bool(getattr(self, "research_v504_session_per_uid", True))))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 a stage without its owner could replace the session file." >&2
+    exit 1
+  }
+  grep -qF 'os.replace(stage, real)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 the session file is not replaced by the stage in one rename." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_31_report()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.31 the pass emits no V6_31_STATE row." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v631_touch_improve=1 "* ]] || {
+    echo "ERROR: v6.31 build without research_v631_touch_improve=1 in PARAMS." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v631_single_write_save=1 "* ]] || {
+    echo "ERROR: v6.31 build without research_v631_single_write_save=1 in PARAMS." >&2
+    exit 1
+  }
+  [[ " $PARAMS " == *" research_v617_touch_quote=1 "* ]] || {
+    echo "ERROR: v6.31 build without research_v617_touch_quote=1 in PARAMS (S12b prices v6.17's touch quote)." >&2
+    exit 1
+  }
+  echo "[preflight] v6.31 touch improve + single-write save PASS (S12b: a new touch quote one tick better than the others' best, strictly inside and our side of their mid, beating the join, edge >= v6.17's hurdle, else the join; the session file replaced only by a complete staged payload, in one rename)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -3752,6 +3861,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_28.py \
       tests/test_research_v6_29.py \
       tests/test_research_v6_30.py \
+      tests/test_research_v6_31.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
