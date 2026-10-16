@@ -110,7 +110,17 @@ def test_all_three_cancel_paths_register_a_reason():
     # v6.3.3: the deep layer's open-book cancel (v6.3 orders on a deep book, drifted or bounded deep orders) registers too.
     # v6.4: the open board's idle-book cancel (touch and deep orders on a book the layer does not open) registers too.
     # v6.17: the touch quote's cancel (flipped, edge, left, paced, bound, no fundamental, shut book) registers too.
-    assert SRC.count("_a19_note_exit_cancel(") == 12
+    # v6.34: the class-1 entry's cancel (_v6_34_cancel: a resting class-1 quote that no longer fits, a class-0 layer's
+    # order on a class-1 book) registers too -- counted apart: the guard reads Simple with v6.34's additions taken out
+    # (test_research_v6_33's _Drop634), and the class-1 path is asserted to register on its own.
+    import test_research_v6_33 as v6_34_t633
+    v6_34_without = ast.unparse(v6_34_t633._Drop634().visit(ast.parse(SRC)))
+    assert v6_34_without.count("_a19_note_exit_cancel(") == 12
+    v6_34_cancel = next(n for n in ast.walk(ast.parse(SRC))
+                        if isinstance(n, ast.FunctionDef) and n.name == "_v6_34_cancel")
+    assert ast.unparse(v6_34_cancel).count("self._a19_note_exit_cancel(book_id, ids, ABSENT_REPRICE_CANCEL)") == 1
+    # v6.34 adds exactly that one registered site and no other
+    assert SRC.count("_a19_note_exit_cancel(") - v6_34_without.count("_a19_note_exit_cancel(") == 1
     for reason in (
         "ABSENT_WAIT_CANCEL", "ABSENT_ENTRY_QUOTE_CANCEL",
         "ABSENT_PARTIAL_REMAINDER_CANCEL", "ABSENT_REPRICE_CANCEL",

@@ -124,8 +124,9 @@ def test_every_key_the_launcher_ships_today_resolves():
     # (v6.26 S6), +1 research_v627_touch_centre (v6.27 S7), +1 research_v628_flat_launch (v6.28 S8),
     # +1 research_v629_touch_fp_move (v6.29 S9), +2 research_v630_deep_tier, research_v630_s9_lookback (v6.30 D1, D2),
     # +2 research_v631_touch_improve, research_v631_single_write_save (v6.31 S12b, the single-write save),
-    # +3 research_v632_fee_making, research_v632_fee_weight, research_v632_state_fundamental (v6.32 S14, P1).
-    assert len(keys) == 209, len(keys)
+    # +3 research_v632_fee_making, research_v632_fee_weight, research_v632_state_fundamental (v6.32 S14, P1),
+    # +1 research_v633_touch_identity (v6.33 D4), +1 research_v634_class1_entry (v6.34).
+    assert len(keys) == 211, len(keys)
     out = _run_guard(" ".join(f"{k}=x" for k in keys))
     assert out.returncode == 0, out.stderr
-    assert "(209 keys)" in out.stdout
+    assert "(211 keys)" in out.stdout

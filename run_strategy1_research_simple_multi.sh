@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -438,7 +438,9 @@ research_v631_touch_improve=1 \
 research_v631_single_write_save=1 \
 research_v632_fee_making=1 \
 research_v632_fee_weight=0.005 \
-research_v632_state_fundamental=1"
+research_v632_state_fundamental=1 \
+research_v633_touch_identity=1 \
+research_v634_class1_entry=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -3913,6 +3915,184 @@ if [[ "${V6_32_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.32 fee-aware making + state fundamental PASS (S14 ${_v632_state}, weight=${_v632_w}: from a 0.6.4 validator, on a book where our pooled realized spread per notional at the validator's horizon does not exceed the weight x its maker fee rate the adding side holds no deep order and no touch quote; P1: the state's own fundamental before the page)"
 fi
 
+# v6.33.  D4 research_v633_touch_identity: the touch dimension of v6.30's identity profile (orthox-profile-v1,
+# pre-registered 10-14 JST; scratchpad k79/spec/profile_v1.py VALUES["D4"] = (1, 0)).  At the touch our UIDs were
+# near-clones (10-16 ~21:00 JST, all eight on v6.32, k95): 1.32 effective agents of 8, >= 1 sibling on the same book-side
+# 94-97% of a UID's touch time, the touch quote carrying the same client id per book for every UID; v6.30's D1 / D2 never
+# reached the touch.  The user's directive (10-16 ~21:10 JST): every UID acts as a different agent at the touch too.  Each
+# UID draws per book from its OWN UID only -- D4 = (1, 0)[int(SHA-256('orthox-profile-v1|D4|uid|book')[:8], 16) mod 2]
+# -- and on a book drawn 0 keeps no v6.17 touch quote at all (a resting one cancelled, none placed: the last gate before
+# the slot and the price); a book drawn 1, the profile off (UID unknown, negative or changed) or an error: v6.32.  The
+# deep layer (D1), the lean, pace, caps, S9, S12b and S14 are unchanged.  No fleet list, no shared schedule, no reading of
+# another agent, no lock, cache, socket or RNG.  STRUCTURAL: independence; the value set is the pre-registered spec's
+# (p = 1/2, its design choice).  research_v633_touch_identity ships 1 but may be 0 -- whether D4 ships on is the user's
+# call (the replay measured about -8..-11% per UID; D4 off: v6.32's touch quote on every book, by a PARAMS edit, no
+# rebuild); the block accepts exactly one of =0 / =1, as v6.32's S14 block does, and prints D4's state.  Tie: refused
+# here, not degraded -- D4 is the presence of v6.17's touch quote (research_v617_touch_quote=1): a build must not report
+# a switch its code cannot act on.  The agent itself falls back per book (the profile off or an error: v6.32).
+if [[ "${V6_33_BUILD:-0}" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_v6_33_touch_identity.py" ]] || {
+    echo "ERROR: v6.33 the touch-identity module is missing." >&2
+    exit 1
+  }
+  grep -qF 'from research_v6_33_touch_identity import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.33 the touch-identity module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self.research_v633_touch_identity = self._as_bool(getattr(self.config, "research_v633_touch_identity", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.33 D4 the agent does not read research_v633_touch_identity (default on)." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_33_request()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.33 D4 the pass draws no touch table from the identity profile." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_33_table.extend(ident.uid, ident.table)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.33 D4 the touch table is not drawn from the profile's own UID and books." >&2
+    exit 1
+  }
+  grep -qF 'v6_33_off = self._v6_33_off(book_id)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.33 D4 the touch quote reads no touch presence." >&2
+    exit 1
+  }
+  grep -qF 'return bool(v6_33_touch_off(switch, profile_on, value))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.33 D4 the touch presence is not the module's rule (the switch, the profile, the draw)." >&2
+    exit 1
+  }
+  grep -qF 'why = V6_33_CANCEL_TOUCH_IDENTITY' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.33 D4 a resting touch quote on an OFF book is not cancelled." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_33_count("touch_withheld")' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.33 D4 the touch quote still places on an OFF book." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_33_report()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.33 the pass emits no V6_33_STATE row." >&2
+    exit 1
+  }
+  grep -qF 'from research_v630_identity_profile import PROFILE_VERSION, uid_of' "$AGENT_PATH/research_v6_33_touch_identity.py" || {
+    echo "ERROR: v6.33 D4 the draw's version string is not v6.30's pre-registered one." >&2
+    exit 1
+  }
+  grep -qF 'VALUES_D4 = (1, 0) ' "$AGENT_PATH/research_v6_33_touch_identity.py" || {
+    echo "ERROR: v6.33 D4 the value set is not the pre-registered one (1: the touch quote, 0: none)." >&2
+    exit 1
+  }
+  grep -qF 'h = hashlib.sha256(f"{PROFILE_VERSION}|{D4}|{uid}|{book}".encode()).hexdigest()' "$AGENT_PATH/research_v6_33_touch_identity.py" || {
+    echo "ERROR: v6.33 D4 the draw is not the pre-registered formula." >&2
+    exit 1
+  }
+  grep -qF 'return VALUES_D4[int(h[:8], 16) % len(VALUES_D4)]' "$AGENT_PATH/research_v6_33_touch_identity.py" || {
+    echo "ERROR: v6.33 D4 the draw does not pick by the hash's first 8 hex digits." >&2
+    exit 1
+  }
+  grep -qF 'return bool(switch) and bool(profile_on) and _integer(value) == TOUCH_OFF' "$AGENT_PATH/research_v6_33_touch_identity.py" || {
+    echo "ERROR: v6.33 D4 a book is not OFF exactly when the switch and the profile are on and its draw is 0." >&2
+    exit 1
+  }
+  _v633_re=' research_v633_touch_identity=(0|1) '
+  [[ " $PARAMS " =~ $_v633_re ]] || {
+    echo "ERROR: v6.33 build without research_v633_touch_identity=0 or 1 in PARAMS (D4's state must be explicit)." >&2
+    exit 1
+  }
+  _v633_d4="${BASH_REMATCH[1]}"
+  _v633_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_v633_touch_identity=' || true)
+  [[ "$_v633_n" == "1" ]] || {
+    echo "ERROR: v6.33 build with research_v633_touch_identity given ${_v633_n} times in PARAMS (exactly once: 0 or 1)." >&2
+    exit 1
+  }
+  if [[ "$_v633_d4" == "1" ]]; then _v633_state="on"; else _v633_state="off"; fi
+  [[ " $PARAMS " == *" research_v617_touch_quote=1 "* ]] || {
+    echo "ERROR: v6.33 build without research_v617_touch_quote=1 in PARAMS (D4 is the presence of v6.17's touch quote)." >&2
+    exit 1
+  }
+  echo "[preflight] v6.33 D4 touch identity: ${_v633_state}"
+  echo "[preflight] v6.33 touch identity PASS (D4 ${_v633_state}: each UID draws per book from its own UID only whether it keeps the v6.17 touch quote there -- 0: none, a resting one cancelled; 1, the profile off or an error: v6.32)"
+fi
+
+# v6.34.  research_v634_class1_entry: the class-1 entry (C3f, scratchpad k98).  Validator 0.6.4 (live ~00:30 JST 10-17)
+# pays each asset class its own share of both pools at 0.75 / 0.25 (was 0.95 / 0.05) and our UIDs traded no class-1 book
+# (v6.23 S2): every UID's share fell ~21 %.  On the books of class 1 in the validator's class map (the state
+# configuration's classes, one per background in document order -- class 1 = the second entry; never a hard-coded range)
+# each side takes ONE join-only touch quote in the class's own units (v6.32's class-0 clip and bound x min1 / min0, the
+# class's grids; at the touch whenever the book is not crossed, a 1-tick spread included -- post-only is the protection,
+# the venue's refusals are counted in V6_34_STATE: coordinator 03:35 JST), on the side the fundamental moved toward (S9, D2's look-back; no move: both sides), sized at the clip
+# adding and max(clip, |inventory|) reducing; the adding side held HOLD_NS = 20 sim-s after a miner taker's print on it
+# (S17-R), paced per book from its own first class-1 state (line = min(T, u0 + cap x (t - t0 + 600 s) / 86,400 s), T = cap
+# minus one making window; paced: no adding quote, the unwind never across flat), S14 on a class-1 estimate of its own
+# (class 0 keeps its own), and D4 (v6.33) also governs class 1.  No deep layer, lean or v6.23 S1 on class 1; class 0 is
+# v6.33's.  The final validator lets exactly these quotes through S2.  Replay k98/vm703 (C3f, d40): joint 0.6.4 pay
+# +27.9 / +33.5 / +2.5 / +6.2 % (cells cA / oA / f115 / A115) vs class 0 alone; the strict Q1 (class-1 making credit
+# > 0 in every third) fails on the two thin tapes -- shipping is the user's decision.  STRUCTURAL: the validator's class
+# map, grids, minimum, cap, sampling interval, assessment period, making window and making horizon; the subnet's UID
+# slots; the leaders' join (OBSERVED k98 TASK A, no threshold).  research_v634_class1_entry ships 1 but may be 0 (off:
+# v6.33 on every book, by a PARAMS edit, no rebuild); the block accepts exactly one of =0 / =1, as v6.33's D4 block
+# does, and prints its state.  Ties: refused here, not degraded -- the quote is v6.17's touch slot and join price
+# (research_v617_touch_quote=1) and v6.33's D4 governs it (research_v633_touch_identity given, =0 or =1).
+if [[ "${V6_34_BUILD:-0}" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_v6_34_class1.py" ]] || {
+    echo "ERROR: v6.34 the class-1 entry module is missing." >&2
+    exit 1
+  }
+  for _v634_pat in \
+      'from research_v6_34_class1 import (' \
+      'self.research_v634_class1_entry = self._as_bool(getattr(self.config, "research_v634_class1_entry", True))' \
+      'self._v6_34_request(state)' \
+      'layout = v6_34_class1_layout(cfg)' \
+      'self._v6_34_holds.observe(book_id, prints, uid, now)' \
+      'if v6_34_route and book_id in v6_34_route:' \
+      'placed_total += self._v6_34_book(response, state, book_id, deep, raw_bid, raw_ask, inv, touch_rows,' \
+      'plan[side] = v6_34_side_plan(side, inventory=inv, clip=clip1, bound=bound1, min_size=min1,' \
+      's9 = self._v6_29_held(book_id, self._v617_fundamental(book_id, raw_bid, raw_ask, cfg), cfg)' \
+      'd4_off = bool(getattr(self, "research_v633_touch_identity", False)) and bool(self._v6_33_off(book_id))' \
+      'price = v6_34_join(side, raw_bid, raw_ask, tick1)' \
+      'if v6_34_keys and self._v6_34_passes(book_id, instruction, v6_34_keys):' \
+      'self._v6_34_report()'; do
+    grep -qF -- "$_v634_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: v6.34 the agent lacks: $_v634_pat" >&2
+      exit 1
+    }
+  done
+  for _v634_pat in \
+      'CLASS1 = 1 ' \
+      'MINER_UID_SLOTS = 256 ' \
+      'HOLD_NS = HORIZON_NS ' \
+      'from research_v6_32_fee_making import HORIZON_NS, WINDOW_NS' \
+      'c0, c1 = classes[0], classes[CLASS1]' \
+      'if ta < 0 or ta >= MINER_UID_SLOTS:' \
+      'if add and abs(inv) >= lim - _EPS:' \
+      'return min(top, u + c * (now - t0 + float(PACE_WINDOW_NS)) / float(ASSESSMENT_NS))'; do
+    grep -qF -- "$_v634_pat" "$AGENT_PATH/research_v6_34_class1.py" || {
+      echo "ERROR: v6.34 the class-1 entry module lacks: $_v634_pat" >&2
+      exit 1
+    }
+  done
+  _v634_re=' research_v634_class1_entry=(0|1) '
+  [[ " $PARAMS " =~ $_v634_re ]] || {
+    echo "ERROR: v6.34 build without research_v634_class1_entry=0 or 1 in PARAMS (the class-1 entry's state must be explicit)." >&2
+    exit 1
+  }
+  _v634_c1="${BASH_REMATCH[1]}"
+  _v634_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_v634_class1_entry=' || true)
+  [[ "$_v634_n" == "1" ]] || {
+    echo "ERROR: v6.34 build with research_v634_class1_entry given ${_v634_n} times in PARAMS (exactly once: 0 or 1)." >&2
+    exit 1
+  }
+  if [[ "$_v634_c1" == "1" ]]; then _v634_state="on"; else _v634_state="off"; fi
+  [[ " $PARAMS " == *" research_v617_touch_quote=1 "* ]] || {
+    echo "ERROR: v6.34 build without research_v617_touch_quote=1 in PARAMS (the class-1 quote is v6.17's touch slot and join)." >&2
+    exit 1
+  }
+  _v634_d4=' research_v633_touch_identity=(0|1) '
+  [[ " $PARAMS " =~ $_v634_d4 ]] || {
+    echo "ERROR: v6.34 build without research_v633_touch_identity=0 or 1 in PARAMS (v6.33's D4 governs the class-1 quotes)." >&2
+    exit 1
+  }
+  echo "[preflight] v6.34 class-1 entry: ${_v634_state}"
+  echo "[preflight] v6.34 class-1 entry PASS (${_v634_state}: on the class map's class-1 books one join-only touch quote per side in the class's own units -- S9's side, S17-R's 20-s miner hold on the adding side, the book's own pace line, S14 on a class-1 estimate, D4; class 0 is v6.33's)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -4033,6 +4213,8 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_30.py \
       tests/test_research_v6_31.py \
       tests/test_research_v6_32.py \
+      tests/test_research_v6_33.py \
+      tests/test_research_v6_34.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

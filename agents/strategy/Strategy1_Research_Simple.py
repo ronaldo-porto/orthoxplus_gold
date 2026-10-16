@@ -864,6 +864,29 @@ from research_v6_32_state_fp import (  # noqa: E402
     fundamental_value as v6_32_fundamental_value,
     s9_snapshot as v6_32_s9_snapshot,
 )
+from research_v6_33_touch_identity import (  # noqa: E402
+    CANCEL_TOUCH_IDENTITY as V6_33_CANCEL_TOUCH_IDENTITY,
+    TouchTable as V6_33TouchTable,
+    V6_33_TOUCH_IDENTITY_VERSION,
+    touch_off as v6_33_touch_off,
+)
+from research_v6_34_class1 import (  # noqa: E402
+    CANCEL_OTHER as V6_34_CANCEL_OTHER,
+    MinerHolds as V6_34MinerHolds,
+    STATUS_OK as V6_34_STATUS_OK,
+    V6_34_CLASS1_ENTRY_VERSION,
+    WHY_CAPPED as V6_34_WHY_CAPPED,
+    class1_layout as v6_34_class1_layout,
+    join as v6_34_join,
+    lot as v6_34_lot,
+    p90 as v6_34_p90,
+    pace_line as v6_34_pace_line,
+    paced as v6_34_paced,
+    refusal as v6_34_refusal,
+    resting_verdict as v6_34_resting_verdict,
+    scaled as v6_34_scaled,
+    side_plan as v6_34_side_plan,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2299,6 +2322,42 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6_32_errors_seen = 0
         self._v6_32_reported = False
         self._v6_32_erring = False
+        # v6.33 D4 (research_v633_touch_identity): the touch dimension of v6.30's identity profile (orthox-profile-v1,
+        # pre-registered 10-14).  Each UID draws per book, from its OWN UID only, whether it keeps the v6.17 touch quote
+        # there: D4 = 1 places it as v6.32 does, D4 = 0 keeps none on the book (a resting one cancelled, none placed).
+        # No fleet list, no shared schedule, no reading of another agent, no RNG.  The profile off (the UID unknown,
+        # negative or changed) keeps every book on v6.32; the deep layer and every other gate are unchanged.  Off, the
+        # build is v6.32.  STRUCTURAL independence; see research_v6_33_touch_identity.
+        self.research_v633_touch_identity = self._as_bool(getattr(self.config, "research_v633_touch_identity", True))
+        self._v6_33_table = V6_33TouchTable()
+        self._v6_33_counts: dict[str, int] = {}
+        self._v6_33_errors = 0
+        self._v6_33_errors_seen = 0
+        self._v6_33_reported = False
+        self._v6_33_erring = False
+        # v6.34 (research_v634_class1_entry): validator 0.6.4 pays asset class 1 a quarter of both pools; the books of
+        # class 1 in the validator's class map take ONE join-only touch quote per side in the class's own units (v6.32's
+        # class-0 clip and bound x min1 / min0), on the side the fundamental moved toward (S9; no move: both sides), the
+        # adding side held 20 sim-s after a miner taker's print (S17-R), paced per book from its own entry, gated by S14
+        # on its own class-1 estimate and by D4.  No deep layer, lean or v6.23 S1 there; class 0 is v6.33's.  Without a
+        # class map the switch does nothing.  Off, the build is v6.33.  STRUCTURAL; see research_v6_34_class1.
+        self.research_v634_class1_entry = self._as_bool(getattr(self.config, "research_v634_class1_entry", True))
+        self._v6_34_layout: dict[str, Any] = {}
+        self._v6_34_c1: frozenset = frozenset()
+        self._v6_34_route: frozenset = frozenset()
+        self._v6_34_tracker = None
+        self._v6_34_holds = V6_34MinerHolds()
+        self._v6_34_active = False
+        self._v6_34_est: float | None = None
+        self._v6_34_pace0: dict[int, tuple] = {}
+        self._v6_34_keys: set = set()
+        self._v6_34_req: dict[str, Any] = {}
+        self._v6_34_refused: dict[str, int] = {}
+        self._v6_34_counts: dict[str, int] = {}
+        self._v6_34_errors = 0
+        self._v6_34_errors_seen = 0
+        self._v6_34_reported = False
+        self._v6_34_erring = False
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11646,6 +11705,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # not cover W x this book's maker fee rate -- not placed below, a resting one cancelled; a reducing quote is
             # never gated (research_v632_fee_making)
             v6_32_gated = self._v6_32_touch_sides(book_id)
+        v6_33_off = False
+        if bool(getattr(self, "research_v633_touch_identity", False)):
+            # v6.33 D4: this book's touch presence for this agent, drawn in the identity profile from its OWN UID -- 0: no
+            # touch quote here at all (a resting one cancelled below, none placed); 1, the profile off or an error: v6.32
+            # (research_v633_touch_identity)
+            v6_33_off = self._v6_33_off(book_id)
         doomed = []
         kept = 0
         for row in touch_rows:
@@ -11671,6 +11736,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if why is None and v6_32_gated and side in v6_32_gated:
                 why = V6_32_CANCEL_FEE_GATE                 # v6.32 S14: an adding quote that would not cover W x the fee
                 self._v6_32_count("touch_cancels")
+            if why is None and v6_33_off:
+                why = V6_33_CANCEL_TOUCH_IDENTITY           # v6.33 D4: this agent keeps no touch quote on this book
+                self._v6_33_count("touch_cancels")
             if why is None:
                 kept += 1
             else:
@@ -11702,6 +11770,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return 0
         if v6_32_gated and toward in v6_32_gated:
             self._v6_32_count("touch_withheld")             # v6.32 S14: an adding quote that would not cover W x the fee
+            return 0
+        if v6_33_off:
+            self._v6_33_count("touch_withheld")             # v6.33 D4: this agent places no touch quote on this book
             return 0
         try:
             if V617_TOUCH_SLOT in (self._v69_live_slots(book_id).get(toward) or frozenset()):
@@ -13023,6 +13094,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 top, per_book = self._v6_32_min_sizes(cfg)
             uid = getattr(self, "uid", None)
             fps: dict[int, float] = {}
+            v6_34_route = getattr(self, "_v6_34_route", None) or frozenset()   # v6.34: class 1's books (own estimate)
             for raw_id, book in items:
                 book_id = int(raw_id)
                 rb = book if isinstance(book, dict) else getattr(book, "_raw", None)
@@ -13030,6 +13102,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     f = v6_32_fundamental_value(rb if isinstance(rb, dict) else book)
                     if f is not None:
                         fps[book_id] = f
+                if v6_34_route and book_id in v6_34_route:
+                    continue        # v6.34: class 0 keeps its own pooled estimate (research_v634_class1_entry)
                 if tracker is not None:
                     if isinstance(rb, dict):
                         prints = [e for e in (rb.get("e") or ()) if isinstance(e, dict) and e.get("y") == "t"]
@@ -13235,6 +13309,421 @@ class Strategy1_Research_Simple(Strategy1_Research):
         row["tracker_ms_p50"] = round(ms[len(ms) // 2], 3) if ms else None
         row["tracker_ms_p99"] = round(ms[min(len(ms) - 1, int(0.99 * len(ms)))], 3) if ms else None
         row["errors"] = int(getattr(self, "_v6_32_errors", 0) or 0)
+        return row
+
+    def _v6_33_request(self) -> None:
+        """v6.33 D4 (research_v633_touch_identity), in the pass once per request right after v6.30's identity profile
+        checked this request: while the profile is on, every book of its table -- every book of the state, drawn at the
+        first request, a book first seen later when it first appears -- has its D4 draw in the touch table, drawn once
+        from this agent's own UID and never again.  The profile off: nothing is drawn (every book is on: v6.32).  Never
+        raises: an error counts."""
+        try:
+            if not bool(getattr(self, "_v6_30_on", False)):
+                return
+            ident = self._v6_30_identity
+            self._v6_33_table.extend(ident.uid, ident.table)
+        except Exception:
+            self._v6_33_errors = int(getattr(self, "_v6_33_errors", 0) or 0) + 1
+
+    def _v6_33_off(self, book_id: int) -> bool:
+        """v6.33 D4 (research_v633_touch_identity), at the top of the v6.17 touch quote: True when this agent keeps no
+        touch quote on this book -- the switch on, v6.30's identity profile on this request and the book's D4 draw for
+        this agent's own UID 0 (v6_33_touch_off) -- else False: v6.32.  A book the table has not drawn yet is drawn here,
+        once.  Never raises: an error counts and is False."""
+        try:
+            switch = bool(getattr(self, "research_v633_touch_identity", False))
+            profile_on = bool(getattr(self, "_v6_30_on", False))
+            value = None
+            if switch and profile_on:
+                table = self._v6_33_table
+                value = table.value(book_id)
+                if value is None:
+                    table.extend(self._v6_30_identity.uid, (book_id,))     # a book first seen here: drawn once, now
+                    value = table.value(book_id)
+            return bool(v6_33_touch_off(switch, profile_on, value))
+        except Exception:
+            self._v6_33_errors = int(getattr(self, "_v6_33_errors", 0) or 0) + 1
+            return False
+
+    def _v6_33_count(self, key: str, n: int = 1) -> None:
+        """v6.33's tally.  Never raises: an error counts."""
+        try:
+            counts = getattr(self, "_v6_33_counts", None)
+            if counts is None:
+                counts = {}
+                self._v6_33_counts = counts
+            counts[key] = int(counts.get(key, 0) or 0) + int(n)
+        except Exception:
+            self._v6_33_errors = int(getattr(self, "_v6_33_errors", 0) or 0) + 1
+
+    def _v6_33_report(self) -> None:
+        """v6.33: the V6_33_STATE row -- the switch and versions, whether v6.30's identity profile is on this request,
+        the UID and why the profile is off when it is, the touch table (its UID, books, ON / OFF counts, sha256, the draws
+        by ascending book, the books drawn later and the draws refused), the touch quotes withheld and cancelled on OFF
+        books, and the errors -- at the first pass, at the first request with an error after one without, and every
+        V62_STATE_EVERY_TICKS ticks; after the reply when the request defers its telemetry (v6.2.9).  Never raises."""
+        try:
+            tick = int(getattr(self, "_tick", 0) or 0)
+            errors = int(getattr(self, "_v6_33_errors", 0) or 0)
+            erring = errors > int(getattr(self, "_v6_33_errors_seen", 0) or 0)
+            was_erring = bool(getattr(self, "_v6_33_erring", False))
+            self._v6_33_errors_seen, self._v6_33_erring = errors, erring
+            if not getattr(self, "_v6_33_reported", False):
+                reason = "start"
+            elif erring and not was_erring:
+                reason = "error"
+            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+                reason = "periodic"
+            else:
+                return
+            self._v6_33_reported = True
+            row = dict(self._v6_33_snapshot(), reason=reason, tick=tick)
+            work = getattr(self, "_v629_request_work", None)
+            if work is not None:
+                work.add("v6_33_state_row", lambda: self._emit("V6_33_STATE", force=True, **row))   # after the reply
+            else:
+                self._emit("V6_33_STATE", force=True, **row)
+        except Exception:
+            self._v6_33_errors = int(getattr(self, "_v6_33_errors", 0) or 0) + 1
+
+    def _v6_33_snapshot(self) -> dict:
+        ident = getattr(self, "_v6_30_identity", None)
+        table = getattr(self, "_v6_33_table", None)
+        counts = dict(getattr(self, "_v6_33_counts", None) or {})
+        snap = table.snapshot() if table is not None else {}
+        row = {"version": V6_33_TOUCH_IDENTITY_VERSION, "profile": V6_30_PROFILE_VERSION,
+               "touch_identity_on": int(bool(getattr(self, "research_v633_touch_identity", False))),
+               "profile_on": int(bool(getattr(self, "_v6_30_on", False))),
+               "uid": getattr(ident, "uid", None), "off_reason": getattr(ident, "off", None),
+               "table_uid": snap.get("table_uid"), "table_sha256": snap.get("table_sha256"), "d4": snap.get("d4", "")}
+        for key in ("books", "touch_on_books", "touch_off_books", "books_drawn_later", "refused"):
+            row[key] = int(snap.get(key, 0) or 0)
+        for key in ("touch_withheld", "touch_cancels"):
+            row[key] = int(counts.get(key, 0) or 0)
+        row["errors"] = int(getattr(self, "_v6_33_errors", 0) or 0)
+        return row
+
+    def _v6_34_request(self, state) -> None:
+        """v6.34 (research_v634_class1_entry), in respond() once per request right after v6.23 read the state and before
+        v6.32's tracker: the class map's class-1 books and units (v6_34_class1_layout: the configuration's second class;
+        none without a readable map: the switch then does nothing this request), then -- on the books of the last
+        readable map -- their trade prints of this state, in arrival order, into the class-1 realized tracker (S14 per
+        class: v6.32's tracker and rule over class-1 fills only, active exactly when v6.32's gate is; class 0 keeps its
+        own estimate) and S17-R's miner-taker clock; the tracker releases what is ready and the class-1 estimate is set.
+        Off: nothing (v6.33).  Never raises: an error counts and no book is class 1 this request (fail closed)."""
+        self._v6_34_c1, self._v6_34_keys, self._v6_34_active, self._v6_34_est = frozenset(), set(), False, None
+        self._v6_34_req = {"class1_books": 0, "on_books": 0, "inv_abs": [], "clip": None, "bound": None}
+        if not bool(getattr(self, "research_v634_class1_entry", False)):
+            return
+        try:
+            cfg = getattr(state, "config", None)
+            layout = v6_34_class1_layout(cfg)
+            self._v6_34_layout = layout
+            self._v6_34_count("map_" + str(layout.get("status")))
+            if layout.get("status") == V6_34_STATUS_OK:
+                self._v6_34_c1 = frozenset(layout.get("books") or ())
+                self._v6_34_route = self._v6_34_c1          # class-1 books: their fills stay out of class 0's estimate
+            route = getattr(self, "_v6_34_route", None) or frozenset()
+            if not route:
+                return
+            try:
+                notices = getattr(state, "notices", None)
+                for event in ((notices.get(getattr(self, "uid", None)) if notices is not None else None) or ()):
+                    why = v6_34_refusal(event, route)      # a class-1 quote the venue refused (post-only or else)
+                    if why is not None:
+                        self._v6_34_count("refused_post_only" if why == "post_only" else "refused_other")
+                        if why in self._v6_34_refused or len(self._v6_34_refused) < 16:
+                            self._v6_34_refused[why] = int(self._v6_34_refused.get(why, 0) or 0) + 1
+            except Exception:
+                self._v6_34_errors = int(getattr(self, "_v6_34_errors", 0) or 0) + 1   # unread; the request goes on
+            now = int(getattr(state, "timestamp", 0) or 0)
+            spec = v623_validator_spec(getattr(state, "version", None))
+            v6_34_tracker = self._v6_34_tracker_ref()
+            if v6_34_tracker.begin(now):
+                self._v6_34_count("tracker_resets")         # a clock that ran back: the streams start over
+            active = bool(v6_32_gate_active(getattr(self, "research_v632_fee_making", False), spec,
+                                            getattr(self, "research_v632_fee_weight", 0.0)))
+            if v6_34_tracker.set_active(active, now):
+                self._v6_34_count("window_starts")          # inactive -> active: the class-1 window starts empty here
+            top, per_book = v6_32_min_sizes(cfg)
+            uid = getattr(self, "uid", None)
+            books = getattr(state, "books", None)
+            raw = getattr(books, "_raw_books", None)          # LazyBooks' wire dicts: no LazyBook built, nothing parsed
+            items = list(raw.items()) if isinstance(raw, dict) else list((books or {}).items())
+            for raw_id, book in items:
+                book_id = int(raw_id)
+                if book_id not in route:
+                    continue
+                rb = book if isinstance(book, dict) else getattr(book, "_raw", None)
+                if isinstance(rb, dict):
+                    prints = [e for e in (rb.get("e") or ()) if isinstance(e, dict) and e.get("y") == "t"]
+                else:
+                    prints = [e for e in (getattr(book, "events", None) or ())
+                              if (e.get("y") if isinstance(e, dict) else getattr(e, "y", None)) == "t"]
+                if prints:
+                    v6_34_tracker.observe(book_id, prints, uid, per_book.get(book_id, top), now)
+                    self._v6_34_holds.observe(book_id, prints, uid, now)
+            v6_34_tracker.release(now)
+            self._v6_34_active, self._v6_34_est = active, v6_34_tracker.estimate()
+            if active:
+                self._v6_34_count("active_requests")
+        except Exception:
+            self._v6_34_errors = int(getattr(self, "_v6_34_errors", 0) or 0) + 1
+            self._v6_34_c1, self._v6_34_active, self._v6_34_est = frozenset(), False, None
+
+    def _v6_34_tracker_ref(self):
+        """v6.34 S14 per class: the class-1 realized tracker (v6.32's own class), made on first use."""
+        tracker = getattr(self, "_v6_34_tracker", None)
+        if not isinstance(tracker, V6_32RealizedTracker):
+            tracker = V6_32RealizedTracker()
+            self._v6_34_tracker = tracker
+        return tracker
+
+    def _v6_34_book(self, response, state, book_id: int, deep, raw_bid, raw_ask, inv, touch_rows, other_rows, already,
+                    req, *, budget: int, expiry: int, cfg) -> int:
+        """v6.34: the error guard around a class-1 book's entry (_v6_34_entry).  Never raises: an error counts and the
+        book places nothing this request (fail closed)."""
+        try:
+            return int(self._v6_34_entry(response, state, book_id, deep, raw_bid, raw_ask, inv, touch_rows, other_rows,
+                                         already, req, budget=budget, expiry=expiry, cfg=cfg))
+        except Exception:
+            self._v6_34_errors = int(getattr(self, "_v6_34_errors", 0) or 0) + 1
+            return 0
+
+    def _v6_34_entry(self, response, state, book_id: int, deep, raw_bid, raw_ask, inv, touch_rows, other_rows, already,
+                     req, *, budget: int, expiry: int, cfg) -> int:
+        """v6.34 C3f on one class-1 book this request (research_v634_class1_entry; the replay k98/vm703's c2 path) --
+        returns the placements added (0 .. 2).
+
+        Units: v6.32's class-0 touch clip (V617 CLIP_DEEP_CLIPS x the deep layer's clip) and touch bound (v6.10's
+        behind-line bound) x min1 / min0; the class's own minimum, price grid and volume grid.  Each side's plan
+        (v6_34_side_plan, the replay's c2 order): the bound, the book's own pace line (from its first class-1 state of
+        this process), S9 (v6.29's decision on the book's fundamental, D2's look-back multiple included), S14 on the
+        class-1 estimate, D4, the paced unwind and S17-R; at the cap no quote.  A resting quote of the book's touch slot
+        is cancelled when its side takes none, is paced past the unwind size or the touch moved REST_TICKS past it; an
+        order of a class-0 layer on the book is cancelled.  A side with no quote kept takes one -- JOIN at the touch,
+        post-only, the touch slot's client id -- once nothing of ours is cancelled, placed or in flight on it."""
+        layout = getattr(self, "_v6_34_layout", None) or {}
+        scale, tick1 = layout.get("scale"), layout.get("tick")
+        min1 = float(layout.get("min1") or 0.0)
+        pd1, vd1 = layout.get("price_decimals"), layout.get("volume_decimals")
+        v34 = self._v6_34_req
+        if deep is None or scale is None or tick1 is None or min1 <= 0.0:
+            self._v6_34_count("no_units_states")
+            return 0
+        clip1 = v6_34_scaled(float(V617_CLIP_DEEP_CLIPS) * float(getattr(deep, "clip", 0.0) or 0.0), scale)
+        bound1 = v6_34_scaled(self._v610_bound_base(deep, False), scale)
+        if clip1 is None or bound1 is None or clip1 + 1e-12 < min1:
+            self._v6_34_count("no_units_states")
+            return 0
+        v34["clip"], v34["bound"] = round(clip1, 6), round(bound1, 6)
+        inv = float(inv or 0.0)
+        now = int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0)
+        v34["class1_books"] = int(v34.get("class1_books", 0) or 0) + 1
+        v34.setdefault("inv_abs", []).append(abs(inv))
+        cap = float(self._research_volume_cap_quote(state) or 0.0)
+        used = float(self._research_book_traded_volume(book_id) or 0.0)
+        anchor = self._v6_34_pace0.get(int(book_id))
+        if anchor is None or now < int(anchor[0]):
+            anchor = (now, used)
+            self._v6_34_pace0[int(book_id)] = anchor        # its first class-1 state (or a new run): its line starts
+        is_paced = bool(v6_34_paced(used, v6_34_pace_line(cap, anchor[1], anchor[0], now)))
+        capped = cap > 0.0 and used >= cap
+        s9 = None
+        if bool(getattr(self, "research_v629_touch_fp_move", False)):
+            s9 = self._v6_29_held(book_id, self._v617_fundamental(book_id, raw_bid, raw_ask, cfg), cfg)
+        gated = False
+        if bool(getattr(self, "_v6_34_active", False)):
+            rate = v6_32_maker_fee_rate((getattr(self, "accounts", None) or {}).get(int(book_id)))
+            gated = rate is not None and bool(v6_32_fee_gated(getattr(self, "_v6_34_est", None), rate,
+                                                              getattr(self, "research_v632_fee_weight", 0.0)))
+        d4_off = bool(getattr(self, "research_v633_touch_identity", False)) and bool(self._v6_33_off(book_id))
+        if not d4_off:
+            v34["on_books"] = int(v34.get("on_books", 0) or 0) + 1
+        self._v6_34_count("book_states")
+        self._v6_34_count("paced_states" if is_paced else "behind_states")
+        if gated:
+            self._v6_34_count("fee_gated_states")
+        plan = {}
+        for side in (V63_SIDE_BUY, V63_SIDE_SELL):
+            if capped:
+                plan[side] = (0.0, V6_34_WHY_CAPPED)
+            else:
+                plan[side] = v6_34_side_plan(side, inventory=inv, clip=clip1, bound=bound1, min_size=min1,
+                                             is_paced=is_paced, s9_held=s9, fee_gated=gated, d4_off=d4_off,
+                                             miner_held=self._v6_34_holds.held(book_id, side, now))
+            self._v6_34_count("armed" if plan[side][1] is None else "held_" + str(plan[side][1]).lower())
+        doomed, kept = [], set()
+        for row in touch_rows or ():
+            if int(row.order_id) in already:
+                continue
+            side = V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL
+            want, why_un = plan[side]
+            why = v6_34_resting_verdict(side, float(row.price), getattr(row, "remaining", None), want, why_un,
+                                        is_paced=is_paced, bid=raw_bid, ask=raw_ask, tick=tick1)
+            if why is None:
+                kept.add(side)
+            else:
+                doomed.append((row, why))
+        for row in other_rows or ():
+            if int(row.order_id) not in already:
+                doomed.append((row, V6_34_CANCEL_OTHER))   # a class-0 layer's order: only the class-1 quote rests here
+        cancelled = self._v6_34_cancel(response, book_id, doomed, req, budget)
+        placed = 0
+        for side in (V63_SIDE_BUY, V63_SIDE_SELL):
+            want = float(plan[side][0])
+            if want <= 0.0 or side in kept:
+                continue
+            if side in cancelled:
+                self._v6_34_count("wait_cancel_seen")       # re-placed once the cancel is seen (A1.7.4.3.1)
+                continue
+            if side in v617_placed_sides(getattr(response, "instructions", None) or (), book_id):
+                self._v6_34_count("side_taken")             # one maker order per book side per response
+                continue
+            if V617_TOUCH_SLOT in (self._v69_live_slots(book_id).get(side) or frozenset()):
+                self._v6_34_count("slot_in_flight")
+                continue
+            # the class-1 join (coordinator 03:35 JST): at the touch whenever the book is not crossed, a 1-tick spread
+            # included -- post-only is the protection; the sanitizer at its minimum cushion must leave the price as is
+            price = v6_34_join(side, raw_bid, raw_ask, tick1)
+            checked = None if price is None else sanitize_post_only_limit_price(
+                side=side, original_price=float(price), best_bid=raw_bid, best_ask=raw_ask, tick_size=tick1,
+                safety_ticks=1, price_decimals=pd1)
+            if price is None or checked is None or abs(float(checked) - float(price)) > 0.25 * float(tick1):
+                self._v6_34_count("no_join")                # a crossed book or no legal post-only price
+                continue
+            q = v6_34_lot(want, vd1)
+            if q + 1e-12 < min1:
+                self._v6_34_count("below_min")
+                continue
+            if self._v691_free_base_on():
+                free = self._v691_free_for(book_id, side, price)
+                sized = v691_quantity_within_free(q, free, min1, vd1)
+                if free is not None and sized + 1e-12 < q:
+                    if sized + 1e-12 < min1:
+                        self._v6_34_count("no_free")
+                        continue
+                    self._v6_34_count("sized_by_free")
+                    q = sized
+            if self._count_book_instructions(response, book_id) >= budget:
+                self._v6_34_count("budget_deferred")
+                continue
+            buy_cid, sell_cid = v617_client_ids(book_id)
+            cid = buy_cid if side == V63_SIDE_BUY else sell_cid
+            response.limit_order(
+                book_id=book_id,
+                direction=OrderDirection.BUY if side == V63_SIDE_BUY else OrderDirection.SELL,
+                quantity=q, price=float(price), clientOrderId=cid,
+                stp=STP.CANCEL_BOTH, postOnly=True, timeInForce=TimeInForce.GTT, expiryPeriod=expiry,
+                leverage=0.0, settlement_option=LoanSettlementOption.NONE, delay=0,
+            )
+            self._v6_34_keys.add((int(book_id), int(cid)))
+            placed += 1
+            self._v6_34_count("placed_" + str(side))
+        return placed
+
+    def _v6_34_cancel(self, response, book_id: int, doomed: list, req, budget: int) -> set:
+        """v6.34: cancel these orders of a class-1 book in one instruction; the sides whose order was cancelled."""
+        if not doomed:
+            return set()
+        if self._count_book_instructions(response, book_id) >= budget:
+            self._v6_34_count("cancel_budget_deferred")
+            return set()
+        ids = [int(row.order_id) for row, _why in doomed]
+        response.cancel_orders(book_id=book_id, order_ids=ids, delay=0)
+        req["cancels"] = int(req.get("cancels", 0) or 0) + 1
+        sides = set()
+        for row, why in doomed:
+            self._v6_34_count("cancel_" + str(why).lower())
+            sides.add(V63_SIDE_BUY if int(row.side) == 0 else V63_SIDE_SELL)
+        try:
+            self._a19_note_exit_cancel(book_id, ids, ABSENT_REPRICE_CANCEL)
+        except Exception:
+            pass
+        return sides
+
+    def _v6_34_passes(self, book_id: int, instruction, keys) -> bool:
+        """v6.34, in the final validator: is this placement one of this request's class-1 entry quotes -- its book and
+        client id as _v6_34_entry placed it?  Never raises: an error counts and is False (S2 applies)."""
+        try:
+            cid = self._get(instruction, "clientOrderId", "client_order_id")
+            ok = cid is not None and (int(book_id), int(cid)) in keys
+            if ok:
+                self._v6_34_count("final_passed")
+            return bool(ok)
+        except Exception:
+            self._v6_34_errors = int(getattr(self, "_v6_34_errors", 0) or 0) + 1
+            return False
+
+    def _v6_34_count(self, key: str, n: int = 1) -> None:
+        """v6.34's tally.  Never raises: an error counts."""
+        try:
+            counts = getattr(self, "_v6_34_counts", None)
+            if counts is None:
+                counts = {}
+                self._v6_34_counts = counts
+            counts[key] = int(counts.get(key, 0) or 0) + int(n)
+        except Exception:
+            self._v6_34_errors = int(getattr(self, "_v6_34_errors", 0) or 0) + 1
+
+    def _v6_34_report(self) -> None:
+        """v6.34: the V6_34_STATE row -- the switch and version, the class map's status and source, the class-1 books
+        and those D4 keeps on, the units read (min0, min1, scale, tick, volume grid) and the sizes (clip, bound), the
+        placements, cancels, S17-R holds, fee-gated and paced states, the venue's refusals of class-1 quotes (post-only
+        and others, by message), the class-1 inventory p90, the class-1 S14 estimate and its window, and the errors --
+        at the first pass, at the first request with an error after one without, and every V62_STATE_EVERY_TICKS
+        ticks; after the reply when the request defers its telemetry (v6.2.9).  Never raises."""
+        try:
+            tick = int(getattr(self, "_tick", 0) or 0)
+            errors = int(getattr(self, "_v6_34_errors", 0) or 0)
+            erring = errors > int(getattr(self, "_v6_34_errors_seen", 0) or 0)
+            was_erring = bool(getattr(self, "_v6_34_erring", False))
+            self._v6_34_errors_seen, self._v6_34_erring = errors, erring
+            if not getattr(self, "_v6_34_reported", False):
+                reason = "start"
+            elif erring and not was_erring:
+                reason = "error"
+            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+                reason = "periodic"
+            else:
+                return
+            self._v6_34_reported = True
+            row = dict(self._v6_34_snapshot(), reason=reason, tick=tick)
+            work = getattr(self, "_v629_request_work", None)
+            if work is not None:
+                work.add("v6_34_state_row", lambda: self._emit("V6_34_STATE", force=True, **row))   # after the reply
+            else:
+                self._emit("V6_34_STATE", force=True, **row)
+        except Exception:
+            self._v6_34_errors = int(getattr(self, "_v6_34_errors", 0) or 0) + 1
+
+    def _v6_34_snapshot(self) -> dict:
+        layout = dict(getattr(self, "_v6_34_layout", None) or {})
+        books = sorted(layout.get("books") or ())
+        req = dict(getattr(self, "_v6_34_req", None) or {})
+        tracker = getattr(self, "_v6_34_tracker", None)
+        snap = tracker.snapshot() if tracker is not None else {}
+        holds = getattr(self, "_v6_34_holds", None)
+        now = int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0)
+        row = {"version": V6_34_CLASS1_ENTRY_VERSION,
+               "class1_entry_on": int(bool(getattr(self, "research_v634_class1_entry", False))),
+               "map_source": "config.classes[1]", "map_status": layout.get("status"),
+               "classes": int(layout.get("classes", 0) or 0), "class1_books": len(books),
+               "class1_range": ([books[0], books[-1]] if books else []), "route_books": len(
+                   getattr(self, "_v6_34_route", None) or ()),
+               "on_books": int(req.get("on_books", 0) or 0), "books_seen": int(req.get("class1_books", 0) or 0),
+               "min0": layout.get("min0"), "min1": layout.get("min1"), "scale": layout.get("scale"),
+               "tick_size": layout.get("tick"), "volume_decimals": layout.get("volume_decimals"),
+               "clip": req.get("clip"), "bound": req.get("bound"),
+               "inv_abs_p90": v6_34_p90(req.get("inv_abs") or ()),
+               "fee_active": int(bool(getattr(self, "_v6_34_active", False))),
+               "estimate_bps": snap.get("estimate_bps"), "window_fills": int(snap.get("window_fills", 0) or 0),
+               "own_fills": int(snap.get("own_fills", 0) or 0), "pending": int(snap.get("pending", 0) or 0),
+               "holds": (holds.snapshot(now) if holds is not None else {}),
+               "paced_books": len(getattr(self, "_v6_34_pace0", None) or ()),
+               "refusals": dict(getattr(self, "_v6_34_refused", None) or {}),
+               "counts": dict(getattr(self, "_v6_34_counts", None) or {}),
+               "errors": int(getattr(self, "_v6_34_errors", 0) or 0)}
         return row
 
     def _v619_snapshot(self) -> dict:
@@ -13783,6 +14272,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # another asset class (research_v623_class_guard) -- both read once per request by _v6_23_observe.
         v6_23_active = bool(getattr(self, "_v6_23_active", False))
         v6_23_foreign = getattr(self, "_v6_23_foreign", None) or frozenset()
+        # v6.34: the books of class 1 this request (read by _v6_34_request; empty with the switch off or no class map)
+        # -- each takes the class-1 entry below instead of the class-0 layers (research_v634_class1_entry)
+        v6_34_c1 = (getattr(self, "_v6_34_c1", None) or frozenset()) if bool(
+            getattr(self, "research_v634_class1_entry", False)) else frozenset()
         # v6.25 S5: the fundamental-lean inventory target (research_v625_lean) -- each book's making decisions below
         # read (inv - tau), tau leaning toward its fresh fundamental; off, every one reads inv (v6.24).  Tallied for the
         # V625_STATE row.
@@ -13809,6 +14302,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # the state has its draw, and S9's history keeps what the longest look-back of this request needs.
         if getattr(self, "_v6_30_identity", None) is not None:
             self._v6_30_request(state)
+        if bool(getattr(self, "research_v633_touch_identity", False)):
+            # v6.33 D4: right after the profile's check, every book of its table -- every book of the state -- has its
+            # touch draw, drawn once from this UID alone (the profile off: none) for the touch quotes below
+            # (research_v633_touch_identity)
+            self._v6_33_request()
         # v6.19 S1: the making mirror's window and the cap, read once per request (research_v619_surplus_hold).
         v619_on = bool(getattr(self, "research_v619_surplus_hold", False))
         v619_mirror, v619_mature, v619_cap = None, False, 0.0
@@ -14008,6 +14506,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 # from its TRUE inventory -- when our realized spread per notional does not exceed W x its maker fee rate:
                 # the deep layer and the touch quote place no adding order there and keep none (research_v632_fee_making)
                 self._v6_32_note(book_id, inv)
+            if v6_34_c1 and book_id in v6_34_c1:
+                # v6.34: a class-1 book takes the class-1 entry quote and none of the class-0 layers below -- its own
+                # units, pace line, S17-R hold and S14 estimate, S9 and D4 as on class 0; the v6.4.1 pace above only
+                # observed it (research_v634_class1_entry)
+                placed_total += self._v6_34_book(response, state, book_id, deep, raw_bid, raw_ask, inv, touch_rows,
+                                                 rows + deep_rows, already, req, budget=budget, expiry=expiry, cfg=cfg)
+                continue
             deep_open = False
             if deep is not None and depth is not None:
                 try:
@@ -14217,6 +14722,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v6_31_report()                            # v6.31: its V6_31_STATE row, on or off (never raises)
         if getattr(self, "_v6_32_counts", None) is not None:
             self._v6_32_report()                            # v6.32: its V6_32_STATE row, on or off (never raises)
+        if getattr(self, "_v6_33_counts", None) is not None:
+            self._v6_33_report()                            # v6.33: its V6_33_STATE row, on or off (never raises)
+        if getattr(self, "_v6_34_counts", None) is not None:
+            self._v6_34_report()                            # v6.34: its V6_34_STATE row, on or off (never raises)
         return placed_total
 
     def _v62_telemetry(self, state) -> None:
@@ -14502,6 +15011,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v6_23_errors = int(getattr(self, "_v6_23_errors", 0) or 0) + 1
             self._v6_23_active, self._v6_23_foreign = False, frozenset()     # v6.22 for this request
             self._v6_23_layout = V623_LAYOUT_UNREADABLE
+        if getattr(self, "_v6_34_counts", None) is not None:
+            # v6.34, before v6.32's tracker and any decision: the class map's class-1 books and units, their prints into
+            # the class-1 realized tracker and S17-R's miner-taker clock (research_v634_class1_entry).  Never raises: an
+            # error counts and no book is class 1 this request.
+            self._v6_34_request(state)
         if getattr(self, "_v6_32_counts", None) is not None:
             # v6.32, before any decision: S14's tracker takes this state's prints and our fills' roles and releases the
             # fills that are ready, and the fee gate reads this state's validator release (research_v632_fee_making);
@@ -17284,6 +17798,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         validated_ids: set[int] = set()
         # v6.23 S2: the books of another asset class, read once per request by _v6_23_observe (research_v623_class_guard)
         v6_23_foreign = getattr(self, "_v6_23_foreign", None) or frozenset()
+        # v6.34: the class-1 entry quotes this request placed, by (book, client id) (research_v634_class1_entry)
+        v6_34_keys = (getattr(self, "_v6_34_keys", None) or set()) if bool(
+            getattr(self, "research_v634_class1_entry", False)) else set()
         for instruction in placements:
             raw_book = self._get(instruction, "bookId", "book_id")
             try:
@@ -17291,6 +17808,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except (TypeError, ValueError):
                 continue
             side = self._research_instruction_side(instruction)
+            if v6_34_keys and self._v6_34_passes(book_id, instruction, v6_34_keys):
+                # v6.34: a class-1 entry quote of this request -- built and checked by _v6_34_book on its class's own
+                # minimum, grids, bound, slot and cap -- passes as built; every other placement on a class-1 book still
+                # meets S2 below (research_v634_class1_entry)
+                validated_ids.add(id(instruction))
+                continue
             if v6_23_foreign and book_id in v6_23_foreign:
                 # v6.23 S2: a book of another asset class takes no new order, whichever path built it -- its minimum and
                 # grid are not the top-level class's (research_v623_class_guard)
