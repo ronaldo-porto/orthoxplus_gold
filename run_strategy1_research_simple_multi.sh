@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -435,7 +435,10 @@ research_v629_touch_fp_move=1 \
 research_v630_deep_tier=1 \
 research_v630_s9_lookback=1 \
 research_v631_touch_improve=1 \
-research_v631_single_write_save=1"
+research_v631_single_write_save=1 \
+research_v632_fee_making=1 \
+research_v632_fee_weight=0.005 \
+research_v632_state_fundamental=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -3743,6 +3746,173 @@ if [[ "${V6_31_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.31 touch improve + single-write save PASS (S12b: a new touch quote one tick better than the others' best, strictly inside and our side of their mid, beating the join, edge >= v6.17's hurdle, else the join; the session file replaced only by a complete staged payload, in one rename)"
 fi
 
+# v6.32.  S14 research_v632_fee_making (with research_v632_fee_weight) and P1 research_v632_state_fundamental.
+# SN79 0.6.4 (upstream test 19f9fbd; mainnet Fri 16 Oct 14:00 JST, inside the running simulation) books every MAKER fill
+# net of making_fee_weight (0.005 first, raised later) x its maker fee, in the captured AND the realized sums.  On the
+# live tape our maker fee is 31.7 bps of notional against a realized spread of 0.14-0.15 bps: q -> 0.000 on all nine
+# UIDs while the leaders keep 70-80% (k90).  S14: the agent measures ALL its own maker fills' realized spread per
+# notional at the validator's horizon, pooled (the k91 replay's fg=2), with the validator's arithmetic (taos 0.6.4
+# debeta.py vendored byte for byte, per fill identical to it on synthetic streams) over its making window, and on each
+# book where that estimate does not exceed W x the book's maker fee rate (the account's, a fraction on the wire) the
+# ADDING side holds no deep order and no touch quote; a reducing order, an exit and a cancel are never withheld; active
+# only on a state from a 0.6.4 validator (spec 64), and the estimate counts fills only while active, its window
+# starting empty at each activation (the post-14:00 fills quote off the state's own fundamental).  P1: 0.6.4 writes each book's fundamental into the state (key f): the vendored Book
+# keeps it and every reader of v6.16's rule (centre, touch quote, S1, S5) and S9's history take it before the page.
+# research_v632_fee_making ships 1 but may be 0 -- whether S14 ships on is the user's call (S14 off: v6.31's making
+# with P1); the block accepts exactly one of =0 / =1 and prints the gate's state.  STRUCTURAL both: the validator's own
+# netting, horizon, window, spec and published value.  Ties: refused here, not degraded -- S14 gates v6.17's touch quote
+# (research_v617_touch_quote=1) and the deep layer's withheld pairs beside v6.23 S1's (research_v633_deep_layer=1 and
+# S1's mechanism in the code); a weight of 0 would ship a switch that does nothing (checked with the gate off too).  The
+# agent itself falls back per switch (off: v6.31; no rate or no estimate yet: no gate; no f: the page).
+if [[ "${V6_32_BUILD:-0}" == "1" ]]; then
+  grep -qF 'from research_v6_32_fee_making import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 the fee-making module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'from research_v6_32_state_fp import (' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 the state-fundamental module is not imported." >&2
+    exit 1
+  }
+  grep -qF 'self.research_v632_fee_making = self._as_bool(getattr(self.config, "research_v632_fee_making", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 the agent does not read research_v632_fee_making (default on)." >&2
+    exit 1
+  }
+  grep -qF 'getattr(self.config, "research_v632_fee_weight", V6_32_FEE_WEIGHT_DEFAULT))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 the agent does not read research_v632_fee_weight (default the validator's 0.005)." >&2
+    exit 1
+  }
+  grep -qF 'getattr(self.config, "research_v632_state_fundamental", True))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 P1 the agent does not read research_v632_state_fundamental (default on)." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_32_request(state)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 the request feeds no tracker and maps no state fundamental." >&2
+    exit 1
+  }
+  grep -qF 'if tracker.set_active(active, now):' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 the tracker is not told the gate's activity before the state's prints (its window never restarts)." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_32_note(book_id, inv)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 the pass gates no book (or not from its true inventory)." >&2
+    exit 1
+  }
+  grep -qF 'sides = frozenset(s for s in (V63_SIDE_BUY, V63_SIDE_SELL) if v6_32_adds(s, inv))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 the gate is not held to the adding side (a reducing order could be withheld)." >&2
+    exit 1
+  }
+  grep -qF 'v6_32_fee = self._v6_32_deep_pairs(book_id)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 the deep layer reads no fee-gated pairs." >&2
+    exit 1
+  }
+  grep -qF 'doomed.append((row, V6_32_CANCEL_FEE_GATE))' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 a resting deep order of a fee-gated pair is not cancelled." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_32_count("deep_withheld")' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 the deep layer still places a fee-gated pair." >&2
+    exit 1
+  }
+  grep -qF 'v6_32_gated = self._v6_32_touch_sides(book_id)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 the touch quote reads no fee-gated side." >&2
+    exit 1
+  }
+  grep -qF 'why = V6_32_CANCEL_FEE_GATE' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 a resting adding touch quote of a fee-gated book is not cancelled." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_32_count("touch_withheld")' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 the touch quote still places on a fee-gated adding side." >&2
+    exit 1
+  }
+  grep -qF 'elif against and (side, level) in against:' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 S14 v6.23 S1's withheld-pair mechanism is missing from the deep layer." >&2
+    exit 1
+  }
+  grep -qF 'v6_32_got = self._v6_32_state_fp(book_id, raw_bid, raw_ask)' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 P1 v6.23 S1 / v6.25 S5 do not read the state's own fundamental." >&2
+    exit 1
+  }
+  grep -qF 'v6_32_snap = self._v6_32_s9_snapshot()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 P1 S9's history is not fed from the state's own fundamentals." >&2
+    exit 1
+  }
+  grep -qF 'self._v6_32_report()' "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.32 the pass emits no V6_32_STATE row." >&2
+    exit 1
+  }
+  grep -qF 'return e <= w * r' "$AGENT_PATH/research_v6_32_fee_making.py" || {
+    echo "ERROR: v6.32 S14 the gate is not the pooled estimate <= weight x the book's maker fee rate." >&2
+    exit 1
+  }
+  grep -qF 'return bool(switch) and s is not None and s >= FEE_SPEC and w is not None and w > 0.0' "$AGENT_PATH/research_v6_32_fee_making.py" || {
+    echo "ERROR: v6.32 S14 the gate is not held to a 0.6.4 validator's state and a positive weight." >&2
+    exit 1
+  }
+  grep -qF 'FEE_SPEC = 64 ' "$AGENT_PATH/research_v6_32_fee_making.py" || {
+    echo "ERROR: v6.32 S14 the gate's release is not 0.6.4's spec version (64)." >&2
+    exit 1
+  }
+  grep -qF 'realized = (capped - p) * q if bought else (p - capped) * q' "$AGENT_PATH/research_v6_32_fee_making.py" || {
+    echo "ERROR: v6.32 S14 the tracker does not book the maker side's realized spread." >&2
+    exit 1
+  }
+  grep -qF 'rpend.append((st["n"], pt, {"p": p, "q": q}, s == 1, self.period if self.active else None))' "$AGENT_PATH/research_v6_32_fee_making.py" || {
+    echo "ERROR: v6.32 S14 the tracker's maker side is not the validator's (s == 1: the maker bought)." >&2
+    exit 1
+  }
+  grep -qF 'if self.active and period is not None and period == self.period:' "$AGENT_PATH/research_v6_32_fee_making.py" || {
+    echo "ERROR: v6.32 S14 the estimate counts fills seen while the gate was off (or before its last activation)." >&2
+    exit 1
+  }
+  grep -qF 'BOOK_KEY = "f" ' "$AGENT_PATH/research_v6_32_state_fp.py" || {
+    echo "ERROR: v6.32 P1 the state's book key is not 0.6.4's (f)." >&2
+    exit 1
+  }
+  grep -qF '    f: float | None = Field(alias="fundamental", default=None)' "$SCRIPT_DIR/taos/im/protocol/models.py" || {
+    echo "ERROR: v6.32 P1 the vendored protocol's Book drops the state's fundamental." >&2
+    exit 1
+  }
+  grep -qF '            f=self._raw.get("f"),' "$SCRIPT_DIR/taos/im/protocol/models.py" || {
+    echo "ERROR: v6.32 P1 the vendored LazyBook's parse drops the state's fundamental." >&2
+    exit 1
+  }
+  _v632_re=' research_v632_fee_making=(0|1) '
+  [[ " $PARAMS " =~ $_v632_re ]] || {
+    echo "ERROR: v6.32 build without research_v632_fee_making=0 or 1 in PARAMS (the S14 fee gate's state must be explicit)." >&2
+    exit 1
+  }
+  _v632_gate="${BASH_REMATCH[1]}"
+  _v632_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_v632_fee_making=' || true)
+  [[ "$_v632_n" == "1" ]] || {
+    echo "ERROR: v6.32 build with research_v632_fee_making given ${_v632_n} times in PARAMS (exactly once: 0 or 1)." >&2
+    exit 1
+  }
+  if [[ "$_v632_gate" == "1" ]]; then _v632_state="on"; else _v632_state="off"; fi
+  [[ " $PARAMS " == *" research_v632_state_fundamental=1 "* ]] || {
+    echo "ERROR: v6.32 build without research_v632_state_fundamental=1 in PARAMS." >&2
+    exit 1
+  }
+  _v632_re=' research_v632_fee_weight=([0-9]+(\.[0-9]+)?) '
+  [[ " $PARAMS " =~ $_v632_re ]] || {
+    echo "ERROR: v6.32 build without a research_v632_fee_weight > 0 in PARAMS (the validator's making_fee_weight)." >&2
+    exit 1
+  }
+  _v632_w="${BASH_REMATCH[1]}"
+  if [[ "$_v632_w" =~ ^0+(\.0+)?$ ]]; then
+    echo "ERROR: v6.32 build with research_v632_fee_weight=${_v632_w}: a weight of 0 gates nothing (the validator's making_fee_weight is > 0)." >&2
+    exit 1
+  fi
+  for key in research_v617_touch_quote research_v633_deep_layer; do
+    [[ " $PARAMS " == *" $key=1 "* ]] || {
+      echo "ERROR: v6.32 build without $key=1 in PARAMS (S14 gates the v6.17 touch quote and the deep layer's pairs beside v6.23 S1's)." >&2
+      exit 1
+    }
+  done
+  echo "[preflight] v6.32 S14 fee gate: ${_v632_state}"
+  echo "[preflight] v6.32 fee-aware making + state fundamental PASS (S14 ${_v632_state}, weight=${_v632_w}: from a 0.6.4 validator, on a book where our pooled realized spread per notional at the validator's horizon does not exceed the weight x its maker fee rate the adding side holds no deep order and no touch quote; P1: the state's own fundamental before the page)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -3862,6 +4032,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_29.py \
       tests/test_research_v6_30.py \
       tests/test_research_v6_31.py \
+      tests/test_research_v6_32.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

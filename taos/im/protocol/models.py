@@ -1506,6 +1506,10 @@ class Book(BaseModel):
     b: list[LevelInfo] = Field(alias="bids")
     a: list[LevelInfo] = Field(alias="asks")
     e: list[Order | TradeInfo | Cancellation] | None = Field(alias="events")
+    # Miner-side addition (orthoxplus v6.32 P1, research_v632_state_fundamental), exactly as taos 0.6.4's
+    # protocol/book.py: a 0.6.4 validator writes each book's latest fundamental into the book (key `f`,
+    # validator/fundamental.py BOOK_KEY) before the state goes to the miners.  None from a validator that does not.
+    f: float | None = Field(alias="fundamental", default=None)
 
     @property
     def id(self) -> int:
@@ -1529,6 +1533,19 @@ class Book(BaseModel):
             float: The book's maker-taker ratio in [0, 1], or None if unset.
         """
         return self.r
+
+    @property
+    def fundamental(self) -> float | None:
+        """
+        Get the book's latest fundamental price.
+
+        Carried in every simulation state update; None when the state carries none (the exchange
+        mechanism, or a validator that does not send it).
+
+        Returns:
+            float | None: The fundamental price, or None.
+        """
+        return self.f
 
     @property
     def bids(self) -> list[LevelInfo]:
@@ -2381,6 +2398,14 @@ class LazyBook(Book):
         return self._raw.get("i")
 
     @property
+    def fundamental(self) -> float | None:
+        """The book's latest fundamental price, read from the raw wire dict; None when the state carries none.
+
+        Miner-side addition (orthoxplus v6.32 P1), as taos 0.6.4's LazyBook; it never raises."""
+        raw = getattr(self, "_raw", None)
+        return raw.get("f") if isinstance(raw, dict) else None
+
+    @property
     def bids(self):
         if self._bids is None:
             self._bids = LazyLevels(self._raw.get("b", []))
@@ -2421,7 +2446,8 @@ class LazyBook(Book):
             i=self._raw.get("i"),
             b=self.bids.parse(),
             a=self.asks.parse(),
-            e=self.events
+            e=self.events,
+            f=self._raw.get("f"),
         )
 
 

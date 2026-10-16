@@ -1081,6 +1081,9 @@ V628_COMMIT = "410cdd4"       # the user's v6.28 commit (10-13 21:45 JST): its 2
 # checks them against the committed v6.30).
 V6_30_IDENTIFIERS = t623.V6_30_IDENTIFIERS
 V6_31_IDENTIFIERS = t623.V6_31_IDENTIFIERS
+# v6.32 (S14 research_v632_fee_making, P1 research_v632_state_fundamental) only adds: the strip takes its additions out
+# as well (tests/test_research_v6_32.py checks them against the committed v6.31).
+V6_32_IDENTIFIERS = t623.V6_32_IDENTIFIERS
 
 
 def _mentions630(node):
@@ -1088,7 +1091,9 @@ def _mentions630(node):
         name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
             n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
         if isinstance(name, str) and (name in V6_30_IDENTIFIERS or name in V6_31_IDENTIFIERS
-                                      or name.startswith(("_v6_30_", "v6_30_", "_v6_31_", "v6_31_"))):
+                                      or name in V6_32_IDENTIFIERS
+                                      or name.startswith(("_v6_30_", "v6_30_", "_v6_31_", "v6_31_",
+                                                          "_v6_32_", "v6_32_"))):
             return True
     return False
 
@@ -1101,9 +1106,11 @@ class _Drop630(ast.NodeTransformer):
         out = []
         for st in stmts:
             if isinstance(st, ast.ImportFrom) and st.module in ("research_v630_identity_profile",
-                                                                "research_v631_touch_improve"):
+                                                                "research_v631_touch_improve",
+                                                                "research_v6_32_fee_making",
+                                                                "research_v6_32_state_fp"):
                 continue
-            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_30_", "_v6_31_")):
+            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_30_", "_v6_31_", "_v6_32_")):
                 continue
             if isinstance(st, ast.If) and _mentions630(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -1214,24 +1221,28 @@ def test_the_launcher_only_adds_to_v628s():
     arm = next(x for x in old if x.startswith("  strategy1_direct_v6_3_0)"))
     assert removed == [defaults, arm, 'research_v628_flat_launch=1"']
     block = []
-    for head in ("# v6.29 S9.", "# v6.30.", "# v6.31."):
+    for head in ("# v6.29 S9.", "# v6.30.", "# v6.31.", "# v6.32."):
         start = LAUNCHER.index(head)
         block += LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
-    assert sorted(added) == sorted([defaults + "; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0",
-                                    arm + "; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1",
+    assert sorted(added) == sorted([defaults + "; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0",
+                                    arm + "; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1",
                                     "research_v628_flat_launch=1 \\", "research_v629_touch_fp_move=1 \\",
                                     "research_v630_deep_tier=1 \\", "research_v630_s9_lookback=1 \\",
-                                    "research_v631_touch_improve=1 \\", 'research_v631_single_write_save=1"',
+                                    "research_v631_touch_improve=1 \\", "research_v631_single_write_save=1 \\",
+                                    "research_v632_fee_making=1 \\",
+                                    "research_v632_fee_weight=0.005 \\",
+                                    'research_v632_state_fundamental=1"',
                                     "      tests/test_research_v6_29.py \\", "      tests/test_research_v6_30.py \\",
-                                    "      tests/test_research_v6_31.py \\", *block])
+                                    "      tests/test_research_v6_31.py \\",
+                                    "      tests/test_research_v6_32.py \\", *block])
 
 
 # ---- 7. the launcher -------------------------------------------------------------------------------------------------
 
 def test_the_v629_block_is_gated_preflighted_and_listed():
-    assert "; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0\n" in LAUNCHER
+    assert "; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0\n" in LAUNCHER
     arm = next(x for x in LAUNCHER.splitlines() if x.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1"), arm
+    assert arm.endswith("; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1"), arm
     assert LAUNCHER.count('if [[ "${V6_29_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_29_BUILD=") == 2
     assert "      tests/test_research_v6_28.py \\\n      tests/test_research_v6_29.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.28 flat launch PASS') < LAUNCHER.index("# v6.29 S9.") < \

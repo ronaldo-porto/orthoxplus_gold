@@ -845,6 +845,25 @@ from research_v631_touch_improve import (  # noqa: E402
     V631_TOUCH_IMPROVE_VERSION as V6_31_TOUCH_IMPROVE_VERSION,
     improved_touch_price as v6_31_improved_touch_price,
 )
+from research_v6_32_fee_making import (  # noqa: E402
+    CANCEL_FEE_GATE as V6_32_CANCEL_FEE_GATE,
+    FEE_WEIGHT_DEFAULT as V6_32_FEE_WEIGHT_DEFAULT,
+    RealizedTracker as V6_32RealizedTracker,
+    V632_FEE_MAKING_VERSION as V6_32_FEE_MAKING_VERSION,
+    adds as v6_32_adds,
+    deep_pairs as v6_32_deep_pairs,
+    fee_gated as v6_32_fee_gated,
+    gate_active as v6_32_gate_active,
+    maker_fee_rate as v6_32_maker_fee_rate,
+    min_sizes as v6_32_min_sizes,
+    parse_fee_weight as v6_32_parse_fee_weight,
+)
+from research_v6_32_state_fp import (  # noqa: E402
+    V632_STATE_FUNDAMENTAL_VERSION as V6_32_STATE_FUNDAMENTAL_VERSION,
+    book_value as v6_32_book_value,
+    fundamental_value as v6_32_fundamental_value,
+    s9_snapshot as v6_32_s9_snapshot,
+)
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
     V64_BOARD_VERSION,
@@ -2250,6 +2269,36 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6_31_errors_seen = 0
         self._v6_31_reported = False
         self._v6_31_erring = False
+        # v6.32 S14 (research_v632_fee_making): under 0.6.4's fee-aware making (every maker fill booked net of
+        # research_v632_fee_weight x its maker fee) a book's ADDING side holds no deep order and no v6.17 touch quote
+        # while our realized spread per notional at the validator's horizon -- measured on ALL our maker fills, pooled,
+        # with the validator's arithmetic over its making window -- does not exceed the weight x that book's maker fee
+        # rate; a reducing order, an exit and a cancel are never withheld.  Active from a 0.6.4 validator's state on; the
+        # tracker runs from the start.  Off, the build is v6.31.  STRUCTURAL: the validator's own netting, horizon,
+        # window and spec; see research_v6_32_fee_making.
+        # v6.32 P1 (research_v632_state_fundamental): a book's fundamental is the one the state itself carries (0.6.4
+        # writes it into each book, key f) when it has one -- for v6.16's centre, the v6.17 touch quote, v6.23 S1, v6.25
+        # S5 and S9's history -- else the page feed's, as v6.31.  STRUCTURAL: the validator's own value; see
+        # research_v6_32_state_fp.
+        self.research_v632_fee_making = self._as_bool(getattr(self.config, "research_v632_fee_making", True))
+        self.research_v632_fee_weight = v6_32_parse_fee_weight(
+            getattr(self.config, "research_v632_fee_weight", V6_32_FEE_WEIGHT_DEFAULT))
+        self.research_v632_state_fundamental = self._as_bool(
+            getattr(self.config, "research_v632_state_fundamental", True))
+        self._v6_32_tracker = None
+        self._v6_32_spec: int | None = None
+        self._v6_32_active = False
+        self._v6_32_est: float | None = None
+        self._v6_32_book = None
+        self._v6_32_fp = None
+        self._v6_32_mins = None
+        self._v6_32_req: dict[str, int] = {}
+        self._v6_32_ms: list[float] = []
+        self._v6_32_counts: dict[str, int] = {}
+        self._v6_32_errors = 0
+        self._v6_32_errors_seen = 0
+        self._v6_32_reported = False
+        self._v6_32_erring = False
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -11479,6 +11528,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             feed.snapshot(), int(book_id), raw_bid, raw_ask,
             state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id,
             max_stale_sim_s=getattr(self, "_v6_26_limit", None))
+        if bool(getattr(self, "research_v632_state_fundamental", False)):
+            # v6.32 P1: the book's own fundamental in this state when it carries one (reason "state"), else the page's
+            # (research_v632_state_fundamental)
+            fp, reason = self._v6_32_fundamental(book_id, raw_bid, raw_ask, fp, reason)
         self._v616_count("book_" + str(reason))
         if fp is None:
             return None
@@ -11525,6 +11578,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             feed.snapshot(), int(book_id), raw_bid, raw_ask,
             state_ts_ns=int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0), sim_id=sim_id,
             max_stale_sim_s=getattr(self, "_v6_26_limit", None))
+        if bool(getattr(self, "research_v632_state_fundamental", False)):
+            # v6.32 P1: the book's own fundamental in this state when it carries one (reason "state"), else the page's
+            # (research_v632_state_fundamental)
+            fp, reason = self._v6_32_fundamental(book_id, raw_bid, raw_ask, fp, reason)
         self._v617_count("book_" + str(reason))
         return fp
 
@@ -11583,6 +11640,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # v6.29 S9: the side whose touch quote the fundamental's move over the look-back is against -- not placed
             # below, and a resting one cancelled (research_v629_touch_fp_move); None: no gate, the quote is v6.28's
             v6_29_held = self._v6_29_held(book_id, fp, cfg)
+        v6_32_gated: frozenset = frozenset()
+        if bool(getattr(self, "research_v632_fee_making", False)):
+            # v6.32 S14: the side(s) whose touch quote would ADD while the touch fills' realized spread per notional does
+            # not cover W x this book's maker fee rate -- not placed below, a resting one cancelled; a reducing quote is
+            # never gated (research_v632_fee_making)
+            v6_32_gated = self._v6_32_touch_sides(book_id)
         doomed = []
         kept = 0
         for row in touch_rows:
@@ -11605,6 +11668,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             if why is None and side == v6_29_held:
                 why = V6_29_CANCEL_FP_MOVE                  # v6.29 S9: the fundamental's move is against it
                 self._v6_29_count("cancelled")
+            if why is None and v6_32_gated and side in v6_32_gated:
+                why = V6_32_CANCEL_FEE_GATE                 # v6.32 S14: an adding quote that would not cover W x the fee
+                self._v6_32_count("touch_cancels")
             if why is None:
                 kept += 1
             else:
@@ -11633,6 +11699,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return 0
         if toward == v6_29_held:
             self._v6_29_count("withheld")                   # v6.29 S9: the fundamental moved against this side
+            return 0
+        if v6_32_gated and toward in v6_32_gated:
+            self._v6_32_count("touch_withheld")             # v6.32 S14: an adding quote that would not cover W x the fee
             return 0
         try:
             if V617_TOUCH_SLOT in (self._v69_live_slots(book_id).get(toward) or frozenset()):
@@ -12001,6 +12070,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
     def _v6_23_fundamental(self, book_id: int, raw_bid, raw_ask, cfg):
         """v6.23 S1: (fundamental, reason) of this book -- v6.16's feed and freshness rule, read exactly as the v6.17 touch
         quote reads it (_v617_fundamental), on v6.23's own counters."""
+        if bool(getattr(self, "research_v632_state_fundamental", False)):
+            v6_32_got = self._v6_32_state_fp(book_id, raw_bid, raw_ask)
+            if v6_32_got is not None:
+                return v6_32_got        # v6.32 P1: the book's own fundamental in this state (reason "state")
         feed = self._v616_feed_ref()
         sim_id = getattr(cfg, "simulation_id", None) if cfg is not None else None
         if not sim_id and cfg is not None:
@@ -12449,7 +12522,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 self._v6_29_pages = pages
             now_ts = int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0)
             feed = getattr(self, "_v616_feed", None)
-            pages.observe(feed.snapshot() if feed is not None else None, now_ts, v626_state_sim_id(cfg))
+            v6_32_snap = None
+            if bool(getattr(self, "research_v632_state_fundamental", False)):
+                # v6.32 P1: with the books' own fundamentals in this state the history records those -- one entry per
+                # request, at the state's time -- instead of the page (research_v632_state_fundamental)
+                v6_32_snap = self._v6_32_s9_snapshot()
+            if v6_32_snap is not None:
+                pages.observe(v6_32_snap, now_ts, v626_state_sim_id(cfg))
+            else:
+                pages.observe(feed.snapshot() if feed is not None else None, now_ts, v626_state_sim_id(cfg))
             lookback = v6_29_lookback(getattr(self, "_v6_26_limit", None))
             self._v6_29_lookback = lookback
             v6_30_decision = None
@@ -12903,6 +12984,259 @@ class Strategy1_Research_Simple(Strategy1_Research):
                     "errors": int(getattr(self, "_v6_31_errors", 0) or 0)})
         return row
 
+    def _v6_32_request(self, state) -> None:
+        """v6.32, in respond() once per request right after v6.23 read the state's release, before any decision.
+
+        S14 (research_v632_fee_making): the gate's activity (a state from a 0.6.4 validator, a positive weight) is read
+        first and handed to the realized tracker -- which counts our fills only while it is active and starts its window
+        empty at each inactive -> active transition -- then the tracker takes every book's trade prints of the state in
+        arrival order (the lazy raw mapping's wire dicts, nothing parsed) with the book's minimum order size and releases
+        our maker fills that are ready; the request's pooled estimate is set for the books below.  A state clock that
+        ran back starts the tracker's streams over.  P1 (research_v632_state_fundamental): the map {book: f} of the
+        books whose own fundamental is a finite number > 0, with this state's time and the S9 snapshot built from it,
+        for every reader below.  The time it takes is tallied.  Never raises: an error counts, no book is gated this
+        request and every reader keeps the page."""
+        started = time.perf_counter()
+        fee_on = bool(getattr(self, "research_v632_fee_making", False))
+        fp_on = bool(getattr(self, "research_v632_state_fundamental", False))
+        self._v6_32_active, self._v6_32_book, self._v6_32_fp, self._v6_32_est = False, None, None, None
+        req = {"gated_books": 0, "no_fee_rate_books": 0, "state_fp_books": 0}
+        self._v6_32_req = req
+        try:
+            now = int(getattr(state, "timestamp", 0) or 0)
+            cfg = getattr(state, "config", None)
+            spec = v623_validator_spec(getattr(state, "version", None))
+            self._v6_32_spec = spec
+            books = getattr(state, "books", None)
+            raw = getattr(books, "_raw_books", None)          # LazyBooks' wire dicts: no LazyBook built, nothing parsed
+            items = list(raw.items()) if isinstance(raw, dict) else list((books or {}).items())
+            tracker = None
+            active = False
+            top, per_book = 0.0, {}
+            if fee_on:
+                tracker = self._v6_32_tracker_ref()
+                if tracker.begin(now):
+                    self._v6_32_count("tracker_resets")     # a clock that ran back: the streams start over
+                active = bool(v6_32_gate_active(fee_on, spec, getattr(self, "research_v632_fee_weight", 0.0)))
+                if tracker.set_active(active, now):
+                    self._v6_32_count("window_starts")      # inactive -> active: the window starts empty here
+                top, per_book = self._v6_32_min_sizes(cfg)
+            uid = getattr(self, "uid", None)
+            fps: dict[int, float] = {}
+            for raw_id, book in items:
+                book_id = int(raw_id)
+                rb = book if isinstance(book, dict) else getattr(book, "_raw", None)
+                if fp_on:
+                    f = v6_32_fundamental_value(rb if isinstance(rb, dict) else book)
+                    if f is not None:
+                        fps[book_id] = f
+                if tracker is not None:
+                    if isinstance(rb, dict):
+                        prints = [e for e in (rb.get("e") or ()) if isinstance(e, dict) and e.get("y") == "t"]
+                    else:
+                        prints = [e for e in (getattr(book, "events", None) or ())
+                                  if (e.get("y") if isinstance(e, dict) else getattr(e, "y", None)) == "t"]
+                    if prints:
+                        tracker.observe(book_id, prints, uid, per_book.get(book_id, top), now)
+            if tracker is not None:
+                tracker.release(now)
+                self._v6_32_est = tracker.estimate()
+                self._v6_32_active = active
+                if active:
+                    self._v6_32_count("active_requests")
+            if fp_on:
+                self._v6_32_fp = (now, fps, v6_32_s9_snapshot(fps, v626_state_sim_id(cfg), now))
+                req["state_fp_books"] = len(fps)
+                self._v6_32_count("state_fp_requests" if fps else "no_state_fp_requests")
+        except Exception:
+            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
+            self._v6_32_active, self._v6_32_book, self._v6_32_fp, self._v6_32_est = False, None, None, None
+        try:
+            samples = getattr(self, "_v6_32_ms", None)
+            if samples is None:
+                samples = []
+                self._v6_32_ms = samples
+            samples.append((time.perf_counter() - started) * 1000.0)
+            if len(samples) > 1024:
+                del samples[:-512]                      # the last 512 requests' times, for the row's p50 / p99
+        except Exception:
+            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
+
+    def _v6_32_tracker_ref(self):
+        """v6.32 S14: the realized tracker, made on first use."""
+        tracker = getattr(self, "_v6_32_tracker", None)
+        if not isinstance(tracker, V6_32RealizedTracker):
+            tracker = V6_32RealizedTracker()
+            self._v6_32_tracker = tracker
+        return tracker
+
+    def _v6_32_min_sizes(self, cfg):
+        """v6.32 S14: (the top-level minimum order size, {book: its class's}) -- the dust floor's voting bar the validator
+        reads per book -- read once per simulation."""
+        key = v626_state_sim_id(cfg)
+        cached = getattr(self, "_v6_32_mins", None)
+        if cached is not None and key and cached[0] == key:
+            return cached[1], cached[2]
+        top, per_book = v6_32_min_sizes(cfg)
+        self._v6_32_mins = (key, top, per_book)
+        return top, per_book
+
+    def _v6_32_note(self, book_id: int, inv) -> None:
+        """v6.32 S14, in the pass right after the book's ledger rows are read: while the gate is active this request,
+        the sides that hold no adding order on this book -- when the pooled estimate (our realized spread per notional
+        over the window, MIN_FILLS fills at least) does not exceed W x the book's current maker fee rate (its account's,
+        a fraction), every side whose fill would not reduce the book's TRUE inventory ``inv`` (v6.23 S1's adds: a flat
+        book both sides), for the deep layer and the v6.17 touch quote alike.  No rate: no gate (counted).  Never
+        raises: an error counts and the book has no gate."""
+        self._v6_32_book = None
+        try:
+            if not bool(getattr(self, "_v6_32_active", False)):
+                return
+            est = getattr(self, "_v6_32_est", None)
+            if est is None:
+                return                                  # fewer than MIN_FILLS fills released yet: nothing can gate
+            req = getattr(self, "_v6_32_req", None)
+            if req is None:
+                req = {}
+                self._v6_32_req = req
+            rate = v6_32_maker_fee_rate((getattr(self, "accounts", None) or {}).get(int(book_id)))
+            if rate is None:
+                req["no_fee_rate_books"] = int(req.get("no_fee_rate_books", 0) or 0) + 1
+                return
+            if not v6_32_fee_gated(est, rate, getattr(self, "research_v632_fee_weight", 0.0)):
+                return
+            sides = frozenset(s for s in (V63_SIDE_BUY, V63_SIDE_SELL) if v6_32_adds(s, inv))
+            req["gated_books"] = int(req.get("gated_books", 0) or 0) + 1
+            self._v6_32_book = (int(book_id), int(getattr(self, "_tick", 0) or 0), sides)
+        except Exception:
+            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
+            self._v6_32_book = None
+
+    def _v6_32_deep_pairs(self, book_id: int) -> frozenset:
+        """v6.32 S14, in the deep layer: the (side, level) pairs _v6_32_note withheld on this book this request -- every
+        level of each gated adding side (v6.23 S1's ``deep`` shape) -- else none.  Never raises: an error counts, none."""
+        try:
+            got = getattr(self, "_v6_32_book", None)
+            if got is None or got[0] != int(book_id) or got[1] != int(getattr(self, "_tick", 0) or 0):
+                return frozenset()
+            return v6_32_deep_pairs(got[2])
+        except Exception:
+            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
+            return frozenset()
+
+    def _v6_32_touch_sides(self, book_id: int) -> frozenset:
+        """v6.32 S14, in the v6.17 touch quote: the adding side(s) _v6_32_note withheld on this book this request, else
+        none.  Never raises: an error counts, none."""
+        try:
+            got = getattr(self, "_v6_32_book", None)
+            if got is None or got[0] != int(book_id) or got[1] != int(getattr(self, "_tick", 0) or 0):
+                return frozenset()
+            return frozenset(got[2])
+        except Exception:
+            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
+            return frozenset()
+
+    def _v6_32_state_fp(self, book_id: int, raw_bid, raw_ask):
+        """v6.32 P1: (fundamental, "state") of this book from this request's state map, after v6.16's book sanity -- or
+        None, and the reader takes the page: no map this request (a state without fundamentals, or the map of another
+        request), no usable value for the book, or a book that is not sane.  Never raises: an error counts, None."""
+        try:
+            got = getattr(self, "_v6_32_fp", None)
+            if got is None or not got[1] or got[0] != int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0):
+                return None
+            out = v6_32_book_value(got[1], book_id, raw_bid, raw_ask)
+            if out is None:
+                self._v6_32_count("fp_page_fallbacks")
+            return out
+        except Exception:
+            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
+            return None
+
+    def _v6_32_fundamental(self, book_id: int, raw_bid, raw_ask, fp, reason):
+        """v6.32 P1, in v6.16's centre and the v6.17 touch quote right after the page's (fp, reason): the state's own
+        (fundamental, "state") when the request's map has a usable one for the book, else the page's unchanged."""
+        got = self._v6_32_state_fp(book_id, raw_bid, raw_ask)
+        return (fp, reason) if got is None else got
+
+    def _v6_32_s9_snapshot(self):
+        """v6.32 P1, in S9's decision: this request's snapshot of the state's own fundamentals for S9's page history
+        ({fp, sim_id, sim_ts_ns}, built once per request), or None -- the page's snapshot, as v6.31.  Never raises."""
+        try:
+            got = getattr(self, "_v6_32_fp", None)
+            if got is None or got[0] != int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0):
+                return None
+            return got[2]
+        except Exception:
+            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
+            return None
+
+    def _v6_32_count(self, key: str, n: int = 1) -> None:
+        """v6.32's tally.  Never raises: an error counts."""
+        try:
+            counts = getattr(self, "_v6_32_counts", None)
+            if counts is None:
+                counts = {}
+                self._v6_32_counts = counts
+            counts[key] = int(counts.get(key, 0) or 0) + int(n)
+        except Exception:
+            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
+
+    def _v6_32_report(self) -> None:
+        """v6.32: the V6_32_STATE row -- both switches and versions, the gate's activity, spec and weight, the pooled
+        estimate (bps) and its window (its start, the gate's transitions, the fills counted / dropped while inactive),
+        the tracker's tally (prints, our fills, pending, released, stale, evicted) and time, the request's gated books,
+        the withheld / cancelled orders, P1's state-fundamental tally and the errors --
+        at the first pass, at the first request with an error after one without, and every V62_STATE_EVERY_TICKS ticks;
+        after the reply when the request defers its telemetry (v6.2.9).  Never raises."""
+        try:
+            tick = int(getattr(self, "_tick", 0) or 0)
+            errors = int(getattr(self, "_v6_32_errors", 0) or 0)
+            erring = errors > int(getattr(self, "_v6_32_errors_seen", 0) or 0)
+            was_erring = bool(getattr(self, "_v6_32_erring", False))
+            self._v6_32_errors_seen, self._v6_32_erring = errors, erring
+            if not getattr(self, "_v6_32_reported", False):
+                reason = "start"
+            elif erring and not was_erring:
+                reason = "error"
+            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+                reason = "periodic"
+            else:
+                return
+            self._v6_32_reported = True
+            row = dict(self._v6_32_snapshot(), reason=reason, tick=tick)
+            work = getattr(self, "_v629_request_work", None)
+            if work is not None:
+                work.add("v6_32_state_row", lambda: self._emit("V6_32_STATE", force=True, **row))   # after the reply
+            else:
+                self._emit("V6_32_STATE", force=True, **row)
+        except Exception:
+            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
+
+    def _v6_32_snapshot(self) -> dict:
+        counts = dict(getattr(self, "_v6_32_counts", None) or {})
+        req = dict(getattr(self, "_v6_32_req", None) or {})
+        tracker = getattr(self, "_v6_32_tracker", None)
+        snap = tracker.snapshot() if tracker is not None else {}
+        ms = sorted(float(x) for x in (getattr(self, "_v6_32_ms", None) or ()))
+        row = {"version": V6_32_FEE_MAKING_VERSION, "state_fp_version": V6_32_STATE_FUNDAMENTAL_VERSION,
+               "fee_making_on": int(bool(getattr(self, "research_v632_fee_making", False))),
+               "state_fundamental_on": int(bool(getattr(self, "research_v632_state_fundamental", False))),
+               "active": int(bool(getattr(self, "_v6_32_active", False))), "spec": getattr(self, "_v6_32_spec", None),
+               "fee_weight": float(getattr(self, "research_v632_fee_weight", 0.0) or 0.0),
+               "estimate_bps": snap.get("estimate_bps"), "window_start_ns": snap.get("window_start_ns")}
+        for key in ("window_fills", "activations", "deactivations", "counted", "dropped_inactive", "pending", "prints",
+                    "own_fills", "released", "stale", "evicted", "malformed"):
+            row[key] = int(snap.get(key, 0) or 0)
+        for key in ("gated_books", "no_fee_rate_books", "state_fp_books"):
+            row[key] = int(req.get(key, 0) or 0)
+        for key in ("active_requests", "window_starts", "deep_cancels", "deep_withheld", "touch_cancels",
+                    "touch_withheld", "tracker_resets", "state_fp_requests", "no_state_fp_requests", "fp_page_fallbacks"):
+            row[key] = int(counts.get(key, 0) or 0)
+        row["tracker_ms_p50"] = round(ms[len(ms) // 2], 3) if ms else None
+        row["tracker_ms_p99"] = round(ms[min(len(ms) - 1, int(0.99 * len(ms)))], 3) if ms else None
+        row["errors"] = int(getattr(self, "_v6_32_errors", 0) or 0)
+        return row
+
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
         mirror = getattr(self, "_v62_mirror", None)
@@ -13018,6 +13352,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             except Exception:
                 self._v69_errors = int(getattr(self, "_v69_errors", 0) or 0) + 1
                 level_depth, levels_side = {}, {V63_SIDE_BUY: [], V63_SIDE_SELL: []}
+        v6_32_fee: frozenset = frozenset()
+        if bool(getattr(self, "research_v632_fee_making", False)):
+            # v6.32 S14: the (side, level) pairs this book holds no deep order on this request besides v6.23 S1's --
+            # every level of an adding side while the deep fills' realized spread per notional does not cover W x the
+            # book's maker fee rate: a resting one is cancelled, none is placed (research_v632_fee_making)
+            v6_32_fee = self._v6_32_deep_pairs(book_id)
         doomed = [(row, V633_CANCEL_OWNS_BOOK) for row in rows if int(row.order_id) not in already]
         resting: dict[Any, Any] = {}
         for row in deep_rows:
@@ -13029,6 +13369,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 doomed.append((row, V69_CANCEL_LEVEL_OFF))  # v6.9: a ladder order the layer no longer places
             elif against and (side, level) in against:
                 doomed.append((row, V623_CANCEL_AGAINST))   # v6.23 S1: on the side trading against the fundamental
+            elif v6_32_fee and (side, level) in v6_32_fee:
+                doomed.append((row, V6_32_CANCEL_FEE_GATE))  # v6.32 S14: its fills would not cover W x the maker fee
+                self._v6_32_count("deep_cancels")
             elif side in held:
                 doomed.append((row, V619_CANCEL_SURPLUS))   # v6.19: the cap-bound leading side keeps no adding order
             elif not _room(side):
@@ -13107,6 +13450,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             for level, level_d in candidates[side]:
                 if against and (side, level) in against:
                     continue                    # v6.23 S1: no order on the side trading against the fundamental
+                if v6_32_fee and (side, level) in v6_32_fee:
+                    self._v6_32_count("deep_withheld")
+                    continue                    # v6.32 S14: no adding deep order whose fills would not cover W x the fee
                 if ladder and ((side, level) in resting or v69_slot_taken(slots, side, level)
                                or (side, level) in cancelled or (side, V69_WHOLE_SIDE) in cancelled):
                     continue
@@ -13657,6 +14003,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 # others' touch (every order of ours left out) is taken only if a new quote is priced
                 # (research_v631_touch_improve)
                 self._v6_31_note(book_id, book, own_ids, touch_on)
+            if bool(getattr(self, "research_v632_fee_making", False)):
+                # v6.32 S14: while the gate is active, the sides whose adding orders this book withholds this request --
+                # from its TRUE inventory -- when our realized spread per notional does not exceed W x its maker fee rate:
+                # the deep layer and the touch quote place no adding order there and keep none (research_v632_fee_making)
+                self._v6_32_note(book_id, inv)
             deep_open = False
             if deep is not None and depth is not None:
                 try:
@@ -13864,6 +14215,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v6_30_report()                            # v6.30: its V6_30_STATE row, on or off (never raises)
         if getattr(self, "_v6_31_counts", None) is not None:
             self._v6_31_report()                            # v6.31: its V6_31_STATE row, on or off (never raises)
+        if getattr(self, "_v6_32_counts", None) is not None:
+            self._v6_32_report()                            # v6.32: its V6_32_STATE row, on or off (never raises)
         return placed_total
 
     def _v62_telemetry(self, state) -> None:
@@ -14149,6 +14502,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             self._v6_23_errors = int(getattr(self, "_v6_23_errors", 0) or 0) + 1
             self._v6_23_active, self._v6_23_foreign = False, frozenset()     # v6.22 for this request
             self._v6_23_layout = V623_LAYOUT_UNREADABLE
+        if getattr(self, "_v6_32_counts", None) is not None:
+            # v6.32, before any decision: S14's tracker takes this state's prints and our fills' roles and releases the
+            # fills that are ready, and the fee gate reads this state's validator release (research_v632_fee_making);
+            # P1 maps the books' own fundamentals (research_v632_state_fundamental).  Never raises: an error counts, no
+            # book is gated and every reader keeps the page.
+            self._v6_32_request(state)
         try:
             self._a1961_note_base_decimals(state)
         except Exception:
