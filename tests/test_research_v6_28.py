@@ -1198,7 +1198,7 @@ def test_the_launcher_only_adds_to_v627s():
                                     "research_v632_fee_weight=0.005 \\",
                                     "research_v632_state_fundamental=1 \\",
                                     "research_v633_touch_identity=1 \\",
-                                    'research_v634_class1_entry=1"', "      tests/test_research_v6_28.py \\",
+                                    'research_v634_class1_entry=0"', "      tests/test_research_v6_28.py \\",
                                     "      tests/test_research_v6_29.py \\", "      tests/test_research_v6_30.py \\",
                                     "      tests/test_research_v6_31.py \\",
                                     "      tests/test_research_v6_32.py \\",

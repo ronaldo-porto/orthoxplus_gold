@@ -440,7 +440,7 @@ research_v632_fee_making=1 \
 research_v632_fee_weight=0.005 \
 research_v632_state_fundamental=1 \
 research_v633_touch_identity=1 \
-research_v634_class1_entry=1"
+research_v634_class1_entry=0"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -4030,6 +4030,13 @@ fi
 # v6.33 on every book, by a PARAMS edit, no rebuild); the block accepts exactly one of =0 / =1, as v6.33's D4 block
 # does, and prints its state.  Ties: refused here, not degraded -- the quote is v6.17's touch slot and join price
 # (research_v617_touch_quote=1) and v6.33's D4 governs it (research_v633_touch_identity given, =0 or =1).
+# v6.35.  research_v634_class1_entry ships 0 (OBSERVED live, k100 08:40 JST 10-17, one hour after v6.34 reached all
+# eight UIDs): the validator's class-1 making was 0.0 on every one of them (its per-book two-sided capture, 2 x
+# min(buy, sell) against the centred mid, summed to ~0 over 283 fills), while the same fills marked -1.1 bps at the
+# 20-s realized horizon -- they lowered the per-UID markout quality q (realized / captured over ALL books), which
+# also scales class-0 making: q fell 3-6 % on all seven UIDs in 76 min while the leaders' stayed flat.  The quotes
+# joined the back of class-1 touch queues (p50 ~1,600 base vs a 20-base clip) and were filled when the level was
+# swept.  Off = v6.33 on every book (v6.34 smoke).  The module and its block stay for a structural re-entry.
 if [[ "${V6_34_BUILD:-0}" == "1" ]]; then
   [[ -f "$AGENT_PATH/research_v6_34_class1.py" ]] || {
     echo "ERROR: v6.34 the class-1 entry module is missing." >&2

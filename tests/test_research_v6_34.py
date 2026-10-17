@@ -842,8 +842,9 @@ def test_the_row_never_fails_the_request_and_waits_for_the_reply_and_off_it_says
 
 def test_the_switch_ships_on_after_v633s_key_and_agrees_with_its_agent_default():
     params = t617._params()
-    assert "research_v634_class1_entry=1 " in t617._shipped() + " " and params.count("research_v634_class1_entry=") == 1
-    assert 'research_v633_touch_identity=1 \\\nresearch_v634_class1_entry=1"\n' in LAUNCHER
+    # v6.35: ships 0 (the launcher's "# v6.35." note); the agent default stays on, the launcher passes =0 explicitly
+    assert "research_v634_class1_entry=0 " in t617._shipped() + " " and params.count("research_v634_class1_entry=") == 1
+    assert 'research_v633_touch_identity=1 \\\nresearch_v634_class1_entry=0"\n' in LAUNCHER
     init = _src("_init_build_switches")
     assert init.count(SWITCH_LINE) == 1
     assert init.index("self._v6_33_erring = False") < init.index(SWITCH_LINE) < \
@@ -1019,7 +1020,9 @@ def _run_block(params, agent_path=STRATEGY, build="1"):
 
 
 def test_the_v634_block_passes_the_shipped_params_and_refuses_a_build_it_cannot_ship():
-    shipped = t617._shipped()
+    real = _run_block(t617._shipped())                                                # v6.35: ships off
+    assert real.returncode == 0 and real.stdout.splitlines()[0] == "[preflight] v6.34 class-1 entry: off", real.stdout
+    shipped = f" {t617._shipped()} ".replace(" research_v634_class1_entry=0 ", " research_v634_class1_entry=1 ").strip()
     out = _run_block(shipped)
     assert out.returncode == 0 and out.stderr == "", out.stderr
     lines = out.stdout.splitlines()

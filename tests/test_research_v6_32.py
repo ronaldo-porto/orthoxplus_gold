@@ -1496,7 +1496,7 @@ def test_the_launcher_only_adds_to_v631s():
                                     "research_v631_single_write_save=1 \\", "research_v632_fee_making=1 \\",
                                     "research_v632_fee_weight=0.005 \\", "research_v632_state_fundamental=1 \\",
                                     "research_v633_touch_identity=1 \\",
-                                    'research_v634_class1_entry=1"',
+                                    'research_v634_class1_entry=0"',
                                     "      tests/test_research_v6_32.py \\",
                                     "      tests/test_research_v6_33.py \\",
                                     "      tests/test_research_v6_34.py \\", *block])

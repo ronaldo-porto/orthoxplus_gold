@@ -931,7 +931,7 @@ def test_the_launcher_only_adds_to_v632s():
         block += LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
     assert sorted(added) == sorted([defaults + "; V6_33_BUILD=0; V6_34_BUILD=0", arm + "; V6_33_BUILD=1; V6_34_BUILD=1",
                                     "research_v632_state_fundamental=1 \\", "research_v633_touch_identity=1 \\",
-                                    'research_v634_class1_entry=1"',
+                                    'research_v634_class1_entry=0"',
                                     "      tests/test_research_v6_33.py \\",
                                     "      tests/test_research_v6_34.py \\", *block])
 
