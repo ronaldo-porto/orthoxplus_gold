@@ -766,6 +766,9 @@ V6_33_IDENTIFIERS = t623.V6_33_IDENTIFIERS
 # v6.34 (research_v634_class1_entry) only adds: the strip takes its additions out as well
 # (tests/test_research_v6_34.py checks them against v6.33).
 V6_34_IDENTIFIERS = t623.V6_34_IDENTIFIERS
+# v6.36 (research_v636_step_withdrawal) only adds: the strip takes its additions out as well
+# (tests/test_research_v6_36.py checks them against v6.35).
+V6_36_IDENTIFIERS = t623.V6_36_IDENTIFIERS
 
 
 def _v623(rel):
@@ -792,11 +795,12 @@ def _mentions(node):
                                       or name in V6_32_IDENTIFIERS
                                       or name in V6_33_IDENTIFIERS
                                       or name in V6_34_IDENTIFIERS
+                                      or name in V6_36_IDENTIFIERS
                                       or name.startswith(("_v6_24_", "v6_24_", "_v6_25_", "v6_25_", "_v6_26_",
                                                           "v6_26_", "_v6_27_", "v6_27_", "_v6_28_", "v6_28_",
                                                           "_v6_29_", "v6_29_", "_v6_30_", "v6_30_", "_v6_31_",
                                                           "v6_31_", "_v6_32_", "v6_32_", "_v6_33_", "v6_33_",
-                                                          "_v6_34_", "v6_34_"))):
+                                                          "_v6_34_", "v6_34_", "_v6_36_", "v6_36_"))):
             return True
     return False
 
@@ -818,11 +822,12 @@ class _Strip624(ast.NodeTransformer):
                                                                 "research_v6_32_fee_making",
                                                                 "research_v6_32_state_fp",
                                                                 "research_v6_33_touch_identity",
-                                                                "research_v6_34_class1"):
+                                                                "research_v6_34_class1",
+                                                                "research_v6_36_step_withdrawal"):
                 continue
             if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_24_", "_v6_25_", "_v6_26_", "_v6_27_",
                                                                        "_v6_28_", "_v6_29_", "_v6_30_", "_v6_31_",
-                                                                       "_v6_32_", "_v6_33_", "_v6_34_")):
+                                                                       "_v6_32_", "_v6_33_", "_v6_34_", "_v6_36_")):
                 continue
             if isinstance(st, ast.If) and _mentions(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -915,14 +920,14 @@ def test_the_launcher_only_adds_to_v623s():
     assert removed == [defaults, arm, 'research_v623_start_once=1"', *v625_greps]
     blocks = []
     for head in ("# v6.24 S4.", "# v6.25 S5.", "# v6.26 S6.", "# v6.27 S7.", "# v6.28 S8.", "# v6.29 S9.", "# v6.30.",
-                 "# v6.31.", "# v6.32.", "# v6.33.", "# v6.34."):
+                 "# v6.31.", "# v6.32.", "# v6.33.", "# v6.34.", "# v6.36."):
         start = LAUNCHER.index(head)
         blocks += LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
     leaned = [ln.replace(f"'{g.format('inv')}'", f"'{g.format(name)}'") for ln, (g, name) in zip(v625_greps, greps)]
     assert sorted(added) == sorted([defaults + "; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0"
-                                    "; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0",
+                                    "; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0",
                                     arm + "; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1"
-                                    "; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1",
+                                    "; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1",
                                     "research_v623_start_once=1 \\", "research_v624_pay_basis=1 \\",
                                     "research_v625_lean=1 \\", "research_v625_lean_slope=1.0 \\",
                                     "research_v625_lean_cap=48 \\", "research_v626_feed_clock=1 \\",
@@ -934,7 +939,8 @@ def test_the_launcher_only_adds_to_v623s():
                                     "research_v632_fee_weight=0.005 \\",
                                     "research_v632_state_fundamental=1 \\",
                                     "research_v633_touch_identity=1 \\",
-                                    'research_v634_class1_entry=1"', *leaned,
+                                    "research_v634_class1_entry=0 \\",
+                                    'research_v636_step_withdrawal=1"', *leaned,
                                     "      tests/test_research_v6_24.py \\", "      tests/test_research_v6_25.py \\",
                                     "      tests/test_research_v6_26.py \\", "      tests/test_research_v6_27.py \\",
                                     "      tests/test_research_v6_28.py \\", "      tests/test_research_v6_29.py \\",
@@ -942,15 +948,16 @@ def test_the_launcher_only_adds_to_v623s():
                                     "      tests/test_research_v6_31.py \\",
                                     "      tests/test_research_v6_32.py \\",
                                     "      tests/test_research_v6_33.py \\",
-                                    "      tests/test_research_v6_34.py \\", *blocks])
+                                    "      tests/test_research_v6_34.py \\",
+                                    "      tests/test_research_v6_36.py \\", *blocks])
 
 
 # ---- 6. the launcher -----------------------------------------------------------------------------------------------
 
 def test_the_v624_block_is_gated_preflighted_and_listed():
-    assert "; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0\n" in LAUNCHER
+    assert "; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0\n" in LAUNCHER
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1"), arm
+    assert arm.endswith("; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1"), arm
     assert LAUNCHER.count('if [[ "${V6_24_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_24_BUILD=") == 2
     assert "      tests/test_research_v6_23.py \\\n      tests/test_research_v6_24.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.23 validator 0.6.3 PASS') < LAUNCHER.index("# v6.24 S4.") < \

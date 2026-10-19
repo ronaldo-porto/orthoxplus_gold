@@ -278,7 +278,66 @@ _CLASSES: dict = {}
 
 
 def _mentions634(node):
-    return t633._mentions634(node)
+    """A v6.34 name in ``node`` -- v6.34's alone: t633's _mentions634 also names v6.36's, which its _Drop634 takes out
+    with v6.34's."""
+    for n in ast.walk(node):
+        name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
+            n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
+        if isinstance(name, str) and (name in t623.V6_34_IDENTIFIERS or name.startswith(("_v6_34_", "v6_34_"))):
+            return True
+    return False
+
+
+# v6.36 (research_v636_step_withdrawal) only adds -- its import, its _v6_36_ methods, its switch and state, and
+# statements naming them in respond() and build_mm_strategy_instructions (an if on its state, or an assignment or call
+# naming one) -- so the method-by-method checks below read v6.34 with v6.36 taken out (_Drop636;
+# tests/test_research_v6_36.py checks it), and t633's _Drop634 takes v6.36's additions out with v6.34's.
+V6_36_IDENTIFIERS = t623.V6_36_IDENTIFIERS
+
+
+def _mentions636(node):
+    for n in ast.walk(node):
+        name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
+            n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
+        if isinstance(name, str) and (name in V6_36_IDENTIFIERS or name.startswith(("_v6_36_", "v6_36_"))):
+            return True
+    return False
+
+
+class _Drop636(ast.NodeTransformer):
+    """Takes out what v6.36 adds and nothing else -- its import, its _v6_36_ methods, statements naming its identifiers
+    (an if on one keeps its else) -- keeping every docstring: v6.34 (and v6.35) as committed (a9dd99e)."""
+
+    def _stmts(self, stmts):
+        out = []
+        for st in stmts:
+            if isinstance(st, ast.ImportFrom) and st.module == "research_v6_36_step_withdrawal":
+                continue
+            if isinstance(st, ast.FunctionDef) and st.name.startswith("_v6_36_"):
+                continue
+            if isinstance(st, ast.If) and _mentions636(st.test):
+                out.extend(self._stmts(st.orelse))
+                continue
+            st = self.visit(st)
+            if isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr)) and _mentions636(st):
+                continue
+            out.append(st)
+        return out
+
+    def generic_visit(self, node):
+        for field in ("body", "orelse", "finalbody"):
+            if isinstance(getattr(node, field, None), list):
+                setattr(node, field, self._stmts(getattr(node, field)))
+        for h in getattr(node, "handlers", None) or []:
+            h.body = self._stmts(h.body)
+        for name, value in ast.iter_fields(node):
+            if name in ("body", "orelse", "finalbody", "handlers"):
+                continue
+            if isinstance(value, list):
+                setattr(node, name, [self.visit(v) if isinstance(v, ast.AST) else v for v in value])
+            elif isinstance(value, ast.AST):
+                setattr(node, name, self.visit(value))
+        return node
 
 
 def _hook_source():
@@ -842,8 +901,9 @@ def test_the_row_never_fails_the_request_and_waits_for_the_reply_and_off_it_says
 
 def test_the_switch_ships_on_after_v633s_key_and_agrees_with_its_agent_default():
     params = t617._params()
-    assert "research_v634_class1_entry=1 " in t617._shipped() + " " and params.count("research_v634_class1_entry=") == 1
-    assert 'research_v633_touch_identity=1 \\\nresearch_v634_class1_entry=1"\n' in LAUNCHER
+    # v6.35: ships 0 (the launcher's "# v6.35." note); the agent default stays on, the launcher passes =0 explicitly
+    assert "research_v634_class1_entry=0 " in t617._shipped() + " " and params.count("research_v634_class1_entry=") == 1
+    assert 'research_v633_touch_identity=1 \\\nresearch_v634_class1_entry=0 \\\n' in LAUNCHER   # v6.36's next
     init = _src("_init_build_switches")
     assert init.count(SWITCH_LINE) == 1
     assert init.index("self._v6_33_erring = False") < init.index(SWITCH_LINE) < \
@@ -922,7 +982,7 @@ CHANGED = {"_init_build_switches", "_v63_pass", "_v6_32_request", "respond", "_r
 def test_v634s_strip_takes_out_its_methods_and_its_statements_in_five():
     stripped = t633._Drop634().visit(ast.parse(SIMPLE))
     assert not _mentions634(stripped)
-    a, b = t629._methods(stripped), t629._methods(ast.parse(SIMPLE))
+    a, b = t629._methods(stripped), t629._methods(_Drop636().visit(ast.parse(SIMPLE)))     # v6.34: v6.36 out
     assert set(b) - set(a) == set(METHODS) and not set(a) - set(b)
     assert {k for k in a if a[k] != b[k]} == CHANGED
     for n in ast.walk(stripped):
@@ -982,9 +1042,9 @@ def _patterns():
 
 
 def test_the_v634_block_is_gated_preflighted_and_listed():
-    assert "; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0\n" in LAUNCHER
+    assert "; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0\n" in LAUNCHER
     arm = next(x for x in LAUNCHER.splitlines() if x.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1"), arm
+    assert arm.endswith("; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1"), arm
     assert LAUNCHER.count('if [[ "${V6_34_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_34_BUILD=") == 2
     assert "      tests/test_research_v6_33.py \\\n      tests/test_research_v6_34.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.33 touch identity PASS') < LAUNCHER.index("# v6.34.") < \
@@ -1019,7 +1079,9 @@ def _run_block(params, agent_path=STRATEGY, build="1"):
 
 
 def test_the_v634_block_passes_the_shipped_params_and_refuses_a_build_it_cannot_ship():
-    shipped = t617._shipped()
+    real = _run_block(t617._shipped())                                                # v6.35: ships off
+    assert real.returncode == 0 and real.stdout.splitlines()[0] == "[preflight] v6.34 class-1 entry: off", real.stdout
+    shipped = f" {t617._shipped()} ".replace(" research_v634_class1_entry=0 ", " research_v634_class1_entry=1 ").strip()
     out = _run_block(shipped)
     assert out.returncode == 0 and out.stderr == "", out.stderr
     lines = out.stdout.splitlines()

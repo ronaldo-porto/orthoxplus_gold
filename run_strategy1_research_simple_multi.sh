@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -440,7 +440,8 @@ research_v632_fee_making=1 \
 research_v632_fee_weight=0.005 \
 research_v632_state_fundamental=1 \
 research_v633_touch_identity=1 \
-research_v634_class1_entry=1"
+research_v634_class1_entry=0 \
+research_v636_step_withdrawal=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -4030,6 +4031,13 @@ fi
 # v6.33 on every book, by a PARAMS edit, no rebuild); the block accepts exactly one of =0 / =1, as v6.33's D4 block
 # does, and prints its state.  Ties: refused here, not degraded -- the quote is v6.17's touch slot and join price
 # (research_v617_touch_quote=1) and v6.33's D4 governs it (research_v633_touch_identity given, =0 or =1).
+# v6.35.  research_v634_class1_entry ships 0 (OBSERVED live, k100 08:40 JST 10-17, one hour after v6.34 reached all
+# eight UIDs): the validator's class-1 making was 0.0 on every one of them (its per-book two-sided capture, 2 x
+# min(buy, sell) against the centred mid, summed to ~0 over 283 fills), while the same fills marked -1.1 bps at the
+# 20-s realized horizon -- they lowered the per-UID markout quality q (realized / captured over ALL books), which
+# also scales class-0 making: q fell 3-6 % on all seven UIDs in 76 min while the leaders' stayed flat.  The quotes
+# joined the back of class-1 touch queues (p50 ~1,600 base vs a 20-base clip) and were filled when the level was
+# swept.  Off = v6.33 on every book (v6.34 smoke).  The module and its block stay for a structural re-entry.
 if [[ "${V6_34_BUILD:-0}" == "1" ]]; then
   [[ -f "$AGENT_PATH/research_v6_34_class1.py" ]] || {
     echo "ERROR: v6.34 the class-1 entry module is missing." >&2
@@ -4091,6 +4099,74 @@ if [[ "${V6_34_BUILD:-0}" == "1" ]]; then
   }
   echo "[preflight] v6.34 class-1 entry: ${_v634_state}"
   echo "[preflight] v6.34 class-1 entry PASS (${_v634_state}: on the class map's class-1 books one join-only touch quote per side in the class's own units -- S9's side, S17-R's 20-s miner hold on the adding side, the book's own pace line, S14 on a class-1 estimate, D4; class 0 is v6.33's)"
+fi
+
+# v6.36.  research_v636_step_withdrawal: the pre-step withdrawal and the stale-side hold (A_r1+D, scratchpad k101 round
+# 2).  The fundamental steps every fp_update_period (30 sim-s; the state at 30n carries step n first) and post-step miner
+# takers pick off what rests across the step before our cancels land (13.5 % of class-0 C - R, our only negative cell).
+# A: on the last state before each step every order of ours -- touch, deep level 0, ladder, exit -- within r x mid of the
+# book's L1 mid is cancelled (resting) or not sent (new); r = the book's trailing median |ln fp step| over one 10,800-s
+# making window of steps, pooled over books until the book has 30.  D: on the step state and the next, every order on
+# the side the step moved against, reducing ones included.  The book's withdrawal cancel goes first among its
+# instructions, within max_instructions_per_book (the cancel wins over a placement).  The step grid comes from the
+# configuration (fp_update_period, publish_interval: K = (P - 1) / I states, taos adding 1 ns to the XML period; never a
+# hard-coded 30 s); unreadable or off the state grid: the switch does nothing and V6_36_STATE says why.  Replay
+# k101/vm711 pst=1 ssd=1 on the calibrated engine (cancels land at the validator's delay): pre-registered Q1-Q5 PASS,
+# E +31.4 / +31.2 / +37.3 % at d48 / d40 / d55, volume x0.966.  STRUCTURAL: the simulation's step period and publish
+# interval, the validator's making window and per-book instruction delays, the state's own fundamental (OBSERVED k101:
+# the state at 30n carries step n, 591 / 591); PRE-REGISTERED: the 30-step warm-up and the two hold states.
+# research_v636_step_withdrawal ships 1 but may be 0 (off: v6.35 on every book, by a PARAMS edit, no rebuild); the block
+# accepts exactly one of =0 / =1 and prints its state.
+if [[ "${V6_36_BUILD:-0}" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_v6_36_step_withdrawal.py" ]] || {
+    echo "ERROR: v6.36 the step-withdrawal module is missing." >&2
+    exit 1
+  }
+  for _v636_pat in \
+      'from research_v6_36_step_withdrawal import (' \
+      'self.research_v636_step_withdrawal = self._as_bool(getattr(self.config, "research_v636_step_withdrawal", True))' \
+      'self._v6_36_request(state)' \
+      'self._v6_36_drop(response, state)' \
+      'self._v6_36_cancel(response, state)' \
+      'grid = v6_36_step_grid(getattr(state, "config", None))' \
+      'event = record.observe(now, None if where is None else where[0], fps)' \
+      'if v6_36_pre_step(phase, grid):' \
+      'if v6_36_hold_phase(phase) and record.step_block == block:' \
+      'why = v6_36_withdrawal(v6_36_side_of(getattr(order, "side", None)), getattr(order, "price", None),' \
+      'response.cancel_orders(book_id=book_id, order_ids=every, delay=0)' \
+      'self._v6_36_report()'; do
+    grep -qF -- "$_v636_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: v6.36 the agent lacks: $_v636_pat" >&2
+      exit 1
+    }
+  done
+  for _v636_pat in \
+      'MIN_OWN_STEPS = 30 ' \
+      'HOLD_STATES = 2 ' \
+      'MAKING_WINDOW_NS = WINDOW_NS ' \
+      'PROTOCOL_PERIOD_PAD_NS = 1 ' \
+      'for whole in (p - PROTOCOL_PERIOD_PAD_NS, p):' \
+      'if blk == self.last_block + 1:' \
+      'return abs(p - m) <= r * m + PRICE_EPS'; do
+    grep -qF -- "$_v636_pat" "$AGENT_PATH/research_v6_36_step_withdrawal.py" || {
+      echo "ERROR: v6.36 the step-withdrawal module lacks: $_v636_pat" >&2
+      exit 1
+    }
+  done
+  _v636_re=' research_v636_step_withdrawal=(0|1) '
+  [[ " $PARAMS " =~ $_v636_re ]] || {
+    echo "ERROR: v6.36 build without research_v636_step_withdrawal=0 or 1 in PARAMS (the step withdrawal's state must be explicit)." >&2
+    exit 1
+  }
+  _v636_sw="${BASH_REMATCH[1]}"
+  _v636_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_v636_step_withdrawal=' || true)
+  [[ "$_v636_n" == "1" ]] || {
+    echo "ERROR: v6.36 build with research_v636_step_withdrawal given ${_v636_n} times in PARAMS (exactly once: 0 or 1)." >&2
+    exit 1
+  }
+  if [[ "$_v636_sw" == "1" ]]; then _v636_state="on"; else _v636_state="off"; fi
+  echo "[preflight] v6.36 step withdrawal: ${_v636_state}"
+  echo "[preflight] v6.36 step withdrawal PASS (${_v636_state}: A -- on the last state before each fundamental step our orders within one trailing median |fp step| of the mid are cancelled or not sent; D -- on the step state and the next the side the step moved against holds no order; the step grid from the configuration)"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -4215,6 +4291,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_32.py \
       tests/test_research_v6_33.py \
       tests/test_research_v6_34.py \
+      tests/test_research_v6_36.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

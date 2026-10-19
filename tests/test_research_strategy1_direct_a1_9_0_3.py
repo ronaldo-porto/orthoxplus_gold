@@ -119,8 +119,14 @@ def test_all_three_cancel_paths_register_a_reason():
     v6_34_cancel = next(n for n in ast.walk(ast.parse(SRC))
                         if isinstance(n, ast.FunctionDef) and n.name == "_v6_34_cancel")
     assert ast.unparse(v6_34_cancel).count("self._a19_note_exit_cancel(book_id, ids, ABSENT_REPRICE_CANCEL)") == 1
-    # v6.34 adds exactly that one registered site and no other
-    assert SRC.count("_a19_note_exit_cancel(") - v6_34_without.count("_a19_note_exit_cancel(") == 1
+    # v6.36: the step withdrawal's cancel (_v6_36_cancel: our resting orders A / D withdraw this state) registers too --
+    # counted apart the same way (test_research_v6_33's _Drop634 takes v6.36's additions out with v6.34's), and the
+    # withdrawal path is asserted to register on its own.
+    v6_36_cancel = next(n for n in ast.walk(ast.parse(SRC))
+                        if isinstance(n, ast.FunctionDef) and n.name == "_v6_36_cancel")
+    assert ast.unparse(v6_36_cancel).count("self._a19_note_exit_cancel(book_id, group, disposition)") == 1
+    # v6.34 and v6.36 add exactly those two registered sites and no other
+    assert SRC.count("_a19_note_exit_cancel(") - v6_34_without.count("_a19_note_exit_cancel(") == 2
     for reason in (
         "ABSENT_WAIT_CANCEL", "ABSENT_ENTRY_QUOTE_CANCEL",
         "ABSENT_PARTIAL_REMAINDER_CANCEL", "ABSENT_REPRICE_CANCEL",

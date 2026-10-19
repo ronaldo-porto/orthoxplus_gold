@@ -1023,6 +1023,13 @@ V6_33_IDENTIFIERS = {"research_v633_touch_identity", "V6_33_CANCEL_TOUCH_IDENTIT
 # (tests/test_research_v6_34.py checks them against v6.33), so every v6.22 statement stays pinned.
 V6_34_IDENTIFIERS = {"research_v634_class1_entry", "V6_34_CANCEL_OTHER", "V6_34MinerHolds", "V6_34_STATUS_OK",
                      "V6_34_CLASS1_ENTRY_VERSION", "V6_34_WHY_CAPPED"}
+# v6.36 (research_v636_step_withdrawal) only adds: its import, its _v6_36_ methods, its switch and state, and statements
+# naming them in respond() (the step record before any decision, the withdrawal cancels after every post-pass) and in
+# build_mm_strategy_instructions (the withdrawn placements dropped after the final validator) -- an if on its state, or
+# an assignment or call naming one.  The strip takes them out (tests/test_research_v6_36.py checks them against
+# v6.35), so every v6.22 statement stays pinned.
+V6_36_IDENTIFIERS = {"research_v636_step_withdrawal", "V6_36_GRID_OK", "V6_36StepRecord",
+                     "V6_36_STEP_WITHDRAWAL_VERSION"}
 
 
 def _v622(rel):
@@ -1049,20 +1056,22 @@ def _mentions(node):
                                       or name in V6_32_IDENTIFIERS
                                       or name in V6_33_IDENTIFIERS
                                       or name in V6_34_IDENTIFIERS
+                                      or name in V6_36_IDENTIFIERS
                                       or name.startswith(("_v6_23_", "v6_23_", "_v6_24_", "v6_24_", "_v6_25_",
                                                           "v6_25_", "_v6_26_", "v6_26_", "_v6_27_", "v6_27_",
                                                           "_v6_28_", "v6_28_", "_v6_29_", "v6_29_", "_v6_30_",
                                                           "v6_30_", "_v6_31_", "v6_31_", "_v6_32_", "v6_32_",
-                                                          "_v6_33_", "v6_33_", "_v6_34_", "v6_34_"))):
+                                                          "_v6_33_", "v6_33_", "_v6_34_", "v6_34_",
+                                                          "_v6_36_", "v6_36_"))):
             return True
     return False
 
 
 class _Strip623(ast.NodeTransformer):
-    """Removes what v6.23 (and v6.24, v6.25, v6.26, v6.27, v6.28, v6.29, v6.30, v6.31, v6.32, v6.33 and v6.34
-    after it) adds and nothing else: its import, its methods, statements naming its identifiers (an if on one keeps
-    its else), the against keyword and argument, v6.26's limit keyword, and every docstring (v6.23 extended one);
-    v6.25's leaned inventory reads back as inv."""
+    """Removes what v6.23 (and v6.24, v6.25, v6.26, v6.27, v6.28, v6.29, v6.30, v6.31, v6.32, v6.33, v6.34 and
+    v6.36 after it) adds and nothing else: its import, its methods, statements naming its identifiers (an if on one
+    keeps its else), the against keyword and argument, v6.26's limit keyword, and every docstring (v6.23 extended
+    one); v6.25's leaned inventory reads back as inv."""
 
     def _stmts(self, stmts):
         out = []
@@ -1077,13 +1086,14 @@ class _Strip623(ast.NodeTransformer):
                                                                 "research_v6_32_fee_making",
                                                                 "research_v6_32_state_fp",
                                                                 "research_v6_33_touch_identity",
-                                                                "research_v6_34_class1"):
+                                                                "research_v6_34_class1",
+                                                                "research_v6_36_step_withdrawal"):
                 continue
             if isinstance(st, ast.FunctionDef) and (st.name == "onStart"
                                                     or st.name.startswith(("_v6_23_", "_v6_24_", "_v6_25_", "_v6_26_",
                                                                            "_v6_27_", "_v6_28_", "_v6_29_", "_v6_30_",
                                                                            "_v6_31_", "_v6_32_", "_v6_33_",
-                                                                           "_v6_34_"))):
+                                                                           "_v6_34_", "_v6_36_"))):
                 continue
             if isinstance(st, ast.If) and _mentions(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -1228,9 +1238,9 @@ def test_each_rule_is_wired_once_and_in_its_place():
 
 
 def test_the_v623_block_is_gated_preflighted_and_listed():
-    assert "; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0\n" in LAUNCHER
+    assert "; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0\n" in LAUNCHER
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1"), arm
+    assert arm.endswith("; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1"), arm
     assert 'if [[ "${V6_23_BUILD:-0}" == "1" ]]; then' in LAUNCHER
     assert "      tests/test_research_v6_23.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.22 aged cap PASS') < LAUNCHER.index("# v6.23 S1-S3.")

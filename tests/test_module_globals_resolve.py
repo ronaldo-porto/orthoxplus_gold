@@ -47,6 +47,7 @@ MODULES = [
     "research_v6_32_state_fp.py",
     "research_v6_33_touch_identity.py",
     "research_v6_34_class1.py",
+    "research_v6_36_step_withdrawal.py",
     "research_v6214_touch_life.py",
     "research_v6215_order_life.py",
     "research_v63_trend_target.py",
