@@ -181,9 +181,6 @@ class RoundTripPhaseState:
             "total_s": total,
         }
 
-    def forget_book(self, book_id: int) -> None:
-        self.books.pop(int(book_id), None)
-
     def books_in_flight(self) -> int:
         return sum(1 for b in self.books.values() if b.entry_fill_ts is not None)
 

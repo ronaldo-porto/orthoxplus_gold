@@ -436,9 +436,10 @@ def test_the_snapshot_reports_the_switches_and_the_last_request():
 # ---- 3. wiring -----------------------------------------------------------------------------------------------------
 
 def test_all_five_rules_default_on_and_ship_in_params():
-    for key in ("research_v63_trend_target", "research_v63_making_layer", "research_v63_fee_cap", "research_v63_book_stop",
-                "research_v63_lean_log"):
+    for key in ("research_v63_trend_target", "research_v63_making_layer", "research_v63_book_stop", "research_v63_lean_log"):
         assert f'getattr(self.config, "{key}", True)' in SIMPLE
+    # v6.38 (item 1): R3, refuted in the v6.3.x line, is off in source as well as in PARAMS
+    assert 'getattr(self.config, "research_v63_fee_cap", False)' in SIMPLE
     for key in ("research_v63_trend_target", "research_v63_making_layer", "research_v63_book_stop", "research_v63_lean_log"):
         assert f"{key}=1" in LAUNCHER
     # R3 ships off (score first) but stays a switch the launcher carries

@@ -79,10 +79,6 @@ class KappaRealizationBoost:
     mode: str
     reason: str
 
-    @property
-    def allow_pressure(self) -> bool:
-        return self.boost > 0.0 and not self.clearly_bad
-
     def as_log(self) -> dict[str, Any]:
         return {
             "kappa_realization_version": KAPPA_REALIZATION_VERSION,

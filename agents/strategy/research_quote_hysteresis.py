@@ -201,17 +201,6 @@ def _sign(x: float, eps: float = 1e-9) -> int:
     return 0
 
 
-def imbalance_reversed(old_imb: float | None, new_imb: float | None, *, min_abs: float = 0.15) -> bool:
-    """Static imbalance helper. Not an OFI signal."""
-    if old_imb is None or new_imb is None:
-        return False
-    old = float(old_imb)
-    new = float(new_imb)
-    if abs(old) < min_abs or abs(new) < min_abs:
-        return False
-    return _sign(old) != 0 and _sign(new) != 0 and _sign(old) != _sign(new)
-
-
 def ofi_reversed(old_ofi: float | None, new_ofi: float | None, *, min_abs: float = 0.10) -> bool:
     """True only when supported OFI flips sign with material magnitude."""
     if old_ofi is None or new_ofi is None:

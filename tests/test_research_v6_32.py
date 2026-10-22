@@ -59,6 +59,7 @@ import test_research_v6_29 as t629  # noqa: E402
 import test_research_v6_30 as t630  # noqa: E402
 import test_research_v6_31 as t631  # noqa: E402
 from _harness import extractor  # noqa: E402
+import _v638_undo  # noqa: E402
 
 SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
 MODULE = (STRATEGY / "research_v6_32_fee_making.py").read_text()
@@ -116,6 +117,21 @@ DEBETA_064 = {
     "_capped_mark": "be6dc224b5bfc6a4ab9d1b861ff8cc97ae57ac603a1d1ca686ccce394ee924f5",
     "_print_time": "b869d1e7f2cbda56b6e986f934e75ca214ab5ad3bca153eebf6927ed83bef821",
 }
+# v6.38 (k123): the same functions' digests as CPython 3.10.9 (the launch shell's interpreter, Gold/venv) prints them --
+# ast.unparse writes some expressions differently there; the 3.12 digests above are the pins of record.
+DEBETA_064_BY_PY = {(3, 12): DEBETA_064, (3, 10): {
+    "_background_sided": "167e5e4a11a1758b5f93be43275120435ddd357182cca72444910fac86df6e15",
+    "_push_floor_reference": "65aef056150a6b17115e00d2b3ebc872fded7e317638b14629604f88a38da52d",
+    "_clears": "fdd3b9e4ff6b0b16820d4c2112e59a84120aa2b3f4593ecb1c696e5e4cdc0ca7",
+    "_floored_mean_at": "e974af1aad97fd8a512c15f297184c862c364687d8316b09732c6411423ba125",
+    "_floored_mid_at": "9b8692b19b01d214c686486ae22475b692fd84f9e0a60032a3d65c7aa4aa28af",
+    "_forward_complete": "437f1aaef39ed1c4df831f2b02c434592319650e01a925e856c3ae9d3e4a5541",
+    "_mark_weight": "6b045d08ab81168ea71a4b6d1aa7ff3bb17b23a5abcdee1d972f2eb82a12b1a1",
+    "_weighted_mark": "fbc8eb18595fcefc40be2bb9cd1eaf940751584c34641ab706fd90560076fa4a",
+    "_mark_near": "17a028794edc912badf123cc49760717fe71306e83ced49113e2bf3d348c688a",
+    "_capped_mark": "a7330b3348e0d06c4100f06768623d0f1466d62bc71ad3379f2b391287568826",
+    "_print_time": "b869d1e7f2cbda56b6e986f934e75ca214ab5ad3bca153eebf6927ed83bef821",
+}}
 # taos 0.6.4 taos/im/protocol/book.py Book: the field and the property, the same way (19f9fbd)
 BOOK_064 = {"f": "82f132908f91c8c5df191f59bd8a30ed294daa09af877d8e7c2c9084aa997702",
             "fundamental": "d248301730257ac79f67501edeb78857187293e1fe531e395ab2dba4554ea7b8"}
@@ -180,7 +196,9 @@ def test_the_module_imports_only_the_deep_layers_sides_and_v641s_adds_and_loads_
 def test_the_vendored_functions_are_taos_064s_byte_for_byte():
     tree = ast.parse(MODULE)
     fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
-    for name, digest in DEBETA_064.items():
+    digests = DEBETA_064_BY_PY.get(tuple(sys.version_info[:2]))
+    assert digests is not None and list(digests) == list(DEBETA_064), "no 0.6.4 digests for this interpreter"
+    for name, digest in digests.items():
         assert hashlib.sha256(ast.unparse(fns[name]).encode()).hexdigest() == digest, name
     start = MODULE.index("# ---- vendored from taos 0.6.4 taos/im/validator/debeta.py (19f9fbd), byte for byte")
     stop = MODULE.index("# ---- the gate")
@@ -220,6 +238,14 @@ GOLDEN = {
     "quiet": (253, 2.622614987042212, 51361.2125,
               "bd160cd1743c3124c27850fafb8b24194c2223276cb9c3f2717862b6c11f4488"),
 }
+# v6.38 (k123): the entries' repr digests on CPython 3.10.9 (the launch shell's interpreter): 3.12's sum() of floats is
+# compensated (the vendored _weighted_mark's sum), 3.10's is not, so a few entries differ in the last bits (<= 7e-13 here);
+# the counts and the tolerance checks above are the same on both.
+GOLDEN_REPR_SHA256_BY_PY = {(3, 12): {name: g[3] for name, g in GOLDEN.items()}, (3, 10): {
+    "clear": "9a7b7b1530d270281c5725081780eee4e84e3233eb3f58bdbe6532da2ed49151",
+    "dust": "0cb7269d02a471bda59499523c545b16f6b822faa6d75c9c7b3ae701b74d7eb7",
+    "quiet": "3fd404b3b9da4559c57f855d575719e4f5ad2d08a34bbdda438ef864791f708a",
+}}
 SCENARIOS = {
     "clear": dict(seed=11, states=420, books=(0, 1, 2), others=True, dust=False, min_size=0.25),
     "dust": dict(seed=23, states=420, books=(3, 4), others=False, dust=True, min_size=0.25),
@@ -301,7 +327,8 @@ def test_the_tracker_books_the_064_originals_realized_spread_fill_by_fill():
         assert len(entries) == n == tr.counts["released"], name
         assert math.isclose(sum(r for _t, r, _q in entries), realized, rel_tol=1e-12, abs_tol=1e-12), name
         assert math.isclose(sum(q for _t, _r, q in entries), notional, rel_tol=1e-12), name
-        assert hashlib.sha256(repr(entries).encode()).hexdigest() == digest, name
+        by_py = GOLDEN_REPR_SHA256_BY_PY.get(tuple(sys.version_info[:2]), {})       # 3.12: GOLDEN's own digest
+        assert hashlib.sha256(repr(entries).encode()).hexdigest() == by_py.get(name, "no digest for this interpreter"), name
         assert tr.counts["malformed"] == 0 and tr.counts["evicted"] == 0, name
     quiet = _feed(_stream(**{k: v for k, v in SCENARIOS["quiet"].items() if k != "min_size"}), 0.25)
     assert quiet.counts["stale"] == 19 and quiet.counts["settled"] == 234         # the quiet book's stale releases
@@ -1363,7 +1390,7 @@ V631_COMMIT = "fb5bf3c"       # the user's v6.31 commit (10-16 00:08 JST canary 
 # naming one) -- so the method-by-method checks below read v6.32 with v6.33 taken out (_Drop633;
 # tests/test_research_v6_33.py checks it against the committed v6.32), and t631's _Drop632 takes v6.33's additions out
 # with v6.32's.  v6.34 (research_v634_class1_entry) only adds as well: _Drop633 takes it out with v6.33.  So does
-# v6.36 (research_v636_step_withdrawal).
+# v6.36 (research_v636_step_withdrawal), and so does v6.37 (research_v637_fast_path).
 V6_33_IDENTIFIERS = t623.V6_33_IDENTIFIERS
 # v6.34 (research_v634_class1_entry) only adds: the strip takes its additions out as well
 # (tests/test_research_v6_34.py checks them against v6.33).
@@ -1371,6 +1398,9 @@ V6_34_IDENTIFIERS = t623.V6_34_IDENTIFIERS
 # v6.36 (research_v636_step_withdrawal) only adds: the strip takes its additions out as well
 # (tests/test_research_v6_36.py checks them against v6.35).
 V6_36_IDENTIFIERS = t623.V6_36_IDENTIFIERS
+# v6.37 (research_v637_fast_path) only adds: the strip takes its additions out as well
+# (tests/test_research_v6_37.py checks them against v6.36).
+V6_37_IDENTIFIERS = t623.V6_37_IDENTIFIERS
 
 
 def _mentions633(node):
@@ -1379,25 +1409,31 @@ def _mentions633(node):
             n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
         if isinstance(name, str) and (name in V6_33_IDENTIFIERS or name in V6_34_IDENTIFIERS
                                       or name in V6_36_IDENTIFIERS
+                                      or name in V6_37_IDENTIFIERS
                                       or name.startswith(("_v6_33_", "v6_33_", "_v6_34_", "v6_34_", "_v6_36_",
-                                                          "v6_36_"))):
+                                                          "v6_36_", "_v6_37_", "v6_37_"))):
             return True
     return False
 
 
 class _Drop633(ast.NodeTransformer):
-    """Takes out what v6.33 (and v6.34 and v6.36 after it) adds and nothing else -- its import, its _v6_33_ methods,
-    statements naming its identifiers (an if on one keeps its else) -- keeping every docstring: v6.32 as committed
-    (9a6ec31)."""
+    """Takes out what v6.33 (and v6.34, v6.36 and v6.37 after it) adds and nothing else -- its import, its _v6_33_
+    methods, statements naming its identifiers (an if on one keeps its else) -- keeping every docstring: v6.32 as
+    committed (9a6ec31)."""
+
+    def visit_Module(self, node):                      # v6.38's changes undone first (tests/_v638_undo.py)
+        _v638_undo.undo(node)
+        return self.generic_visit(node)
 
     def _stmts(self, stmts):
         out = []
         for st in stmts:
             if isinstance(st, ast.ImportFrom) and st.module in ("research_v6_33_touch_identity",
                                                                 "research_v6_34_class1",
-                                                                "research_v6_36_step_withdrawal"):
+                                                                "research_v6_36_step_withdrawal",
+                                                                "research_v6_37_fast_path"):
                 continue
-            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_33_", "_v6_34_", "_v6_36_")):
+            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_33_", "_v6_34_", "_v6_36_", "_v6_37_")):
                 continue
             if isinstance(st, ast.If) and _mentions633(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -1479,14 +1515,16 @@ def test_only_nine_methods_changed_and_the_exit_layer_frozen_files_and_protocol_
                   "research_direct_exit_refresh.py", "research_v6214_touch_life.py"):
         assert _committed(f"agents/strategy/{other}") == (STRATEGY / other).read_text(), other
     old_models = ast.parse(_committed("taos/im/protocol/models.py"))
-    assert ast.dump(t623._drop632_models(ast.parse(MODELS))) == ast.dump(old_models)     # P1's additions only
+    stripped = t623._drop632_models(t623._drop_f2_models(ast.parse(MODELS)))          # k106 F2's fast builds out
+    assert ast.dump(stripped) == ast.dump(old_models)                                   # P1's additions only
 
 
 def test_the_launcher_only_adds_to_v631s():
     """The committed v6.31 launcher line by line: three lines extended (the flag defaults, the v6_3_0 arm, PARAMS' last
-    key), the rest added -- the v6.32 block, three PARAMS keys and its gate entry.  v6.33, v6.34 and v6.36 each
-    extend the same three lines and add their block, one PARAMS key and their gate entry."""
-    old, new = _committed("run_strategy1_research_simple_multi.sh").splitlines(), LAUNCHER.splitlines()
+    key), the rest added -- the v6.32 block, three PARAMS keys and its gate entry.  v6.33, v6.34, v6.36 and v6.37
+    each extend the same three lines and add their block, one PARAMS key and their gate entry."""
+    launcher = _v638_undo.launcher_v637(LAUNCHER)               # v6.37's launcher: v6.38's edits undone
+    old, new = _committed("run_strategy1_research_simple_multi.sh").splitlines(), launcher.splitlines()
     removed, added = [], []
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
         if tag in ("replace", "delete"):
@@ -1497,27 +1535,29 @@ def test_the_launcher_only_adds_to_v631s():
     arm = next(x for x in old if x.startswith("  strategy1_direct_v6_3_0)"))
     assert removed == [defaults, arm, 'research_v631_single_write_save=1"']
     block = []
-    for head in ("# v6.32.", "# v6.33.", "# v6.34.", "# v6.36."):
-        start = LAUNCHER.index(head)
-        block += LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
-    assert sorted(added) == sorted([defaults + "; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0", arm + "; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1",
+    for head in ("# v6.32.", "# v6.33.", "# v6.34.", "# v6.36.", "# v6.37."):
+        start = launcher.index(head)
+        block += launcher[start:launcher.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
+    assert sorted(added) == sorted([defaults + "; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0", arm + "; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1",
                                     "research_v631_single_write_save=1 \\", "research_v632_fee_making=1 \\",
                                     "research_v632_fee_weight=0.005 \\", "research_v632_state_fundamental=1 \\",
                                     "research_v633_touch_identity=1 \\",
                                     "research_v634_class1_entry=0 \\",
-                                    'research_v636_step_withdrawal=1"',
+                                    "research_v636_step_withdrawal=1 \\",
+                                    'research_v637_fast_path=1"',
                                     "      tests/test_research_v6_32.py \\",
                                     "      tests/test_research_v6_33.py \\",
                                     "      tests/test_research_v6_34.py \\",
-                                    "      tests/test_research_v6_36.py \\", *block])
+                                    "      tests/test_research_v6_36.py \\",
+                                    "      tests/test_research_v6_37.py \\", *block])
 
 
 # ---- 11. the launcher ----------------------------------------------------------------------------------------------------
 
 def test_the_v632_block_is_gated_preflighted_and_listed():
-    assert "; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0\n" in LAUNCHER
+    assert "; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0; V6_38_BUILD=0\n" in LAUNCHER
     arm = next(x for x in LAUNCHER.splitlines() if x.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1"), arm
+    assert arm.endswith("; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1; V6_38_BUILD=1"), arm
     assert LAUNCHER.count('if [[ "${V6_32_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_32_BUILD=") == 2
     assert "      tests/test_research_v6_31.py \\\n      tests/test_research_v6_32.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.31 touch improve + single-write save PASS') < \

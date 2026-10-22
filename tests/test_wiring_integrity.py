@@ -27,8 +27,10 @@ SIMPLE_PATH = STRATEGY / "Strategy1_Research_Simple.py"
 SIMPLE = SIMPLE_PATH.read_text(encoding="utf-8")
 
 # The class chain an attribute may legitimately come from.
-CHAIN = ("Strategy1_Research_Simple.py", "Strategy1_Research.py", "DetailedTemplateAgent.py",
-         "BaseStrategy.py", "AdaptiveAgent.py")
+CHAIN = ("Strategy1_Research_Simple.py", "Strategy1_Research.py", "Strategy1_Debug.py", "Strategy1.py",
+         "DetailedTemplateAgent.py")
+# (v6.38: the live chain Simple -> Research -> Debug -> Strategy1 -> Template; BaseStrategy.py / AdaptiveAgent.py,
+#  which stood in for Strategy1.py's own attributes such as mm_base_size, are archived: never imported by the agent)
 
 # Names that resolve at runtime but are not assigned anywhere in the chain's source.
 ALLOWED_UNRESOLVED = {

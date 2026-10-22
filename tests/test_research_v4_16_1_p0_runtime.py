@@ -48,8 +48,8 @@ from research_rt_phase_timing import RoundTripPhaseState
 from research_score_ev import compute_score_ev
 
 STRATEGY = (ROOT / "agents/strategy/Strategy1_Research.py").read_text(encoding="utf-8")
-BASE = ROOT / "agents/strategy/BaseStrategy.py"
-ADAPTIVE = ROOT / "agents/strategy/AdaptiveAgent.py"
+BASE = ROOT / "archive/agents/strategy/BaseStrategy.py"          # v6.38: archived (git mv, history kept)
+ADAPTIVE = ROOT / "archive/agents/strategy/AdaptiveAgent.py"
 VALIDATOR_TRADE = ROOT / "taos/im/validator/trade.py"
 VALIDATOR_TRADE_SHA256 = "d9b3b00c5c9e43c12008ab2b25b1d2a389026d787351bcdd72ee299b60fd811f"
 S = 1_000_000_000

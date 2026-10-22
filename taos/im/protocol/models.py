@@ -2296,6 +2296,166 @@ class LoanSettlementOption(IntEnum):
                 except Exception:
                     return None
 
+# ---- k106 F2 (reply time; every decision identical): exact fast builds for the lazy wrappers below ----------------
+# LazyLevel built every Order of a level on ANY attribute read -- even .price, so the markout recorder alone built
+# every touch order of all 128 books each state (11 ms a state on the k106 harness's wire states; 0.9 ms with F2), and
+# LazyAccount built its parts with pydantic's model_construct (~3 us an object).  F2 reads .price / .quantity straight
+# off the wire dict until a level's orders are read, and builds Order / Balance / Loan / Fees with an exact replica of
+# model_construct (~1 us) for a raw dict whose keys are all field names; anything else -- a non-dict, an extra, alias
+# or non-str key, a model the replica does not cover -- goes to model_construct itself.  The objects, their __dict__
+# (keys in field order), fields set, extra and private parts are as before.  LazyBook.events validates every event of
+# every book (~9,400 a state): F2 calls each model's pydantic-core validator directly instead of through
+# model_validate's Python wrapper -- the same call with the same (default) options, 1.0 -> 0.65 us an event (a Python
+# replica of the validation was measured slower, 1.2 us, and is not used).  _F2_FAST = False restores the original.
+_F2_FAST = True
+_F2_LEVEL_RAW = {"price": "p", "p": "p", "quantity": "q", "q": "q"}
+
+
+def _f2_aliases(cls):
+    """Every alias key of cls's fields, or None when a field has an alias form the replicas do not cover."""
+    out = set()
+    for field in cls.__pydantic_fields__.values():
+        if field.alias is not None:
+            out.add(field.alias)
+        alias = field.validation_alias
+        if isinstance(alias, str):
+            out.add(alias)
+        elif alias is not None:
+            return None
+    return out
+
+
+def _f2_construct(cls):
+    """cls.model_construct(**raw), replicated for a raw dict whose keys are all field names (no alias, extra or non-str
+    key -- those go to model_construct itself): pydantic 2's model_construct takes each field present under its own
+    name, gives an absent optional field its default (field.get_default, as pydantic calls it), and sets __dict__
+    (fields in definition order), the fields set, extra (None unless extra='allow') and private."""
+    original = cls.model_construct
+    try:
+        fields = list(cls.__pydantic_fields__.items())
+        names = frozenset(name for name, _field in fields)
+        aliases = _f2_aliases(cls)
+        usable = (aliases is not None and aliases.isdisjoint(names) and cls.model_config.get("extra") != "allow"
+                  and not cls.__pydantic_post_init__ and not cls.__pydantic_root_model__)
+    except Exception:
+        usable = False
+    if not usable:
+        return lambda raw: original(**raw)
+    new, setattr_ = cls.__new__, object.__setattr__
+
+    def build(raw):
+        if type(raw) is not dict or not names.issuperset(raw):       # an extra / alias / non-str key: pydantic's own
+            return original(**raw)
+        values, fields_set = {}, set()
+        for name, field in fields:
+            if name in raw:
+                values[name] = raw[name]
+                fields_set.add(name)
+            elif not field.is_required():
+                values[name] = field.get_default(call_default_factory=True, validated_data=values)
+        m = new(cls)
+        setattr_(m, "__dict__", values)
+        setattr_(m, "__pydantic_fields_set__", fields_set)
+        setattr_(m, "__pydantic_extra__", None)
+        setattr_(m, "__pydantic_private__", None)
+        return m
+    return build
+
+
+_F2_ORDER_CONSTRUCT = _f2_construct(Order)
+_F2_BALANCE_CONSTRUCT = _f2_construct(Balance)
+_F2_LOAN_CONSTRUCT = _f2_construct(Loan)
+_F2_FEES_CONSTRUCT = _f2_construct(Fees)
+
+
+def _f2_events(raw_events):
+    """LazyBook.events' loop with each event validated by its model's own validator called directly: model_validate(e)
+    is validate_python(e) with every option at its default (its wrapper adds only a by_alias / by_name check that cannot
+    fire with the defaults), so the objects and the errors are the same, without the wrapper's call (1.0 -> 0.65 us)."""
+    order = Order.__pydantic_validator__.validate_python
+    trade = TradeInfo.__pydantic_validator__.validate_python
+    cancel = Cancellation.__pydantic_validator__.validate_python
+    out = []
+    for e in raw_events:
+        ty = e.get("y")
+        if ty == "o":
+            out.append(order(e))
+        elif ty == "t":
+            out.append(trade(e))
+        elif ty == "c":
+            out.append(cancel(e))
+        else:
+            out.append(e)
+    return out
+
+
+def _f2_account(raw):
+    """LazyAccount.data's build, Balance / Order / Loan / Fees by the model_construct replica (Account as before)."""
+    bb = _F2_BALANCE_CONSTRUCT(raw.get("bb", {}))
+    qb = _F2_BALANCE_CONSTRUCT(raw.get("qb", {}))
+    orders = [_F2_ORDER_CONSTRUCT(o) for o in raw.get("o", [])]
+    loans = {}
+    for k, v in raw.get("l", {}).items():
+        loan = _F2_LOAN_CONSTRUCT(v)
+        loan.c = OrderCurrency(loan.c)
+        loans[int(k)] = loan
+    fees = _F2_FEES_CONSTRUCT(raw["f"]) if raw.get("f") else None
+    return Account.model_construct(
+        i=raw.get("i"),
+        b=raw.get("b"),
+        bb=bb,
+        qb=qb,
+        bl=raw.get("bl", 0.0),
+        ql=raw.get("ql", 0.0),
+        bc=raw.get("bc", 0.0),
+        qc=raw.get("qc", 0.0),
+        o=orders,
+        l=loans,
+        f=fees,
+        v=raw.get("v")
+    )
+
+
+# ---- v6.38 P5 (research_v638_fast_path; scratchpad k115 probe P5, built in k123): LazyBook.events validated every order,
+# trade and cancellation event of every book (~9,300 a state: 13.4 ms of the ~141-ms reply on the k115 harness) while
+# every reader on the agent's path looks at the trades only (~170 a state): the four trade walkers and v6.32's print
+# filter take a dict and read its "y" key, Strategy1's and the template's trade counters read getattr(event, "type", None)
+# and skip anything that is not a trade.  With the switch on, LazyBook.events validates the trade events only -- the
+# same TradeInfo objects in the same places, by the validator call the switch-off path makes -- and leaves each order /
+# cancellation event its wire dict.  The readers that need order / cancellation objects (Book.trades / .orders /
+# .cancellations and parse(); none runs on the agent's path) get the switch-off list, every event a model, built for
+# them on first use.  The protocol is shared by every agent the venv's taos serves, and some (Book.history for the
+# SimpleRegressor / HybridTraining agents) iterate every event as a model, so the module ships it OFF: the agent's
+# constructor turns it on for its own process (research_v6_38_fast_path.apply).  _V638_TRADES_ONLY = False is the
+# original (F2's or v6.36's loop).
+_V638_TRADES_ONLY = False
+
+
+def _v638_events(raw_events):
+    """LazyBook.events with only the trade events validated, each by TradeInfo's validator as the switch-off path calls
+    it (F2's direct call, else model_validate); every other event stays the wire dict, in its place."""
+    trade = TradeInfo.__pydantic_validator__.validate_python if _F2_FAST else TradeInfo.model_validate
+    return [trade(e) if e.get("y") == "t" else e for e in raw_events]
+
+
+def _v638_all_events(raw_events):
+    """The switch-off LazyBook.events list (every order / trade / cancellation a model): F2's loop, else v6.36's."""
+    if _F2_FAST:
+        return _f2_events(raw_events)
+    parsed_events = []
+    for e in raw_events:
+        ty = e.get("y")
+        if ty == "o":
+            parsed_events.append(Order.model_validate(e))
+        elif ty == "t":
+            parsed_events.append(TradeInfo.model_validate(e))
+        elif ty == "c":
+            parsed_events.append(Cancellation.model_validate(e))
+        else:
+            parsed_events.append(e)
+    return parsed_events
+
+
 class LazyLevel(Sequence):
     """
     Lazily-parsed order book level.
@@ -2314,7 +2474,11 @@ class LazyLevel(Sequence):
 
     def _load(self):
         if self._parsed is None:
-            orders = [Order.model_construct(**o) for o in self._raw.get("o", [])] if self._raw.get("o") else []
+            if _F2_FAST:
+                build = _F2_ORDER_CONSTRUCT
+                orders = [build(o) for o in self._raw.get("o", [])] if self._raw.get("o") else []
+            else:
+                orders = [Order.model_construct(**o) for o in self._raw.get("o", [])] if self._raw.get("o") else []
             self._parsed = LevelInfo.model_construct(
                 p=self._raw.get("p"),
                 q=self._raw.get("q"),
@@ -2323,6 +2487,8 @@ class LazyLevel(Sequence):
             self._raw = None
 
     def __getattr__(self, name):
+        if _F2_FAST and self._parsed is None and name in _F2_LEVEL_RAW:
+            return self._raw.get(_F2_LEVEL_RAW[name])
         self._load()
         return getattr(self._parsed, name)
 
@@ -2421,27 +2587,67 @@ class LazyBook(Book):
     def events(self):
         if self._events is None:
             raw_events = self._raw.get("e", [])
-            parsed_events = []
-            for e in raw_events:
-                ty = e.get("y")
-                # model_validate (not model_construct) here: populate_by_name
-                # is True on the base config, so both short and long keys are
-                # accepted, AND pydantic v2 enforces required fields. Using
-                # model_construct here silently produced malformed objects
-                # whenever the wire dict lacked Ti/Ta/Mi/Ma for trades.
-                if ty == "o":
-                    parsed_events.append(Order.model_validate(e))
-                elif ty == "t":
-                    parsed_events.append(TradeInfo.model_validate(e))
-                elif ty == "c":
-                    parsed_events.append(Cancellation.model_validate(e))
-                else:
-                    parsed_events.append(e)
+            if _V638_TRADES_ONLY:
+                parsed_events = _v638_events(raw_events)          # v6.38 P5: the trades only (order / cancel: wire dicts)
+            elif _F2_FAST:
+                parsed_events = _f2_events(raw_events)
+            else:
+                parsed_events = []
+                for e in raw_events:
+                    ty = e.get("y")
+                    # model_validate (not model_construct) here: populate_by_name
+                    # is True on the base config, so both short and long keys are
+                    # accepted, AND pydantic v2 enforces required fields. Using
+                    # model_construct here silently produced malformed objects
+                    # whenever the wire dict lacked Ti/Ta/Mi/Ma for trades.
+                    if ty == "o":
+                        parsed_events.append(Order.model_validate(e))
+                    elif ty == "t":
+                        parsed_events.append(TradeInfo.model_validate(e))
+                    elif ty == "c":
+                        parsed_events.append(Cancellation.model_validate(e))
+                    else:
+                        parsed_events.append(e)
             self._events = parsed_events
         return self._events
 
+    def _v638_full(self):
+        """v6.38 P5: this book's events as the switch-off LazyBook.events builds them (every event a model), for the
+        readers below; built on first use, once a book (none of them runs on the agent's path)."""
+        full = self.__dict__.get("_v638_all")
+        if full is None:
+            full = _v638_all_events(self._raw.get("e", []))
+            self.__dict__["_v638_all"] = full
+        return full
+
+    @property
+    def trades(self) -> dict[int, TradeInfo]:
+        if _V638_TRADES_ONLY:                                      # v6.38 P5: over every event as a model
+            return {t.timestamp: t for t in self._v638_full() if t.type == 't'}
+        return Book.trades.fget(self)
+
+    @property
+    def orders(self) -> dict[int, Order]:
+        if _V638_TRADES_ONLY:                                      # v6.38 P5: over every event as a model
+            return {o.timestamp: o for o in self._v638_full() if o.type == 'o'}
+        return Book.orders.fget(self)
+
+    @property
+    def cancellations(self) -> dict[int, Cancellation]:
+        if _V638_TRADES_ONLY:                                      # v6.38 P5: over every event as a model
+            return {c.timestamp: c for c in self._v638_full() if c.type == 'c'}
+        return Book.cancellations.fget(self)
+
+    def _v638_parse(self) -> Book:
+        """v6.38 P5: parse() with every event a model (the switch-off list), the other fields as parse() builds them."""
+        raw = self._raw
+        return Book.model_construct(i=raw.get("i"), b=self.bids.parse(), a=self.asks.parse(), e=self._v638_full(),
+                                    f=raw.get("f"))
+
     def parse(self) -> Book:
         """Return fully parsed Book object."""
+        if _V638_TRADES_ONLY:                                      # v6.38 P5: every event a model, as switched off
+            return self._v638_parse()
         return Book.model_construct(
             i=self._raw.get("i"),
             b=self.bids.parse(),
@@ -2502,32 +2708,35 @@ class LazyAccount:
     @property
     def data(self):
         if self._parsed is None:
-            bb = Balance.model_construct(**self._raw.get("bb", {}))
-            qb = Balance.model_construct(**self._raw.get("qb", {}))
-            orders = [Order.model_construct(**o) for o in self._raw.get("o", [])]
+            if _F2_FAST:
+                self._parsed = _f2_account(self._raw)
+            else:
+                bb = Balance.model_construct(**self._raw.get("bb", {}))
+                qb = Balance.model_construct(**self._raw.get("qb", {}))
+                orders = [Order.model_construct(**o) for o in self._raw.get("o", [])]
 
-            loans = {}
-            for k, v in self._raw.get("l", {}).items():
-                loan = Loan.model_construct(**v)
-                loan.c = OrderCurrency(loan.c)
-                loans[int(k)] = loan
+                loans = {}
+                for k, v in self._raw.get("l", {}).items():
+                    loan = Loan.model_construct(**v)
+                    loan.c = OrderCurrency(loan.c)
+                    loans[int(k)] = loan
 
-            fees = Fees.model_construct(**self._raw["f"]) if self._raw.get("f") else None
+                fees = Fees.model_construct(**self._raw["f"]) if self._raw.get("f") else None
 
-            self._parsed = Account.model_construct(
-                i=self._raw.get("i"),
-                b=self._raw.get("b"),
-                bb=bb,
-                qb=qb,
-                bl=self._raw.get("bl", 0.0),
-                ql=self._raw.get("ql", 0.0),
-                bc=self._raw.get("bc", 0.0),
-                qc=self._raw.get("qc", 0.0),
-                o=orders,
-                l=loans,
-                f=fees,
-                v=self._raw.get("v")
-            )
+                self._parsed = Account.model_construct(
+                    i=self._raw.get("i"),
+                    b=self._raw.get("b"),
+                    bb=bb,
+                    qb=qb,
+                    bl=self._raw.get("bl", 0.0),
+                    ql=self._raw.get("ql", 0.0),
+                    bc=self._raw.get("bc", 0.0),
+                    qc=self._raw.get("qc", 0.0),
+                    o=orders,
+                    l=loans,
+                    f=fees,
+                    v=self._raw.get("v")
+                )
             self._raw = None
         return self._parsed
 

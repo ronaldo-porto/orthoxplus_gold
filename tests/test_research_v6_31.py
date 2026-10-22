@@ -60,6 +60,7 @@ import test_research_v6_28 as t628  # noqa: E402
 import test_research_v6_29 as t629  # noqa: E402
 import test_research_v6_30 as t630  # noqa: E402
 from _harness import extractor  # noqa: E402
+import _v638_undo  # noqa: E402
 
 SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
 BASE = (STRATEGY / "Strategy1_Research.py").read_text()
@@ -1145,6 +1146,9 @@ V6_34_IDENTIFIERS = t623.V6_34_IDENTIFIERS
 # v6.36 (research_v636_step_withdrawal) only adds: the strip takes its additions out as well
 # (tests/test_research_v6_36.py checks them against v6.35).
 V6_36_IDENTIFIERS = t623.V6_36_IDENTIFIERS
+# v6.37 (research_v637_fast_path) only adds: the strip takes its additions out as well
+# (tests/test_research_v6_37.py checks them against v6.36).
+V6_37_IDENTIFIERS = t623.V6_37_IDENTIFIERS
 
 
 def _mentions632(node):
@@ -1154,16 +1158,22 @@ def _mentions632(node):
         if isinstance(name, str) and (name in V6_32_IDENTIFIERS or name in V6_33_IDENTIFIERS
                                       or name in V6_34_IDENTIFIERS
                                       or name in V6_36_IDENTIFIERS
+                                      or name in V6_37_IDENTIFIERS
                                       or name.startswith(("_v6_32_", "v6_32_", "_v6_33_", "v6_33_",
-                                                          "_v6_34_", "v6_34_", "_v6_36_", "v6_36_"))):
+                                                          "_v6_34_", "v6_34_", "_v6_36_", "v6_36_",
+                                                          "_v6_37_", "v6_37_"))):
             return True
     return False
 
 
 class _Drop632(ast.NodeTransformer):
-    """Takes out what v6.32 (and v6.33, v6.34 and v6.36 after it) adds and nothing else -- its two imports, its
-    _v6_32_ methods, statements naming its identifiers (an if on one keeps its else) -- keeping every docstring: v6.31
-    as committed (fb5bf3c)."""
+    """Takes out what v6.32 (and v6.33, v6.34, v6.36 and v6.37 after it) adds and nothing else -- its two imports,
+    its _v6_32_ methods, statements naming its identifiers (an if on one keeps its else) -- keeping every docstring:
+    v6.31 as committed (fb5bf3c)."""
+
+    def visit_Module(self, node):                      # v6.38's changes undone first (tests/_v638_undo.py)
+        _v638_undo.undo(node)
+        return self.generic_visit(node)
 
     def _stmts(self, stmts):
         out = []
@@ -1171,9 +1181,11 @@ class _Drop632(ast.NodeTransformer):
             if isinstance(st, ast.ImportFrom) and st.module in ("research_v6_32_fee_making", "research_v6_32_state_fp",
                                                                 "research_v6_33_touch_identity",
                                                                 "research_v6_34_class1",
-                                                                "research_v6_36_step_withdrawal"):
+                                                                "research_v6_36_step_withdrawal",
+                                                                "research_v6_37_fast_path"):
                 continue
-            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_32_", "_v6_33_", "_v6_34_", "_v6_36_")):
+            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_32_", "_v6_33_", "_v6_34_", "_v6_36_",
+                                                                       "_v6_37_")):
                 continue
             if isinstance(st, ast.If) and _mentions632(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -1270,7 +1282,8 @@ def test_the_launcher_only_adds_to_v630s():
     """The committed v6.30 launcher line by line: three lines extended (the flag defaults, the v6_3_0 arm, PARAMS' last
     key), the rest added -- the v6.31 block, two PARAMS keys and its gate entry.  v6.32 extends the same three lines and
     adds its block, three PARAMS keys and its gate entry."""
-    old, new = _committed("run_strategy1_research_simple_multi.sh").splitlines(), LAUNCHER.splitlines()
+    launcher = _v638_undo.launcher_v637(LAUNCHER)               # v6.37's launcher: v6.38's edits undone
+    old, new = _committed("run_strategy1_research_simple_multi.sh").splitlines(), launcher.splitlines()
     removed, added = [], []
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
         if tag in ("replace", "delete"):
@@ -1281,30 +1294,32 @@ def test_the_launcher_only_adds_to_v630s():
     arm = next(x for x in old if x.startswith("  strategy1_direct_v6_3_0)"))
     assert removed == [defaults, arm, 'research_v630_s9_lookback=1"']
     block = []
-    for head in ("# v6.31.", "# v6.32.", "# v6.33.", "# v6.34.", "# v6.36."):
-        start = LAUNCHER.index(head)
-        block += LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
-    assert sorted(added) == sorted([defaults + "; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0",
-                                    arm + "; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1",
+    for head in ("# v6.31.", "# v6.32.", "# v6.33.", "# v6.34.", "# v6.36.", "# v6.37."):
+        start = launcher.index(head)
+        block += launcher[start:launcher.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
+    assert sorted(added) == sorted([defaults + "; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0",
+                                    arm + "; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1",
                                     "research_v630_s9_lookback=1 \\", "research_v631_touch_improve=1 \\",
                                     "research_v631_single_write_save=1 \\", "research_v632_fee_making=1 \\",
                                     "research_v632_fee_weight=0.005 \\", "research_v632_state_fundamental=1 \\",
                                     "research_v633_touch_identity=1 \\",
                                     "research_v634_class1_entry=0 \\",
-                                    'research_v636_step_withdrawal=1"',
+                                    "research_v636_step_withdrawal=1 \\",
+                                    'research_v637_fast_path=1"',
                                     "      tests/test_research_v6_31.py \\", "      tests/test_research_v6_32.py \\",
                                     "      tests/test_research_v6_33.py \\",
                                     "      tests/test_research_v6_34.py \\",
                                     "      tests/test_research_v6_36.py \\",
+                                    "      tests/test_research_v6_37.py \\",
                                     *block])
 
 
 # ---- 8. the launcher -----------------------------------------------------------------------------------------------------
 
 def test_the_v631_block_is_gated_preflighted_and_listed():
-    assert "; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0\n" in LAUNCHER
+    assert "; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0; V6_38_BUILD=0\n" in LAUNCHER
     arm = next(x for x in LAUNCHER.splitlines() if x.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1"), arm
+    assert arm.endswith("; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1; V6_38_BUILD=1"), arm
     assert LAUNCHER.count('if [[ "${V6_31_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_31_BUILD=") == 2
     assert "      tests/test_research_v6_30.py \\\n      tests/test_research_v6_31.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.30 identity profile PASS') < LAUNCHER.index("# v6.31.") < \

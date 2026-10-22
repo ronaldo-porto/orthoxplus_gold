@@ -41,10 +41,6 @@ class ProjectedCompletion:
     projected_completion_healthy: bool | None
     projected_completion_reason: str
 
-    @property
-    def uncertain(self) -> bool:
-        return self.projected_completion_healthy is None
-
     def as_log(self) -> dict[str, Any]:
         healthy = self.projected_completion_healthy
         return {

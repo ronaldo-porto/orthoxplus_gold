@@ -160,7 +160,7 @@ POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/St
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
 # cumulative, not per-revision -- so they gate on A19X_BUILD rather than on one
 # literal, and A1.9.6 keeps every A1.9.5 guard by setting A195_BUILD as well.
-A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0
+A19X_BUILD=0; A195_BUILD=0; A196_BUILD=0; A1961_BUILD=0; A197_BUILD=0; A198_BUILD=0; A199_BUILD=0; A1991_BUILD=0; A1992_BUILD=0; V500_BUILD=0; V501_BUILD=0; V502_BUILD=0; V503_BUILD=0; V504_BUILD=0; V600_BUILD=0; V601_BUILD=0; V602_BUILD=0; V603_BUILD=0; V610_BUILD=0; V611_BUILD=0; V620_BUILD=0; V621_BUILD=0; V622_BUILD=0; V623_BUILD=0; V624_BUILD=0; V625_BUILD=0; V626_BUILD=0; V627_BUILD=0; V628_BUILD=0; V629_BUILD=0; V6210_BUILD=0; V6211_BUILD=0; V6212_BUILD=0; V6213_BUILD=0; V6214_BUILD=0; V6215_BUILD=0; V63_BUILD=0; V6_10_BUILD=0; V6_11_BUILD=0; V6_12_BUILD=0; V6_14_BUILD=0; V6_15_BUILD=0; V6_16_BUILD=0; V6_17_BUILD=0; V6_18_BUILD=0; V6_19_BUILD=0; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0; V6_38_BUILD=0
 case "$POLICY_VER" in
   strategy1_direct_v4_16_2_a1_9_4) A19X_BUILD=1 ;;
   strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1 ;;
@@ -200,7 +200,7 @@ case "$POLICY_VER" in
   strategy1_direct_v6_2_15) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1
     # v6.2.15: a restart must manage every inherited position -- park froze 56 of 128 books on UID 94 (09-24).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
-  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1
+  strategy1_direct_v6_3_0) A19X_BUILD=1; A195_BUILD=1; A196_BUILD=1; A1961_BUILD=1; A197_BUILD=1; A198_BUILD=1; A199_BUILD=1; A1991_BUILD=1; A1992_BUILD=1; V500_BUILD=1; V501_BUILD=1; V502_BUILD=1; V503_BUILD=1; V504_BUILD=1; V600_BUILD=1; V601_BUILD=1; V602_BUILD=1; V603_BUILD=1; V610_BUILD=1; V611_BUILD=1; V620_BUILD=1; V621_BUILD=1; V622_BUILD=1; V623_BUILD=1; V624_BUILD=1; V625_BUILD=1; V626_BUILD=1; V627_BUILD=1; V628_BUILD=1; V629_BUILD=1; V6210_BUILD=1; V6211_BUILD=1; V6212_BUILD=1; V6213_BUILD=1; V6214_BUILD=1; V6215_BUILD=1; V63_BUILD=1; V6_10_BUILD=1; V6_11_BUILD=1; V6_12_BUILD=1; V6_14_BUILD=1; V6_15_BUILD=1; V6_16_BUILD=1; V6_17_BUILD=1; V6_18_BUILD=1; V6_19_BUILD=1; V6_20_BUILD=1; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1; V6_38_BUILD=1
     # v6.3: an inherited position is a target the pass manages; a parked one never is (v6.2.15).
     [[ "$INHERITED_SHORT_LOTS_SOURCE" == "default" ]] && INHERITED_SHORT_LOTS="exit" ;;
   *)
@@ -304,7 +304,6 @@ research_session_save_every_n=100 research_p95_target_ms=120 \
 research_profitable_exit_ttl_ms=4000 research_a191_queue_preservation_enabled=1 \
 research_a192_book_risk_admission_enabled=1 \
 research_a1921_severity_priority_enabled=1 \
-research_a193_breadth_admission_enabled=1 \
 research_a194_rebate_conjunction_enabled=1 \
 research_a195_reconcile_observe=1 research_a195_dust_capacity_class=1 \
 research_a195_taker_floor_enforce=1 research_a195_taker_floor_bps=-25.0 \
@@ -441,7 +440,10 @@ research_v632_fee_weight=0.005 \
 research_v632_state_fundamental=1 \
 research_v633_touch_identity=1 \
 research_v634_class1_entry=0 \
-research_v636_step_withdrawal=1"
+research_v636_step_withdrawal=1 \
+research_v637_fast_path=1 \
+research_enable_fill_hazard=0 \
+research_v638_fast_path=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -598,12 +600,8 @@ if [[ "$A19X_BUILD" == "1" ]]; then
     echo "       admission and budget size cannot both move in one run." >&2
     exit 1
   }
-  [[ "$PARAMS" == *"research_a193_breadth_admission_enabled=1"* ]] || {
-    echo "ERROR: A1.9.3 build without research_a193_breadth_admission_enabled=1" >&2
-    echo "       in PARAMS. The engine would report a1_9_3 while leaving every" >&2
-    echo "       breadth-critical book unreachable -- A1.9.2.1 under a new name." >&2
-    exit 1
-  }
+  # v6.38: the research_a193_breadth_admission_enabled PARAMS check is retired with its key: no code ever read the key
+  # from the configuration (_a193_enabled() reads an attribute nothing assigns, default True), so the key was inert.
   if [[ "$A195_BUILD" == "1" ]]; then
     echo "[preflight] A1.9.3 hook retired; breadth relocated to A1.7.4.5 PASS"
   else
@@ -4045,7 +4043,7 @@ if [[ "${V6_34_BUILD:-0}" == "1" ]]; then
   }
   for _v634_pat in \
       'from research_v6_34_class1 import (' \
-      'self.research_v634_class1_entry = self._as_bool(getattr(self.config, "research_v634_class1_entry", True))' \
+      'self.research_v634_class1_entry = self._as_bool(getattr(self.config, "research_v634_class1_entry", False))' \
       'self._v6_34_request(state)' \
       'layout = v6_34_class1_layout(cfg)' \
       'self._v6_34_holds.observe(book_id, prints, uid, now)' \
@@ -4167,6 +4165,184 @@ if [[ "${V6_36_BUILD:-0}" == "1" ]]; then
   if [[ "$_v636_sw" == "1" ]]; then _v636_state="on"; else _v636_state="off"; fi
   echo "[preflight] v6.36 step withdrawal: ${_v636_state}"
   echo "[preflight] v6.36 step withdrawal PASS (${_v636_state}: A -- on the last state before each fundamental step our orders within one trailing median |fp step| of the mid are cancelled or not sent; D -- on the step state and the next the side the step moved against holds no order; the step grid from the configuration)"
+fi
+
+# v6.37.  research_v637_fast_path: F2 (scratchpad k106) -- the reply path made faster with every decision as v6.36's.
+# The protocol's lazy wrappers serve a level's price / quantity off the wire dict until its orders are read, build
+# Order / Balance / Loan / Fees by an exact replica of model_construct and the events through each model's own
+# validator; automatic collection is held off from a request's start to its idle pass; the exit ledger answers
+# live_orders from a per-book index.  Each change sits behind its module's own switch (_F2_FAST in
+# taos/im/protocol/models.py, F2_REQUEST_GC_HOLD in research_direct_idle_gc, _F2_LEDGER_INDEX in
+# research_direct_exit_ledger), read where its code runs; the miner imports those modules before the agent reads PARAMS,
+# so the agent writes this switch into all three in its constructor, before any request (research_v6_37_fast_path), and
+# a ledger made after it takes the order dict the switch selects.  OBSERVED (k106 harness, under load): handle p50
+# 118.6 -> 92.5 ms, p95 130.3 -> 104.9 ms; identity runs on a virtual clock (415,844 + 220,514 instructions): every
+# response and every persisted session file byte-identical to v6.36.  STRUCTURAL: the same calls on the same wire data
+# (the replica checked against pydantic 2.13's model_construct -- re-check it after any pydantic upgrade), the ledger
+# index kept in step with every write.  research_v637_fast_path ships 1 but may be 0 (off: v6.36's code on every path,
+# by a PARAMS edit, no rebuild); the block accepts exactly one of =0 / =1 and prints its state.
+if [[ "${V6_37_BUILD:-0}" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_v6_37_fast_path.py" ]] || {
+    echo "ERROR: v6.37 the fast-path module is missing." >&2
+    exit 1
+  }
+  for _v637_pat in \
+      'from research_v6_37_fast_path import (' \
+      'self.research_v637_fast_path = self._as_bool(getattr(self.config, "research_v637_fast_path", True))' \
+      'self._v6_37_switches = v6_37_apply(self.research_v637_fast_path)' \
+      'self._a19_ledger.orders = v6_37_ledger_orders(self._a19_ledger.orders)'; do
+    grep -qF -- "$_v637_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: v6.37 the agent lacks: $_v637_pat" >&2
+      exit 1
+    }
+  done
+  for _v637_pat in \
+      '("taos.im.protocol.models", "_F2_FAST"),' \
+      '("research_direct_idle_gc", "F2_REQUEST_GC_HOLD"),' \
+      '("research_direct_exit_ledger", "_F2_LEDGER_INDEX"),' \
+      'setattr(module, switch, value)' \
+      'fresh = importlib.import_module(LEDGER_MODULE)._v6_37_orders()'; do
+    grep -qF -- "$_v637_pat" "$AGENT_PATH/research_v6_37_fast_path.py" || {
+      echo "ERROR: v6.37 the fast-path module lacks: $_v637_pat" >&2
+      exit 1
+    }
+  done
+  for _v637_pat in \
+      '_F2_FAST = True' \
+      'if _F2_FAST and self._parsed is None and name in _F2_LEVEL_RAW:' \
+      'build = _F2_ORDER_CONSTRUCT' \
+      'parsed_events = _f2_events(raw_events)' \
+      'self._parsed = _f2_account(self._raw)'; do
+    grep -qF -- "$_v637_pat" "$SCRIPT_DIR/taos/im/protocol/models.py" || {
+      echo "ERROR: v6.37 the protocol lacks: $_v637_pat" >&2
+      exit 1
+    }
+  done
+  for _v637_pat in \
+      'F2_REQUEST_GC_HOLD = True' \
+      'if F2_REQUEST_GC_HOLD and self.installed:' \
+      'if F2_REQUEST_GC_HOLD:'; do
+    grep -qF -- "$_v637_pat" "$AGENT_PATH/research_direct_idle_gc.py" || {
+      echo "ERROR: v6.37 the idle collector lacks: $_v637_pat" >&2
+      exit 1
+    }
+  done
+  for _v637_pat in \
+      '_F2_LEDGER_INDEX = True' \
+      'orders: dict[int, LedgerOrder] = field(default_factory=_v6_37_orders)' \
+      'if _F2_LEDGER_INDEX and (f2_rows := _f2_book_rows(self.orders, bid)) is not None:'; do
+    grep -qF -- "$_v637_pat" "$AGENT_PATH/research_direct_exit_ledger.py" || {
+      echo "ERROR: v6.37 the exit ledger lacks: $_v637_pat" >&2
+      exit 1
+    }
+  done
+  _v637_re=' research_v637_fast_path=(0|1) '
+  [[ " $PARAMS " =~ $_v637_re ]] || {
+    echo "ERROR: v6.37 build without research_v637_fast_path=0 or 1 in PARAMS (the fast path's state must be explicit)." >&2
+    exit 1
+  }
+  _v637_fp="${BASH_REMATCH[1]}"
+  _v637_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_v637_fast_path=' || true)
+  [[ "$_v637_n" == "1" ]] || {
+    echo "ERROR: v6.37 build with research_v637_fast_path given ${_v637_n} times in PARAMS (exactly once: 0 or 1)." >&2
+    exit 1
+  }
+  if [[ "$_v637_fp" == "1" ]]; then _v637_state="on"; else _v637_state="off"; fi
+  echo "[preflight] v6.37 fast path: ${_v637_state}"
+  echo "[preflight] v6.37 fast path PASS (${_v637_state}: the protocol's lazy builds, the request window's collection hold and the exit ledger's book index, each behind its module's switch, written by the agent before any request; every decision as v6.36's)"
+fi
+
+# v6.38.  research_v638_fast_path: U2 stage A (scratchpad k115 probes P5 / P1 / P3, built in k123) -- the reply path made
+# faster with every decision as v6.37's.  P5: the protocol validates a book's trade events only, order / cancellation
+# events stay the wire dicts (every reader on the agent's path skips non-trades; Book.trades / .orders / .cancellations
+# and parse() still get every event as a model) -- the protocol's own switch (_V638_TRADES_ONLY in
+# taos/im/protocol/models.py, shipped off there because other agents read every event as a model), written by the
+# agent's constructor before any request (research_v6_38_fast_path); P1: the A1.9.0.2 resting-exit observer stops after
+# its ledger sweep (its per-book shadow pass is measurement only); P3: the four trade walkers read one parse of each
+# book's events a request.  Each sits behind "if switch: new, else: the original".  OBSERVED (k115, interleaved A/B on
+# real clocks): P5 -13.0, P1 -7.1, P3 -1.7 ms a request; identity runs on a virtual clock (k123): every response and
+# every persisted session byte-identical to v6.37's, the switch on and off.  research_enable_fill_hazard=0 (P2L) ships
+# with it: under the shipped config the fill-hazard model's predictions feed telemetry rows only (k123: code reading +
+# k115 coverage + identity runs).  STRUCTURAL: each change keeps what its original computed for every reader on the
+# agent's path (k123 audit; tests/test_research_v6_38.py).  research_v638_fast_path ships 1 but may be 0 (off: v6.37's
+# code on every path, by a PARAMS edit, no rebuild); the block accepts exactly one of =0 / =1 for each key and prints
+# their state.
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_v6_38_fast_path.py" ]] || {
+    echo "ERROR: v6.38 the fast-path module is missing." >&2
+    exit 1
+  }
+  for _v638_pat in \
+      'from research_v6_38_fast_path import (' \
+      'self.research_v638_fast_path = self._as_bool(getattr(self.config, "research_v638_fast_path", True))' \
+      'self._v6_38_switches = v6_38_apply(self.research_v638_fast_path)' \
+      'v6_38_trades_reset()' \
+      'side = v6_38_last_taker_side(getattr(book, "events", None))' \
+      'trades = list(v6_38_trades_of(getattr(book, "events", None)))'; do
+    grep -qF -- "$_v638_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: v6.38 the agent lacks: $_v638_pat" >&2
+      exit 1
+    }
+  done
+  _v638_n=$(grep -cF -- '((int(raw_id), v6_38_feed(getattr(book, "events", None))) for raw_id, book in books.items()),' \
+    "$AGENT_PATH/Strategy1_Research_Simple.py" || true)
+  [[ "$_v638_n" == "2" ]] || {
+    echo "ERROR: v6.38 the v6.2 and v6.2.11 mirrors do not both read the shared parse (${_v638_n} feeds)." >&2
+    exit 1
+  }
+  _v638_n=$(grep -cF -- 'if getattr(self, "research_v638_fast_path", False):' "$AGENT_PATH/Strategy1_Research_Simple.py" || true)
+  [[ "$_v638_n" == "6" ]] || {
+    echo "ERROR: v6.38 the agent reads its switch at ${_v638_n} sites, not the 6 of P1 + P3." >&2
+    exit 1
+  }
+  for _v638_pat in \
+      '("taos.im.protocol.models", "_V638_TRADES_ONLY"),' \
+      'setattr(module, switch, value)' \
+      'def trades_of(events) -> list:' \
+      'def feed(events):' \
+      'def last_taker_side(events):'; do
+    grep -qF -- "$_v638_pat" "$AGENT_PATH/research_v6_38_fast_path.py" || {
+      echo "ERROR: v6.38 the fast-path module lacks: $_v638_pat" >&2
+      exit 1
+    }
+  done
+  for _v638_pat in \
+      '_V638_TRADES_ONLY = False' \
+      'parsed_events = _v638_events(raw_events)' \
+      'return [trade(e) if e.get("y") == "t" else e for e in raw_events]' \
+      'for t in self._v638_full() if t.type =='; do
+    grep -qF -- "$_v638_pat" "$SCRIPT_DIR/taos/im/protocol/models.py" || {
+      echo "ERROR: v6.38 the protocol lacks: $_v638_pat" >&2
+      exit 1
+    }
+  done
+  _v638_re=' research_v638_fast_path=(0|1) '
+  [[ " $PARAMS " =~ $_v638_re ]] || {
+    echo "ERROR: v6.38 build without research_v638_fast_path=0 or 1 in PARAMS (the fast path's state must be explicit)." >&2
+    exit 1
+  }
+  _v638_fp="${BASH_REMATCH[1]}"
+  _v638_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_v638_fast_path=' || true)
+  [[ "$_v638_n" == "1" ]] || {
+    echo "ERROR: v6.38 build with research_v638_fast_path given ${_v638_n} times in PARAMS (exactly once: 0 or 1)." >&2
+    exit 1
+  }
+  _v638_re=' research_enable_fill_hazard=(0|1) '
+  [[ " $PARAMS " =~ $_v638_re ]] || {
+    echo "ERROR: v6.38 build without research_enable_fill_hazard=0 or 1 in PARAMS (P2L's state must be explicit)." >&2
+    exit 1
+  }
+  _v638_fh="${BASH_REMATCH[1]}"
+  _v638_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_enable_fill_hazard=' || true)
+  [[ "$_v638_n" == "1" ]] || {
+    echo "ERROR: v6.38 build with research_enable_fill_hazard given ${_v638_n} times in PARAMS (exactly once: 0 or 1)." >&2
+    exit 1
+  }
+  if [[ "$_v638_fp" == "1" ]]; then _v638_state="on"; else _v638_state="off"; fi
+  if [[ "$_v638_fh" == "1" ]]; then _v638_fh_state="on"; else _v638_fh_state="off"; fi
+  echo "[preflight] v6.38 fast path: ${_v638_state}"
+  echo "[preflight] v6.38 fill hazard: ${_v638_fh_state}"
+  echo "[preflight] v6.38 fast path PASS (${_v638_state}: the protocol's trade-only events, the A1.9.0.2 observer's shadow pass skipped and one trade parse a request, each behind its switch, written by the agent before any request; every decision as v6.37's; fill hazard ${_v638_fh_state})"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -4292,6 +4468,8 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_33.py \
       tests/test_research_v6_34.py \
       tests/test_research_v6_36.py \
+      tests/test_research_v6_37.py \
+      tests/test_research_v6_38.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

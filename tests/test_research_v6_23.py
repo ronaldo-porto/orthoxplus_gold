@@ -46,6 +46,7 @@ import test_research_v6_17 as t617  # noqa: E402
 import test_research_v6_19 as t619  # noqa: E402
 import test_research_v6_22 as t622  # noqa: E402
 from _harness import extractor, method_source  # noqa: E402
+import _v638_undo  # noqa: E402
 
 SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
 LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
@@ -853,7 +854,8 @@ def test_s3_two_runs_first_states_are_two_starts_while_the_request_tick_stands_s
         a.onStart(ev)
     assert a._tick == 7 and a.resets == 2 and a._v6_23_counts == {"starts_reset": 2, "starts_skipped": 14}
     update = _src("update")
-    first = ast.parse(update).body[0].body[0]
+    first = next(st for st in ast.parse(update).body[0].body           # v6.38's P3 cache reset (an if on its switch) aside
+                 if not (isinstance(st, ast.If) and "research_v638_fast_path" in ast.unparse(st.test)))
     assert ast.unparse(first) == "self._v6_23_update_seq = int(getattr(self, '_v6_23_update_seq', 0) or 0) + 1"
     assert 'key = v623_start_key(getattr(self, "_v6_23_update_seq", None), getattr(self, "_scoring_timestamp", None))' \
         in _src("onStart")
@@ -1030,6 +1032,10 @@ V6_34_IDENTIFIERS = {"research_v634_class1_entry", "V6_34_CANCEL_OTHER", "V6_34M
 # v6.35), so every v6.22 statement stays pinned.
 V6_36_IDENTIFIERS = {"research_v636_step_withdrawal", "V6_36_GRID_OK", "V6_36StepRecord",
                      "V6_36_STEP_WITHDRAWAL_VERSION"}
+# v6.37 (research_v637_fast_path) only adds: its import and, in _init_build_switches, its switch and the statements
+# writing it into F2's three module switches and the exit ledger's dict -- assignments naming one.  The strip takes them
+# out (tests/test_research_v6_37.py checks them against v6.36), so every v6.22 statement stays pinned.
+V6_37_IDENTIFIERS = {"research_v637_fast_path"}
 
 
 def _v622(rel):
@@ -1057,21 +1063,26 @@ def _mentions(node):
                                       or name in V6_33_IDENTIFIERS
                                       or name in V6_34_IDENTIFIERS
                                       or name in V6_36_IDENTIFIERS
+                                      or name in V6_37_IDENTIFIERS
                                       or name.startswith(("_v6_23_", "v6_23_", "_v6_24_", "v6_24_", "_v6_25_",
                                                           "v6_25_", "_v6_26_", "v6_26_", "_v6_27_", "v6_27_",
                                                           "_v6_28_", "v6_28_", "_v6_29_", "v6_29_", "_v6_30_",
                                                           "v6_30_", "_v6_31_", "v6_31_", "_v6_32_", "v6_32_",
                                                           "_v6_33_", "v6_33_", "_v6_34_", "v6_34_",
-                                                          "_v6_36_", "v6_36_"))):
+                                                          "_v6_36_", "v6_36_", "_v6_37_", "v6_37_"))):
             return True
     return False
 
 
 class _Strip623(ast.NodeTransformer):
-    """Removes what v6.23 (and v6.24, v6.25, v6.26, v6.27, v6.28, v6.29, v6.30, v6.31, v6.32, v6.33, v6.34 and
-    v6.36 after it) adds and nothing else: its import, its methods, statements naming its identifiers (an if on one
+    """Removes what v6.23 (and v6.24, v6.25, v6.26, v6.27, v6.28, v6.29, v6.30, v6.31, v6.32, v6.33, v6.34, v6.36
+    and v6.37 after it) adds and nothing else: its import, its methods, statements naming its identifiers (an if on one
     keeps its else), the against keyword and argument, v6.26's limit keyword, and every docstring (v6.23 extended
     one); v6.25's leaned inventory reads back as inv."""
+
+    def visit_Module(self, node):                      # v6.38's changes undone first (tests/_v638_undo.py)
+        _v638_undo.undo(node)
+        return self.generic_visit(node)
 
     def _stmts(self, stmts):
         out = []
@@ -1087,13 +1098,14 @@ class _Strip623(ast.NodeTransformer):
                                                                 "research_v6_32_state_fp",
                                                                 "research_v6_33_touch_identity",
                                                                 "research_v6_34_class1",
-                                                                "research_v6_36_step_withdrawal"):
+                                                                "research_v6_36_step_withdrawal",
+                                                                "research_v6_37_fast_path"):
                 continue
             if isinstance(st, ast.FunctionDef) and (st.name == "onStart"
                                                     or st.name.startswith(("_v6_23_", "_v6_24_", "_v6_25_", "_v6_26_",
                                                                            "_v6_27_", "_v6_28_", "_v6_29_", "_v6_30_",
                                                                            "_v6_31_", "_v6_32_", "_v6_33_",
-                                                                           "_v6_34_", "_v6_36_"))):
+                                                                           "_v6_34_", "_v6_36_", "_v6_37_"))):
                 continue
             if isinstance(st, ast.If) and _mentions(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -1157,6 +1169,7 @@ def test_every_v622_statement_is_in_v623_unchanged_and_v623_only_adds():
     tree = ast.parse(MODELS)
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MarketSimulationConfig")
     cls.body = [n for n in cls.body if not (isinstance(n, ast.AnnAssign) and getattr(n.target, "id", "") == "classes")]
+    _drop_f2_models(tree)                    # k106 F2's fast builds (tests/test_research_v6_37.py pins them)
     _drop632_models(tree)                    # v6.32 P1's protocol additions (tests/test_research_v6_32.py pins them)
     assert ast.dump(tree) == ast.dump(ast.parse(old_models))                       # the vendored change is the field
 
@@ -1174,6 +1187,72 @@ def _drop632_models(tree):
                 for call in ast.walk(fn):
                     if isinstance(call, ast.Call):
                         call.keywords = [k for k in call.keywords if k.arg != "f"]
+    return tree
+
+
+def _mentions_f2(node):
+    """True when the subtree names a k106 F2 identifier (_F2_* / _f2_* / F2_* / f2_*)."""
+    for n in ast.walk(node):
+        name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else None
+        if isinstance(name, str) and name.startswith(("_F2_", "_f2_", "F2_", "f2_")):
+            return True
+    return False
+
+
+def _drop_f2_stmts(stmts):
+    out = []
+    for st in stmts:
+        if isinstance(st, ast.FunctionDef) and st.name.startswith("_f2_"):
+            continue
+        if isinstance(st, ast.ClassDef) and st.name.startswith("_F2"):
+            continue
+        if isinstance(st, (ast.Assign, ast.AnnAssign, ast.Expr)) and _mentions_f2(st):
+            continue
+        if isinstance(st, ast.If) and _mentions_f2(st.test):
+            out.extend(_drop_f2_stmts(st.orelse))
+            continue
+        for field in ("body", "orelse", "finalbody"):
+            if isinstance(getattr(st, field, None), list):
+                setattr(st, field, _drop_f2_stmts(getattr(st, field)))
+        if isinstance(st, ast.Try):
+            for handler in st.handlers:
+                handler.body = _drop_f2_stmts(handler.body)
+        out.append(st)
+    return out
+
+
+def _drop_f2_models(tree):
+    """Takes k106 F2's additions out of a module and nothing else: its _F2_* / F2_* names, _f2_* functions, _F2*
+    classes and the statements naming one (an assignment or a call), and each "if <F2 name>:" replaced by its else
+    branch (the original statements).  The vendored protocol: LazyLevel._load / __getattr__, LazyBook.events,
+    LazyAccount.data; research_direct_exit_ledger: the orders field and live_orders; research_direct_idle_gc: the
+    request-window hold (tests/test_research_v6_37.py pins all three)."""
+    _v638_undo.undo(tree)                               # v6.38's changes undone first (tests/_v638_undo.py)
+    tree.body = _drop_f2_stmts(tree.body)
+    return tree
+
+
+def _drop_v637_models(tree):
+    """Takes v6.37's additions to F2's modules out and nothing else: its _v6_37_ functions and the statements naming one
+    -- the exit ledger's _v6_37_orders and F2's orders field naming it (tests/test_research_v6_37.py pins them; with
+    _drop_f2_models after it, either order, the ledger is the committed one)."""
+    _v638_undo.undo(tree)                               # v6.38's changes undone first (tests/_v638_undo.py)
+    def mentions(node):
+        return any(isinstance(n, ast.Name) and n.id.startswith("_v6_37_") for n in ast.walk(node))
+
+    def stmts(body):
+        out = []
+        for st in body:
+            if isinstance(st, ast.FunctionDef) and st.name.startswith("_v6_37_"):
+                continue
+            if isinstance(st, (ast.Assign, ast.AnnAssign, ast.Expr)) and mentions(st):
+                continue
+            for field in ("body", "orelse", "finalbody"):
+                if isinstance(getattr(st, field, None), list):
+                    setattr(st, field, stmts(getattr(st, field)))
+            out.append(st)
+        return out
+    tree.body = stmts(tree.body)
     return tree
 
 
@@ -1238,9 +1317,9 @@ def test_each_rule_is_wired_once_and_in_its_place():
 
 
 def test_the_v623_block_is_gated_preflighted_and_listed():
-    assert "; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0\n" in LAUNCHER
+    assert "; V6_20_BUILD=0; V6_21_BUILD=0; V6_22_BUILD=0; V6_23_BUILD=0; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0; V6_38_BUILD=0\n" in LAUNCHER
     arm = next(line for line in LAUNCHER.splitlines() if line.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1"), arm
+    assert arm.endswith("; V6_21_BUILD=1; V6_22_BUILD=1; V6_23_BUILD=1; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1; V6_38_BUILD=1"), arm
     assert 'if [[ "${V6_23_BUILD:-0}" == "1" ]]; then' in LAUNCHER
     assert "      tests/test_research_v6_23.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.22 aged cap PASS') < LAUNCHER.index("# v6.23 S1-S3.")

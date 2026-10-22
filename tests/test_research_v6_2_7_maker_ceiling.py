@@ -213,7 +213,7 @@ def test_the_budget_code_survives_behind_its_switch():
 # ------------------------------------------------------------------------------------------------
 
 def test_the_switches_are_wired_and_composable():
-    assert 'research_v627_balance_gate", True)' in _simple("_v627_balance_gate_on")
+    assert 'research_v627_balance_gate", False)' in _simple("_v627_balance_gate_on")     # v6.38: refuted, off in source
     assert 'research_v627_band_caps", True)' in _simple("_v627_band_caps_on")
     # the balance gate is a refinement of rule B and cannot outlive it
     assert "self._v626_capture_balance_on()" in _simple("_v627_balance_gate_on")

@@ -48,6 +48,7 @@ from research_direct_inflight_reservation import (  # noqa: E402
     DIRECT_INFLIGHT_RESERVATION_VERSION, PendingExposureOrder)
 from research_v62_breadth import V62_STATE_EVERY_TICKS  # noqa: E402
 from _harness import extractor  # noqa: E402
+import _v638_undo  # noqa: E402
 
 SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
 MODULE = (STRATEGY / "research_v6_36_step_withdrawal.py").read_text()
@@ -100,10 +101,70 @@ def _mentions636(node):
     return False
 
 
+# v6.37 (research_v637_fast_path) only adds -- its import and, in _init_build_switches, its switch and the statements
+# writing it into F2's three module switches and the exit ledger's dict -- so the checks that read v6.36's Simple whole
+# (the import order, v6.35 = v6.36 minus v6.36) take v6.37 out first (_Drop637; tests/test_research_v6_37.py checks it
+# against v6.36); _mentions636 stays v6.36's alone (the harness execs v6.36's statements only).
+V6_37_IDENTIFIERS = {"research_v637_fast_path"}
+
+
+def _mentions637(node):
+    for n in ast.walk(node):
+        name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
+            n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
+        if isinstance(name, str) and (name in V6_37_IDENTIFIERS or name.startswith(("_v6_37_", "v6_37_"))):
+            return True
+    return False
+
+
+class _Drop637(ast.NodeTransformer):
+    """Takes out what v6.37 adds and nothing else -- its import, statements naming its identifiers (an if on one keeps
+    its else) -- keeping every docstring: v6.36 as committed (6171a57)."""
+
+    def visit_Module(self, node):                      # v6.38's changes undone first (tests/_v638_undo.py)
+        _v638_undo.undo(node)
+        return self.generic_visit(node)
+
+    def _stmts(self, stmts):
+        out = []
+        for st in stmts:
+            if isinstance(st, ast.ImportFrom) and st.module == "research_v6_37_fast_path":
+                continue
+            if isinstance(st, ast.FunctionDef) and st.name.startswith("_v6_37_"):
+                continue
+            if isinstance(st, ast.If) and _mentions637(st.test):
+                out.extend(self._stmts(st.orelse))
+                continue
+            st = self.visit(st)
+            if isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr)) and _mentions637(st):
+                continue
+            out.append(st)
+        return out
+
+    def generic_visit(self, node):
+        for field in ("body", "orelse", "finalbody"):
+            if isinstance(getattr(node, field, None), list):
+                setattr(node, field, self._stmts(getattr(node, field)))
+        for h in getattr(node, "handlers", None) or []:
+            h.body = self._stmts(h.body)
+        for name, value in ast.iter_fields(node):
+            if name in ("body", "orelse", "finalbody", "handlers"):
+                continue
+            if isinstance(value, list):
+                setattr(node, name, [self.visit(v) if isinstance(v, ast.AST) else v for v in value])
+            elif isinstance(value, ast.AST):
+                setattr(node, name, self.visit(value))
+        return node
+
+
 class _Drop636(ast.NodeTransformer):
     """Takes out what v6.36 adds and nothing else -- its import, its _v6_36_ methods, statements naming its identifiers
     (an if on one keeps its else) -- keeping every docstring: v6.35 as committed (38e06ed; Simple unchanged since
     a9dd99e)."""
+
+    def visit_Module(self, node):                      # v6.38's changes undone first (tests/_v638_undo.py)
+        _v638_undo.undo(node)
+        return self.generic_visit(node)
 
     def _stmts(self, stmts):
         out = []
@@ -835,7 +896,7 @@ def test_the_hooks_sit_where_the_design_puts_them():
     test = "getattr(self, '_v6_36_counts', None) is not None"
     assert [ast.unparse(h.test) for h in _hooks("respond")] == [test, test]
     assert [ast.unparse(h.test) for h in _hooks("build_mm_strategy_instructions")] == [test]
-    tree = ast.parse(SIMPLE)
+    tree = _Drop637().visit(ast.parse(SIMPLE))                                   # v6.36: v6.37 out
     imports = [n for n in tree.body if isinstance(n, ast.ImportFrom)]
     names = [n.module for n in imports]
     i = names.index("research_v6_36_step_withdrawal")
@@ -849,9 +910,12 @@ def test_the_hooks_sit_where_the_design_puts_them():
     assert order[j + 1:j + 1 + len(METHODS)] == list(METHODS) and order[j + 1 + len(METHODS)] == "_v619_snapshot"
 
 
-# v6.35 = v6.34 (a9dd99e) with PARAMS only: its Simple is a9dd99e's (sha256 ecdf6929ff98...); the digest of its AST
-# (ast.dump, Python 3.12) was computed once from that file and is embedded here
-V635_AST_SHA256 = "b786087b590517c0b93d6645850a668ab445d6b43b68f68b7591fc436c67547b"
+# v6.35 = v6.34 (a9dd99e) with PARAMS only: its Simple is a9dd99e's (sha256 ecdf6929ff98...); the digest of its AST was
+# computed once from that file and is embedded here -- per interpreter, since ast.dump's text differs between Python
+# minors (k123: 3.10 = the miners' venv, so the launcher gate's interpreter; 3.12 = the host's python3)
+V635_AST_SHA256_BY_PY = {(3, 10): "f720caa928d02c08e1ac97cafb356a6323a9f902623b45c821a008d06aa0c900",
+                         (3, 12): "b786087b590517c0b93d6645850a668ab445d6b43b68f68b7591fc436c67547b"}
+V635_AST_SHA256 = V635_AST_SHA256_BY_PY.get(tuple(sys.version_info[:2]), "no v6.35 digest for this interpreter")
 
 
 def _ast_sha(tree):
@@ -859,7 +923,7 @@ def _ast_sha(tree):
 
 
 def test_every_v635_statement_is_in_v636_unchanged_and_v636_only_adds():
-    stripped = _Drop636().visit(ast.parse(SIMPLE))
+    stripped = _Drop636().visit(_Drop637().visit(ast.parse(SIMPLE)))            # v6.37 out first
     assert _ast_sha(stripped) == V635_AST_SHA256                                  # v6.35 = v6.36 minus v6.36
     assert _ast_sha(ast.parse(SIMPLE)) != V635_AST_SHA256 and not _mentions636(stripped)
     for good, bad in (("self._research_final_validate_instructions(response, state)\n",
@@ -867,7 +931,8 @@ def test_every_v635_statement_is_in_v636_unchanged_and_v636_only_adds():
                       ("self._v6_32_request(state)", "self._v6_32_report()"),
                       ("            self._a199_note_exit_stalls(response)\n", "            pass\n")):
         assert SIMPLE.count(good) == 1, good
-        assert _ast_sha(_Drop636().visit(ast.parse(SIMPLE.replace(good, bad)))) != V635_AST_SHA256, good
+        assert _ast_sha(_Drop636().visit(_Drop637().visit(ast.parse(SIMPLE.replace(good, bad))))) != \
+            V635_AST_SHA256, good
     try:
         out = subprocess.run(["git", "-c", "safe.directory=*", "show",
                               "a9dd99e:agents/strategy/Strategy1_Research_Simple.py"], cwd=ROOT,
@@ -887,8 +952,16 @@ def test_the_frozen_modules_are_v635s():
         out = None
     if out is None or out.returncode != 0:
         pytest.skip("git or a9dd99e is not available here")
-    assert out.stdout.split() == ["agents/strategy/Strategy1_Research_Simple.py"]     # + the new module (untracked)
-    assert (STRATEGY / "research_v6_36_step_withdrawal.py").is_file()
+    # k106 F2 changes three more files, each pinned to its committed code by the F2 strip (tests/test_research_v6_37.py)
+    f2 = {"agents/strategy/research_direct_exit_ledger.py", "agents/strategy/research_direct_idle_gc.py",
+          "taos/im/protocol/models.py"}
+    # v6.37 (6171a57 + F2): the module is committed since 6171a57, so git lists it beside Simple
+    v636 = {"agents/strategy/research_v6_36_step_withdrawal.py"}
+    # v6.37's and v6.38's own modules (listed once committed, k111 note 2) and v6.38's paths (tests/_v638_undo.py)
+    later = ({"agents/strategy/research_v6_37_fast_path.py"} | _v638_undo.V638_NEW | _v638_undo.V638_MODULES
+             | _v638_undo.V638_ARCHIVED)
+    assert [n for n in out.stdout.split() if n not in f2 | v636 | later] == ["agents/strategy/Strategy1_Research_Simple.py"]
+    assert (STRATEGY / "research_v6_36_step_withdrawal.py").is_file()           # + the new module
 
 
 # ---- 6. the launcher -------------------------------------------------------------------------------------------------
@@ -910,14 +983,14 @@ def _patterns():
 
 
 def test_the_v636_block_is_gated_preflighted_listed_and_ships_on():
-    assert LAUNCHER.count("; V6_34_BUILD=0; V6_36_BUILD=0\n") == 1
+    assert LAUNCHER.count("; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0; V6_38_BUILD=0\n") == 1
     arm = next(x for x in LAUNCHER.splitlines() if x.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_34_BUILD=1; V6_36_BUILD=1"), arm
+    assert arm.endswith("; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1; V6_38_BUILD=1"), arm
     assert LAUNCHER.count('if [[ "${V6_36_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_36_BUILD=") == 2
     assert "      tests/test_research_v6_34.py \\\n      tests/test_research_v6_36.py \\\n" in LAUNCHER
-    assert 'research_v634_class1_entry=0 \\\nresearch_v636_step_withdrawal=1"\n' in LAUNCHER
-    assert " research_v636_step_withdrawal=1 " in f" {_params()} " and _params().split()[-1] == \
-        "research_v636_step_withdrawal=1"
+    assert 'research_v634_class1_entry=0 \\\nresearch_v636_step_withdrawal=1 \\\n' in LAUNCHER   # v6.37's next
+    assert " research_v636_step_withdrawal=1 " in f" {_params()} " and _params().split()[-4] == \
+        "research_v636_step_withdrawal=1"                       # then v6.37's key and v6.38's two
     assert LAUNCHER.index('echo "[preflight] v6.34 class-1 entry PASS') < LAUNCHER.index("# v6.36.") < \
         LAUNCHER.index('echo "[preflight] v6.36 step withdrawal PASS') < \
         LAUNCHER.index('if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then')

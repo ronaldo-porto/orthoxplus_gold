@@ -84,11 +84,125 @@ class LedgerOrder:
             return 0.0
 
 
+# ---- k106 F2 (reply time; every result identical) -------------------------------------------------------------------
+# live_orders scanned EVERY tracked row for each call (~650 calls a state on the k106 harness, ~4 ms).  F2 keeps the
+# order dict as _F2BookOrders: a dict whose every write also files the row under its book, so live_orders reads only
+# that book's rows -- in the dict's own order: each order id keeps the sequence number of its first insertion (a
+# re-write keeps the key's place, as the dict does; a removal and a new write move it to the end, as the dict does).
+# Reads, iteration and every other dict behaviour are the dict's own.  A row without a usable book_id switches the
+# index off for good (the original scan then runs, with the original outcome).  _F2_LEDGER_INDEX = False restores the
+# scan.
+_F2_LEDGER_INDEX = True
+
+
+class _F2BookOrders(dict):
+    """The ledger's order dict with a per-book index kept in step with every write (see the F2 note above)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self._f2_books = {}                 # book_id -> {order_id: row}
+        self._f2_where = {}                 # order_id -> the book_id it is filed under
+        self._f2_seq = {}                   # order_id -> first-insertion sequence number
+        self._f2_next = 0
+        self._f2_broken = False
+        for key, value in dict(*args, **kwargs).items():
+            self[key] = value
+
+    def _f2_unfile(self, key):
+        if key in self._f2_where:
+            book = self._f2_where.pop(key)
+            rows = self._f2_books.get(book)
+            if rows is not None:
+                rows.pop(key, None)
+                if not rows:
+                    del self._f2_books[book]
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self._f2_unfile(key)
+        else:
+            self._f2_seq[key] = self._f2_next
+            self._f2_next += 1
+        dict.__setitem__(self, key, value)
+        try:
+            book = value.book_id
+            self._f2_books.setdefault(book, {})[key] = value
+            self._f2_where[key] = book
+        except Exception:
+            self._f2_broken = True
+
+    def __delitem__(self, key):
+        dict.__delitem__(self, key)
+        self._f2_unfile(key)
+        self._f2_seq.pop(key, None)
+
+    def pop(self, key, *default):
+        if key in self:
+            value = dict.pop(self, key)
+            self._f2_unfile(key)
+            self._f2_seq.pop(key, None)
+            return value
+        return dict.pop(self, key, *default)
+
+    def popitem(self):
+        key, value = dict.popitem(self)
+        self._f2_unfile(key)
+        self._f2_seq.pop(key, None)
+        return key, value
+
+    def clear(self):
+        dict.clear(self)
+        self._f2_books.clear()
+        self._f2_where.clear()
+        self._f2_seq.clear()
+
+    def setdefault(self, key, default=None):
+        if key not in self:
+            self[key] = default
+        return dict.__getitem__(self, key)
+
+    def update(self, *args, **kwargs):
+        for key, value in dict(*args, **kwargs).items():
+            self[key] = value
+
+    def _f2_book_rows(self, book_id):
+        """This book's rows in the dict's own order, or None when the index cannot answer."""
+        if self._f2_broken:
+            return None
+        try:
+            rows = self._f2_books.get(book_id)
+        except Exception:
+            return None
+        if not rows:
+            return []
+        seq = self._f2_seq
+        return [row for _key, row in sorted(rows.items(), key=lambda item: seq[item[0]])]
+
+
+def _f2_book_rows(orders, book_id):
+    """The book's rows from the index, in the dict's order; None when the dict is not indexed or cannot answer."""
+    if type(orders) is not _F2BookOrders:
+        return None
+    return orders._f2_book_rows(book_id)
+
+
+def _v6_37_orders():
+    """v6.37 (research_v637_fast_path): the order dict of a ledger being made, as _F2_LEDGER_INDEX stands when it is
+    made -- F2's indexed dict while on, v6.36's plain dict once the agent switched the fast path off.  The agent writes
+    the switch after this module's import (research_v6_37_fast_path), so a default fixed when the class was built would
+    keep F2's dict for every later ledger."""
+    if _F2_LEDGER_INDEX:
+        return _F2BookOrders()
+    return {}
+
 @dataclass
 class DirectExitLedger:
     """Live-order view rebuilt from acknowledged exchange notices."""
 
-    orders: dict[int, LedgerOrder] = field(default_factory=dict)
+    if _F2_LEDGER_INDEX:
+        orders: dict[int, LedgerOrder] = field(default_factory=_v6_37_orders)
+    else:
+        orders: dict[int, LedgerOrder] = field(default_factory=dict)
     removal_causes: dict[int, str] = field(default_factory=dict)
     accepted: int = 0
     removed: int = 0
@@ -209,12 +323,6 @@ class DirectExitLedger:
             self.swept += 1
         return len(stale)
 
-    def note_action(self, book_id, side, action: str) -> None:
-        """Tag the newest order on a book/side with the rung that placed it."""
-        rows = self.live_orders(book_id, side=side)
-        if rows:
-            rows[0].action = str(action or "")
-
     # ----------------------------------------------------------------- reads
 
     def live_orders(
@@ -240,10 +348,13 @@ class DirectExitLedger:
                 want = int(side)
             except (TypeError, ValueError):
                 return []
-        rows = [
-            row for row in self.orders.values()
-            if row.book_id == bid and (want is None or row.side == want)
-        ]
+        if _F2_LEDGER_INDEX and (f2_rows := _f2_book_rows(self.orders, bid)) is not None:
+            rows = [row for row in f2_rows if want is None or row.side == want]
+        else:
+            rows = [
+                row for row in self.orders.values()
+                if row.book_id == bid and (want is None or row.side == want)
+            ]
         if max_age_ms is not None and now_ns is not None:
             try:
                 limit = float(max_age_ms)

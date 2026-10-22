@@ -5,8 +5,8 @@ from research_contract_guard import guarded_post_only_price
 
 ROOT = Path(__file__).parents[1]
 SRC = (ROOT / "agents" / "strategy" / "Strategy1_Research.py").read_text()
-BASE = (ROOT / "agents" / "strategy" / "BaseStrategy.py").read_text()
-ADAPTIVE = (ROOT / "agents" / "strategy" / "AdaptiveAgent.py").read_text()
+BASE = (ROOT / "archive" / "agents" / "strategy" / "BaseStrategy.py").read_text()      # v6.38: archived (git mv)
+ADAPTIVE = (ROOT / "archive" / "agents" / "strategy" / "AdaptiveAgent.py").read_text()
 
 
 def test_book106_safe_reprice_is_deterministic():

@@ -327,7 +327,7 @@ def test_the_switch_off_restores_a1_9_9_1():
 
 def test_no_strategy_module_observes_when_the_collector_runs():
     paths = sorted(STRATEGY.glob("Strategy1*.py")) + sorted(STRATEGY.glob("research_*.py"))
-    paths += [STRATEGY / "DetailedTemplateAgent.py", STRATEGY / "candidate_screen.py"]
+    paths += [STRATEGY / "DetailedTemplateAgent.py"]          # v6.38: candidate_screen.py archived (not loaded)
     offenders = []
     for path in paths:
         if path.name == "research_direct_idle_gc.py":

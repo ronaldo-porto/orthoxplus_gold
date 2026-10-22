@@ -52,10 +52,6 @@ class RollingBookEconomics:
     newest_timestamp: int | None
 
     @property
-    def pnl_ready(self) -> bool:
-        return self.nonzero_count > 0 and self.realized_sum >= 0.0
-
-    @property
     def loss_rate(self) -> float:
         return 0.0 if self.nonzero_count <= 0 else self.negative_count / float(self.nonzero_count)
 

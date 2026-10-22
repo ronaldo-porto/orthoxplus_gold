@@ -352,20 +352,6 @@ def rolling_observation_timestamps(
     return {book: tuple(sorted(ts_list)) for book, ts_list in rows.items()}
 
 
-def rolling_observation_counts(
-    realized_pnl_history: Mapping[Any, Mapping[Any, Any]] | None,
-    *,
-    now: Any,
-    lookback_ns: Any,
-) -> dict[int, int]:
-    return {
-        int(book): len(timestamps)
-        for book, timestamps in rolling_observation_timestamps(
-            realized_pnl_history, now=now, lookback_ns=lookback_ns,
-        ).items()
-    }
-
-
 
 
 def kappa_expiry_from_timestamps(
@@ -405,47 +391,6 @@ def kappa_expiry_from_timestamps(
         # retained observation is valuable progress, so the oldest observation
         # is the next progress point at risk of rolling out.
         retained = clean[-required:] if qualified else clean
-        oldest = int(retained[0])
-        expires_at = oldest + lookback
-        time_to_expiry = max(0, expires_at - current)
-        horizon = max(1.0, float(lookback) * max(0.01, min(0.95, float(warning_horizon_frac))))
-        urgency = max(0.0, min(1.0, 1.0 - float(time_to_expiry) / horizon))
-    return KappaExpiryState(
-        book=bid,
-        recent_observation_count=count,
-        required_observations=required,
-        qualified=qualified,
-        oldest_required_timestamp=oldest,
-        expires_at=expires_at,
-        time_to_expiry_ns=time_to_expiry,
-        expiry_urgency=urgency,
-    )
-
-def kappa_expiry_state(
-    book: Any,
-    realized_pnl_history: Mapping[Any, Mapping[Any, Any]] | None,
-    *,
-    now: Any,
-    lookback_ns: Any,
-    required_observations: Any,
-    warning_horizon_frac: float = 0.20,
-) -> KappaExpiryState:
-    bid = int(book)
-    current = int(now or 0)
-    lookback = max(1, int(lookback_ns or 1))
-    required = max(1, _count(required_observations, 1))
-    timestamps = rolling_observation_timestamps(
-        realized_pnl_history, now=current, lookback_ns=lookback,
-    ).get(bid, ())
-    count = len(timestamps)
-    qualified = count >= required
-    oldest = None
-    expires_at = None
-    time_to_expiry = None
-    urgency = 0.0
-    if qualified:
-        # Only the most recent `required` observations are needed to stay qualified.
-        retained = timestamps[-required:]
         oldest = int(retained[0])
         expires_at = oldest + lookback
         time_to_expiry = max(0, expires_at - current)

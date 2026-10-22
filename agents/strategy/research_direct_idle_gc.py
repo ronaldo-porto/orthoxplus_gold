@@ -59,6 +59,12 @@ A1992_IDLE_DELAY_MS = 500.0
 A1992_FALLBACK_RESPONSES = 20
 # Counting tracked objects walks the heap, so only every Nth idle pass does it.
 A1992_HEAP_SAMPLE_EVERY = 100
+# k106 F2 (reply time): automatic collection of generations 0 and 1 is held off too, from a request's start until the
+# idle pass after it (which re-enables it), so neither the request nor the reply's compression pays a young-generation
+# pass (OBSERVED, k106 harness: ~97 gen-0 + ~8 gen-1 passes = ~3.8 ms per request).  The idle pass collects every
+# generation; a fallback turns automatic collection back on.  Only where the gc module offers isenabled / disable /
+# enable.
+F2_REQUEST_GC_HOLD = True
 
 FALLBACK_NO_EVENT_LOOP = "NO_EVENT_LOOP"
 FALLBACK_NO_IDLE_GAP = "NO_IDLE_GAP"
@@ -122,6 +128,8 @@ class IdleCollector:
         self.idle_total_ms = 0.0
         self.idle_last_unreachable = 0
         self.tracked_objects: int | None = None
+        self.f2_held = False                # F2: collection held off since a request began (its idle pass ends it)
+        self.f2_holds = 0
 
     # ---- request boundary ---------------------------------------------------------------------
 
@@ -133,6 +141,8 @@ class IdleCollector:
             self.idle_cancelled += 1
         if not self.installed and not self.fallback_reason:
             self._install(loop)
+        if F2_REQUEST_GC_HOLD and self.installed:
+            self._f2_hold()
         self._begin_collections = self._collections()
 
     def end_request(self, loop: Any) -> None:
@@ -167,6 +177,8 @@ class IdleCollector:
         except Exception:
             self._fall_back(FALLBACK_COLLECT_ERROR)
             return None
+        if F2_REQUEST_GC_HOLD:
+            self._f2_release()
         ms = (self._clock() - started) * 1000.0
         self.idle_passes += 1
         self.idle_last_ms = ms
@@ -203,7 +215,33 @@ class IdleCollector:
         self.installed = True
         self.skip_reason = ""
 
+    def _f2_hold(self) -> None:
+        """F2: switch automatic collection off for this request and the reply after it, if this collector can."""
+        isenabled, disable = getattr(self._gc, "isenabled", None), getattr(self._gc, "disable", None)
+        if self.f2_held or isenabled is None or disable is None:
+            return
+        try:
+            if isenabled():
+                disable()
+                self.f2_held = True
+                self.f2_holds += 1
+        except Exception:
+            self.f2_held = False
+
+    def _f2_release(self) -> None:
+        """F2: automatic collection back on (after the idle pass, or on a fallback)."""
+        if not self.f2_held:
+            return
+        self.f2_held = False
+        enable = getattr(self._gc, "enable", None)
+        if enable is not None:
+            try:
+                enable()
+            except Exception:
+                pass
+
     def _fall_back(self, reason: str) -> None:
+        self._f2_release()
         self._cancel_timer()
         if self.saved_threshold is not None:
             try:

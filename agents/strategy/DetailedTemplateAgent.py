@@ -685,27 +685,6 @@ class DetailedTemplateAgent(FinanceSimulationAgent):
             return False
         return len(pos["longs"]) > 0 or len(pos["shorts"]) > 0
 
-    def estimate_realized_pnl(
-        self,
-        book_id: int,
-        is_buy: bool,
-        quantity: float,
-        price: float,
-        is_maker: bool = True,
-        timestamp: int = 0,
-    ) -> float:
-        """
-        Expected realized PnL for one hypothetical fill using current FIFO open lots.
-
-        Returns 0.0 when the trade would only open a new position (no round-trip close).
-        """
-        if quantity <= 0 or price <= 0:
-            return 0.0
-        positions = self._copy_positions_for_book(book_id)
-        fee = self._estimate_trade_fee(book_id, quantity, price, is_maker)
-        pnl, _ = self._simulate_fifo_pnl(positions, is_buy, quantity, price, fee, timestamp)
-        return pnl
-
     def estimate_round_trip_pnl(
         self,
         book_id: int,

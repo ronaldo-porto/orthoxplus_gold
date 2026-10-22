@@ -126,8 +126,9 @@ def test_every_key_the_launcher_ships_today_resolves():
     # +2 research_v631_touch_improve, research_v631_single_write_save (v6.31 S12b, the single-write save),
     # +3 research_v632_fee_making, research_v632_fee_weight, research_v632_state_fundamental (v6.32 S14, P1),
     # +1 research_v633_touch_identity (v6.33 D4), +1 research_v634_class1_entry (v6.34),
-    # +1 research_v636_step_withdrawal (v6.36).
-    assert len(keys) == 212, len(keys)
+    # +1 research_v636_step_withdrawal (v6.36), +1 research_v637_fast_path (v6.37), v6.38: -1
+    # research_a193_breadth_admission_enabled (retired), +1 research_enable_fill_hazard (P2L), +1 research_v638_fast_path.
+    assert len(keys) == 214, len(keys)
     out = _run_guard(" ".join(f"{k}=x" for k in keys))
     assert out.returncode == 0, out.stderr
-    assert "(212 keys)" in out.stdout
+    assert "(214 keys)" in out.stdout

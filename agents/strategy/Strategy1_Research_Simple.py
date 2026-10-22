@@ -81,7 +81,6 @@ from research_direct_quality import (
     MIGRATED_QUALITY_GLOBAL_FULL_WEIGHT_SAMPLES,
     MakerLifecycleStats,
     maker_quality_adjustment,
-    maker_realization_cost_estimate,
 )
 from research_direct_execution_quality import (
     DIRECT_DUST_EXEMPT_CAP,
@@ -89,7 +88,6 @@ from research_direct_execution_quality import (
     DIRECT_MAKER_MAX_TOUCH_IMPROVEMENT_BPS,
     cap_maker_quote_geometry,
     dust_exempt_count,
-    effective_total_open_books,
 )
 from research_direct_fastpath import (
     DIRECT_FASTPATH_VERSION,
@@ -115,7 +113,6 @@ from research_direct_exit import (
 import importlib
 from research_position_exit import (
     ACTION_MAKER_EXIT,
-    ACTION_PARK_EXIT,
     ACTION_TAKER_EXIT,
     ACTION_WAIT,
     BAND_ABSOLUTE,
@@ -129,7 +126,6 @@ from research_direct_exposure import (
     DIRECT_EXPOSURE_VERSION,
     add_order_to_batch,
     outstanding_reservation,
-    worst_case_abs_inventory,
 )
 from research_direct_quote_manager import (
     DIRECT_QUOTE_MANAGER_VERSION,
@@ -261,10 +257,8 @@ from research_direct_inventory_truth import (
     A195_INVENTORY_TRUTH_VERSION,
     A195_MAX_SEED_ABS_BASE,
     A195_MAX_SEED_BOOKS,
-    SEED_LEGACY_DUST,
     SEED_REAL,
     build_seed_plan,
-    legacy_dust_ceiling_bonus,
 )
 from research_direct_breadth_lane import (
     A195_BREADTH_LANE_VERSION,
@@ -394,10 +388,8 @@ from research_v603_recovery import (
     row_disposition as v603_row_disposition,
 )
 from research_v61_lot_floor import (
-    REWRITE_IDLE_TO_MAKER as V61_REWRITE_IDLE,
     fifo_close_net_bps as v61_fifo_close_net_bps,
     REWRITE_NONE as V61_REWRITE_NONE,
-    REWRITE_TAKER_TO_MAKER as V61_REWRITE_TAKER,
     V61_LOT_FLOOR_VERSION,
     V61_STATE_EVERY_TICKS,
     floor_price as v61_floor_price,
@@ -454,7 +446,6 @@ from research_v625_cap_paced import (
     BAND_CLIPS as V625_BAND_CLIPS,
     PACE_PERIOD_NS as V625_PACE_PERIOD_NS,
     PACE_SAMPLE_NS as V625_PACE_SAMPLE_NS,
-    REASON_BAND as V625_REASON_BAND,
     REASON_CAP_RESERVE as V625_REASON_CAP_RESERVE,
     REASON_EXIT_SIDE as V625_REASON_EXIT_SIDE,
     REASON_OK as V625_REASON_OK,
@@ -474,10 +465,7 @@ from research_v625_cap_paced import (
     sides_verdict as v625_sides_verdict,
 )
 from research_v626_balanced_maker import (
-    REASON_SIDE_OWNED as V626_REASON_SIDE_OWNED,
     REASON_SURPLUS as V626_REASON_SURPLUS,
-    V626_BALANCED_MAKER_VERSION,
-    balance_ratio as v626_balance_ratio,
     book_blocked as v626_book_blocked,
     median_budget as v626_median_budget,
     open_book_caps as v626_open_book_caps,
@@ -488,10 +476,8 @@ from research_v626_balanced_maker import (
 )
 from research_v627_maker_ceiling import (
     BALANCE_TARGET as V627_BALANCE_TARGET,
-    V627_MAKER_CEILING_VERSION,
     balance_gate_sides as v627_balance_gate_sides,
     band_caps as v627_band_caps,
-    book_balance as v627_book_balance,
     bounded_ceiling as v627_bounded_ceiling,
     cap_absorption_clip as v627_cap_absorption_clip,
     pace_rewound as v627_pace_rewound,
@@ -681,15 +667,12 @@ from research_v69_deep_ladder import (  # noqa: E402
 )
 from research_v610_paced_bound import (  # noqa: E402
     BEHIND_MAX_CLIPS_DEFAULT as V610_BEHIND_MAX_CLIPS_DEFAULT,
-    BEHIND_MAX_CLIPS_OFF as V610_BEHIND_MAX_CLIPS_OFF,
     V610_PACED_BOUND_VERSION,
     behind_clips as v610_behind_clips,
     bound_clips as v610_bound_clips,
     caps_clips as v610_caps_clips,
 )
 from research_v612_reduce_depth import (  # noqa: E402
-    REDUCE_DEPTH_FACTOR as V612_REDUCE_DEPTH_FACTOR,
-    V612_REDUCE_DEPTH_VERSION,
     level0_depth as v612_level0_depth,
 )
 from research_v614_book_floor import (  # noqa: E402
@@ -901,6 +884,17 @@ from research_v6_36_step_withdrawal import (  # noqa: E402
     state_map as v6_36_state_map,
     step_grid as v6_36_step_grid,
     withdrawal as v6_36_withdrawal,
+)
+from research_v6_37_fast_path import (  # noqa: E402
+    apply as v6_37_apply,
+    ledger_orders as v6_37_ledger_orders,
+)
+from research_v6_38_fast_path import (  # noqa: E402
+    apply as v6_38_apply,
+    feed as v6_38_feed,
+    last_taker_side as v6_38_last_taker_side,
+    trades_of as v6_38_trades_of,
+    trades_reset as v6_38_trades_reset,
 )
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
@@ -1793,8 +1787,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # v6.2.7: rule B becomes corrective.  The proportional split only slowed an imbalance -- the
         # surplus side kept quoting at a trimmed size and making is 2*min(buy, sell), so that size
         # scored nothing.  Balance stalled at 60.9% with the median book at 0.663.  Off = v6.2.6.
+        # v6.38: off in source as well (refuted; PARAMS ships =0): a launcher that loses the key keeps it off.
         self.research_v627_balance_gate = self._as_bool(
-            getattr(self.config, "research_v627_balance_gate", True)
+            getattr(self.config, "research_v627_balance_gate", False)
         )
         # v6.2.7: the portfolio exposure bound and the startup seed bound come off one band.  They
         # were set independently, the seed bound at twice the exposure bound, and the v6.2.6 launch
@@ -1972,7 +1967,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # One switch per rule; all off = v6.2.15.1.
         self.research_v63_trend_target = self._as_bool(getattr(self.config, "research_v63_trend_target", True))
         self.research_v63_making_layer = self._as_bool(getattr(self.config, "research_v63_making_layer", True))
-        self.research_v63_fee_cap = self._as_bool(getattr(self.config, "research_v63_fee_cap", True))
+        # v6.38: R3 (the fee cap) is off in source as well (refuted in the v6.3.x line; PARAMS ships =0).
+        self.research_v63_fee_cap = self._as_bool(getattr(self.config, "research_v63_fee_cap", False))
         self.research_v63_book_stop = self._as_bool(getattr(self.config, "research_v63_book_stop", True))
         self.research_v63_lean_log = self._as_bool(getattr(self.config, "research_v63_lean_log", True))
         try:
@@ -2094,7 +2090,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # sell, its free quote at the order's price for a buy).  STRUCTURAL: see research_v69_deep_ladder.
         self.research_v691_free_base = self._as_bool(getattr(self.config, "research_v691_free_base", True))
         # v6.12: on a held book the side that reduces the position rests its level-0 deep order at
-        # V612_REDUCE_DEPTH_FACTOR of the depth.  STRUCTURAL: see research_v612_reduce_depth.
+        # research_v612_reduce_depth.REDUCE_DEPTH_FACTOR of the depth.  STRUCTURAL: see research_v612_reduce_depth.
         self.research_v612_reduce_depth = self._as_bool(getattr(self.config, "research_v612_reduce_depth", True))
         # v6.14: the deep layer opens a book on its depth and inventory, not on its paper alpha (the 0.6.2 skill floor's
         # per-book rule; the making half pays every book's capture).  STRUCTURAL: see research_v614_book_floor.
@@ -2356,7 +2352,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # adding side held 20 sim-s after a miner taker's print (S17-R), paced per book from its own entry, gated by S14
         # on its own class-1 estimate and by D4.  No deep layer, lean or v6.23 S1 there; class 0 is v6.33's.  Without a
         # class map the switch does nothing.  Off, the build is v6.33.  STRUCTURAL; see research_v6_34_class1.
-        self.research_v634_class1_entry = self._as_bool(getattr(self.config, "research_v634_class1_entry", True))
+        # v6.38: off in source as well (FAILED live 10-17; PARAMS ships =0): a launcher that loses the key keeps it off.
+        self.research_v634_class1_entry = self._as_bool(getattr(self.config, "research_v634_class1_entry", False))
         self._v6_34_layout: dict[str, Any] = {}
         self._v6_34_c1: frozenset = frozenset()
         self._v6_34_route: frozenset = frozenset()
@@ -2389,6 +2386,25 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self._v6_36_errors_seen = 0
         self._v6_36_reported = False
         self._v6_36_erring = False
+        # v6.37 (research_v637_fast_path): F2 (scratchpad k106) -- the reply path ~20 % faster with every decision as
+        # v6.36's: the protocol's lazy wrappers build less (a level's price / quantity off the wire dict, an exact
+        # model_construct replica, events through each model's own validator), automatic collection waits for the
+        # request's idle pass, the exit ledger answers live_orders from a per-book index.  Each sits behind its
+        # module's own switch, read where its code runs; the miner imported those modules before this agent, so the
+        # PARAMS switch is written into all three here, before any request, and the A1.9.0.1 ledger initialize() made
+        # before this method takes the order dict the switch selects.  Off, the build is v6.36.  STRUCTURAL; see
+        # research_v6_37_fast_path.
+        self.research_v637_fast_path = self._as_bool(getattr(self.config, "research_v637_fast_path", True))
+        self._v6_37_switches = v6_37_apply(self.research_v637_fast_path)
+        self._a19_ledger.orders = v6_37_ledger_orders(self._a19_ledger.orders)
+        # v6.38 (research_v638_fast_path): U2 stage A (scratchpad k115 probes, built in k123) -- the reply path faster
+        # with every decision as v6.37's: P5 the protocol validates a book's trade events only (the switch is the
+        # protocol's own, written here before any request), P1 the A1.9.0.2 observer's per-book shadow pass skipped
+        # (its ledger sweep kept), P3 the four trade walkers read one parse of each book's events a request.  Each sits
+        # behind "if switch: new, else: the original".  Off, the build is v6.37.  STRUCTURAL; see
+        # research_v6_38_fast_path.
+        self.research_v638_fast_path = self._as_bool(getattr(self.config, "research_v638_fast_path", True))
+        self._v6_38_switches = v6_38_apply(self.research_v638_fast_path)
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -2694,6 +2710,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
         return super()._format_human(record)
 
     def update(self, state) -> None:
+        # v6.38 P3 (research_v638_fast_path): a new request -- the trade walkers' shared parse starts empty.
+        if getattr(self, "research_v638_fast_path", False):
+            v6_38_trades_reset()
         # v6.23 S3: one count per state, so the start notices one state carries are told from a later state's
         # (research_v623_start_once; the request tick stands still while the v5.0.3 quiet gate holds).
         self._v6_23_update_seq = int(getattr(self, "_v6_23_update_seq", 0) or 0) + 1
@@ -6346,23 +6365,6 @@ class Strategy1_Research_Simple(Strategy1_Research):
             pass
 
     @staticmethod
-    def _a19_order_id(order) -> int | None:
-        try:
-            return int(getattr(order, "id", None))
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _a19_order_price(order) -> float | None:
-        price = getattr(order, "price", None)
-        if price is None:
-            price = getattr(order, "limit_price", None)
-        try:
-            return float(price)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
     def _a19_tick_size(state) -> float:
         try:
             price_dec = int(getattr(getattr(state, "config", None), "priceDecimals", 2) or 2)
@@ -6867,6 +6869,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # row join the A19_EXIT_EVAL row emitted later in the same tick.
         tick = int(getattr(self, "_tick", 0) or 0) + 1
         self._a19_tick_passes += 1
+        if getattr(self, "research_v638_fast_path", False):
+            # v6.38 P1 (research_v638_fast_path; scratchpad k115 probe P1): the per-book shadow-exit pass below is
+            # measurement only -- its _a19_tick_* state feeds its own lean-sampled A19_TICK_OBSERVE / A19_TICK_LIFECYCLE
+            # rows and the stats dict, never a decision -- so the fast path skips it.  The ledger sweep above stays:
+            # a191, v6.2.14, v6.36 and v6.17 read the exit ledger it keeps.
+            return
 
         books = getattr(state, "books", None) or {}
         if not books:
@@ -9862,7 +9870,7 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _v627_balance_gate_on(self) -> bool:
         return bool(self._v626_capture_balance_on()
-                    and getattr(self, "research_v627_balance_gate", True))
+                    and getattr(self, "research_v627_balance_gate", False))
 
     def _v627_band_caps_on(self) -> bool:
         return bool(self._v62_on() and getattr(self, "research_v627_band_caps", True))
@@ -10494,10 +10502,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 mirror = V62MakingMirror(int(getattr(self, "uid", 0) or 0), lookback_ns=lookback)
             self._v62_mirror = mirror
         books = getattr(state, "books", None) or {}
-        mirror.ingest_state(
-            int(getattr(state, "timestamp", 0) or 0),
-            ((int(raw_id), getattr(book, "events", None)) for raw_id, book in books.items()),
-        )
+        if getattr(self, "research_v638_fast_path", False):
+            # v6.38 P3: each book's trades from the request's one parse (research_v6_38_fast_path.feed)
+            mirror.ingest_state(
+                int(getattr(state, "timestamp", 0) or 0),
+                ((int(raw_id), v6_38_feed(getattr(book, "events", None))) for raw_id, book in books.items()),
+            )
+        else:
+            mirror.ingest_state(
+                int(getattr(state, "timestamp", 0) or 0),
+                ((int(raw_id), getattr(book, "events", None)) for raw_id, book in books.items()),
+            )
 
     # ---- v6.2.11: the score logic for the final rung ------------------------------------------------
     def _v6211_count(self, key: str, n: int = 1) -> None:
@@ -10521,10 +10536,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 mirror = V6211OwnAlphaMirror(int(getattr(self, "uid", 0) or 0), lookback_ns=lookback)
             self._v6211_mirror = mirror
         books = getattr(state, "books", None) or {}
-        mirror.ingest_state(
-            int(getattr(state, "timestamp", 0) or 0),
-            ((int(raw_id), getattr(book, "events", None)) for raw_id, book in books.items()),
-        )
+        if getattr(self, "research_v638_fast_path", False):
+            # v6.38 P3: each book's trades from the request's one parse (research_v6_38_fast_path.feed)
+            mirror.ingest_state(
+                int(getattr(state, "timestamp", 0) or 0),
+                ((int(raw_id), v6_38_feed(getattr(book, "events", None))) for raw_id, book in books.items()),
+            )
+        else:
+            mirror.ingest_state(
+                int(getattr(state, "timestamp", 0) or 0),
+                ((int(raw_id), getattr(book, "events", None)) for raw_id, book in books.items()),
+            )
 
     def _v6211_snapshot(self) -> dict:
         out = dict(getattr(self, "_v6211_counts", {}) or {})
@@ -10650,7 +10672,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
 
     def _v6214_note_prints(self, book_id: int, book) -> None:
         """S2: remember which side the last print on this book hit; a state without a print keeps the old one."""
-        side = v6214_last_taker_side(getattr(book, "events", None))
+        if getattr(self, "research_v638_fast_path", False):
+            side = v6_38_last_taker_side(getattr(book, "events", None))     # v6.38 P3: from the request's one parse
+        else:
+            side = v6214_last_taker_side(getattr(book, "events", None))
         if side is None:
             return
         memo = getattr(self, "_v6214_last_taker", None)
@@ -14710,7 +14735,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             book_trades: list = []
             if deep is not None:
                 try:
-                    trades = [t for t in (v633_trade_of(ev) for ev in (getattr(book, "events", None) or ())) if t is not None]
+                    if getattr(self, "research_v638_fast_path", False):
+                        trades = list(v6_38_trades_of(getattr(book, "events", None)))     # v6.38 P3: the one parse
+                    else:
+                        trades = [t for t in (v633_trade_of(ev) for ev in (getattr(book, "events", None) or ())) if t is not None]
                     book_trades = trades
                     if bool(getattr(self, "research_v630_deep_tier", False)):
                         # v6.30 D1: the book's paper record rests its paper orders where its live deep orders go, so
@@ -18054,10 +18082,6 @@ class Strategy1_Research_Simple(Strategy1_Research):
             reserved_abs += reserve_abs
             reserved_open += reserve_open
         return float(reserved_abs), int(reserved_open)
-
-    def _direct_instruction_signed_qty(self, instruction, qty: float) -> float:
-        side = str(self._research_instruction_side(instruction) or "").lower()
-        return float(qty) if side in {"buy", "bid", "b", "0"} else -float(qty)
 
     def _research_final_validate_instructions(self, response, state) -> None:
         """A1.6.3 final placement validator with directional exposure semantics.

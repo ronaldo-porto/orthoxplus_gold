@@ -54,6 +54,7 @@ import test_research_v6_31 as t631  # noqa: E402
 import test_research_v6_32 as t632  # noqa: E402
 import test_research_v6_33 as t633  # noqa: E402
 from _harness import extractor  # noqa: E402
+import _v638_undo  # noqa: E402
 
 SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
 MODULE = (STRATEGY / "research_v6_34_class1.py").read_text()
@@ -62,7 +63,8 @@ _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 S = 1_000_000_000
 NOW = t632.NOW
 BUY, SELL = dl.SIDE_BUY, dl.SIDE_SELL
-SWITCH_LINE = 'self.research_v634_class1_entry = self._as_bool(getattr(self.config, "research_v634_class1_entry", True))'
+# v6.38 (item 1): the source default is off as well (refuted live 10-17; PARAMS ships =0 since v6.35)
+SWITCH_LINE = 'self.research_v634_class1_entry = self._as_bool(getattr(self.config, "research_v634_class1_entry", False))'
 HOOK_LINE = "self._v6_34_request(state)"
 BRANCH_LINE = ("placed_total += self._v6_34_book(response, state, book_id, deep, raw_bid, raw_ask, inv, touch_rows, "
                "rows + deep_rows, already, req, budget=budget, expiry=expiry, cfg=cfg)")
@@ -293,27 +295,37 @@ def _mentions634(node):
 # naming one) -- so the method-by-method checks below read v6.34 with v6.36 taken out (_Drop636;
 # tests/test_research_v6_36.py checks it), and t633's _Drop634 takes v6.36's additions out with v6.34's.
 V6_36_IDENTIFIERS = t623.V6_36_IDENTIFIERS
+# v6.37 (research_v637_fast_path) only adds: the strip takes its additions out as well
+# (tests/test_research_v6_37.py checks them against v6.36).
+V6_37_IDENTIFIERS = t623.V6_37_IDENTIFIERS
 
 
 def _mentions636(node):
     for n in ast.walk(node):
         name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
             n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
-        if isinstance(name, str) and (name in V6_36_IDENTIFIERS or name.startswith(("_v6_36_", "v6_36_"))):
+        if isinstance(name, str) and (name in V6_36_IDENTIFIERS or name in V6_37_IDENTIFIERS
+                                      or name.startswith(("_v6_36_", "v6_36_", "_v6_37_", "v6_37_"))):
             return True
     return False
 
 
 class _Drop636(ast.NodeTransformer):
-    """Takes out what v6.36 adds and nothing else -- its import, its _v6_36_ methods, statements naming its identifiers
-    (an if on one keeps its else) -- keeping every docstring: v6.34 (and v6.35) as committed (a9dd99e)."""
+    """Takes out what v6.36 (and v6.37 after it) adds and nothing else -- its import, its _v6_36_ methods, statements
+    naming its identifiers (an if on one keeps its else) -- keeping every docstring: v6.34 (and v6.35) as committed
+    (a9dd99e)."""
+
+    def visit_Module(self, node):                      # v6.38's changes undone first (tests/_v638_undo.py)
+        _v638_undo.undo(node)
+        return self.generic_visit(node)
 
     def _stmts(self, stmts):
         out = []
         for st in stmts:
-            if isinstance(st, ast.ImportFrom) and st.module == "research_v6_36_step_withdrawal":
+            if isinstance(st, ast.ImportFrom) and st.module in ("research_v6_36_step_withdrawal",
+                                                                "research_v6_37_fast_path"):
                 continue
-            if isinstance(st, ast.FunctionDef) and st.name.startswith("_v6_36_"):
+            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_36_", "_v6_37_")):
                 continue
             if isinstance(st, ast.If) and _mentions636(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -475,8 +487,8 @@ def _miner(side_hit, *, ts=NOW - S, ta=120, ma=77, q=3.0, p=30.03):
             "Mi": 5, "Ti": 6}
 
 
-def test_the_init_statements_set_the_state_and_the_switch_ships_default_on():
-    agent = _agent()
+def test_the_init_statements_set_the_state_and_the_switch_defaults_off():
+    agent = _agent()                                                 # the harness agent passes the switch =1
     assert agent.research_v634_class1_entry is True and isinstance(agent._v6_34_holds, c1.MinerHolds)
     assert (agent._v6_34_layout, agent._v6_34_c1, agent._v6_34_route, agent._v6_34_tracker) == ({}, frozenset(),
                                                                                                frozenset(), None)
@@ -489,11 +501,15 @@ def test_the_init_statements_set_the_state_and_the_switch_ships_default_on():
     exec(compile(_init_source(), "<v6.34 init>", "exec"), ns)
     a.config = types.SimpleNamespace()
     ns["_init634"](a)
-    assert a.research_v634_class1_entry is True
+    assert a.research_v634_class1_entry is False                     # v6.38: a launcher that loses the key keeps it off
     for bad in ("0", "false", 0, False):
         a.config = types.SimpleNamespace(research_v634_class1_entry=bad)
         ns["_init634"](a)
         assert a.research_v634_class1_entry is False, bad
+    for good in ("1", "true", 1, True):
+        a.config = types.SimpleNamespace(research_v634_class1_entry=good)
+        ns["_init634"](a)
+        assert a.research_v634_class1_entry is True, good
 
 
 def test_a_class_1_book_without_an_s9_decision_joins_both_touches_in_the_class_units():
@@ -901,7 +917,7 @@ def test_the_row_never_fails_the_request_and_waits_for_the_reply_and_off_it_says
 
 def test_the_switch_ships_on_after_v633s_key_and_agrees_with_its_agent_default():
     params = t617._params()
-    # v6.35: ships 0 (the launcher's "# v6.35." note); the agent default stays on, the launcher passes =0 explicitly
+    # v6.35: ships 0 (the launcher's "# v6.35." note), passed =0 explicitly; v6.38: the agent default is off as well
     assert "research_v634_class1_entry=0 " in t617._shipped() + " " and params.count("research_v634_class1_entry=") == 1
     assert 'research_v633_touch_identity=1 \\\nresearch_v634_class1_entry=0 \\\n' in LAUNCHER   # v6.36's next
     init = _src("_init_build_switches")
@@ -989,9 +1005,13 @@ def test_v634s_strip_takes_out_its_methods_and_its_statements_in_five():
         assert not (isinstance(n, ast.ImportFrom) and n.module == "research_v6_34_class1")
 
 
-# v6.33 is not committed: its Simple is k96's FROZEN_2 (sha256 225de14b62f6c9f9...); the digest of its AST (ast.dump,
-# Python 3.12) was computed once from that file and is embedded here
-V633_AST_SHA256 = "702447b48ebe91a6ac3c83a1355c1bfb69b6c94d401628f7a0a3d7c179591ceb"
+# v6.33 is not committed: its Simple is k96's FROZEN_2 (sha256 225de14b62f6c9f9...); the digest of its AST was computed
+# once from that file and is embedded here -- per interpreter, since ast.dump's text differs between Python minors (k123:
+# 3.10 = the miners' venv, so the launcher gate's interpreter; 3.12 = the host's python3; both from 9a6ec31 + k96's
+# v633_only_frozen_2.diff, sha256 225de14b62f6c9f9 again)
+V633_AST_SHA256_BY_PY = {(3, 10): "0c7d1f59aa3796365ce3452ea3bd7043ad91d55b8a6fbaf8229f426bff353c87",
+                         (3, 12): "702447b48ebe91a6ac3c83a1355c1bfb69b6c94d401628f7a0a3d7c179591ceb"}
+V633_AST_SHA256 = V633_AST_SHA256_BY_PY.get(tuple(sys.version_info[:2]), "no v6.33 digest for this interpreter")
 
 
 def _ast_sha(tree):
@@ -1019,10 +1039,14 @@ def test_the_frozen_modules_and_protocol_are_v633s():
     for other in ("Strategy1_Research.py", "research_v617_touch_quote.py", "research_v6_29_touch_move.py",
                   "research_v630_identity_profile.py", "research_v631_touch_improve.py", "research_v6_32_fee_making.py",
                   "research_v6_32_state_fp.py", "research_v633_deep_layer.py", "research_v641_pace.py",
-                  "research_v623_validator_063.py", "research_contract_guard.py", "research_direct_exit_ledger.py"):
+                  "research_v623_validator_063.py", "research_contract_guard.py"):
         assert t633._committed(f"agents/strategy/{other}") == (STRATEGY / other).read_text(), other
+    ledger = (STRATEGY / "research_direct_exit_ledger.py").read_text()          # k106 F2: its book index out
+    committed = ast.parse(t633._committed("agents/strategy/research_direct_exit_ledger.py"))
+    assert ast.dump(committed) == ast.dump(t623._drop_f2_models(t623._drop_v637_models(ast.parse(ledger))))
     models = (ROOT / "taos" / "im" / "protocol" / "models.py").read_text()
-    assert t633._committed("taos/im/protocol/models.py") == models
+    committed = ast.parse(t633._committed("taos/im/protocol/models.py"))               # k106 F2: its fast builds out
+    assert ast.dump(committed) == ast.dump(t623._drop_f2_models(ast.parse(models)))
     digest = hashlib.sha256((STRATEGY / "research_v6_33_touch_identity.py").read_bytes()).hexdigest()
     assert digest.startswith(V633_MODULE_SHA256), digest
 
@@ -1042,9 +1066,9 @@ def _patterns():
 
 
 def test_the_v634_block_is_gated_preflighted_and_listed():
-    assert "; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0\n" in LAUNCHER
+    assert "; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0; V6_38_BUILD=0\n" in LAUNCHER
     arm = next(x for x in LAUNCHER.splitlines() if x.startswith("  strategy1_direct_v6_3_0)"))
-    assert arm.endswith("; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1"), arm
+    assert arm.endswith("; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1; V6_38_BUILD=1"), arm
     assert LAUNCHER.count('if [[ "${V6_34_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_34_BUILD=") == 2
     assert "      tests/test_research_v6_33.py \\\n      tests/test_research_v6_34.py \\\n" in LAUNCHER
     assert LAUNCHER.index('echo "[preflight] v6.33 touch identity PASS') < LAUNCHER.index("# v6.34.") < \
