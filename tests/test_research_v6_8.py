@@ -26,10 +26,11 @@ import test_research_v6_3_3_deep_layer as d633  # noqa: E402
 import test_research_v6_4_board as t64  # noqa: E402
 import test_research_v6_5_deep_clips as t65  # noqa: E402
 from _harness import extractor  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 TICK = 0.01
 S = 1_000_000_000

@@ -64,16 +64,18 @@ import test_research_a1_9_9_2_idle_gc as t1992  # noqa: E402
 import test_research_v6_23 as t623  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
+import _v639_undo  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-MODULE = (STRATEGY / "research_v6_37_fast_path.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(STRATEGY / "research_v6_37_fast_path.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 MODELS_PATH = ROOT / "taos" / "im" / "protocol" / "models.py"
 MODELS = MODELS_PATH.read_text()
-GC_MODULE = (STRATEGY / "research_direct_idle_gc.py").read_text()
-LEDGER_SRC = (STRATEGY / "research_direct_exit_ledger.py").read_text()
+GC_MODULE = read_source(STRATEGY / "research_direct_idle_gc.py")
+LEDGER_SRC = read_source(STRATEGY / "research_direct_exit_ledger.py")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
-_dbg = extractor((STRATEGY / "Strategy1_Debug.py").read_text(), cls_name="Strategy1_Debug")
+_dbg = extractor(read_source(STRATEGY / "Strategy1_Debug.py"), cls_name="Strategy1_Debug")
 V636_COMMIT = "6171a57"                      # v6.36 as committed (its protocol, collector and ledger are a9dd99e's)
 SWITCH_LINE = 'self.research_v637_fast_path = self._as_bool(getattr(self.config, "research_v637_fast_path", True))'
 APPLY_LINE = "self._v6_37_switches = v6_37_apply(self.research_v637_fast_path)"
@@ -99,6 +101,59 @@ def _mentions637(node):
         if isinstance(name, str) and (name in V6_37_IDENTIFIERS or name.startswith(("_v6_37_", "v6_37_"))):
             return True
     return False
+
+
+# v6.38 layer 3 (research_v638_kbl, research_v638_lean + _arm, research_v638_c1 + _arm; scratchpad k124) only adds -- its
+# four modules' imports, its _v6_38_ methods and statements naming its identifiers -- so the checks that read Simple whole
+# take it out first (_Drop638; tests/test_research_v6_38_l3.py checks layer 3 against v6.37).
+V6_38_IDENTIFIERS = {"research_v638_kbl", "research_v638_lean", "research_v638_lean_arm", "research_v638_c1",
+                     "research_v638_c1_arm"}
+V6_38_MODULES = ("research_v6_38_canary", "research_v6_38_kbl", "research_v6_38_lean", "research_v6_38_keeper")
+
+
+def _mentions638(node):
+    for n in ast.walk(node):
+        name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
+            n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
+        if isinstance(name, str) and (name in V6_38_IDENTIFIERS or name.startswith(("_v6_38_", "v6_38_"))):
+            return True
+    return False
+
+
+class _Drop638(ast.NodeTransformer):
+    """Takes out what v6.38 layer 3 adds and nothing else -- its imports, its _v6_38_ methods, statements naming its
+    identifiers (an if on one keeps its else) -- keeping every docstring: v6.37 (FROZEN_1)."""
+
+    def _stmts(self, stmts):
+        out = []
+        for st in stmts:
+            if isinstance(st, ast.ImportFrom) and st.module in V6_38_MODULES:
+                continue
+            if isinstance(st, ast.FunctionDef) and st.name.startswith("_v6_38_"):
+                continue
+            if isinstance(st, ast.If) and _mentions638(st.test):
+                out.extend(self._stmts(st.orelse))
+                continue
+            st = self.visit(st)
+            if isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr)) and _mentions638(st):
+                continue
+            out.append(st)
+        return out
+
+    def generic_visit(self, node):
+        for field in ("body", "orelse", "finalbody"):
+            if isinstance(getattr(node, field, None), list):
+                setattr(node, field, self._stmts(getattr(node, field)))
+        for h in getattr(node, "handlers", None) or []:
+            h.body = self._stmts(h.body)
+        for name, value in ast.iter_fields(node):
+            if name in ("body", "orelse", "finalbody", "handlers"):
+                continue
+            if isinstance(value, list):
+                setattr(node, name, [self.visit(v) if isinstance(v, ast.AST) else v for v in value])
+            elif isinstance(value, ast.AST):
+                setattr(node, name, self.visit(value))
+        return node
 
 
 class _Drop637(ast.NodeTransformer):
@@ -574,14 +629,14 @@ def test_the_switch_off_holds_nothing_and_runs_a1992s_own_path():
 
 def test_the_idle_collector_strip_gives_back_the_committed_module():
     old = _committed("agents/strategy/research_direct_idle_gc.py")
-    assert ast.dump(t623._drop_f2_models(ast.parse(GC_MODULE))) == ast.dump(ast.parse(old))
+    assert ast.dump(t623._drop_f2_models(_v638_undo.parse(GC_MODULE))) == ast.dump(ast.parse(old))   # k129: v6.39 out
     assert ast.dump(ast.parse(GC_MODULE)) != ast.dump(ast.parse(old)) and not _mentions637(ast.parse(GC_MODULE))
     for good, bad in (("self._gc.set_threshold(saved[0], saved[1], A1992_FULL_THRESHOLD_OFF)",
                        "self._gc.set_threshold(saved[0], 0, A1992_FULL_THRESHOLD_OFF)"),
                       ("        self._f2_release()\n        self._cancel_timer()\n",
                        "        self._cancel_timer()\n")):
         assert GC_MODULE.count(good) == 1, good
-        mutated = ast.dump(t623._drop_f2_models(ast.parse(GC_MODULE.replace(good, bad))))
+        mutated = ast.dump(t623._drop_f2_models(_v638_undo.parse(GC_MODULE.replace(good, bad))))
         assert (mutated != ast.dump(ast.parse(old))) == ("set_threshold" in good), good   # the hold itself is F2's
 
 
@@ -822,7 +877,7 @@ def _ast_sha(tree):
 
 
 def test_every_v636_statement_is_in_v637_unchanged_and_v637_only_adds():
-    stripped = _Drop637().visit(ast.parse(SIMPLE))
+    stripped = _Drop637().visit(_Drop638().visit(ast.parse(SIMPLE)))            # v6.38 L3 out first
     assert _ast_sha(stripped) == V636_AST_SHA256                                  # v6.36 = v6.37 minus v6.37
     assert _ast_sha(ast.parse(SIMPLE)) != V636_AST_SHA256 and not _mentions637(stripped)
     for good, bad in (("self._research_final_validate_instructions(response, state)\n",
@@ -830,7 +885,8 @@ def test_every_v636_statement_is_in_v637_unchanged_and_v637_only_adds():
                       ("self._v6_36_request(state)", "self._v6_36_report()"),
                       ("        self._a19_reset_exit_observation()\n", "        pass\n")):
         assert SIMPLE.count(good) == 1, good
-        assert _ast_sha(_Drop637().visit(ast.parse(SIMPLE.replace(good, bad)))) != V636_AST_SHA256, good
+        assert _ast_sha(_Drop637().visit(_Drop638().visit(ast.parse(SIMPLE.replace(good, bad))))) != \
+            V636_AST_SHA256, good
     try:
         out = subprocess.run(["git", "-c", "safe.directory=*", "show",
                               f"{V636_COMMIT}:agents/strategy/Strategy1_Research_Simple.py"], cwd=ROOT,
@@ -842,7 +898,7 @@ def test_every_v636_statement_is_in_v637_unchanged_and_v637_only_adds():
 
 
 def test_v637_sits_after_v636_in_the_switch_block_and_adds_nothing_to_the_request_path():
-    tree = _v638_undo.parse(SIMPLE)                                              # v6.37: v6.38 out
+    tree = _Drop638().visit(_v638_undo.parse(SIMPLE))                            # v6.37: v6.38, then v6.38 L3 out
     imports = [n for n in tree.body if isinstance(n, ast.ImportFrom)]
     names = [n.module for n in imports]
     i = names.index("research_v6_37_fast_path")
@@ -884,8 +940,11 @@ def test_the_changed_files_are_simple_and_f2s_three_and_the_new_module():
         pytest.skip(f"git or {V636_COMMIT} is not available here")
     listed = set(out.stdout.split())
     new = {"agents/strategy/research_v6_37_fast_path.py"} | _v638_undo.V638_NEW     # listed once committed (k111 note 2)
+    new |= _v638_undo.V638_L3_MODULES                                                # v6.38 L3's, the same (k126)
     v638 = _v638_undo.V638_MODULES | _v638_undo.V638_ARCHIVED                       # v6.38's own (its test pins them)
-    assert sorted(listed - new - v638) == ["agents/strategy/Strategy1_Research_Simple.py",
+    v639 = _v639_undo.V639_PATHS - {"agents/strategy/Strategy1_Research_Simple.py",
+                                    "agents/strategy/research_direct_idle_gc.py"}   # k129: v6.39's, untracked or tracked
+    assert sorted(listed - new - v638 - v639) == ["agents/strategy/Strategy1_Research_Simple.py",
                                            "agents/strategy/research_direct_exit_ledger.py",
                                            "agents/strategy/research_direct_idle_gc.py", "taos/im/protocol/models.py"]
     assert v638 <= listed
@@ -926,8 +985,8 @@ def test_the_v637_block_is_gated_preflighted_listed_and_ships_on():
     assert LAUNCHER.count('if [[ "${V6_37_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_37_BUILD=") == 2
     assert "      tests/test_research_v6_36.py \\\n      tests/test_research_v6_37.py \\\n" in LAUNCHER
     assert 'research_v636_step_withdrawal=1 \\\nresearch_v637_fast_path=1 \\\n' in LAUNCHER                 # v6.38's next
-    assert _params().split()[-3:] == ["research_v637_fast_path=1", "research_enable_fill_hazard=0",
-                                      "research_v638_fast_path=1"] and len(_params().split()) == 214
+    assert _params().split()[-9:-6] == ["research_v637_fast_path=1", "research_enable_fill_hazard=0",
+                                        "research_v638_fast_path=1"] and len(_params().split()) == 220   # + L3's 5, v6.39's 1
     assert LAUNCHER.index('echo "[preflight] v6.36 step withdrawal PASS') < LAUNCHER.index("# v6.37.") < \
         LAUNCHER.index('echo "[preflight] v6.37 fast path PASS') < \
         LAUNCHER.index('if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then')
@@ -942,13 +1001,13 @@ def test_every_v637_preflight_pattern_is_in_the_file_it_checks():
     pats = _patterns()
     assert [len([p for p in pats if p[2] == name]) for name in FILES] == [4, 5, 5, 3, 3]
     for needle, var, name in pats:
-        assert (ROOT / FILES[name]).read_text().count(needle) == 1, (needle, name)
+        assert read_source(ROOT / FILES[name]).count(needle) == 1, (needle, name)
         assert (var == "SCRIPT_DIR") == (name == "taos/im/protocol/models.py"), (needle, var)
     assert {SWITCH_LINE, APPLY_LINE, LEDGER_LINE} <= {p for p, _v, _n in pats}
     assert '[[ -f "$AGENT_PATH/research_v6_37_fast_path.py" ]] || {' in _block()
 
 
-def _run_block(params, agent_path=STRATEGY, script_dir=ROOT, build="1"):
+def _run_block(params, agent_path=strategy_view(), script_dir=ROOT, build="1"):
     start = LAUNCHER.index("# v6.37.")
     stop = LAUNCHER.index('echo "[preflight] v6.37 fast path PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -981,7 +1040,7 @@ def _tree(tmp):
     (tmp / "agents" / "strategy").mkdir(parents=True)
     (tmp / "taos" / "im" / "protocol").mkdir(parents=True)
     for rel in FILES.values():
-        shutil.copy(ROOT / rel, tmp / rel)
+        copy_source(ROOT / rel, tmp / rel)
     return tmp
 
 

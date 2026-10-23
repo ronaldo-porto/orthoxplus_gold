@@ -24,9 +24,10 @@ import test_research_v6_4_board as t64  # noqa: E402
 import test_research_v6_5_deep_clips as t65  # noqa: E402
 import test_research_v6_6 as t66  # noqa: E402
 from _harness import extractor  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 TICK = 0.01
 EXTRA = {"v67_sweep_quantile": dd.sweep_quantile, "V67_DEEP_DEPTH_VERSION": dd.V67_DEEP_DEPTH_VERSION}

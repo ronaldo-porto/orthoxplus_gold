@@ -155,6 +155,36 @@ fi
 
 [[ -f "$SCRIPT_DIR/run_miner_multi.sh" ]] || { echo "ERROR: run_miner_multi.sh missing" >&2; exit 1; }
 [[ -f "$AGENT_PATH/Strategy1_Research_Simple.py" ]] || { echo "ERROR: Strategy1_Research_Simple.py missing" >&2; exit 1; }
+# v6.39 S4 (k129): the agent class is split into part modules (agents/strategy/simple_parts/*.py, one mixin each, the
+# methods moved verbatim).  Every check below reads Simple's text as the interpreter binds it: for the preflight AGENT_PATH
+# is a view directory -- a full COPY of agents/strategy (cp -a: every check, recursive greps included, reads exactly the
+# real files) with Strategy1_Research_Simple.py replaced by the file with every moved chunk back at its line
+# (simple_parts/join.py: byte-identical to the single file of the split commit, the original line numbering; the suite's
+# tests/_harness.simple_text reads the same text).  The view lives under $TMPDIR (mktemp -d), never in the tree, and is
+# removed on every exit (the EXIT trap; HUP / INT / TERM exit through it) and before the launch.  The real directory's
+# Simple and its parts are byte-compiled below, and the miner is launched from the real directory.
+AGENT_PATH_REAL="$AGENT_PATH"
+SIMPLE_VIEW=""
+if [[ -f "$AGENT_PATH/simple_parts/join.py" ]]; then
+  SIMPLE_VIEW="$(mktemp -d)" || { echo "ERROR: v6.39 no temp directory for the Simple view" >&2; exit 1; }
+  trap 'rm -rf -- "$SIMPLE_VIEW"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  cp -a "$AGENT_PATH"/. "$SIMPLE_VIEW"/ || { echo "ERROR: v6.39 the Simple view could not be copied" >&2; exit 1; }
+  rm -f -- "$SIMPLE_VIEW/Strategy1_Research_Simple.py"
+  python3 "$AGENT_PATH/simple_parts/join.py" "$AGENT_PATH" > "$SIMPLE_VIEW/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.39 simple_parts/join.py could not rebuild Strategy1_Research_Simple.py" >&2
+    exit 1
+  }
+  for _part in "$AGENT_PATH/Strategy1_Research_Simple.py" "$AGENT_PATH"/simple_parts/*.py; do
+    python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' "$_part" || {
+      echo "ERROR: v6.39 $_part does not compile" >&2
+      exit 1
+    }
+  done
+  AGENT_PATH="$SIMPLE_VIEW"
+fi
 POLICY_VER="$(sed -n 's/^SIMPLE_POLICY_VERSION = "\(.*\)"$/\1/p' "$AGENT_PATH/Strategy1_Research_Simple.py" | head -1)"
 # A1.9.5 and A1.9.6 ship as their own policy versions.  The A1.9.2 / A1.9.2.1 /
 # A1.9.3 / A1.9.4 guards below still apply to both -- those invariants are
@@ -443,7 +473,13 @@ research_v634_class1_entry=0 \
 research_v636_step_withdrawal=1 \
 research_v637_fast_path=1 \
 research_enable_fill_hazard=0 \
-research_v638_fast_path=1"
+research_v638_fast_path=1 \
+research_v638_kbl=0 \
+research_v638_lean=0 \
+research_v638_lean_arm=0 \
+research_v638_c1=0 \
+research_v638_c1_arm=0 \
+research_v639_runlen=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -4345,6 +4381,192 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.38 fast path PASS (${_v638_state}: the protocol's trade-only events, the A1.9.0.2 observer's shadow pass skipped and one trade parse a request, each behind its switch, written by the agent before any request; every decision as v6.37's; fill hazard ${_v638_fh_state})"
 fi
 
+# v6.38 L3.  research_v638_kbl, research_v638_lean + research_v638_lean_arm, research_v638_c1 + research_v638_c1_arm:
+# tonight's pre-registered candidates (scratchpad k124) as agent code, EVERY switch shipped 0 -- off, no layer-3 code runs
+# and the build is v6.37 (identity-proven on the k111 harness).  KBL (1) / K5 (2): the post-step window touch quote on the
+# newest fundamental step's side keyed to the book's capture balance, the balance-keyed ladder and the touch cleanup
+# (k105; the L2B candidate / its comparison arm).  The k116 lean candidates (arm 1 CA slope 2, 2 CB = CA + the front-built
+# lean, 3 CC the front-built lean, 4 CD = KBL + CB) and the k118 class-1 keepers on v6.34's class-1 entry (arm 1 K1, 2 K3,
+# 3 K3B, 4 K3Q), each family on the hash half (1: the pre-registered per-(UID, book) draws from the agent's own UID,
+# research_v6_38_canary) or every book of its class (2).  A PASS of a candidate's pre-registered test only flips its
+# switch (the user's call).  The block accepts research_v638_kbl 0|1|2, a family's mode 0|1|2 with its arm 1-4 when on and
+# 0 when off; the keeper needs research_v634_class1_entry=1, and KBL, CD and the keeper read v6.36's step record
+# (research_v636_step_withdrawal=1); K5 with CD is refused (CD carries KBL).
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  for _v638l3_mod in research_v6_38_canary.py research_v6_38_kbl.py research_v6_38_lean.py research_v6_38_keeper.py; do
+    [[ -f "$AGENT_PATH/$_v638l3_mod" ]] || {
+      echo "ERROR: v6.38 L3 the module $_v638l3_mod is missing." >&2
+      exit 1
+    }
+  done
+  for _v638l3_pat in \
+      'from research_v6_38_canary import (' \
+      'from research_v6_38_kbl import (' \
+      'from research_v6_38_lean import (' \
+      'from research_v6_38_keeper import (' \
+      'self.research_v638_kbl = v6_38_kbl_mode_of(getattr(self.config, "research_v638_kbl", 0))' \
+      'self.research_v638_lean = v6_38_mode_of(getattr(self.config, "research_v638_lean", 0))' \
+      'self.research_v638_lean_arm = v6_38_arm_of(getattr(self.config, "research_v638_lean_arm", 0), V6_38_LEAN_ARMS)' \
+      'self.research_v638_c1 = v6_38_mode_of(getattr(self.config, "research_v638_c1", 0))' \
+      'self.research_v638_c1_arm = v6_38_arm_of(getattr(self.config, "research_v638_c1_arm", 0), V6_38_C1_ARMS)' \
+      'self._v6_38_l3_request(state)' \
+      'self._v6_38_l3_post(response, state)' \
+      'v6_38_win = self._v6_38_kbl_window(book_id)' \
+      'v6_38_ladder = self._v6_38_kbl_ladder(book_id, levels_side)' \
+      'self._v6_38_lean_note(book_id, depth, raw_bid, raw_ask, cfg)' \
+      'v6_34_c1 = self._v6_38_k1_books(v6_34_c1)'; do
+    grep -qF -- "$_v638l3_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: v6.38 L3 the agent lacks: $_v638l3_pat" >&2
+      exit 1
+    }
+  done
+  for _v638l3_pat in \
+      'TAG_K116 = "orthox-profile-k116-v1"' \
+      'TAG_K118 = "orthox-profile-k118-v1"' \
+      'h = hashlib.sha256(f"{tag}|{dim}|{int(uid)}|{int(book)}".encode()).hexdigest()' \
+      'return int(h[:8], 16) % K'; do
+    grep -qF -- "$_v638l3_pat" "$AGENT_PATH/research_v6_38_canary.py" || {
+      echo "ERROR: v6.38 L3 the canary module lacks: $_v638l3_pat" >&2
+      exit 1
+    }
+  done
+  _v638l3_get() { tr ' ' '\n' <<< "$PARAMS" | grep "^$1=" | cut -d= -f2 || true; }
+  for _v638l3_kv in "research_v638_kbl:0 1 2" "research_v638_lean:0 1 2" "research_v638_lean_arm:0 1 2 3 4" \
+                    "research_v638_c1:0 1 2" "research_v638_c1_arm:0 1 2 3 4"; do
+    _v638l3_key="${_v638l3_kv%%:*}"
+    _v638l3_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c "^${_v638l3_key}=" || true)
+    [[ "$_v638l3_n" == "1" ]] || {
+      echo "ERROR: v6.38 L3 build with ${_v638l3_key} given ${_v638l3_n} times in PARAMS (exactly once)." >&2
+      exit 1
+    }
+    _v638l3_v="$(_v638l3_get "$_v638l3_key")"
+    [[ " ${_v638l3_kv#*:} " == *" ${_v638l3_v} "* ]] || {
+      echo "ERROR: v6.38 L3 ${_v638l3_key}=${_v638l3_v} (allowed: ${_v638l3_kv#*:})." >&2
+      exit 1
+    }
+  done
+  _v638l3_kbl="$(_v638l3_get research_v638_kbl)"
+  _v638l3_lean="$(_v638l3_get research_v638_lean)"; _v638l3_larm="$(_v638l3_get research_v638_lean_arm)"
+  _v638l3_c1="$(_v638l3_get research_v638_c1)"; _v638l3_carm="$(_v638l3_get research_v638_c1_arm)"
+  if { [[ "$_v638l3_lean" == "0" ]] && [[ "$_v638l3_larm" != "0" ]]; } || \
+     { [[ "$_v638l3_lean" != "0" ]] && [[ "$_v638l3_larm" == "0" ]]; }; then
+    echo "ERROR: v6.38 L3 research_v638_lean=${_v638l3_lean} with research_v638_lean_arm=${_v638l3_larm} (an arm 1-4 exactly when the mode is on)." >&2
+    exit 1
+  fi
+  if { [[ "$_v638l3_c1" == "0" ]] && [[ "$_v638l3_carm" != "0" ]]; } || \
+     { [[ "$_v638l3_c1" != "0" ]] && [[ "$_v638l3_carm" == "0" ]]; }; then
+    echo "ERROR: v6.38 L3 research_v638_c1=${_v638l3_c1} with research_v638_c1_arm=${_v638l3_carm} (an arm 1-4 exactly when the mode is on)." >&2
+    exit 1
+  fi
+  if [[ "$_v638l3_c1" != "0" ]] && [[ " $PARAMS " != *" research_v634_class1_entry=1 "* ]]; then
+    echo "ERROR: v6.38 L3 the class-1 keeper runs on v6.34's class-1 entry: research_v634_class1_entry=1 is required." >&2
+    exit 1
+  fi
+  if { [[ "$_v638l3_kbl" != "0" ]] || [[ "$_v638l3_c1" != "0" ]] || { [[ "$_v638l3_lean" != "0" ]] && [[ "$_v638l3_larm" == "4" ]]; }; } \
+     && [[ " $PARAMS " != *" research_v636_step_withdrawal=1 "* ]]; then
+    echo "ERROR: v6.38 L3 KBL, CD and the keeper read v6.36's step record: research_v636_step_withdrawal=1 is required." >&2
+    exit 1
+  fi
+  if [[ "$_v638l3_kbl" == "2" ]] && [[ "$_v638l3_lean" != "0" ]] && [[ "$_v638l3_larm" == "4" ]]; then
+    echo "ERROR: v6.38 L3 research_v638_kbl=2 (K5) with the lean arm CD (CD carries KBL itself)." >&2
+    exit 1
+  fi
+  case "$_v638l3_kbl" in 0) _v638l3_s1="off";; 1) _v638l3_s1="KBL";; 2) _v638l3_s1="K5";; esac
+  _v638l3_mode() { case "$1" in 0) echo "off";; 1) echo "the hash half";; 2) echo "every book";; esac; }
+  case "$_v638l3_larm" in 0) _v638l3_s2="off";; 1) _v638l3_s2="CA";; 2) _v638l3_s2="CB";; 3) _v638l3_s2="CC";; 4) _v638l3_s2="CD";; esac
+  case "$_v638l3_carm" in 0) _v638l3_s3="off";; 1) _v638l3_s3="K1";; 2) _v638l3_s3="K3";; 3) _v638l3_s3="K3B";; 4) _v638l3_s3="K3Q";; esac
+  [[ "$_v638l3_s2" == "off" ]] || _v638l3_s2="${_v638l3_s2} on $(_v638l3_mode "$_v638l3_lean")"
+  [[ "$_v638l3_s3" == "off" ]] || _v638l3_s3="${_v638l3_s3} on $(_v638l3_mode "$_v638l3_c1")"
+  echo "[preflight] v6.38 L3 KBL: ${_v638l3_s1}; lean: ${_v638l3_s2}; class-1 keeper: ${_v638l3_s3}"
+  echo "[preflight] v6.38 L3 PASS (every layer-3 switch explicit; off: v6.37 exactly)"
+fi
+
+# v6.39.  research_v639_runlen: U2 stage 2 / S3 (scratchpad k115 H6 / H7 / H14, built in k129) -- the run-length growth
+# and the off-path CPU taken out with every decision as v6.38's.  STORE: the session-persisted rolling realized-PnL store
+# and the v6.23 census -- v6.38 copies, re-validates and re-sorts every book's list on every realized fill and re-walks
+# every stored event on every state (O(store) a request, ~11 ms a reply at the live plateau); the v6.39 store keeps its
+# lists marked clean (sorted, validated: what v6.38's prune leaves), finds the window edges by bisection and recomputes a
+# book's census only when its list or its edges changed, by the original per-book loop over the same items in the same
+# order (the same floats).  SWEEP: the v6.33 deep layer's sweep record keeps its sorted copy keyed on its own content
+# (v6.38 sorts it on every depth() call).  IDLE: the A1.9.9.2 idle full collection runs only when the interpreter's own
+# generation-2 trigger is reached (generation-1 passes since the last full pass >= the threshold saved at install), a
+# young-generation pass on every other gap (v6.38: the full pass on every gap, ~59 ms CPU a request, ~0 objects found).
+# OBS: the observatory recorder writes gzip at the library's default level (v6.38: gzip.open's own, level 9; the
+# decompressed data identical).  Each sits behind "if switch: new, else: the original" (the store through Simple's own
+# overrides: Strategy1_Research.py is frozen).  STRUCTURAL: each change keeps what its original computed for every
+# reader (k129 eq tests: 155,424 store / census cases + 132,240 sweep cases, 0 mismatches; identity runs on a virtual
+# clock: every response and every persisted session byte-identical to v6.38's, the switch on and off).
+# research_v639_runlen ships 1 but may be 0 (off: v6.38's code on every path, by a PARAMS edit, no rebuild); the block
+# accepts exactly one of =0 / =1 and prints its state.
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  [[ -f "$AGENT_PATH/research_v6_39_runlen.py" ]] || {
+    echo "ERROR: v6.39 the runlen module is missing." >&2
+    exit 1
+  }
+  for _v639_pat in \
+      'from research_v6_39_runlen import (' \
+      'self.research_v639_runlen = self._as_bool(getattr(self.config, "research_v639_runlen", True))' \
+      'self._v6_39_switches = v6_39_apply(self.research_v639_runlen)' \
+      'self._a1992_idle_gc.deferred_full = True' \
+      'census = v6_39_window_census_cached(' \
+      'self._research_realized_pnl_events_by_book = v6_39_note_event(' \
+      '**({"opener": v6_39_observatory_open} if getattr(self, "research_v639_runlen", False) else {}),'; do
+    grep -qF -- "$_v639_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: v6.39 the agent lacks: $_v639_pat" >&2
+      exit 1
+    }
+  done
+  _v639_n=$(grep -cF -- 'if getattr(self, "research_v639_runlen", False):' "$AGENT_PATH/Strategy1_Research_Simple.py" || true)
+  [[ "$_v639_n" == "1" ]] || {
+    echo "ERROR: v6.39 the agent reads its switch as a branch at ${_v639_n} sites, not the 1 of the census." >&2
+    exit 1
+  }
+  for _v639_pat in \
+      '("research_v633_deep_layer", "_V639_SORTED_CACHE"),' \
+      'class CleanRows(list):' \
+      'def prune_events(' \
+      'def note_event(' \
+      'def window_census_cached(' \
+      'GZIP_LEVEL = zlib.Z_DEFAULT_COMPRESSION'; do
+    grep -qF -- "$_v639_pat" "$AGENT_PATH/research_v6_39_runlen.py" || {
+      echo "ERROR: v6.39 the runlen module lacks: $_v639_pat" >&2
+      exit 1
+    }
+  done
+  for _v639_pat in \
+      '_V639_SORTED_CACHE = False' \
+      'self.sweeps: deque = SweepRecord(maxlen=SWEEP_KEEP)' \
+      'if _V639_SORTED_CACHE and isinstance(values, SweepRecord):'; do
+    grep -qF -- "$_v639_pat" "$AGENT_PATH/research_v633_deep_layer.py" || {
+      echo "ERROR: v6.39 the deep layer lacks: $_v639_pat" >&2
+      exit 1
+    }
+  done
+  for _v639_pat in \
+      'deferred_full: bool = False,' \
+      'generation = self._v639_generation() if self.deferred_full else 2' \
+      'return 2 if int(get_count()[2]) >= int(saved[2]) else 1'; do
+    grep -qF -- "$_v639_pat" "$AGENT_PATH/research_direct_idle_gc.py" || {
+      echo "ERROR: v6.39 the idle collector lacks: $_v639_pat" >&2
+      exit 1
+    }
+  done
+  _v639_re=' research_v639_runlen=(0|1) '
+  [[ " $PARAMS " =~ $_v639_re ]] || {
+    echo "ERROR: v6.39 build without research_v639_runlen=0 or 1 in PARAMS (the runlen state must be explicit)." >&2
+    exit 1
+  }
+  _v639_on="${BASH_REMATCH[1]}"
+  _v639_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_v639_runlen=' || true)
+  [[ "$_v639_n" == "1" ]] || {
+    echo "ERROR: v6.39 build with research_v639_runlen given ${_v639_n} times in PARAMS (exactly once: 0 or 1)." >&2
+    exit 1
+  }
+  if [[ "$_v639_on" == "1" ]]; then _v639_state="on"; else _v639_state="off"; fi
+  echo "[preflight] v6.39 runlen: ${_v639_state}"
+  echo "[preflight] v6.39 runlen PASS (${_v639_state}: the clean rolling store and the cached census, the sorted sweep record, the deferred idle full pass and the default gzip level, each behind the switch; every decision as v6.38's)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -4470,6 +4692,8 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_36.py \
       tests/test_research_v6_37.py \
       tests/test_research_v6_38.py \
+      tests/test_research_v6_38_l3.py \
+      tests/test_research_v6_39.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \
@@ -4488,6 +4712,9 @@ echo "[Strategy1_Research_Simple] max_active_books=$MAX_ACTIVE_BOOKS"
 echo "[Strategy1_Research_Simple] deep_clip_mult=$DEEP_CLIP_MULT (from $DEEP_CLIP_MULT_SOURCE)"
 echo "[Strategy1_Research_Simple] log_dir=$RESEARCH_DIR"
 
+# v6.39 S4: the miner runs from the real directory (the split Simple + its parts), not the preflight view.
+AGENT_PATH="$AGENT_PATH_REAL"
+if [[ -n "$SIMPLE_VIEW" ]]; then rm -rf -- "$SIMPLE_VIEW"; SIMPLE_VIEW=""; trap - EXIT HUP INT TERM; fi
 # Keep the strategy directory importable in the actual PM2/miner process, not
 # only in the preflight subprocess.
 export PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"

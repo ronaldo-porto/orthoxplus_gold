@@ -60,12 +60,14 @@ import test_research_v6_30 as t630  # noqa: E402
 import test_research_v6_31 as t631  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
+import _v639_undo  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-MODULE = (STRATEGY / "research_v6_32_fee_making.py").read_text()
-STATE_MODULE = (STRATEGY / "research_v6_32_state_fp.py").read_text()
-MODELS = (ROOT / "taos" / "im" / "protocol" / "models.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(STRATEGY / "research_v6_32_fee_making.py")
+STATE_MODULE = read_source(STRATEGY / "research_v6_32_state_fp.py")
+MODELS = read_source(ROOT / "taos" / "im" / "protocol" / "models.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 S = 1_000_000_000
 NOW = t631.NOW
@@ -1401,6 +1403,8 @@ V6_36_IDENTIFIERS = t623.V6_36_IDENTIFIERS
 # v6.37 (research_v637_fast_path) only adds: the strip takes its additions out as well
 # (tests/test_research_v6_37.py checks them against v6.36).
 V6_37_IDENTIFIERS = t623.V6_37_IDENTIFIERS
+# v6.38 layer 3 only adds: the strip takes its additions out as well (tests/test_research_v6_38_l3.py).
+V6_38_IDENTIFIERS = t623.V6_38_IDENTIFIERS
 
 
 def _mentions633(node):
@@ -1410,8 +1414,9 @@ def _mentions633(node):
         if isinstance(name, str) and (name in V6_33_IDENTIFIERS or name in V6_34_IDENTIFIERS
                                       or name in V6_36_IDENTIFIERS
                                       or name in V6_37_IDENTIFIERS
+                                      or name in V6_38_IDENTIFIERS
                                       or name.startswith(("_v6_33_", "v6_33_", "_v6_34_", "v6_34_", "_v6_36_",
-                                                          "v6_36_", "_v6_37_", "v6_37_"))):
+                                                          "v6_36_", "_v6_37_", "v6_37_", "_v6_38_", "v6_38_"))):
             return True
     return False
 
@@ -1431,9 +1436,14 @@ class _Drop633(ast.NodeTransformer):
             if isinstance(st, ast.ImportFrom) and st.module in ("research_v6_33_touch_identity",
                                                                 "research_v6_34_class1",
                                                                 "research_v6_36_step_withdrawal",
-                                                                "research_v6_37_fast_path"):
+                                                                "research_v6_37_fast_path",
+                                                                "research_v6_38_canary",
+                                                                "research_v6_38_kbl",
+                                                                "research_v6_38_lean",
+                                                                "research_v6_38_keeper"):
                 continue
-            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_33_", "_v6_34_", "_v6_36_", "_v6_37_")):
+            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_33_", "_v6_34_", "_v6_36_", "_v6_37_",
+                                                                       "_v6_38_")):
                 continue
             if isinstance(st, ast.If) and _mentions633(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -1513,7 +1523,7 @@ def test_only_nine_methods_changed_and_the_exit_layer_frozen_files_and_protocol_
                   "research_v616_fair_value.py", "research_v6_29_touch_move.py", "research_v630_identity_profile.py",
                   "research_v631_touch_improve.py", "research_v633_deep_layer.py", "research_v641_pace.py",
                   "research_direct_exit_refresh.py", "research_v6214_touch_life.py"):
-        assert _committed(f"agents/strategy/{other}") == (STRATEGY / other).read_text(), other
+        assert _committed(f"agents/strategy/{other}") == _v639_undo.source_v638(other, read_source(STRATEGY / other)), other   # k129: v6.39 S3's own edits out
     old_models = ast.parse(_committed("taos/im/protocol/models.py"))
     stripped = t623._drop632_models(t623._drop_f2_models(ast.parse(MODELS)))          # k106 F2's fast builds out
     assert ast.dump(stripped) == ast.dump(old_models)                                   # P1's additions only
@@ -1535,21 +1545,27 @@ def test_the_launcher_only_adds_to_v631s():
     arm = next(x for x in old if x.startswith("  strategy1_direct_v6_3_0)"))
     assert removed == [defaults, arm, 'research_v631_single_write_save=1"']
     block = []
-    for head in ("# v6.32.", "# v6.33.", "# v6.34.", "# v6.36.", "# v6.37."):
+    for head in ("# v6.32.", "# v6.33.", "# v6.34.", "# v6.36.", "# v6.37.", "# v6.38 L3."):
         start = launcher.index(head)
         block += launcher[start:launcher.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
-    assert sorted(added) == sorted([defaults + "; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0", arm + "; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1",
+    assert sorted(added) == sorted([defaults + "; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0; V6_38_BUILD=0", arm + "; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1; V6_38_BUILD=1",
                                     "research_v631_single_write_save=1 \\", "research_v632_fee_making=1 \\",
                                     "research_v632_fee_weight=0.005 \\", "research_v632_state_fundamental=1 \\",
                                     "research_v633_touch_identity=1 \\",
                                     "research_v634_class1_entry=0 \\",
                                     "research_v636_step_withdrawal=1 \\",
-                                    'research_v637_fast_path=1"',
+                                    "research_v637_fast_path=1 \\",
+                                    "research_v638_kbl=0 \\",
+                                    "research_v638_lean=0 \\",
+                                    "research_v638_lean_arm=0 \\",
+                                    "research_v638_c1=0 \\",
+                                    'research_v638_c1_arm=0"',
                                     "      tests/test_research_v6_32.py \\",
                                     "      tests/test_research_v6_33.py \\",
                                     "      tests/test_research_v6_34.py \\",
                                     "      tests/test_research_v6_36.py \\",
-                                    "      tests/test_research_v6_37.py \\", *block])
+                                    "      tests/test_research_v6_37.py \\",
+                                    "      tests/test_research_v6_38_l3.py \\", *block])
 
 
 # ---- 11. the launcher ----------------------------------------------------------------------------------------------------
@@ -1585,7 +1601,7 @@ def test_every_v632_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(_PATTERN, _block())
     assert len(pats) == 28, pats
     for needle, var, name, _msg in pats:
-        assert name in FILES and (ROOT / FILES[name]).read_text().count(needle) == 1, (needle, name)
+        assert name in FILES and read_source(ROOT / FILES[name]).count(needle) == 1, (needle, name)
         assert (var == "SCRIPT_DIR") == (name == "taos/im/protocol/models.py"), (needle, var)
     assert {p[0] for p in pats} >= {"from research_v6_32_fee_making import (", "from research_v6_32_state_fp import (",
                                     FEE_SWITCH, WEIGHT_READ, FP_SWITCH, REQUEST_LINE, NOTE_LINE, REPORT_LINE,
@@ -1594,7 +1610,7 @@ def test_every_v632_preflight_pattern_is_in_the_file_it_checks():
                                     "if self.active and period is not None and period == self.period:"}
 
 
-def _run_block(params, agent_path=STRATEGY, script_dir=ROOT, build="1"):
+def _run_block(params, agent_path=strategy_view(), script_dir=ROOT, build="1"):
     start = LAUNCHER.index("# v6.32.")
     stop = LAUNCHER.index('echo "[preflight] v6.32 fee-aware making + state fundamental PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -1653,7 +1669,7 @@ def test_the_v632_block_refuses_a_tree_without_each_line_it_checks(tmp_path):
         (tmp / "agents" / "strategy").mkdir(parents=True)
         (tmp / "taos" / "im" / "protocol").mkdir(parents=True)
         for rel in FILES.values():
-            shutil.copy(ROOT / rel, tmp / rel)
+            copy_source(ROOT / rel, tmp / rel)
         path = tmp / FILES[name]
         text = path.read_text()
         assert text.count(needle) == 1, needle

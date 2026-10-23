@@ -18,10 +18,11 @@ from research_direct_dust_capacity import (
     productive_abs_base,
 )
 from research_direct_liveness import admission_slots
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
-SIMPLE = (ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
-MODULE = (ROOT / "agents" / "strategy" / "research_direct_dust_capacity.py").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(ROOT / "agents" / "strategy" / "research_direct_dust_capacity.py")
 
 # The live configuration at the moment of the measurement.
 LIVE = dict(total_abs=1.5758, dust_abs=1.3257, min_order=0.25, max_abs=2.0)

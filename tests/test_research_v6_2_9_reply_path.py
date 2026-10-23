@@ -18,12 +18,13 @@ import pytest
 import research_direct_idle_gc as idle
 import research_v629_reply_path as rp
 from _harness import extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
-PROTOCOL = (ROOT / "taos" / "im" / "protocol" / "__init__.py").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
+PROTOCOL = read_source(ROOT / "taos" / "im" / "protocol" / "__init__.py")
 _simple = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 TELEMETRY = ["_v500_service", "_v501_service", "_v502_service", "_v503_service", "_v504_telemetry",
@@ -90,7 +91,7 @@ def test_the_frozen_fields_are_exactly_what_clear_inputs_clears():
 
 
 def test_the_miner_clears_inputs_after_the_handler_returns():
-    miner = (ROOT / "taos" / "im" / "neurons" / "miner.py").read_text()
+    miner = read_source(ROOT / "taos" / "im" / "neurons" / "miner.py")
     fwd = miner[miner.index("async def forward(\n"):]
     fwd = fwd[:fwd.index("def blacklist_forward(")]
     assert fwd.index("self.agent.handle(synapse)") < fwd.index("synapse.clear_inputs().compress()")

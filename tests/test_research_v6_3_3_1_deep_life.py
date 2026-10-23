@@ -21,9 +21,10 @@ import research_v633_deep_layer as dl  # noqa: E402
 import test_research_v6_2_14_touch_life as tlt  # noqa: E402
 import test_research_strategy1_direct_a1_9_1_1 as a1911  # noqa: E402
 from research_direct_exit_refresh import EXIT_REPRICE  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 EXEMPTION = 'if deep_life and v633_is_deep_client_id(getattr(row, "client_id", None)):'
 
 

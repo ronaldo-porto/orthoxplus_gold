@@ -25,12 +25,13 @@ import pytest
 
 from _harness import extractor
 from research_kappa_state import rolling_observation_timestamps
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
-DETAILED = (STRATEGY / "DetailedTemplateAgent.py").read_text()
+SIMPLE = simple_text()
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
+DETAILED = read_source(STRATEGY / "DetailedTemplateAgent.py")
 
 _simple = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 _research = extractor(RESEARCH, cls_name="Strategy1_Research")
@@ -203,4 +204,4 @@ def test_t3_each_override_is_defined_once_and_falls_back_to_the_frozen_method():
     for name in ("_research_refresh_rolling_kappa_cache", "_pnl_observation_count", "_realized_pnl_lookback"):
         assert SIMPLE.count(f"    def {name}(") == 1, name
         assert f"super().{name}(" in _simple(name), name
-    assert "research_v61_request_memo=1" in (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+    assert "research_v61_request_memo=1" in read_source(ROOT / "run_strategy1_research_simple_multi.sh")

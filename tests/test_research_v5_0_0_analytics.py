@@ -18,12 +18,13 @@ from types import SimpleNamespace
 import research_v5_analytics as va
 import research_v5_score_mirror as sm
 from _harness import extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-MIRROR = (STRATEGY / "research_v5_score_mirror.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+MIRROR = read_source(STRATEGY / "research_v5_score_mirror.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 NS = 1_000_000_000
 
 

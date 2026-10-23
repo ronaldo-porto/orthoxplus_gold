@@ -26,9 +26,10 @@ from research_v68_deep_owns import RollingPaceLine  # noqa: E402
 import test_research_v6_3_0_trend_target as t63  # noqa: E402
 import test_research_v6_17 as t617  # noqa: E402
 import test_research_v6_19 as t619  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 S = 1_000_000_000
 NOW = t619.NOW
 CAP = 500_000.0
@@ -237,7 +238,10 @@ def test_the_room_line_replaces_the_rolling_line_and_the_size_reaches_every_laye
     assert SIMPLE.count(LINE_LINE) == 1 and SIMPLE.count(SCALE_LINE) == 1
     assert SIMPLE.count("from research_v620_room_pace import (") == 1
     assert SIMPLE.count("size_scale=size_scale") == 5          # the deep layer x2, the touch quote x2 + its guard
-    assert SIMPLE.count("v620_scaled_quantity(") == 2         # the deep layer's sizes and the touch quote's
+    # the deep layer's sizes and the touch quote's -- and v6.38 L3's FBL touch size (the same scale on its grown clip)
+    assert SIMPLE.count("v620_scaled_quantity(") == 3
+    l3 = SIMPLE[SIMPLE.index("    def _v6_38_touch_size("):]
+    assert l3[:l3.index("\n    def ", 10)].count("v620_scaled_quantity(") == 1
     assert "bound_scale: float = 1.0, held: frozenset = frozenset(), size_scale: float = 1.0) -> int:" in SIMPLE
     assert SIMPLE.index(LINE_LINE) > SIMPLE.index("pace = V615LaunchPaceLine()")
 
@@ -257,10 +261,10 @@ def test_every_v620_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(r"grep -qF '([^']+)' \"\$AGENT_PATH/([^\"]+)\"", block)
     assert len(pats) == 4, pats
     for pat, name in pats:
-        assert pat in (STRATEGY / name).read_text(), (pat, name)
+        assert pat in read_source(STRATEGY / name), (pat, name)
 
 
-def _run_block(params, agent_path=STRATEGY):
+def _run_block(params, agent_path=strategy_view()):
     start = LAUNCHER.index("# v6.20 S1.")
     stop = LAUNCHER.index('echo "[preflight] v6.20 room pace PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -292,7 +296,7 @@ def test_the_v620_block_refuses_an_agent_without_the_import_the_line_the_size_or
         tmp = Path(tempfile.mkdtemp(prefix="t620_"))
         try:
             for n in ("Strategy1_Research_Simple.py", "research_v620_room_pace.py"):
-                shutil.copy(STRATEGY / n, tmp / n)
+                copy_source(STRATEGY / n, tmp / n)
             text = (tmp / name).read_text()
             assert text.count(needle) == 1, needle
             (tmp / name).write_text(text.replace(needle, "# removed"))

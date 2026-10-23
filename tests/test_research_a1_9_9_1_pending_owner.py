@@ -28,12 +28,13 @@ from research_position_exit import (
     BAND_NORMAL,
 )
 from _harness import extractor, legacy_capability_attrs
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-RISK = (STRATEGY / "research_direct_risk_state.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+RISK = read_source(STRATEGY / "research_direct_risk_state.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 EPS = 5e-05
 
 

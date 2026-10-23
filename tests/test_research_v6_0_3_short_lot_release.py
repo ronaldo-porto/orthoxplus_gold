@@ -21,11 +21,12 @@ import research_v603_recovery as rec
 from research_direct_exit_refresh import ABSENT_PARTIAL_REMAINDER_CANCEL
 from research_direct_liveness import is_dust_inventory, partition_bound_remainder_orders
 from _harness import extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 
 MIN = 0.25
 EPS = 0.00005  # half a base unit at 4 volume decimals
@@ -390,7 +391,7 @@ def test_t5_source_wiring():
                   SIMPLE.index("def _direct_place_dust_normalizer")]
     assert body.index("if disposition == V603_DISPOSITION_RELEASE:") < body.index("response.cancel_orders(")
     # The frozen modules stay frozen.
-    liveness = (STRATEGY / "research_direct_liveness.py").read_text()
+    liveness = read_source(STRATEGY / "research_direct_liveness.py")
     assert "def is_dust_inventory(qty: float, *, min_order: float, eps: float) -> bool:" in liveness
     assert "v603" not in liveness.lower()
 

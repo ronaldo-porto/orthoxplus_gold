@@ -21,9 +21,10 @@ import research_v6212_pace_defer as pd  # noqa: E402
 from _harness import extractor  # noqa: E402
 import test_research_v6_2_5_cap_paced as c5  # noqa: E402
 import test_research_v6_2_11_score_logic as t11  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _simple = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 S = 1_000_000_000
 

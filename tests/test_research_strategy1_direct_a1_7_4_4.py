@@ -8,9 +8,10 @@ from research_direct_positive_maker_kappa import (
     classify_a1744_outcome,
 )
 from research_position_exit import ACTION_MAKER_EXIT, ACTION_TAKER_EXIT
+from _harness import read_source  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = (ROOT / "agents/strategy/Strategy1_Research_Simple.py").read_text()
+SRC = read_source(ROOT / "agents/strategy/Strategy1_Research_Simple.py")
 
 
 def _base(*, unrealized_bps, maker_net_bps, taker_net_bps, failed_exit_count=100,

@@ -22,9 +22,10 @@ import research_v633_deep_layer as dl  # noqa: E402
 import test_research_v6_3_0_trend_target as t63  # noqa: E402
 import test_research_v6_3_3_deep_layer as d633  # noqa: E402
 import test_research_v6_8 as t68  # noqa: E402
+from _harness import simple_text, read_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 FLOOR = 30.0                                     # research_v63_alpha_floor as shipped: the per-book floor is -15
 GATE_LINE = 'return bool(v68_per_book_gate(bool(getattr(self, "research_v68_book_gate", False))))'
 
@@ -107,10 +108,10 @@ def test_every_v611_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(r"grep -qF '([^']+)' \"\$AGENT_PATH/([^\"]+)\"", block)
     assert len(pats) == 1, pats
     for pat, name in pats:
-        assert pat in (STRATEGY / name).read_text(), (pat, name)
+        assert pat in read_source(STRATEGY / name), (pat, name)
 
 
-def _run_block(params, agent_path=STRATEGY):
+def _run_block(params, agent_path=strategy_view()):
     start = LAUNCHER.index("# v6.11 S1.")
     stop = LAUNCHER.index('echo "[preflight] v6.11 per-book gate PASS"', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]

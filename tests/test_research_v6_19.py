@@ -25,9 +25,10 @@ import test_research_v6_3_0_trend_target as t63  # noqa: E402
 import test_research_v6_16 as t616  # noqa: E402
 import test_research_v6_17 as t617  # noqa: E402
 from _harness import extractor  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 S = 1_000_000_000
 NOW = t616.NOW
@@ -225,10 +226,10 @@ def test_every_v619_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(r"grep -qF '([^']+)' \"\$AGENT_PATH/([^\"]+)\"", block)
     assert len(pats) == 3, pats
     for pat, name in pats:
-        assert pat in (STRATEGY / name).read_text(), (pat, name)
+        assert pat in read_source(STRATEGY / name), (pat, name)
 
 
-def _run_block(params, agent_path=STRATEGY):
+def _run_block(params, agent_path=strategy_view()):
     start = LAUNCHER.index("# v6.19 S1.")
     stop = LAUNCHER.index('echo "[preflight] v6.19 surplus hold PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -259,7 +260,7 @@ def test_the_v619_block_refuses_an_agent_without_the_import_the_rule_or_the_modu
         tmp = Path(tempfile.mkdtemp(prefix="t619_"))
         try:
             for n in ("Strategy1_Research_Simple.py", "research_v619_surplus_hold.py"):
-                shutil.copy(STRATEGY / n, tmp / n)
+                copy_source(STRATEGY / n, tmp / n)
             text = (tmp / name).read_text()
             assert text.count(needle) == 1, needle
             (tmp / name).write_text(text.replace(needle, "# removed"))

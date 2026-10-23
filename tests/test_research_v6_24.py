@@ -37,10 +37,11 @@ import test_research_v6_17 as t617  # noqa: E402
 import test_research_v6_23 as t623  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-MODULE = (STRATEGY / "research_v624_pay_basis.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(STRATEGY / "research_v624_pay_basis.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 CAPTURED, REALIZED = pb.BASIS_CAPTURED, pb.BASIS_REALIZED
 LABEL = "config_scoring_debeta_making_basis"
@@ -773,6 +774,8 @@ V6_36_IDENTIFIERS = t623.V6_36_IDENTIFIERS
 # v6.37 (research_v637_fast_path) only adds: the strip takes its additions out as well
 # (tests/test_research_v6_37.py checks them against v6.36).
 V6_37_IDENTIFIERS = t623.V6_37_IDENTIFIERS
+# v6.38 layer 3 only adds: the strip takes its additions out as well (tests/test_research_v6_38_l3.py).
+V6_38_IDENTIFIERS = t623.V6_38_IDENTIFIERS
 
 
 def _v623(rel):
@@ -801,12 +804,13 @@ def _mentions(node):
                                       or name in V6_34_IDENTIFIERS
                                       or name in V6_36_IDENTIFIERS
                                       or name in V6_37_IDENTIFIERS
+                                      or name in V6_38_IDENTIFIERS
                                       or name.startswith(("_v6_24_", "v6_24_", "_v6_25_", "v6_25_", "_v6_26_",
                                                           "v6_26_", "_v6_27_", "v6_27_", "_v6_28_", "v6_28_",
                                                           "_v6_29_", "v6_29_", "_v6_30_", "v6_30_", "_v6_31_",
                                                           "v6_31_", "_v6_32_", "v6_32_", "_v6_33_", "v6_33_",
                                                           "_v6_34_", "v6_34_", "_v6_36_", "v6_36_",
-                                                          "_v6_37_", "v6_37_"))):
+                                                          "_v6_37_", "v6_37_", "_v6_38_", "v6_38_"))):
             return True
     return False
 
@@ -834,12 +838,16 @@ class _Strip624(ast.NodeTransformer):
                                                                 "research_v6_33_touch_identity",
                                                                 "research_v6_34_class1",
                                                                 "research_v6_36_step_withdrawal",
-                                                                "research_v6_37_fast_path"):
+                                                                "research_v6_37_fast_path",
+                                                                "research_v6_38_canary",
+                                                                "research_v6_38_kbl",
+                                                                "research_v6_38_lean",
+                                                                "research_v6_38_keeper"):
                 continue
             if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_24_", "_v6_25_", "_v6_26_", "_v6_27_",
                                                                        "_v6_28_", "_v6_29_", "_v6_30_", "_v6_31_",
                                                                        "_v6_32_", "_v6_33_", "_v6_34_", "_v6_36_",
-                                                                       "_v6_37_")):
+                                                                       "_v6_37_", "_v6_38_")):
                 continue
             if isinstance(st, ast.If) and _mentions(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -933,14 +941,14 @@ def test_the_launcher_only_adds_to_v623s():
     assert removed == [defaults, arm, 'research_v623_start_once=1"', *v625_greps]
     blocks = []
     for head in ("# v6.24 S4.", "# v6.25 S5.", "# v6.26 S6.", "# v6.27 S7.", "# v6.28 S8.", "# v6.29 S9.", "# v6.30.",
-                 "# v6.31.", "# v6.32.", "# v6.33.", "# v6.34.", "# v6.36.", "# v6.37."):
+                 "# v6.31.", "# v6.32.", "# v6.33.", "# v6.34.", "# v6.36.", "# v6.37.", "# v6.38 L3."):
         start = launcher.index(head)
         blocks += launcher[start:launcher.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
     leaned = [ln.replace(f"'{g.format('inv')}'", f"'{g.format(name)}'") for ln, (g, name) in zip(v625_greps, greps)]
     assert sorted(added) == sorted([defaults + "; V6_24_BUILD=0; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0"
-                                    "; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0",
+                                    "; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0; V6_38_BUILD=0",
                                     arm + "; V6_24_BUILD=1; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1"
-                                    "; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1",
+                                    "; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1; V6_38_BUILD=1",
                                     "research_v623_start_once=1 \\", "research_v624_pay_basis=1 \\",
                                     "research_v625_lean=1 \\", "research_v625_lean_slope=1.0 \\",
                                     "research_v625_lean_cap=48 \\", "research_v626_feed_clock=1 \\",
@@ -954,7 +962,12 @@ def test_the_launcher_only_adds_to_v623s():
                                     "research_v633_touch_identity=1 \\",
                                     "research_v634_class1_entry=0 \\",
                                     "research_v636_step_withdrawal=1 \\",
-                                    'research_v637_fast_path=1"', *leaned,
+                                    "research_v637_fast_path=1 \\",
+                                    "research_v638_kbl=0 \\",
+                                    "research_v638_lean=0 \\",
+                                    "research_v638_lean_arm=0 \\",
+                                    "research_v638_c1=0 \\",
+                                    'research_v638_c1_arm=0"', *leaned,
                                     "      tests/test_research_v6_24.py \\", "      tests/test_research_v6_25.py \\",
                                     "      tests/test_research_v6_26.py \\", "      tests/test_research_v6_27.py \\",
                                     "      tests/test_research_v6_28.py \\", "      tests/test_research_v6_29.py \\",
@@ -964,7 +977,8 @@ def test_the_launcher_only_adds_to_v623s():
                                     "      tests/test_research_v6_33.py \\",
                                     "      tests/test_research_v6_34.py \\",
                                     "      tests/test_research_v6_36.py \\",
-                                    "      tests/test_research_v6_37.py \\", *blocks])
+                                    "      tests/test_research_v6_37.py \\",
+                                    "      tests/test_research_v6_38_l3.py \\", *blocks])
 
 
 # ---- 6. the launcher -----------------------------------------------------------------------------------------------
@@ -993,14 +1007,14 @@ def test_every_v624_preflight_pattern_is_in_the_file_it_checks():
     assert len(pats) == 6, pats
     for single, double, var, name in pats:
         needle = single or double
-        assert var == "AGENT_PATH" and (STRATEGY / name).read_text().count(needle) == 1, (needle, name)
+        assert var == "AGENT_PATH" and read_source(STRATEGY / name).count(needle) == 1, (needle, name)
     needles = {single or double for single, double, _var, _name in pats}
     assert needles == {"from research_v624_pay_basis import (", SWITCH_LINE, OBSERVE_LINE,
                        "def parse_basis(text: Any) -> str | None:",
                        "def realized_active(mode: Any, spec: Any, basis: Any) -> bool:", "class SharedBasis:"}
 
 
-def _run_block(params, agent_path=STRATEGY, script_dir=ROOT, build="1"):
+def _run_block(params, agent_path=strategy_view(), script_dir=ROOT, build="1"):
     start = LAUNCHER.index("# v6.24 S4.")
     stop = LAUNCHER.index('echo "[preflight] v6.24 pay basis PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -1033,7 +1047,7 @@ def test_the_v624_block_refuses_a_tree_without_each_line_it_checks(tmp_path):
         tmp = tmp_path / str(i)
         (tmp / "agents" / "strategy").mkdir(parents=True)
         for n in ("Strategy1_Research_Simple.py", "research_v624_pay_basis.py"):
-            shutil.copy(STRATEGY / n, tmp / "agents" / "strategy" / n)
+            copy_source(STRATEGY / n, tmp / "agents" / "strategy" / n)
         path = tmp / "agents" / "strategy" / name
         text = path.read_text()
         assert text.count(needle) == 1, needle

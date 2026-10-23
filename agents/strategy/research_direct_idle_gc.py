@@ -103,6 +103,7 @@ class IdleCollector:
         delay_s: float = A1992_IDLE_DELAY_MS / 1000.0,
         fallback_responses: int = A1992_FALLBACK_RESPONSES,
         supported: bool | None = None,
+        deferred_full: bool = False,
     ) -> None:
         self._gc = gc_module
         self._clock = clock
@@ -130,6 +131,12 @@ class IdleCollector:
         self.tracked_objects: int | None = None
         self.f2_held = False                # F2: collection held off since a request began (its idle pass ends it)
         self.f2_holds = 0
+        # v6.39 (research_v6_39_runlen, S3.3): the full pass only when the interpreter's own trigger is reached
+        # (generation-1 passes since the last full pass >= the threshold saved at install); a young-generation
+        # pass on every other idle gap.  Off (the default): v6.38's full pass on every gap.
+        self.deferred_full = bool(deferred_full)
+        self.idle_young_passes = 0
+        self.idle_young_total_ms = 0.0
 
     # ---- request boundary ---------------------------------------------------------------------
 
@@ -172,14 +179,20 @@ class IdleCollector:
             self.idle_skipped_busy += 1
             return None
         started = self._clock()
+        generation = self._v639_generation() if self.deferred_full else 2
         try:
-            unreachable = int(self._gc.collect())
+            unreachable = int(self._gc.collect() if generation == 2 else self._gc.collect(generation))
         except Exception:
             self._fall_back(FALLBACK_COLLECT_ERROR)
             return None
         if F2_REQUEST_GC_HOLD:
             self._f2_release()
         ms = (self._clock() - started) * 1000.0
+        if generation != 2:                 # v6.39: a young pass -- the gap was used, the full-pass counters untouched
+            self.idle_young_passes += 1
+            self.idle_young_total_ms += ms
+            self.responses_since_idle = 0
+            return unreachable
         self.idle_passes += 1
         self.idle_last_ms = ms
         self.idle_max_ms = max(self.idle_max_ms, ms)
@@ -192,6 +205,19 @@ class IdleCollector:
             except Exception:
                 pass
         return unreachable
+
+    def _v639_generation(self) -> int:
+        """v6.39: 2 (the full pass) once the interpreter's own generation-2 trigger is reached -- generation-1
+        passes since the last full pass (gc.get_count()[2]) >= the threshold saved at install -- else 1; 2 where
+        the gc module has no get_count or no threshold was saved."""
+        get_count = getattr(self._gc, "get_count", None)
+        saved = self.saved_threshold
+        if get_count is None or saved is None or len(saved) < 3:
+            return 2
+        try:
+            return 2 if int(get_count()[2]) >= int(saved[2]) else 1
+        except Exception:
+            return 2
 
     # ---- interpreter ---------------------------------------------------------------------------
 
@@ -288,4 +314,7 @@ class IdleCollector:
             "idle_mean_ms": round(self.idle_total_ms / self.idle_passes, 3) if self.idle_passes else 0.0,
             "idle_last_unreachable": self.idle_last_unreachable,
             "tracked_objects": self.tracked_objects,
+            **({"deferred_full": 1, "idle_young_passes": self.idle_young_passes,
+                "idle_young_mean_ms": (round(self.idle_young_total_ms / self.idle_young_passes, 3)
+                                       if self.idle_young_passes else 0.0)} if self.deferred_full else {}),
         }

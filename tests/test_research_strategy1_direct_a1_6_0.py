@@ -6,9 +6,10 @@ import pytest
 ROOT = Path(__file__).parents[1]
 STRATEGY_DIR = ROOT / 'agents' / 'strategy'
 sys.path.insert(0, str(STRATEGY_DIR))
+from _harness import simple_text, read_source  # noqa: E402
 
 PATH = STRATEGY_DIR / 'Strategy1_Research_Simple.py'
-SRC = PATH.read_text(encoding='utf-8')
+SRC = simple_text()
 TREE = ast.parse(SRC)
 CLASS = next(n for n in TREE.body if isinstance(n, ast.ClassDef) and n.name == 'Strategy1_Research_Simple')
 METHODS = {n.name: n for n in CLASS.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
@@ -225,5 +226,5 @@ def test_direct_overlay_temporarily_substitutes_exit_chooser_without_editing_bas
     exit_src = ast.get_source_segment(SRC, METHODS['_research_apply_unified_exit'])
     assert 'choose_observable_position_exit' in exit_src
     assert 'finally' in exit_src
-    base_src = (STRATEGY_DIR / 'Strategy1_Research.py').read_text(encoding='utf-8')
+    base_src = read_source(STRATEGY_DIR / 'Strategy1_Research.py')
     assert 'choose_observable_position_exit' not in base_src

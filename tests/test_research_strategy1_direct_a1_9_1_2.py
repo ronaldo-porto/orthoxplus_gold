@@ -34,7 +34,8 @@ STRATEGY_DIR = ROOT / "agents" / "strategy"
 SIMPLE = STRATEGY_DIR / "Strategy1_Research_Simple.py"
 
 sys.path.insert(0, str(STRATEGY_DIR))
-SRC = SIMPLE.read_text()
+from _harness import simple_text  # noqa: E402
+SRC = simple_text()
 
 from research_direct_book_ownership import (  # noqa: E402
     ExchangeOrderIdentity, PendingExposureOrder, canonical_order_side,

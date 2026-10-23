@@ -240,6 +240,7 @@ class StateRecorder:
                 self.errors += 1
                 self.stopped_reason = STOP_ERROR
                 self._close()
+            item = None     # v6.39 (k115 H14): the previous state's books are not held while waiting for the next
 
     def _write(self, item: tuple[int, Any, Mapping[Any, Any], bool]) -> None:
         tick, ts, raw, depth = item

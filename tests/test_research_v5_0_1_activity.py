@@ -22,12 +22,13 @@ import research_v5_score_mirror as sm
 from research_candidate_screen import ScreenResult
 from research_score_ev import ScoreEVBreakdown
 from _harness import extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-ACTIVITY = (STRATEGY / "research_v5_activity.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+ACTIVITY = read_source(STRATEGY / "research_v5_activity.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 NS = 1_000_000_000
 BUCKET = 600 * NS
 GATE = 5_400 * NS
@@ -550,7 +551,7 @@ def test_v5_0_1_is_wired_and_launched():
     floor = "return (int(gate_ts) // int(sampling_ns)) * int(sampling_ns) - int(sampling_ns)"
     assert floor in ACTIVITY and floor in LAUNCHER
     weighting = "weighted[book] = weighted_kappa(norm, factor)"
-    assert weighting in (STRATEGY / "research_v5_score_mirror.py").read_text() and weighting in LAUNCHER
+    assert weighting in read_source(STRATEGY / "research_v5_score_mirror.py") and weighting in LAUNCHER
 
 
 def test_the_decision_inputs_read_neither_the_ledger_nor_the_mirror():

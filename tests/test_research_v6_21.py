@@ -38,9 +38,10 @@ import test_research_v6_16 as t616  # noqa: E402
 import test_research_v6_17 as t617  # noqa: E402
 import test_research_v6_19 as t619  # noqa: E402
 import test_research_v6_20 as t620  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 S = 1_000_000_000
 NOW = t620.NOW
 CAP = 500_000.0
@@ -1060,10 +1061,10 @@ def test_every_v621_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(r"grep -qF '([^']+)' \"\$AGENT_PATH/([^\"]+)\"", block)
     assert len(pats) == 11, pats
     for pat, name in pats:
-        assert pat in (STRATEGY / name).read_text(), (pat, name)
+        assert pat in read_source(STRATEGY / name), (pat, name)
 
 
-def _run_block(params, agent_path=STRATEGY):
+def _run_block(params, agent_path=strategy_view()):
     start = LAUNCHER.index("# v6.21 S1-S3.")
     stop = LAUNCHER.index('echo "[preflight] v6.21 young window PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -1095,7 +1096,7 @@ def test_the_v621_block_refuses_an_agent_without_each_line_it_checks():
         tmp = Path(tempfile.mkdtemp(prefix="t621_"))
         try:
             for n in names:
-                shutil.copy(STRATEGY / n, tmp / n)
+                copy_source(STRATEGY / n, tmp / n)
             text = (tmp / name).read_text()
             assert text.count(needle) == 1, needle
             (tmp / name).write_text(text.replace(needle, "# removed"))

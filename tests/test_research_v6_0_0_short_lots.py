@@ -19,13 +19,14 @@ import research_v600_short_lots as sl
 from research_direct_risk_state import ExitPending, authorize_exit
 from research_exit_quantity import REASON_EXACT, REASON_SAFER_RESIDUAL, choose_reduce_quantity
 from _harness import defs_extractor, extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
-MODULE = (STRATEGY / "research_v600_short_lots.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
+MODULE = read_source(STRATEGY / "research_v600_short_lots.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 
 MIN = 0.25
 EPS = 0.00005  # half a base unit at 4 volume decimals

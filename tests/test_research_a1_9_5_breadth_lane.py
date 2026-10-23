@@ -24,10 +24,11 @@ from research_direct_breadth_lane import (
     evaluate_breadth_relief,
 )
 from _harness import extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
-SIMPLE = (ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
-MODULE = (ROOT / "agents" / "strategy" / "research_direct_breadth_lane.py").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(ROOT / "agents" / "strategy" / "research_direct_breadth_lane.py")
 
 # The measured live state: base floor 2.5, gate escalated to 15.0, the median
 # blocked one-away book showing +8.40 bps, score deficit 9.

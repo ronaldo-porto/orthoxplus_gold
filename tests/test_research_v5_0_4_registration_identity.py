@@ -32,15 +32,16 @@ import research_v5_observatory as obs
 import research_v5_session_identity as si
 from research_v5_score_mirror import mirror_score
 from _harness import extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
-IDENTITY = (STRATEGY / "research_v5_session_identity.py").read_text()
-ROUNDS = (STRATEGY / "research_v5_mirror_rounds.py").read_text()
-OBSERVATORY = (STRATEGY / "research_v5_observatory.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
+IDENTITY = read_source(STRATEGY / "research_v5_session_identity.py")
+ROUNDS = read_source(STRATEGY / "research_v5_mirror_rounds.py")
+OBSERVATORY = read_source(STRATEGY / "research_v5_observatory.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 
 SECOND = 1_000_000_000
 SIM = "20260913_0722"

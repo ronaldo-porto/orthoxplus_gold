@@ -20,11 +20,12 @@ no new probe may appear.
 """
 import ast
 from pathlib import Path
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
 SIMPLE_PATH = STRATEGY / "Strategy1_Research_Simple.py"
-SIMPLE = SIMPLE_PATH.read_text(encoding="utf-8")
+SIMPLE = simple_text()
 
 # The class chain an attribute may legitimately come from.
 CHAIN = ("Strategy1_Research_Simple.py", "Strategy1_Research.py", "Strategy1_Debug.py", "Strategy1.py",
@@ -47,7 +48,7 @@ KNOWN_PROBES: set[tuple[str, str]] = set()
 
 
 def _class(path):
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = ast.parse(read_source(path))                 # v6.39 S4: Simple's joined text
     return tree, next((n for n in tree.body if isinstance(n, ast.ClassDef)), None)
 
 

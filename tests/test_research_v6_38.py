@@ -46,13 +46,15 @@ import research_v6_38_fast_path as fp  # noqa: E402
 import test_research_v6_37 as t637  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
+import _v639_undo  # noqa: E402
+from _harness import simple_text, read_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-MODULE = (STRATEGY / "research_v6_38_fast_path.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
-MODELS = (ROOT / "taos" / "im" / "protocol" / "models.py").read_text()
-LEDGER_SRC = (STRATEGY / "research_direct_exit_ledger.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(STRATEGY / "research_v6_38_fast_path.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
+MODELS = read_source(ROOT / "taos" / "im" / "protocol" / "models.py")
+LEDGER_SRC = read_source(STRATEGY / "research_direct_exit_ledger.py")
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 SWITCH = "research_v638_fast_path"
 SWITCH_TEST = 'getattr(self, "research_v638_fast_path", False)'
@@ -70,6 +72,22 @@ V637_AST = {
                (3, 12): "cf5a67ef10d74a3dc8792276b00d83f99d56fb57294ebca730a08dab535db830"},
 }
 V637_LAUNCHER_SHA256 = "f62b9454fa958087345a93a33180f066b6e8b8834fde24e38810e8e6c326b964"
+# k126 (the merged v6.38 = this layer 2 + v6.38 layer 3, scratchpad k124 / k126): v6.37 + layer 3 = k124's Dev_v6_38_l3
+# launcher (its L3_FROZEN entry) and this layer 2 alone = k123's FROZEN_1 launcher (k123 verify/frozen_1.sha256)
+V637_L3_LAUNCHER_SHA256 = "c11a588fd7530428cf31577de017da49f38472055da28413cf8f3ab70f26a398"
+V638_A_LAUNCHER_SHA256 = "b358c9813ae939bec2a5be52e6fa53e8f7b4fd9a48988f677e6f0121aa2dd07e"
+# k126 M-FROZEN_2 = M-FROZEN_1 + ONE default flip in PARAMS (research_v638_lean=1 + research_v638_lean_arm=3: CC on the
+# k116 hash half) and its note line in layer 3's block header; with both undone the launcher is M-FROZEN_1's
+M2_FLIP = (("research_v638_lean=0 \\\n", "research_v638_lean=1 \\\n"),
+           ("research_v638_lean_arm=0 \\\n", "research_v638_lean_arm=3 \\\n"))
+M2_NOTE = ("# M-FROZEN_2 (k126, 10-22 JST): ONE default flipped since -- research_v638_lean=1 + research_v638_lean_arm=3: CC (the\n"
+           "# front-built lean) on the k116 hash half of the class-0 books; every other layer-3 switch still ships 0.\n")
+M1_LAUNCHER_SHA256 = "a289b652e6ba99f8a565f8733e6c2c433d9c630383b22fe2e61ea34119f65b32"
+
+
+def _l3_out(tree):
+    """k126: v6.38 layer 3 taken out of a tree v6.38's undo has run on (t637's _Drop638: no layer-2 name is left)."""
+    return t637._Drop638().visit(tree)
 
 
 def _params():
@@ -393,7 +411,8 @@ def test_every_reader_of_book_events_is_the_audited_one():
         rel = path.relative_to(ROOT).as_posix()
         if rel == "taos/im/protocol/models.py":
             continue
-        n = len(pat.findall(path.read_text(errors="replace")))
+        n = len(pat.findall(read_source(path) if path.name == "Strategy1_Research_Simple.py"
+                            else path.read_text(errors="replace")))                 # v6.39 S4: the joined text
         if n:
             seen[rel] = n
     assert seen == EVENT_READERS, seen
@@ -556,7 +575,8 @@ def test_the_v6214_side_memo_is_the_same_on_and_off():
 
 def test_simple_the_protocol_and_the_ledger_with_v638_undone_are_v637s():
     for name, text in (("Simple", SIMPLE), ("models", MODELS), ("ledger", LEDGER_SRC)):
-        digest = hashlib.sha256(ast.dump(_v638_undo.parse(text)).encode()).hexdigest()
+        undone = _v638_undo.parse(text)                                   # k126: Simple's layer 3 out as well
+        digest = hashlib.sha256(ast.dump(_l3_out(undone) if name == "Simple" else undone).encode()).hexdigest()
         assert digest == V637_AST[name].get(PY, "no v6.37 digest for this interpreter"), name
         assert digest != hashlib.sha256(ast.dump(ast.parse(text)).encode()).hexdigest(), name     # it changes them
         tree = _v638_undo.parse(text)
@@ -566,7 +586,7 @@ def test_simple_the_protocol_and_the_ledger_with_v638_undone_are_v637s():
                       ("trades = list(v6_38_trades_of(getattr(book, \"events\", None)))     # v6.38 P3: the one parse",
                        "trades = list(v6_38_trades_of(getattr(book, \"events\", None)))[:1]")):
         assert SIMPLE.count(good) == 1, good
-        mutated = hashlib.sha256(ast.dump(_v638_undo.parse(SIMPLE.replace(good, bad))).encode()).hexdigest()
+        mutated = hashlib.sha256(ast.dump(_l3_out(_v638_undo.parse(SIMPLE.replace(good, bad)))).encode()).hexdigest()
         if "v6_38_trades_of" in good:                       # inside a switch branch: the undo drops it (the on path)
             assert mutated == V637_AST["Simple"].get(PY), good
         else:
@@ -574,14 +594,30 @@ def test_simple_the_protocol_and_the_ledger_with_v638_undone_are_v637s():
 
 
 def test_the_launcher_with_v638_undone_is_v637s_byte_for_byte():
-    assert _sha(_v638_undo.launcher_v637(LAUNCHER)) == V637_LAUNCHER_SHA256
+    launcher = _v639_undo.launcher_v638(LAUNCHER)                       # k129: v6.39's edits out first
+    for off, on in M2_FLIP:                    # k129: v6.39 ships CC OFF (the user, 10-23): M-FROZEN_1's values, no note
+        assert launcher.count(off) == 1 and launcher.count(on) == 0, on
+    assert launcher.count(M2_NOTE) == 0
+    assert _sha(launcher) == M1_LAUNCHER_SHA256                          # M-FROZEN_1's launcher, byte for byte
+    layer3 = _v638_undo.V638_L3_HEAD in launcher                         # k126: the merged build carries layer 3 too
+    assert _sha(_v638_undo.launcher_v637(launcher)) == (V637_L3_LAUNCHER_SHA256 if layer3 else V637_LAUNCHER_SHA256)
     with pytest.raises(AssertionError):
-        _v638_undo.launcher_v637(_v638_undo.launcher_v637(LAUNCHER))     # applies to v6.38's text only
+        _v638_undo.launcher_v637(_v638_undo.launcher_v637(launcher))     # applies to v6.38's text only
+    if layer3:                       # layer 3's three launcher edits out (its block, its five keys, its gate entry)
+        text = launcher.replace(launcher[launcher.index("# v6.38 L3.  "):
+                                         launcher.index('if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then')], "", 1)
+        tail = ("research_v638_fast_path=1 \\\nresearch_v638_kbl=0 \\\nresearch_v638_lean=0 \\\n"
+                "research_v638_lean_arm=0 \\\nresearch_v638_c1=0 \\\nresearch_v638_c1_arm=0\"\n")
+        assert text.count(tail) == 1 and text.count("      tests/test_research_v6_38_l3.py \\\n") == 1
+        text = text.replace(tail, 'research_v638_fast_path=1"\n').replace("      tests/test_research_v6_38_l3.py \\\n", "")
+        assert _sha(text) == V638_A_LAUNCHER_SHA256                      # k123's v6.38-A launcher, byte for byte
+        assert _sha(_v638_undo.launcher_v637(text)) == V637_LAUNCHER_SHA256
 
 
 def test_v638_imports_its_module_after_v637s_and_writes_the_switch_after_v637s_ledger_line():
     tree = ast.parse(SIMPLE)
-    imports = [n for n in tree.body if isinstance(n, ast.ImportFrom)]
+    imports = [n for n in tree.body if isinstance(n, ast.ImportFrom)
+               and n.module not in t637.V6_38_MODULES + (_v639_undo.V639_MODULE,)]   # k126: layer 3's four out; k129: v6.39's
     names = [n.module for n in imports]
     i = names.index("research_v6_38_fast_path")
     assert names[i - 1] == "research_v6_37_fast_path" and names[i + 1] == "research_v64_board"
@@ -606,9 +642,11 @@ def test_the_changed_paths_are_f2s_and_v638s_own():
         pytest.skip(f"git or {V637_COMMIT} is not available here")
     listed = set(out.stdout.split())
     new = {"agents/strategy/research_v6_37_fast_path.py"} | _v638_undo.V638_NEW
+    new |= _v638_undo.V638_L3_MODULES                  # k126: v6.38 layer 3's four modules, listed once committed
     f2 = {"agents/strategy/Strategy1_Research_Simple.py", "agents/strategy/research_direct_exit_ledger.py",
           "agents/strategy/research_direct_idle_gc.py", "taos/im/protocol/models.py"}
-    assert listed - new == f2 | _v638_undo.V638_MODULES | _v638_undo.V638_ARCHIVED
+    v639 = _v639_undo.V639_PATHS                       # k129: v6.39's paths, untracked or tracked (its test pins them)
+    assert listed - new - v639 == (f2 | _v638_undo.V638_MODULES | _v638_undo.V638_ARCHIVED) - v639
     assert (STRATEGY / "research_v6_38_fast_path.py").is_file()
 
 
@@ -783,10 +821,13 @@ def test_the_v638_block_is_gated_preflighted_listed_and_ships_on():
     assert LAUNCHER.count("; V6_36_BUILD=0; V6_37_BUILD=0; V6_38_BUILD=0\n") == 1
     arm = next(x for x in LAUNCHER.splitlines() if x.startswith("  strategy1_direct_v6_3_0)"))
     assert arm.endswith("; V6_36_BUILD=1; V6_37_BUILD=1; V6_38_BUILD=1"), arm
-    assert LAUNCHER.count('if [[ "${V6_38_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_38_BUILD=") == 2
+    # k126: layer 3's "# v6.38 L3." block reads the same flag (its own test pins it); its five keys follow this one's
+    assert LAUNCHER.count('if [[ "${V6_38_BUILD:-0}" == "1" ]]; then') == 3 and LAUNCHER.count("V6_38_BUILD=") == 2  # k129: + v6.39
+    assert LAUNCHER.index("# v6.38.") < LAUNCHER.index('if [[ "${V6_38_BUILD:-0}" == "1" ]]; then') < \
+        LAUNCHER.index("# v6.38 L3.")
     assert "      tests/test_research_v6_37.py \\\n      tests/test_research_v6_38.py \\\n" in LAUNCHER
-    assert 'research_v637_fast_path=1 \\\nresearch_enable_fill_hazard=0 \\\nresearch_v638_fast_path=1"\n' in LAUNCHER
-    assert _params().split()[-1] == "research_v638_fast_path=1" and len(_params().split()) == 214
+    assert 'research_v637_fast_path=1 \\\nresearch_enable_fill_hazard=0 \\\nresearch_v638_fast_path=1 \\\n' in LAUNCHER
+    assert _params().split()[-7] == "research_v638_fast_path=1" and len(_params().split()) == 220   # k129: + v6.39's key
     assert LAUNCHER.index('echo "[preflight] v6.37 fast path PASS') < LAUNCHER.index("# v6.38.") < \
         LAUNCHER.index('echo "[preflight] v6.38 fast path PASS') < \
         LAUNCHER.index('if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then')
@@ -813,14 +854,14 @@ def test_every_v638_preflight_pattern_is_in_the_file_it_checks():
     pats = _patterns()
     assert [len([p for p in pats if p[2] == name]) for name in FILES] == [6, 5, 4]
     for needle, _var, name in pats:
-        assert (ROOT / FILES[name]).read_text().count(needle) >= 1, needle
+        assert read_source(ROOT / FILES[name]).count(needle) >= 1, needle
     block = _block()
     assert block.count('"$_v638_n" == "2"') == 1 and SIMPLE.count(
         '((int(raw_id), v6_38_feed(getattr(book, "events", None))) for raw_id, book in books.items()),') == 2
     assert block.count('"$_v638_n" == "6"') == 1 and SIMPLE.count(f"if {SWITCH_TEST}:") == 6
 
 
-def _run_block(params, *, agent_path=STRATEGY, script_dir=ROOT, build="1"):
+def _run_block(params, *, agent_path=strategy_view(), script_dir=ROOT, build="1"):
     start = LAUNCHER.index('if [[ "${V6_38_BUILD:-0}" == "1" ]]; then')
     text = LAUNCHER[start:LAUNCHER.index("\nfi\n", start) + len("\nfi\n")]
     script = 'set -euo pipefail\nAGENT_PATH="$1"\nSCRIPT_DIR="$2"\nPARAMS="$3"\nV6_38_BUILD="$4"\n' + text
@@ -851,13 +892,13 @@ def test_the_v638_block_refuses_a_tree_without_each_line_it_checks(tmp_path):
     whole = tmp_path / "whole"
     for rel in FILES.values():
         (whole / rel).parent.mkdir(parents=True, exist_ok=True)
-        (whole / rel).write_text((ROOT / rel).read_text())
+        (whole / rel).write_text(read_source(ROOT / rel))
     assert _run_block(shipped, agent_path=whole / "agents" / "strategy", script_dir=whole).returncode == 0
     for needle, _var, name in _patterns():
         tree = tmp_path / ("t%d" % abs(hash(needle)))
         for rel in FILES.values():
             (tree / rel).parent.mkdir(parents=True, exist_ok=True)
-            text = (ROOT / rel).read_text()
+            text = read_source(ROOT / rel)
             (tree / rel).write_text(text.replace(needle, "") if rel == FILES[name] else text)
         out = _run_block(shipped, agent_path=tree / "agents" / "strategy", script_dir=tree)
         assert out.returncode == 1 and "ERROR: v6.38" in out.stderr, needle
@@ -865,7 +906,7 @@ def test_the_v638_block_refuses_a_tree_without_each_line_it_checks(tmp_path):
     for rel in FILES.values():
         if rel != FILES["research_v6_38_fast_path.py"]:
             (bare / rel).parent.mkdir(parents=True, exist_ok=True)
-            (bare / rel).write_text((ROOT / rel).read_text())
+            (bare / rel).write_text(read_source(ROOT / rel))
     out = _run_block(shipped, agent_path=bare / "agents" / "strategy", script_dir=bare)
     assert out.returncode == 1 and "the fast-path module is missing" in out.stderr
     feed = '((int(raw_id), v6_38_feed(getattr(book, "events", None))) for raw_id, book in books.items()),'
@@ -876,7 +917,7 @@ def test_the_v638_block_refuses_a_tree_without_each_line_it_checks(tmp_path):
         one = tmp_path / ("one%d" % len(why))
         for rel in FILES.values():
             (one / rel).parent.mkdir(parents=True, exist_ok=True)
-            text = (ROOT / rel).read_text()
+            text = read_source(ROOT / rel)
             (one / rel).write_text(text.replace(old, new, 1) if rel == FILES["Strategy1_Research_Simple.py"] else text)
         out = _run_block(shipped, agent_path=one / "agents" / "strategy", script_dir=one)
         assert out.returncode == 1 and why in out.stderr, (why, out.stderr)

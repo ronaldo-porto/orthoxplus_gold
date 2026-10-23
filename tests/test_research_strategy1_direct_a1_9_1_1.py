@@ -36,8 +36,9 @@ SIMPLE = STRATEGY_DIR / "Strategy1_Research_Simple.py"
 LAUNCHER = ROOT / "run_strategy1_research_simple_multi.sh"
 
 sys.path.insert(0, str(STRATEGY_DIR))
+from _harness import simple_text  # noqa: E402
 
-SRC = SIMPLE.read_text()
+SRC = simple_text()
 LAUNCHER_SRC = LAUNCHER.read_text()
 
 from research_direct_exit_ledger import (  # noqa: E402

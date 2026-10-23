@@ -47,7 +47,8 @@ SIMPLE = STRATEGY_DIR / "Strategy1_Research_Simple.py"
 LAUNCHER = ROOT / "run_strategy1_research_simple_multi.sh"
 
 sys.path.insert(0, str(STRATEGY_DIR))
-SRC = SIMPLE.read_text()
+from _harness import simple_text, read_source  # noqa: E402
+SRC = simple_text()
 
 
 # ------------------------------------------------------------- source pins
@@ -63,7 +64,7 @@ def test_suppression_cap_is_unchanged():
 
 
 def test_frozen_base_untouched():
-    base = (STRATEGY_DIR / "Strategy1_Research.py").read_text()
+    base = read_source(STRATEGY_DIR / "Strategy1_Research.py")
     assert 'RESEARCH_POLICY_VERSION = "simplified_hybrid_authority_v4_16_2"' in base
 
 

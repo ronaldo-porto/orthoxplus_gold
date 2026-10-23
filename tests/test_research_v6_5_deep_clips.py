@@ -24,9 +24,10 @@ import test_research_v6_3_3_deep_layer as d633  # noqa: E402
 import test_research_v6_4_board as t64  # noqa: E402
 from _harness import extractor  # noqa: E402
 from research_direct_exposure import add_order_to_batch  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 TICK = 0.01
 EXTRA = {"V65_DEEP_CLIPS_VERSION": dc.V65_DEEP_CLIPS_VERSION, "v65_deep_clip": dc.deep_clip,

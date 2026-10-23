@@ -16,6 +16,7 @@ import symtable
 from pathlib import Path
 
 import pytest
+from _harness import simple_text  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
@@ -49,7 +50,17 @@ MODULES = [
     "research_v6_34_class1.py",
     "research_v6_36_step_withdrawal.py",
     "research_v6_37_fast_path.py",
+    "research_v6_38_canary.py",
+    "research_v6_38_kbl.py",
+    "research_v6_38_lean.py",
+    "research_v6_38_keeper.py",
     "research_v6_38_fast_path.py",
+    "research_v6_39_runlen.py",
+    "simple_parts/v6_29_part.py",
+    "simple_parts/v6_30_part.py",
+    "simple_parts/v6_31_part.py",
+    "simple_parts/v6_32_part.py",
+    "simple_parts/v6_36_part.py",
     "research_v6214_touch_life.py",
     "research_v6215_order_life.py",
     "research_v63_trend_target.py",
@@ -115,6 +126,6 @@ def test_the_frozen_module_has_only_its_known_gap():
 
 
 def test_the_v6_2_6_constant_that_was_missing_is_imported_now():
-    src = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
+    src = simple_text()
     assert "BOOK_LOSS as V623_BOOK_LOSS" in src
     assert "if status == V623_BOOK_LOSS:" in src

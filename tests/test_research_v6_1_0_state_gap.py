@@ -26,10 +26,11 @@ import research_v5_dust_liveness as dl
 import research_v61_state_gap as sg
 from research_session_state import extract_simulation_id
 from _harness import extractor, legacy_capability_attrs
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
-SIMPLE = (ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 S = 1_000_000_000

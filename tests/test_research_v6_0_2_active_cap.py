@@ -12,12 +12,13 @@ from types import SimpleNamespace
 
 from research_direct_legacy_baseline import admission_decomposition
 from research_direct_liveness import admission_slots
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 MIN = 0.25
 
 

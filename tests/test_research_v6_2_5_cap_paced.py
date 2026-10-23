@@ -33,10 +33,11 @@ from research_v62_breadth import (  # noqa: E402
     REASON_OK, REASON_VOLUME_CAP, BookFacts,
 )
 from _harness import extractor  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-MODULE = (STRATEGY / "research_v625_cap_paced.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(STRATEGY / "research_v625_cap_paced.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _simple = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 S = 1_000_000_000

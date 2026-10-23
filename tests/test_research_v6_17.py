@@ -27,9 +27,10 @@ import test_research_v6_5_deep_clips as t65  # noqa: E402
 import test_research_v6_9 as t69  # noqa: E402
 import test_research_v6_16 as t616  # noqa: E402
 from _harness import extractor  # noqa: E402
+from _harness import simple_text, read_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 S = 1_000_000_000
 NOW = t616.NOW
@@ -396,10 +397,10 @@ def test_every_v617_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(r"grep -qF '([^']+)' \"\$AGENT_PATH/([^\"]+)\"", block)
     assert len(pats) == 6, pats
     for pat, name in pats:
-        assert pat in (STRATEGY / name).read_text(), (pat, name)
+        assert pat in read_source(STRATEGY / name), (pat, name)
 
 
-def _run_block(params, agent_path=STRATEGY):
+def _run_block(params, agent_path=strategy_view()):
     start = LAUNCHER.index("# v6.17 S1.")
     stop = LAUNCHER.index('echo "[preflight] v6.17 touch quote PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -427,7 +428,7 @@ def test_the_v617_block_refuses_an_agent_without_the_quote_the_sides_the_slot_or
         out = _run_block(_shipped(), agent_path=tmp)
         assert out.returncode == 1 and why in out.stderr, why
     (tmp / "Strategy1_Research_Simple.py").write_text(SIMPLE)
-    src = (STRATEGY / "research_v617_touch_quote.py").read_text()
+    src = read_source(STRATEGY / "research_v617_touch_quote.py")
     (tmp / "research_v617_touch_quote.py").write_text(src.replace("def verdict(", "def no_verdict("))
     out = _run_block(_shipped(), agent_path=tmp)
     assert out.returncode == 1 and "has no verdict" in out.stderr

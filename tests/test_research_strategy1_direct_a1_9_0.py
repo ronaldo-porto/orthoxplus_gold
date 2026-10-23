@@ -41,10 +41,11 @@ from research_direct_exit_refresh import (
     forgone_edge_bps,
     ladder_rung,
 )
+from _harness import read_source  # noqa: E402
 
-SRC = (AGENT / "Strategy1_Research_Simple.py").read_text()
-BASE_SRC = (AGENT / "Strategy1_Research.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SRC = read_source(AGENT / "Strategy1_Research_Simple.py")
+BASE_SRC = read_source(AGENT / "Strategy1_Research.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 
 TICK = 0.01
 FLOOR = 1.0

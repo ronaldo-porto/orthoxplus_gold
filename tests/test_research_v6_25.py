@@ -43,10 +43,11 @@ import test_research_v6_22 as t622  # noqa: E402
 import test_research_v6_23 as t623  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-MODULE = (STRATEGY / "research_v625_lean.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(STRATEGY / "research_v625_lean.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 S = 1_000_000_000
 NOW = t623.NOW
@@ -310,7 +311,9 @@ def test_the_deep_layer_and_the_touch_quote_read_their_inventory_only_from_the_a
                "_research_abs_inventory", "venue")
     for name, reads in (("_v633_book", {"v612_level0_depth", "v66_adds_to_position", "spacing.allows", "deep.room",
                                         "v661_room", "v641_adds"}),
-                        ("_v617_touch", {"v641_adds", "v617_room"}), ("_v619_side", {"v619_held_side"}),
+                        # v6.38 L3: FBL's clip in _v6_38_touch_size reads the same inv (switch off: never called)
+                        ("_v617_touch", {"v641_adds", "v617_room", "_v6_38_touch_size"}),
+                        ("_v619_side", {"v619_held_side"}),
                         ("_v6_23_against", {"v623_withheld"})):
         fn = ast.parse(_src(name)).body[0]
         assert "inv" in [a.arg for a in fn.args.args], name
@@ -721,6 +724,8 @@ V6_36_IDENTIFIERS = t623.V6_36_IDENTIFIERS
 # v6.37 (research_v637_fast_path) only adds: the strip takes its additions out as well
 # (tests/test_research_v6_37.py checks them against v6.36).
 V6_37_IDENTIFIERS = t623.V6_37_IDENTIFIERS
+# v6.38 layer 3 only adds: the strip takes its additions out as well (tests/test_research_v6_38_l3.py).
+V6_38_IDENTIFIERS = t623.V6_38_IDENTIFIERS
 
 
 def _v624(rel):
@@ -748,12 +753,13 @@ def _mentions(node):
                                       or name in V6_34_IDENTIFIERS
                                       or name in V6_36_IDENTIFIERS
                                       or name in V6_37_IDENTIFIERS
+                                      or name in V6_38_IDENTIFIERS
                                       or name.startswith(("_v6_25_", "v6_25_", "_v6_26_", "v6_26_", "_v6_27_",
                                                           "v6_27_", "_v6_28_", "v6_28_", "_v6_29_", "v6_29_",
                                                           "_v6_30_", "v6_30_", "_v6_31_", "v6_31_",
                                                           "_v6_32_", "v6_32_", "_v6_33_", "v6_33_",
                                                           "_v6_34_", "v6_34_", "_v6_36_", "v6_36_",
-                                                          "_v6_37_", "v6_37_"))):
+                                                          "_v6_37_", "v6_37_", "_v6_38_", "v6_38_"))):
             return True
     return False
 
@@ -781,11 +787,16 @@ class _Strip625(ast.NodeTransformer):
                                                                 "research_v6_33_touch_identity",
                                                                 "research_v6_34_class1",
                                                                 "research_v6_36_step_withdrawal",
-                                                                "research_v6_37_fast_path"):
+                                                                "research_v6_37_fast_path",
+                                                                "research_v6_38_canary",
+                                                                "research_v6_38_kbl",
+                                                                "research_v6_38_lean",
+                                                                "research_v6_38_keeper"):
                 continue
             if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_25_", "_v6_26_", "_v6_27_", "_v6_28_",
                                                                        "_v6_29_", "_v6_30_", "_v6_31_", "_v6_32_",
-                                                                       "_v6_33_", "_v6_34_", "_v6_36_", "_v6_37_")):
+                                                                       "_v6_33_", "_v6_34_", "_v6_36_", "_v6_37_",
+                                                                       "_v6_38_")):
                 continue
             if isinstance(st, ast.If) and _mentions(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -844,11 +855,12 @@ def _mentions626(node):
                                       or name in V6_34_IDENTIFIERS
                                       or name in V6_36_IDENTIFIERS
                                       or name in V6_37_IDENTIFIERS
+                                      or name in V6_38_IDENTIFIERS
                                       or name.startswith(("_v6_26_", "v6_26_", "_v6_27_", "v6_27_", "_v6_28_",
                                                           "v6_28_", "_v6_29_", "v6_29_", "_v6_30_", "v6_30_", "_v6_31_",
                                                           "v6_31_", "_v6_32_", "v6_32_", "_v6_33_", "v6_33_",
                                                           "_v6_34_", "v6_34_", "_v6_36_", "v6_36_",
-                                                          "_v6_37_", "v6_37_"))):
+                                                          "_v6_37_", "v6_37_", "_v6_38_", "v6_38_"))):
             return True
     return False
 
@@ -875,11 +887,15 @@ class _Drop626(ast.NodeTransformer):
                                                                 "research_v6_33_touch_identity",
                                                                 "research_v6_34_class1",
                                                                 "research_v6_36_step_withdrawal",
-                                                                "research_v6_37_fast_path"):
+                                                                "research_v6_37_fast_path",
+                                                                "research_v6_38_canary",
+                                                                "research_v6_38_kbl",
+                                                                "research_v6_38_lean",
+                                                                "research_v6_38_keeper"):
                 continue
             if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_26_", "_v6_27_", "_v6_28_", "_v6_29_",
                                                                        "_v6_30_", "_v6_31_", "_v6_32_", "_v6_33_",
-                                                                       "_v6_34_", "_v6_36_", "_v6_37_")):
+                                                                       "_v6_34_", "_v6_36_", "_v6_37_", "_v6_38_")):
                 continue
             if isinstance(st, ast.If) and _mentions626(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -950,7 +966,7 @@ def test_only_the_switch_block_and_the_pass_changed_and_three_methods_were_added
               "_v6_23_fundamental", "respond", "build_mm_strategy_instructions"):
         assert a[k] == b[k], k
     for other in ("Strategy1_Research.py", "Strategy1.py"):
-        assert _v624(f"agents/strategy/{other}") == (STRATEGY / other).read_text(), other
+        assert _v624(f"agents/strategy/{other}") == read_source(STRATEGY / other), other
 
 
 def test_with_a_lean_of_zero_the_pass_is_the_committed_v624s():
@@ -997,14 +1013,14 @@ def test_the_launcher_only_adds_to_v624s():
     assert removed == [defaults, arm, 'research_v624_pay_basis=1"', *olds]
     block = []
     for head in ("# v6.25 S5.", "# v6.26 S6.", "# v6.27 S7.", "# v6.28 S8.", "# v6.29 S9.", "# v6.30.", "# v6.31.",
-                 "# v6.32.", "# v6.33.", "# v6.34.", "# v6.36.", "# v6.37."):
+                 "# v6.32.", "# v6.33.", "# v6.34.", "# v6.36.", "# v6.37.", "# v6.38 L3."):
         start = launcher.index(head)
         block += launcher[start:launcher.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
     leaned = [x.replace(f"'{g.format('inv')}'", f"'{g.format(n)}'") for x, (g, n) in zip(olds, greps)]
     assert sorted(added) == sorted([defaults + "; V6_25_BUILD=0; V6_26_BUILD=0; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0"
-                                    "; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0",
+                                    "; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0; V6_38_BUILD=0",
                                     arm + "; V6_25_BUILD=1; V6_26_BUILD=1; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1"
-                                    "; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1",
+                                    "; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1; V6_38_BUILD=1",
                                     "research_v624_pay_basis=1 \\", "research_v625_lean=1 \\",
                                     "research_v625_lean_slope=1.0 \\", "research_v625_lean_cap=48 \\",
                                     "research_v626_feed_clock=1 \\", "research_v627_touch_centre=1 \\",
@@ -1018,7 +1034,12 @@ def test_the_launcher_only_adds_to_v624s():
                                     "research_v633_touch_identity=1 \\",
                                     "research_v634_class1_entry=0 \\",
                                     "research_v636_step_withdrawal=1 \\",
-                                    'research_v637_fast_path=1"', *leaned,
+                                    "research_v637_fast_path=1 \\",
+                                    "research_v638_kbl=0 \\",
+                                    "research_v638_lean=0 \\",
+                                    "research_v638_lean_arm=0 \\",
+                                    "research_v638_c1=0 \\",
+                                    'research_v638_c1_arm=0"', *leaned,
                                     "      tests/test_research_v6_25.py \\", "      tests/test_research_v6_26.py \\",
                                     "      tests/test_research_v6_27.py \\", "      tests/test_research_v6_28.py \\",
                                     "      tests/test_research_v6_29.py \\", "      tests/test_research_v6_30.py \\",
@@ -1028,6 +1049,7 @@ def test_the_launcher_only_adds_to_v624s():
                                     "      tests/test_research_v6_34.py \\",
                                     "      tests/test_research_v6_36.py \\",
                                     "      tests/test_research_v6_37.py \\",
+                                    "      tests/test_research_v6_38_l3.py \\",
                                     *block])
 
 
@@ -1072,7 +1094,7 @@ def test_every_v625_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(_PATTERN, _block())
     assert len(pats) == 7, pats
     for needle, name, _msg in pats:
-        assert (STRATEGY / name).read_text().count(needle) == 1, (needle, name)
+        assert read_source(STRATEGY / name).count(needle) == 1, (needle, name)
     assert {p[0] for p in pats} == {"from research_v625_lean import (", SWITCH_LINE, LEAN_LINE,
                                     "side_h = self._v619_side(book_id, v619_mirror, v619_mature, v619_cap, v6_25_inv)",
                                     REPORT_LINE,
@@ -1081,7 +1103,7 @@ def test_every_v625_preflight_pattern_is_in_the_file_it_checks():
     counted = re.findall(_COUNTED, _block())
     assert len(counted) == 2, counted
     for needle, name, n, _msg in counted:
-        assert (STRATEGY / name).read_text().count(needle) == int(n) == 2, needle
+        assert read_source(STRATEGY / name).count(needle) == int(n) == 2, needle
     absent = re.findall(_ABSENT, _block())
     assert [(kind, name) for kind, _p, name, _m in absent] == [("E", "Strategy1_Research_Simple.py"),
                                                               ("F", "Strategy1_Research_Simple.py")]
@@ -1092,7 +1114,7 @@ def test_every_v625_preflight_pattern_is_in_the_file_it_checks():
     assert fixed not in SIMPLE and fixed.replace("inv,", "v6_25_inv,") in SIMPLE
 
 
-def _run_block(params, agent_path=STRATEGY, build="1"):
+def _run_block(params, agent_path=strategy_view(), build="1"):
     start = LAUNCHER.index("# v6.25 S5.")
     stop = LAUNCHER.index('echo "[preflight] v6.25 fundamental lean PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -1141,7 +1163,7 @@ def test_the_v625_block_refuses_a_tree_without_each_line_it_checks(tmp_path):
         tmp = tmp_path / str(i)
         tmp.mkdir()
         for n in ("Strategy1_Research_Simple.py", "research_v625_lean.py"):
-            shutil.copy(STRATEGY / n, tmp / n)
+            copy_source(STRATEGY / n, tmp / n)
         text = (tmp / name).read_text()
         assert text.count(needle) in (1, 2), needle
         (tmp / name).write_text(text.replace(needle, "pass  # removed", 1))
@@ -1159,7 +1181,7 @@ def test_the_v625_block_refuses_a_tree_without_each_line_it_checks(tmp_path):
         tmp = tmp_path / f"true{k}"
         tmp.mkdir()
         for n in ("Strategy1_Research_Simple.py", "research_v625_lean.py"):
-            shutil.copy(STRATEGY / n, tmp / n)
+            copy_source(STRATEGY / n, tmp / n)
         text = (tmp / "Strategy1_Research_Simple.py").read_text()
         (tmp / "Strategy1_Research_Simple.py").write_text(text.replace(lean, true, 1))       # one call on the true inv
         out = _run_block(t617._shipped(), agent_path=tmp)

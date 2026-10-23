@@ -28,14 +28,15 @@ from research_direct_venue_integrity import (
     valid_touch,
 )
 from _harness import class_defs, extractor, legacy_capability_stubs
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
-BASE = (STRATEGY / "Strategy1.py").read_text()
-MODULE = (STRATEGY / "research_direct_venue_integrity.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
+BASE = read_source(STRATEGY / "Strategy1.py")
+MODULE = read_source(STRATEGY / "research_direct_venue_integrity.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 
 
 def _levels(*prices):

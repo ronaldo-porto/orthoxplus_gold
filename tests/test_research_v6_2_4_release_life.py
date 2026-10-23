@@ -32,10 +32,11 @@ from research_quote_hysteresis import (  # noqa: E402
 from research_quote_lifecycle import ms_to_ns, sim_delta_ms  # noqa: E402
 from research_realization import maker_exit_price  # noqa: E402
 from _harness import extractor  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _simple = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 _frozen = extractor(RESEARCH, cls_name="Strategy1_Research")
 S = 1_000_000_000

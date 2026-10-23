@@ -44,9 +44,10 @@ from research_position_exit import (
     BAND_HARD_ESCAPE,
     PositionExitDecision,
 )
+from _harness import read_source  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = (ROOT / "agents/strategy/Strategy1_Research_Simple.py").read_text()
+SRC = read_source(ROOT / "agents/strategy/Strategy1_Research_Simple.py")
 
 _SIG = inspect.signature(PositionExitDecision)
 

@@ -26,9 +26,10 @@ import research_v62_breadth as br  # noqa: E402
 from research_direct_exit_ledger import DirectExitLedger  # noqa: E402
 from _harness import extractor  # noqa: E402
 import test_research_v6_2_0_breadth as b0  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _simple = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 TICK = 0.01
 

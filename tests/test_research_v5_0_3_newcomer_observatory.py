@@ -31,15 +31,16 @@ from collections import deque
 from research_v5_activity import EVIDENCE_FIRST_STATE, EVIDENCE_OBSERVATION, KAPPA_MIN_LOOKBACK_NS, SCORING_INTERVAL_NS
 from research_v5_score_mirror import mirror_score
 from _harness import extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
-STRATEGY1 = (STRATEGY / "Strategy1.py").read_text()
-GATE = (STRATEGY / "research_v5_newcomer_gate.py").read_text()
-FIFO = (STRATEGY / "research_v5_validator_fifo.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
+STRATEGY1 = read_source(STRATEGY / "Strategy1.py")
+GATE = read_source(STRATEGY / "research_v5_newcomer_gate.py")
+FIFO = read_source(STRATEGY / "research_v5_validator_fifo.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 
 SECOND = 1_000_000_000
 _TREES = {}
@@ -370,7 +371,7 @@ def test_the_frozen_baseline_is_untouched_and_the_pure_helpers_are_pure():
         imported = {node.module for node in ast.walk(ast.parse(text)) if isinstance(node, ast.ImportFrom)}
         assert imported == allowed, imported
     # The recorder owns I/O, so it may import the standard library it needs -- and nothing else.
-    recorder_tree = ast.parse((STRATEGY / "research_v5_observatory.py").read_text())
+    recorder_tree = ast.parse(read_source(STRATEGY / "research_v5_observatory.py"))
     modules = {node.module for node in ast.walk(recorder_tree) if isinstance(node, ast.ImportFrom)}
     plain = {alias.name for node in ast.walk(recorder_tree) if isinstance(node, ast.Import)
              for alias in node.names}

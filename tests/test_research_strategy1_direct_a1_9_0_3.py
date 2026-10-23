@@ -33,8 +33,9 @@ SIMPLE = STRATEGY_DIR / "Strategy1_Research_Simple.py"
 FROZEN = STRATEGY_DIR / "Strategy1_Research.py"
 
 sys.path.insert(0, str(STRATEGY_DIR))
+from _harness import simple_text  # noqa: E402
 
-SRC = SIMPLE.read_text()
+SRC = simple_text()
 
 from research_direct_exit_ledger import (  # noqa: E402
     DIRECT_EXIT_LEDGER_VERSION,

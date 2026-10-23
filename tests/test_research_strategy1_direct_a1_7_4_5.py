@@ -6,9 +6,10 @@ from research_direct_quiet_entry import (
     DIRECT_A1745_QUIET_ZERO_REBATE_MIN_EDGE_BPS,
     quiet_zero_rebate_entry_gate,
 )
+from _harness import read_source  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = (ROOT / "agents/strategy/Strategy1_Research_Simple.py").read_text()
+SRC = read_source(ROOT / "agents/strategy/Strategy1_Research_Simple.py")
 
 
 def _gate(*, regime="QUIET", fee=0.0, spread=31.5, trade_rate=0.0):
@@ -86,7 +87,7 @@ def test_meaningful_negative_rebate_bypasses_gate():
 def test_gate_is_only_an_entry_floor_not_an_exit_or_size_retune():
     assert "maker_size = min_size" in SRC
     assert "apply_positive_maker_kappa_veto(" in SRC
-    assert "research_max_total_abs_base=2.0" in (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+    assert "research_max_total_abs_base=2.0" in read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 
 
 def test_effective_floor_blocks_14_bps_but_allows_15_bps_in_target_regime():

@@ -21,9 +21,10 @@ import research_v633_deep_layer as dl  # noqa: E402
 import test_research_v6_3_0_trend_target as t63  # noqa: E402
 import test_research_v6_3_3_deep_layer as d633  # noqa: E402
 import test_research_v6_8 as t68  # noqa: E402
+from _harness import simple_text, read_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 FLOOR = 30.0                                     # research_v63_alpha_floor as shipped: the per-book floor is -15
 CALL_LINE = "if not deep_open and not v614_paper_floor_on(v614_off):"
 
@@ -128,10 +129,10 @@ def test_every_v614_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(r"grep -qF '([^']+)' \"\$AGENT_PATH/([^\"]+)\"", block)
     assert len(pats) == 3, pats
     for pat, name in pats:
-        assert pat in (STRATEGY / name).read_text(), (pat, name)
+        assert pat in read_source(STRATEGY / name), (pat, name)
 
 
-def _run_block(params, agent_path=STRATEGY):
+def _run_block(params, agent_path=strategy_view()):
     start = LAUNCHER.index("# v6.14 S1.")
     stop = LAUNCHER.index('echo "[preflight] v6.14 per-book paper floor off PASS"', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -155,7 +156,7 @@ def test_the_v614_block_refuses_an_agent_that_ignores_the_switch_or_a_layer_with
     out = _run_block(_shipped(), agent_path=tmp_path)
     assert out.returncode == 1 and "does not read research_v614_book_floor_off" in out.stderr
     (tmp_path / "Strategy1_Research_Simple.py").write_text(SIMPLE)
-    layer_src = (STRATEGY / "research_v633_deep_layer.py").read_text()
+    layer_src = read_source(STRATEGY / "research_v633_deep_layer.py")
     (tmp_path / "research_v633_deep_layer.py").write_text(layer_src.replace("if not paper_floor:", "if False:"))
     out = _run_block(_shipped(), agent_path=tmp_path)
     assert out.returncode == 1 and "has no paper_floor switch" in out.stderr

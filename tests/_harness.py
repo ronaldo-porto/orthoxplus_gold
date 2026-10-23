@@ -22,8 +22,84 @@ from __future__ import annotations
 import ast
 from typing import Callable
 
-__all__ = ["class_defs", "defs_extractor", "extractor", "legacy_capability_attrs",
-           "legacy_capability_stubs", "method_source", "shadowed_definitions"]
+__all__ = ["class_defs", "copy_source", "defs_extractor", "extractor", "legacy_capability_attrs",
+           "legacy_capability_stubs", "method_source", "read_source", "shadowed_definitions", "simple_text",
+           "strategy_view"]
+
+SIMPLE_NAME = "Strategy1_Research_Simple.py"
+_SIMPLE_TEXT: str | None = None
+
+
+def simple_text() -> str:
+    """v6.39 S4 (k129): Strategy1_Research_Simple's text as the interpreter binds it.
+
+    The agent class is split into part modules (agents/strategy/simple_parts/); this is the file with every
+    moved chunk back at the line it was cut from (simple_parts/join.py): byte-identical to the single file of
+    the split commit, so every pin, order check, AST strip and exec-by-name extraction in this suite reads
+    what it read before the split.  A tree without parts gives the file as it is.  Read once per process.
+    """
+    global _SIMPLE_TEXT
+    if _SIMPLE_TEXT is None:
+        import importlib.util
+        import pathlib
+        strategy = pathlib.Path(__file__).resolve().parents[1] / "agents" / "strategy"
+        join_py = strategy / "simple_parts" / "join.py"
+        if join_py.is_file():
+            spec = importlib.util.spec_from_file_location("_simple_parts_join", join_py)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _SIMPLE_TEXT = module.joined_text(str(strategy))
+        else:
+            _SIMPLE_TEXT = (strategy / SIMPLE_NAME).read_text(encoding="utf-8")
+    return _SIMPLE_TEXT
+
+
+def read_source(path) -> str:
+    """The text of a source file of the tree: Simple's is the joined text (simple_text), any other its file."""
+    import pathlib
+    p = pathlib.Path(path)
+    return simple_text() if p.name == SIMPLE_NAME else p.read_text(encoding="utf-8")
+
+
+def copy_source(src, dst) -> None:
+    """A test's copy of a source file into its own directory: Simple's copy is the joined text."""
+    import pathlib
+    import shutil
+    src, dst = pathlib.Path(src), pathlib.Path(dst)
+    if src.name == SIMPLE_NAME:
+        if dst.is_dir():
+            dst = dst / src.name
+        dst.write_text(simple_text(), encoding="utf-8")
+    else:
+        shutil.copy(src, dst)
+
+
+_STRATEGY_VIEW: str | None = None
+
+
+def strategy_view() -> str:
+    """agents/strategy as the launcher's preflight sees it: a full COPY of the directory whose
+    Strategy1_Research_Simple.py is the joined text (the launcher builds the same view, v6.39 S4; a copy, not links:
+    a recursive grep does not follow symlinked files -- k129 21:4x JST).  A tree without parts: the real directory.
+    Built once per process, in a temp directory."""
+    global _STRATEGY_VIEW
+    if _STRATEGY_VIEW is None:
+        import pathlib
+        import shutil
+        import tempfile
+        strategy = pathlib.Path(__file__).resolve().parents[1] / "agents" / "strategy"
+        if not (strategy / "simple_parts" / "join.py").is_file():
+            _STRATEGY_VIEW = str(strategy)
+        else:
+            import atexit
+            holder = tempfile.mkdtemp(prefix="simple_view_")
+            atexit.register(shutil.rmtree, holder, True)              # removed when the test process exits
+            view = pathlib.Path(holder) / "strategy"
+            shutil.copytree(strategy, view, symlinks=True, ignore=shutil.ignore_patterns("__pycache__"))
+            (view / SIMPLE_NAME).unlink()
+            (view / SIMPLE_NAME).write_text(simple_text(), encoding="utf-8")
+            _STRATEGY_VIEW = str(view)
+    return _STRATEGY_VIEW
 
 
 def _classes(tree: ast.Module, cls_name: str | None):

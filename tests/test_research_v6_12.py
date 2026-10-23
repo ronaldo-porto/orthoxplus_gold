@@ -27,9 +27,10 @@ import research_v69_deep_ladder as d69  # noqa: E402
 import test_research_v6_3_0_trend_target as t63  # noqa: E402
 import test_research_v6_4_board as t64  # noqa: E402
 import test_research_v6_9 as t69  # noqa: E402
+from _harness import simple_text, read_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 BUY, SELL = dl.SIDE_BUY, dl.SIDE_SELL
 PRICE_LINE = "price = v633_deep_price(mid, eff_side[side], side, bid=raw_bid, ask=raw_ask, tick=tick_size,"
 EFF_LINE = "eff_side = {s_: float(v612_level0_depth(s_, depth, inv, min_order)) for s_ in (V63_SIDE_BUY, V63_SIDE_SELL)}"
@@ -206,10 +207,10 @@ def test_every_v612_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(r"grep -qF '([^']+)' \"\$AGENT_PATH/([^\"]+)\"", block)
     assert len(pats) == 4, pats
     for pat, name in pats:
-        assert pat in (STRATEGY / name).read_text(), (pat, name)
+        assert pat in read_source(STRATEGY / name), (pat, name)
 
 
-def _run_block(params, agent_path=STRATEGY):
+def _run_block(params, agent_path=strategy_view()):
     start = LAUNCHER.index("# v6.12 S1.")
     stop = LAUNCHER.index('echo "[preflight] v6.12 reducing-side depth PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -228,13 +229,13 @@ def test_the_v612_block_passes_the_shipped_params_and_refuses_the_switch_off():
 
 def test_the_v612_block_refuses_an_agent_that_prices_level_0_at_the_book_depth(tmp_path):
     for name in ("research_v612_reduce_depth.py",):
-        (tmp_path / name).write_text((STRATEGY / name).read_text())
+        (tmp_path / name).write_text(read_source(STRATEGY / name))
     (tmp_path / "Strategy1_Research_Simple.py").write_text(
         SIMPLE.replace(PRICE_LINE, "price = v633_deep_price(mid, depth, side, bid=raw_bid, ask=raw_ask, tick=tick_size,"))
     out = _run_block(_shipped(), agent_path=tmp_path)
     assert out.returncode == 1 and "v6.12 S1 the level-0 order is not priced at its side's depth" in out.stderr
     (tmp_path / "Strategy1_Research_Simple.py").write_text(SIMPLE)
     (tmp_path / "research_v612_reduce_depth.py").write_text(
-        (STRATEGY / "research_v612_reduce_depth.py").read_text().replace("REDUCE_DEPTH_FACTOR = 0.5 ", "REDUCE_DEPTH_FACTOR = 0.25 "))
+        read_source(STRATEGY / "research_v612_reduce_depth.py").replace("REDUCE_DEPTH_FACTOR = 0.5 ", "REDUCE_DEPTH_FACTOR = 0.25 "))
     out = _run_block(_shipped(), agent_path=tmp_path)
     assert out.returncode == 1 and "does not carry the replayed factor 0.5" in out.stderr

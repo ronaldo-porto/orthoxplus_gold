@@ -18,10 +18,11 @@ from research_direct_inventory_truth import (
 )
 from research_direct_reconcile import reconcile_books
 from _harness import extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
-SIMPLE = (ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
-MODULE = (ROOT / "agents" / "strategy" / "research_direct_inventory_truth.py").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(ROOT / "agents" / "strategy" / "research_direct_inventory_truth.py")
 
 # The measured tick-1 residue, top 12 books by magnitude.
 LIVE_RESIDUE = {

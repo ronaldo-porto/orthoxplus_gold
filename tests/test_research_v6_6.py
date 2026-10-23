@@ -33,9 +33,10 @@ import test_research_v6_4_1_volume_pace as t641  # noqa: E402
 import test_research_v6_4_board as t64  # noqa: E402
 from _harness import extractor  # noqa: E402
 from research_volume_cap import volume_cap_headroom  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 TICK = 0.01
 S = 1_000_000_000

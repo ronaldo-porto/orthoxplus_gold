@@ -49,14 +49,16 @@ from research_direct_inflight_reservation import (  # noqa: E402
 from research_v62_breadth import V62_STATE_EVERY_TICKS  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
+import _v639_undo  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-MODULE = (STRATEGY / "research_v6_36_step_withdrawal.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(STRATEGY / "research_v6_36_step_withdrawal.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
-_dbg = extractor((STRATEGY / "Strategy1_Debug.py").read_text(), cls_name="Strategy1_Debug")
-_dta = extractor((STRATEGY / "DetailedTemplateAgent.py").read_text(), cls_name="DetailedTemplateAgent")
-_res = extractor((STRATEGY / "Strategy1_Research.py").read_text(), cls_name="Strategy1_Research")
+_dbg = extractor(read_source(STRATEGY / "Strategy1_Debug.py"), cls_name="Strategy1_Debug")
+_dta = extractor(read_source(STRATEGY / "DetailedTemplateAgent.py"), cls_name="DetailedTemplateAgent")
+_res = extractor(read_source(STRATEGY / "Strategy1_Research.py"), cls_name="Strategy1_Research")
 S = 1_000_000_000
 PERIOD, INTERVAL = 30_000_000_001, 1_000_000_000          # mainnet 0.6.4: k97/validator_0035.txt
 BUY, SELL = dl.SIDE_BUY, dl.SIDE_SELL
@@ -115,6 +117,59 @@ def _mentions637(node):
         if isinstance(name, str) and (name in V6_37_IDENTIFIERS or name.startswith(("_v6_37_", "v6_37_"))):
             return True
     return False
+
+
+# v6.38 layer 3 (research_v638_kbl, research_v638_lean + _arm, research_v638_c1 + _arm; scratchpad k124) only adds -- its
+# four modules' imports, its _v6_38_ methods and statements naming its identifiers -- so the checks that read Simple whole
+# take it out first (_Drop638; tests/test_research_v6_38_l3.py checks layer 3 against v6.37).
+V6_38_IDENTIFIERS = {"research_v638_kbl", "research_v638_lean", "research_v638_lean_arm", "research_v638_c1",
+                     "research_v638_c1_arm"}
+V6_38_MODULES = ("research_v6_38_canary", "research_v6_38_kbl", "research_v6_38_lean", "research_v6_38_keeper")
+
+
+def _mentions638(node):
+    for n in ast.walk(node):
+        name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
+            n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
+        if isinstance(name, str) and (name in V6_38_IDENTIFIERS or name.startswith(("_v6_38_", "v6_38_"))):
+            return True
+    return False
+
+
+class _Drop638(ast.NodeTransformer):
+    """Takes out what v6.38 layer 3 adds and nothing else -- its imports, its _v6_38_ methods, statements naming its
+    identifiers (an if on one keeps its else) -- keeping every docstring: v6.37 (FROZEN_1)."""
+
+    def _stmts(self, stmts):
+        out = []
+        for st in stmts:
+            if isinstance(st, ast.ImportFrom) and st.module in V6_38_MODULES:
+                continue
+            if isinstance(st, ast.FunctionDef) and st.name.startswith("_v6_38_"):
+                continue
+            if isinstance(st, ast.If) and _mentions638(st.test):
+                out.extend(self._stmts(st.orelse))
+                continue
+            st = self.visit(st)
+            if isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr)) and _mentions638(st):
+                continue
+            out.append(st)
+        return out
+
+    def generic_visit(self, node):
+        for field in ("body", "orelse", "finalbody"):
+            if isinstance(getattr(node, field, None), list):
+                setattr(node, field, self._stmts(getattr(node, field)))
+        for h in getattr(node, "handlers", None) or []:
+            h.body = self._stmts(h.body)
+        for name, value in ast.iter_fields(node):
+            if name in ("body", "orelse", "finalbody", "handlers"):
+                continue
+            if isinstance(value, list):
+                setattr(node, name, [self.visit(v) if isinstance(v, ast.AST) else v for v in value])
+            elif isinstance(value, ast.AST):
+                setattr(node, name, self.visit(value))
+        return node
 
 
 class _Drop637(ast.NodeTransformer):
@@ -896,7 +951,7 @@ def test_the_hooks_sit_where_the_design_puts_them():
     test = "getattr(self, '_v6_36_counts', None) is not None"
     assert [ast.unparse(h.test) for h in _hooks("respond")] == [test, test]
     assert [ast.unparse(h.test) for h in _hooks("build_mm_strategy_instructions")] == [test]
-    tree = _Drop637().visit(ast.parse(SIMPLE))                                   # v6.36: v6.37 out
+    tree = _Drop637().visit(_Drop638().visit(ast.parse(SIMPLE)))                # v6.36: v6.38 L3, v6.37 out
     imports = [n for n in tree.body if isinstance(n, ast.ImportFrom)]
     names = [n.module for n in imports]
     i = names.index("research_v6_36_step_withdrawal")
@@ -923,7 +978,7 @@ def _ast_sha(tree):
 
 
 def test_every_v635_statement_is_in_v636_unchanged_and_v636_only_adds():
-    stripped = _Drop636().visit(_Drop637().visit(ast.parse(SIMPLE)))            # v6.37 out first
+    stripped = _Drop636().visit(_Drop637().visit(_Drop638().visit(ast.parse(SIMPLE))))   # later versions out
     assert _ast_sha(stripped) == V635_AST_SHA256                                  # v6.35 = v6.36 minus v6.36
     assert _ast_sha(ast.parse(SIMPLE)) != V635_AST_SHA256 and not _mentions636(stripped)
     for good, bad in (("self._research_final_validate_instructions(response, state)\n",
@@ -931,7 +986,8 @@ def test_every_v635_statement_is_in_v636_unchanged_and_v636_only_adds():
                       ("self._v6_32_request(state)", "self._v6_32_report()"),
                       ("            self._a199_note_exit_stalls(response)\n", "            pass\n")):
         assert SIMPLE.count(good) == 1, good
-        assert _ast_sha(_Drop636().visit(_Drop637().visit(ast.parse(SIMPLE.replace(good, bad))))) != \
+        assert _ast_sha(_Drop636().visit(_Drop637().visit(_Drop638().visit(
+            ast.parse(SIMPLE.replace(good, bad)))))) != \
             V635_AST_SHA256, good
     try:
         out = subprocess.run(["git", "-c", "safe.directory=*", "show",
@@ -957,9 +1013,11 @@ def test_the_frozen_modules_are_v635s():
           "taos/im/protocol/models.py"}
     # v6.37 (6171a57 + F2): the module is committed since 6171a57, so git lists it beside Simple
     v636 = {"agents/strategy/research_v6_36_step_withdrawal.py"}
-    # v6.37's and v6.38's own modules (listed once committed, k111 note 2) and v6.38's paths (tests/_v638_undo.py)
+    # v6.37's and v6.38's own modules (listed once committed, k111 note 2) and v6.38's paths (tests/_v638_undo.py), with
+    # v6.38 layer 3's four modules (listed once committed, k126)
     later = ({"agents/strategy/research_v6_37_fast_path.py"} | _v638_undo.V638_NEW | _v638_undo.V638_MODULES
-             | _v638_undo.V638_ARCHIVED)
+             | _v638_undo.V638_ARCHIVED | _v638_undo.V638_L3_MODULES
+             | (_v639_undo.V639_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"}))   # k129: v6.39's, either state
     assert [n for n in out.stdout.split() if n not in f2 | v636 | later] == ["agents/strategy/Strategy1_Research_Simple.py"]
     assert (STRATEGY / "research_v6_36_step_withdrawal.py").is_file()           # + the new module
 
@@ -989,8 +1047,8 @@ def test_the_v636_block_is_gated_preflighted_listed_and_ships_on():
     assert LAUNCHER.count('if [[ "${V6_36_BUILD:-0}" == "1" ]]; then') == 1 and LAUNCHER.count("V6_36_BUILD=") == 2
     assert "      tests/test_research_v6_34.py \\\n      tests/test_research_v6_36.py \\\n" in LAUNCHER
     assert 'research_v634_class1_entry=0 \\\nresearch_v636_step_withdrawal=1 \\\n' in LAUNCHER   # v6.37's next
-    assert " research_v636_step_withdrawal=1 " in f" {_params()} " and _params().split()[-4] == \
-        "research_v636_step_withdrawal=1"                       # then v6.37's key and v6.38's two
+    assert " research_v636_step_withdrawal=1 " in f" {_params()} " and _params().split()[-10] == \
+        "research_v636_step_withdrawal=1"                       # then v6.37's key, v6.38's two and v6.38 L3's five
     assert LAUNCHER.index('echo "[preflight] v6.34 class-1 entry PASS') < LAUNCHER.index("# v6.36.") < \
         LAUNCHER.index('echo "[preflight] v6.36 step withdrawal PASS') < \
         LAUNCHER.index('if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then')
@@ -1015,7 +1073,7 @@ def test_every_v636_preflight_pattern_is_in_the_file_it_checks():
     assert '[[ -f "$AGENT_PATH/research_v6_36_step_withdrawal.py" ]] || {' in _block()
 
 
-def _run_block(params, agent_path=STRATEGY, build="1"):
+def _run_block(params, agent_path=strategy_view(), build="1"):
     start = LAUNCHER.index("# v6.36.")
     stop = LAUNCHER.index('echo "[preflight] v6.36 step withdrawal PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -1052,13 +1110,13 @@ def test_the_v636_block_refuses_a_tree_without_each_line_it_checks(tmp_path):
         tmp = tmp_path / str(i)
         tmp.mkdir()
         for base in ("Strategy1_Research_Simple.py", "research_v6_36_step_withdrawal.py"):
-            shutil.copy(STRATEGY / base, tmp / base)
+            copy_source(STRATEGY / base, tmp / base)
         path = tmp / name
         path.write_text(path.read_text().replace(needle, "pass  # removed", 1))
         out = _run_block(_params(), agent_path=tmp)
         assert out.returncode == 1 and needle in out.stderr and "PASS" not in out.stdout, (needle, out.stderr)
     bare = tmp_path / "no_module"
     bare.mkdir()
-    shutil.copy(STRATEGY / "Strategy1_Research_Simple.py", bare / "Strategy1_Research_Simple.py")
+    copy_source(STRATEGY / "Strategy1_Research_Simple.py", bare / "Strategy1_Research_Simple.py")
     out = _run_block(_params(), agent_path=bare)
     assert out.returncode == 1 and "module is missing" in out.stderr

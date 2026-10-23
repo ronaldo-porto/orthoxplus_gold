@@ -26,11 +26,12 @@ from research_direct_legacy_baseline import (
 )
 from research_direct_liveness import admission_slots
 from _harness import defs_extractor, extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
-SIMPLE = (ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
-MODULE = (ROOT / "agents" / "strategy" / "research_direct_legacy_baseline.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(ROOT / "agents" / "strategy" / "research_direct_legacy_baseline.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 
 # The measured tick-1 residue of 20260912_121832, top 12 books by magnitude.
 LIVE_RESIDUE = {

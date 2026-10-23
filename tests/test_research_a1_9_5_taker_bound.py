@@ -16,11 +16,12 @@ from research_direct_taker_bound import (
     taker_bound_report,
 )
 from _harness import extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
-SIMPLE = (ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
-MODULE = (ROOT / "agents" / "strategy" / "research_direct_taker_bound.py").read_text()
-BASE = (ROOT / "agents" / "strategy" / "Strategy1_Research.py").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(ROOT / "agents" / "strategy" / "research_direct_taker_bound.py")
+BASE = read_source(ROOT / "agents" / "strategy" / "Strategy1_Research.py")
 
 
 _method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
@@ -175,7 +176,7 @@ def test_the_version_advances_so_the_guards_can_tell_the_builds_apart():
 
 
 def test_launcher_guards_the_new_phase():
-    sh = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+    sh = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
     # A1.9.5 is recognised as its own build, and the cumulative A1.9.x guards
     # still run against it rather than silently switching themselves off.
     assert "strategy1_direct_v4_16_2_a1_9_5) A19X_BUILD=1; A195_BUILD=1" in sh
@@ -191,7 +192,7 @@ def test_launcher_refuses_an_unbounded_taker_exit():
     base, and the slippage clamp is strictly positive so a declared floor of
     0.0 can never ship as max_slippage=0.0, which the wire reads as
     UNBOUNDED."""
-    sh = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+    sh = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
     assert "placed = super()._execute_aggressive_close(" in sh
     assert "A195_MIN_SLIPPAGE_FRACTION = 1e-4" in sh
 
@@ -200,6 +201,6 @@ def test_launcher_keeps_breadth_authority_somewhere():
     """A1.9.3's hook is retired, so the guard inverts rather than vanishing:
     the dead site must be gone AND the relocation must be present.  Without
     this, a later edit could delete breadth authority in silence."""
-    sh = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+    sh = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
     assert "RETIRED in A1.9.5 step 4" in sh
     assert "_a195_breadth_relief(" in sh

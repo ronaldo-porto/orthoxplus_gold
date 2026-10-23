@@ -197,6 +197,11 @@ V638_ARCHIVED = frozenset({'agents/strategy/AdaptiveAgent.py',
  'agents/strategy/run_strategy5_test.sh',
  'agents/strategy/score_ev.py'})
 V638_NEW = frozenset({"agents/strategy/research_v6_38_fast_path.py"})
+# k126 (the merged v6.38 = this layer 2 + v6.38 layer 3, scratchpad k124 / k126): layer 3's four new modules -- untracked
+# until the user's commit, listed by git's name-only diff once committed (as V638_NEW); the name-only pins of t636 / t637 /
+# t638 accept them in both states (their content is tests/test_research_v6_38_l3.py's)
+V638_L3_MODULES = frozenset({"agents/strategy/research_v6_38_canary.py", "agents/strategy/research_v6_38_kbl.py",
+                             "agents/strategy/research_v6_38_keeper.py", "agents/strategy/research_v6_38_lean.py"})
 
 
 # The launcher: v6.38's text edits as (v6.38 text, v6.37 text) pairs, applied in order, each found exactly once
@@ -220,10 +225,29 @@ V638_LAUNCHER_EDITS = (
 )
 
 
+# k126 (the merged v6.38 = this layer 2 + v6.38 layer 3, scratchpad k124 / k126): layer 3 shares the V6_38_BUILD flag and
+# appends its five PARAMS keys after research_v638_fast_path=1.  With layer 3's block in the text, launcher_v637 undoes
+# layer 2 alone: the flag lines stay (they are layer 3's too) and the PARAMS edit takes out layer 2's two keys before
+# layer 3's five -- the result is v6.37 + layer 3 (k124's Dev_v6_38_l3 launcher, byte for byte; tests/test_research_v6_38.py
+# pins it).  A launcher without layer 3 is undone as before (v6.37's).
+V638_L3_HEAD = "\n# v6.38 L3.  "
+# v6.39 (k129): its launcher block's head; launcher_v637 takes v6.39's launcher edits out first when it is there
+V639_HEAD = "\n# v6.39.  research_v639_runlen:"
+V638_LAUNCHER_EDITS_L3 = tuple(
+    ('research_v637_fast_path=1 \\\nresearch_enable_fill_hazard=0 \\\nresearch_v638_fast_path=1 \\\n',
+     'research_v637_fast_path=1 \\\n')
+    if new == 'research_v637_fast_path=1 \\\nresearch_enable_fill_hazard=0 \\\nresearch_v638_fast_path=1"\n' else (new, old)
+    for new, old in V638_LAUNCHER_EDITS if not new.startswith("; V6_37_BUILD="))
+
+
 def launcher_v637(text):
     """v6.38's launcher text with v6.38's edits undone: v6.37 FROZEN_1's launcher, byte for byte (tests/test_research_v6_38.py
-    pins its sha256).  Raises if an edit is not found exactly once (then this is not v6.38's launcher)."""
-    for new, old in V638_LAUNCHER_EDITS:
+    pins its sha256) -- with v6.38 layer 3 in the text, v6.37 + layer 3 (k126).  Raises if an edit is not found exactly
+    once (then this is not v6.38's launcher)."""
+    if V639_HEAD in text:                       # v6.39 (k129): its launcher edits out first, as undo() chains the AST
+        import _v639_undo
+        text = _v639_undo.launcher_v638(text)
+    for new, old in (V638_LAUNCHER_EDITS_L3 if V638_L3_HEAD in text else V638_LAUNCHER_EDITS):
         if text.count(new) != 1:
             raise AssertionError("v6.38 launcher edit not found exactly once: %r" % new[:80])
         text = text.replace(new, old)
@@ -336,6 +360,8 @@ def _undo_protocol(tree):
 
 def undo(tree):
     """v6.38's changes undone in a parsed module, in place (see the module docstring); returns the tree."""
+    import _v639_undo                                   # v6.39 (k129): its edits out first, so every strip inherits it
+    _v639_undo.undo(tree)
     cls = _class(tree, SIMPLE_CLASS)
     if cls is not None:
         _undo_simple(tree, cls)

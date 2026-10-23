@@ -7,9 +7,10 @@ import pytest
 ROOT = Path(__file__).parents[1]
 STRATEGY_DIR = ROOT / 'agents' / 'strategy'
 sys.path.insert(0, str(STRATEGY_DIR))
+from _harness import simple_text  # noqa: E402
 
 PATH = STRATEGY_DIR / 'Strategy1_Research_Simple.py'
-SRC = PATH.read_text(encoding='utf-8')
+SRC = simple_text()
 if 'SIMPLE_POLICY_VERSION = "strategy1_direct_v4_16_2_a1_5"' not in SRC:
     pytest.skip('A1.5 historical contract superseded by current Direct candidate', allow_module_level=True)
 TREE = ast.parse(SRC)

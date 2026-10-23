@@ -15,10 +15,11 @@ from research_direct_reconcile import (
     reconcile_books,
     venue_net_base,
 )
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
-SIMPLE = (ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
-MODULE = (ROOT / "agents" / "strategy" / "research_direct_reconcile.py").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(ROOT / "agents" / "strategy" / "research_direct_reconcile.py")
 
 
 def _method_body(source: str, name: str) -> str:

@@ -23,9 +23,10 @@ import research_v618_centre_off as co  # noqa: E402
 import test_research_v6_3_0_trend_target as t63  # noqa: E402
 import test_research_v6_16 as t616  # noqa: E402
 import test_research_v6_17 as t617  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 CALL_LINE = 'if v618_centre_on(getattr(self, "research_v616_fair_value", False), v618_off):'
 SWITCH_LINE = 'self.research_v618_centre_off = self._as_bool(getattr(self.config, "research_v618_centre_off", True))'
 MID = {("BUY", 99.80), ("SELL", 100.23)}         # v6.15: level 0 at 21.5 ticks either side of the mid 100.015
@@ -141,10 +142,10 @@ def test_every_v618_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(r"grep -qF '([^']+)' \"\$AGENT_PATH/([^\"]+)\"", block)
     assert len(pats) == 3, pats
     for pat, name in pats:
-        assert pat in (STRATEGY / name).read_text(), (pat, name)
+        assert pat in read_source(STRATEGY / name), (pat, name)
 
 
-def _run_block(params, agent_path=STRATEGY):
+def _run_block(params, agent_path=strategy_view()):
     start = LAUNCHER.index("# v6.18 S1.")
     stop = LAUNCHER.index('echo "[preflight] v6.18 centre off PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -175,7 +176,7 @@ def test_the_v618_block_refuses_an_agent_without_the_import_the_gate_or_the_rule
         tmp = Path(tempfile.mkdtemp(prefix="t618_"))
         try:
             for n in ("Strategy1_Research_Simple.py", "research_v618_centre_off.py"):
-                shutil.copy(STRATEGY / n, tmp / n)
+                copy_source(STRATEGY / n, tmp / n)
             text = (tmp / name).read_text()
             assert text.count(needle) == 1, needle
             (tmp / name).write_text(text.replace(needle, "# removed"))

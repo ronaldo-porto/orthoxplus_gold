@@ -889,12 +889,74 @@ from research_v6_37_fast_path import (  # noqa: E402
     apply as v6_37_apply,
     ledger_orders as v6_37_ledger_orders,
 )
+from research_v6_38_canary import (  # noqa: E402
+    ARM_CD as V6_38_ARM_CD,
+    C1_ARMS as V6_38_C1_ARMS,
+    CanaryTable as V6_38CanaryTable,
+    DIM_C1 as V6_38_DIM_C1,
+    FAMILY_C1 as V6_38_FAMILY_C1,
+    FAMILY_LEAN as V6_38_FAMILY_LEAN,
+    LEAN_ARMS as V6_38_LEAN_ARMS,
+    MODE_ALL as V6_38_MODE_ALL,
+    TAG_K116 as V6_38_TAG_K116,
+    TAG_K118 as V6_38_TAG_K118,
+    V6_38_CANARY_VERSION,
+    arm_of as v6_38_arm_of,
+    book_on as v6_38_book_on,
+    mode_of as v6_38_mode_of,
+)
+from research_v6_38_kbl import (  # noqa: E402
+    CANCEL_LADDER_OFF as V6_38_CANCEL_LADDER_OFF,
+    CANCEL_SURPLUS_LADDER as V6_38_CANCEL_SURPLUS_LADDER,
+    LADDER_LEVELS as V6_38_KBL_LADDER_LEVELS,
+    MODE_K5 as V6_38_KBL_MODE_K5,
+    MODE_KBL as V6_38_KBL_MODE_KBL,
+    V6_38_KBL_VERSION,
+    components as v6_38_kbl_components,
+    improve as v6_38_kbl_improve,
+    in_window as v6_38_kbl_in_window,
+    join as v6_38_kbl_join,
+    ladder_pairs as v6_38_kbl_ladder_pairs,
+    mode_of as v6_38_kbl_mode_of,
+    surplus_side as v6_38_kbl_surplus_side,
+    touch_first as v6_38_kbl_touch_first,
+    verdict as v6_38_kbl_verdict,
+    window_ns as v6_38_kbl_window_ns,
+    window_side as v6_38_kbl_window_side,
+)
+from research_v6_38_lean import (  # noqa: E402
+    CA_SLOPE as V6_38_CA_SLOPE,
+    V6_38_LEAN_VERSION,
+    arm_parts as v6_38_lean_arm_parts,
+    fbl_clip as v6_38_fbl_clip,
+    fbl_sign as v6_38_fbl_sign,
+)
+from research_v6_38_keeper import (  # noqa: E402
+    CaptureTracker as V6_38CaptureTracker,
+    LIFE_NS as V6_38_K1_LIFE_NS,
+    SIZE_SHORTFALL as V6_38_SIZE_SHORTFALL,
+    V6_38_KEEPER_VERSION,
+    WHY_NO_RADIUS as V6_38_K1_WHY_NO_RADIUS,
+    arm_parts as v6_38_k1_arm_parts,
+    move_side as v6_38_k1_move_side,
+    parity_hold as v6_38_k3q_hold,
+    q0_of as v6_38_k3q_q0,
+    side_gate as v6_38_k1_side_gate,
+    target as v6_38_k1_target,
+    verdict as v6_38_k1_verdict,
+)
 from research_v6_38_fast_path import (  # noqa: E402
     apply as v6_38_apply,
     feed as v6_38_feed,
     last_taker_side as v6_38_last_taker_side,
     trades_of as v6_38_trades_of,
     trades_reset as v6_38_trades_reset,
+)
+from research_v6_39_runlen import (
+    apply as v6_39_apply,
+    note_event as v6_39_note_event,
+    observatory_open as v6_39_observatory_open,
+    window_census_cached as v6_39_window_census_cached,
 )
 from research_v64_board import (  # noqa: E402
     CANCEL_BOARD_OWNS as V64_CANCEL_BOARD_OWNS,
@@ -1150,7 +1212,12 @@ DIRECT_A175_SHADOW_HORIZON_TICKS = 200
 DIRECT_A175_SHADOW_LEDGER_MAX = 256
 
 
-class Strategy1_Research_Simple(Strategy1_Research):
+from simple_parts.v6_36_part import V636Part
+from simple_parts.v6_32_part import V632Part
+from simple_parts.v6_30_part import V630Part
+from simple_parts.v6_31_part import V631Part
+from simple_parts.v6_29_part import V629Part
+class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
     """V4.16.2 A1.9.2 fee-conditioned book risk admission on A1.9.1.2.
 
     What is deliberately removed from the hot entry path:
@@ -2397,6 +2464,34 @@ class Strategy1_Research_Simple(Strategy1_Research):
         self.research_v637_fast_path = self._as_bool(getattr(self.config, "research_v637_fast_path", True))
         self._v6_37_switches = v6_37_apply(self.research_v637_fast_path)
         self._a19_ledger.orders = v6_37_ledger_orders(self._a19_ledger.orders)
+        # v6.38 layer 3 (scratchpad k124): tonight's pre-registered candidates as agent code, each behind its own PARAMS
+        # switch, every one shipped 0 -- off, every hook is inert and the build is v6.37.  research_v638_kbl: 1 KBL / 2 K5,
+        # the post-step window touch quote keyed to the book's capture balance (k105; the L2B candidate / its comparison
+        # arm).  research_v638_lean with research_v638_lean_arm: the k116 lean candidates CA / CB / CC / CD on the hash
+        # half (1) or on every class-0 book (2); research_v638_c1 with research_v638_c1_arm: the k118 class-1 keepers K1 /
+        # K3 / K3B / K3Q on v6.34's class-1 entry, the hash half (1) or all class-1 books (2).  The half: the
+        # pre-registered per-(UID, book) draws from this agent's OWN UID (research_v6_38_canary).  STRUCTURAL.
+        self.research_v638_kbl = v6_38_kbl_mode_of(getattr(self.config, "research_v638_kbl", 0))
+        self.research_v638_lean = v6_38_mode_of(getattr(self.config, "research_v638_lean", 0))
+        self.research_v638_lean_arm = v6_38_arm_of(getattr(self.config, "research_v638_lean_arm", 0), V6_38_LEAN_ARMS)
+        self.research_v638_c1 = v6_38_mode_of(getattr(self.config, "research_v638_c1", 0))
+        self.research_v638_c1_arm = v6_38_arm_of(getattr(self.config, "research_v638_c1_arm", 0), V6_38_C1_ARMS)
+        self._v6_38_l3_on = False
+        self._v6_38_canary_tables: dict[tuple, Any] = {}
+        self._v6_38_kbl_win: dict | None = None
+        self._v6_38_kbl_excluded: frozenset = frozenset()
+        self._v6_38_fbl_sign: dict[int, int] = {}
+        self._v6_38_fbl_prev: dict[int, int] = {}
+        self._v6_38_fbl_ts: int | None = None
+        self._v6_38_k1_books_now: frozenset = frozenset()
+        self._v6_38_k1_pooled: float | None = None
+        self._v6_38_k3q: dict[str, Any] = {}
+        self._v6_38_k3q_trackers()
+        self._v6_38_l3_counts: dict[str, int] = {}
+        self._v6_38_l3_errors = 0
+        self._v6_38_l3_errors_seen = 0
+        self._v6_38_l3_reported = False
+        self._v6_38_l3_erring = False
         # v6.38 (research_v638_fast_path): U2 stage A (scratchpad k115 probes, built in k123) -- the reply path faster
         # with every decision as v6.37's: P5 the protocol validates a book's trade events only (the switch is the
         # protocol's own, written here before any request), P1 the A1.9.0.2 observer's per-book shadow pass skipped
@@ -2405,6 +2500,15 @@ class Strategy1_Research_Simple(Strategy1_Research):
         # research_v6_38_fast_path.
         self.research_v638_fast_path = self._as_bool(getattr(self.config, "research_v638_fast_path", True))
         self._v6_38_switches = v6_38_apply(self.research_v638_fast_path)
+        # v6.39 (research_v639_runlen): U2 stage 2 / S3 (scratchpad k115 H6 / H7 / H14, built in k129) -- the run-length
+        # growth (the rolling realized-PnL store and the v6.23 census, the v6.33 sweep sorts) and the off-path CPU (the
+        # A1.9.9.2 idle full pass, the observatory's gzip level) behind one switch; every decision as v6.38's.
+        # Off: v6.38's code on every path.
+        self.research_v639_runlen = self._as_bool(getattr(self.config, "research_v639_runlen", True))
+        self._v6_39_switches = v6_39_apply(self.research_v639_runlen)
+        self._v6_39_census_cache = {}
+        if self.research_v639_runlen and getattr(self, "_a1992_idle_gc", None) is not None:
+            self._a1992_idle_gc.deferred_full = True
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -6732,6 +6836,17 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 # verdict already kept the exit path from placing a second order on this side.
                 self._v633_count("life_kept_reprice")
                 continue
+            if getattr(self, "_v6_38_l3_on", False) and self._v6_38_k1_life(int(bid), getattr(row, "client_id", None)) \
+                    and verdict.get("reason") != V6_38_SIZE_SHORTFALL:
+                # v6.38 L3 k118 keeper (research_v638_c1): of the exit reprice reasons only the size shortfall applies to it
+                # (the replay keeps the legacy A1.9 size-shortfall cancel, a19x, and models no other)
+                self._v6_38_l3_count("k1_kept_reprice")
+                continue
+            if getattr(self, "_v6_38_l3_on", False) and self._v6_38_kbl_x1(int(bid), getattr(row, "client_id", None)):
+                # v6.38 L3 KBL X1 (research_v638_kbl): the close-side order is the touch quote -- its own rules govern its
+                # life, as the deep layer's do for its orders (v6.3.3.1)
+                self._v6_38_l3_count("kbl_x1_kept_reprice")
+                continue
             if self._count_book_instructions(response, int(bid)) >= self.max_instructions_per_book:
                 # R3: the budget is shared with placements and cancels count.
                 # Falling back to HOLD keeps the queue position rather than
@@ -8195,6 +8310,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 budget_basis=(
                     BUDGET_DISK if bool(getattr(self, "research_v504_disk_budget", True)) else BUDGET_PAYLOAD
                 ),
+                # v6.39 S3.4: gzip at the library's default level (off: gzip.open's own, level 9)
+                **({"opener": v6_39_observatory_open} if getattr(self, "research_v639_runlen", False) else {}),
             )
             self._v503_recorder = recorder
         return recorder
@@ -9526,14 +9643,56 @@ class Strategy1_Research_Simple(Strategy1_Research):
         cfg = getattr(state, "config", None) if state is not None else None
         step = getattr(cfg, "publish_interval", None) or V623_PUBLISH_STEP_NS
         decimals = getattr(cfg, "volumeDecimals", None)
-        census = v623_window_census(
-            events, now=now,
-            lookback_ns=int(getattr(self, "research_kappa_lookback_ns", 10_800_000_000_000) or 10_800_000_000_000),
-            step_ns=step,
-            decimals=(V623_VOLUME_DECIMALS if decimals is None else decimals),
-        )
+        if getattr(self, "research_v639_runlen", False):
+            # v6.39 S3.1: the same census from a per-book cache (the book's list object + its window edges)
+            cache = getattr(self, "_v6_39_census_cache", None)
+            if cache is None:
+                cache = {}
+                self._v6_39_census_cache = cache
+            census = v6_39_window_census_cached(
+                cache, events, now=now,
+                lookback_ns=int(getattr(self, "research_kappa_lookback_ns", 10_800_000_000_000) or 10_800_000_000_000),
+                step_ns=step,
+                decimals=(V623_VOLUME_DECIMALS if decimals is None else decimals),
+            )
+        else:
+            census = v623_window_census(
+                events, now=now,
+                lookback_ns=int(getattr(self, "research_kappa_lookback_ns", 10_800_000_000_000) or 10_800_000_000_000),
+                step_ns=step,
+                decimals=(V623_VOLUME_DECIMALS if decimals is None else decimals),
+            )
         self._v623_memo = (key, census)
         return census
+
+    def _research_note_realized_pnl_event(
+        self, book_id: int, *, timestamp=None, realized_pnl: float
+    ) -> None:
+        """v6.39 S3.1: the frozen base's method (Strategy1_Research.py) with research_rolling_economics'
+        note_realized_pnl_event replaced by the v6.39 store's note (== by content; the untouched books keep their
+        list objects).  Off: the base's method."""
+        if not getattr(self, "research_v639_runlen", False):
+            return super()._research_note_realized_pnl_event(book_id, timestamp=timestamp, realized_pnl=realized_pnl)
+        ts = timestamp
+        if ts is None:
+            ts = getattr(self, "_research_last_sim_ts", None)
+        if ts is None:
+            ts = int(getattr(self, "_tick", 0) or 0)
+        try:
+            its = int(ts)
+        except (TypeError, ValueError):
+            its = int(getattr(self, "_tick", 0) or 0)
+        now = getattr(self, "_research_last_sim_ts", None)
+        if now is None:
+            now = its
+        self._research_realized_pnl_events_by_book = v6_39_note_event(
+            getattr(self, "_research_realized_pnl_events_by_book", {}),
+            book_id=int(book_id),
+            timestamp=its,
+            realized_pnl=float(realized_pnl),
+            now=int(now or its),
+            lookback_ns=int(getattr(self, "research_kappa_lookback_ns", 10_800_000_000_000)),
+        )
 
     def _v623_lifted(self, book_id: int, state=None) -> tuple[bool, str]:
         """(lifted, window status).  The floor stays on a PREMIUM book and on any error.
@@ -10805,6 +10964,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 # v6.3.3.1: a deep order rests behind the touch by design; the deep layer owns its life.
                 deep_kept += 1
                 continue
+            if getattr(self, "_v6_38_l3_on", False) and self._v6_38_k1_life(book_id, getattr(row, "client_id", None)):
+                # v6.38 L3 k118 keeper (research_v638_c1): it rests outside the A radius by design; its keep rule and
+                # 3,600-s life govern it (the replay's keeper has no touch-life cancel)
+                self._v6_38_l3_count("k1_life_kept")
+                continue
             if row.placed_ns > 0 and row.age_ms(now_ns) < ttl_ms:
                 live_by_book.setdefault(book_id, []).append(row)
         if deep_kept:
@@ -11742,6 +11906,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
         fp = self._v617_fundamental(book_id, raw_bid, raw_ask, cfg)
         mid = 0.5 * (float(raw_bid) + float(raw_ask))
         toward = v617_toward_side(mid, fp) if fp is not None else None
+        v6_38_win = None
+        if getattr(self, "_v6_38_l3_on", False) and fp is not None:
+            # v6.38 L3 KBL X2b (research_v638_kbl): in [step, step + W) of a step v6.36's record saw, on a book the step
+            # moved (KBL's xb: not the book's capture-surplus side), the touch quote takes the step's side
+            v6_38_win = self._v6_38_kbl_window(book_id)
+            if v6_38_win is not None:
+                toward = v6_38_win
         clip = float(V617_CLIP_DEEP_CLIPS) * float(getattr(deep, "clip", 0.0) or 0.0)
         bound = self._v610_bound_base(deep, paced)
         v6_27_wide = None
@@ -11755,6 +11926,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # v6.29 S9: the side whose touch quote the fundamental's move over the look-back is against -- not placed
             # below, and a resting one cancelled (research_v629_touch_fp_move); None: no gate, the quote is v6.28's
             v6_29_held = self._v6_29_held(book_id, fp, cfg)
+        if v6_38_win is not None:
+            v6_29_held = None          # v6.38 L3 KBL X2b: no S9 on the window quote (its look-back move is the step)
         v6_32_gated: frozenset = frozenset()
         if bool(getattr(self, "research_v632_fee_making", False)):
             # v6.32 S14: the side(s) whose touch quote would ADD while the touch fills' realized spread per notional does
@@ -11778,6 +11951,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             else:
                 why = v617_verdict(side, float(row.price), toward=toward, bid=raw_bid, ask=raw_ask, fundamental=fp,
                                    tick=tick_size)
+            if v6_38_win is not None:
+                # v6.38 L3 KBL X2b: off the window side flipped; on it no fp-edge test and re-joined at one tick behind
+                why = v6_38_kbl_verdict(side, float(row.price), window=v6_38_win, bid=raw_bid, ask=raw_ask, tick=tick_size)
             if why is None and paced and v641_adds(side, inv):
                 why = V617_CANCEL_PACED        # ahead of its volume line, no adding order (v6.4.1)
             if why is None and side in held:
@@ -11839,6 +12015,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             return 0
         price = v617_wanted_price(toward, bid=raw_bid, ask=raw_ask, fundamental=fp, tick=tick_size,
                                   safety_ticks=int(getattr(self, "research_post_only_safety_ticks", 2) or 2))
+        if v6_38_win is not None:
+            # v6.38 L3 KBL X2b: the window quote's join carries no fp-edge hurdle
+            price = v6_38_kbl_join(toward, raw_bid, raw_ask, tick_size,
+                                   int(getattr(self, "research_post_only_safety_ticks", 2) or 2))
         if price is None:
             self._v617_count("no_price")
             return 0
@@ -11847,7 +12027,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # every opposite order, strictly our side of the others' mid), it beats this join and its edge is still
             # v6.17's hurdle; else the join (research_v631_touch_improve)
             price = self._v6_31_price(book_id, toward, price, fp, tick_size)
+        if v6_38_win is not None:
+            # v6.38 L3 KBL X5 + X2b: the window quote improves under S12b's geometry without the fp-edge test
+            price = self._v6_38_kbl_price(book_id, toward, price, fp, tick_size)
         q_ = v620_scaled_quantity(clip, size_scale, min_order) if size_scale < 1.0 else clip   # v6.20: ahead of its line
+        if getattr(self, "_v6_38_l3_on", False):
+            # v6.38 L3: the touch quote's size when layer 3 sets it -- KBL X3a (the window quote unscaled) and the lean
+            # candidates' front-built lean (FBL); None: v6.36's
+            v6_38_q = self._v6_38_touch_size(book_id, toward, inv, clip, size_scale, min_order, v6_38_win)
+            if v6_38_q is not None:
+                q_ = v6_38_q
         q = v62_lot_quantity(q_, getattr(cfg, "volumeDecimals", 4))
         if q + 1e-12 < min_order:
             self._v617_count("below_min_order")
@@ -12304,6 +12493,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
                                              getattr(self, "research_v623_against_gap_bps", 0.0),
                                              getattr(self, "research_v625_lean_slope", 0.0),
                                              getattr(self, "research_v625_lean_cap", 0.0)))
+                if getattr(self, "_v6_38_l3_on", False) and self._v6_38_lean_has(book_id, "slope2"):
+                    # v6.38 L3 CA (research_v638_lean): one deep clip of lean per hurdle unit (slope 2.0), the cap as is
+                    tau = float(v625_lean_target(0.5 * (float(raw_bid) + float(raw_ask)), fp,
+                                                 getattr(self, "research_v623_against_gap_bps", 0.0), V6_38_CA_SLOPE,
+                                                 getattr(self, "research_v625_lean_cap", 0.0)))
             taus[int(book_id)] = (tau, int(now_ts))
         except Exception:
             self._v6_25_errors = int(getattr(self, "_v6_25_errors", 0) or 0) + 1
@@ -12632,740 +12826,39 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 "flat_clip_book_states": int(counts.get("flat_clip_book_states", 0) or 0),
                 "errors": self._v6_28_error_total()}
 
-    def _v6_29_held(self, book_id: int, fp, cfg):
-        """v6.29 S9 (research_v629_touch_fp_move), in the touch quote right after v6.17 read the book's fundamental
-        ``fp`` (None: its page is stale or missing): the side whose touch quote the fundamental's move over the
-        look-back is against -- BUY when it fell, SELL when it rose -- or None (no gate).  The move is ``fp`` minus the
-        book's fundamental on the page that was current W sim-s ago: the newest page this agent first saw at or before
-        this request's state time minus W, from the page history the feed's snapshot feeds here (V6_29PageHistory:
-        distinct pages by their own sim time, only what W needs).  W is this request's S6 limit (v6.16's
-        MAX_STALE_SIM_S without one).  Tallies the decision and why there is no gate (no page that old, no fresh
-        fundamental, no move).  Never raises: an error counts and the book has no gate (v6.28)."""
-        try:
-            self._v6_29_count("touch_decisions")
-            pages = getattr(self, "_v6_29_pages", None)
-            if pages is None:
-                pages = V6_29PageHistory()
-                self._v6_29_pages = pages
-            now_ts = int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0)
-            feed = getattr(self, "_v616_feed", None)
-            v6_32_snap = None
-            if bool(getattr(self, "research_v632_state_fundamental", False)):
-                # v6.32 P1: with the books' own fundamentals in this state the history records those -- one entry per
-                # request, at the state's time -- instead of the page (research_v632_state_fundamental)
-                v6_32_snap = self._v6_32_s9_snapshot()
-            if v6_32_snap is not None:
-                pages.observe(v6_32_snap, now_ts, v626_state_sim_id(cfg))
-            else:
-                pages.observe(feed.snapshot() if feed is not None else None, now_ts, v626_state_sim_id(cfg))
-            lookback = v6_29_lookback(getattr(self, "_v6_26_limit", None))
-            self._v6_29_lookback = lookback
-            v6_30_decision = None
-            if bool(getattr(self, "research_v630_s9_lookback", False)):
-                # v6.30 D2: this book's look-back is m x W, m its multiple in this UID's identity profile, by v6.29's
-                # reference rule (None: no profile this request -- W, v6.29's decision) (research_v630_s9_lookback)
-                v6_30_decision = self._v6_30_decide(pages, book_id, fp, now_ts, lookback)
-            if v6_30_decision is not None:
-                side, why = v6_30_decision
-            else:
-                side, why = pages.decide(book_id, fp, now_ts, lookback)
-            self._v6_29_count(why)
-            return side
-        except Exception:
-            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
-            return None
 
-    def _v6_29_count(self, key: str, n: int = 1) -> None:
-        """v6.29's tally.  Never raises: an error counts."""
-        try:
-            counts = getattr(self, "_v6_29_counts", None)
-            if counts is None:
-                counts = {}
-                self._v6_29_counts = counts
-            counts[key] = int(counts.get(key, 0) or 0) + int(n)
-        except Exception:
-            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
 
-    def _v6_29_launches(self, pace):
-        """v6.29, S8's first save (research_v628_flat_launch), in the pass before its books are seen: the launch records
-        S8's line holds (v6_29_launch_records), or None without S8's line.  The process's first pass keeps that number
-        as the records already accounted for -- a restart's, restored from the session file that carries them.  Never
-        raises: an error counts and is None (no save is asked for: v6.28's cadence)."""
-        try:
-            if not isinstance(pace, V628FlatLaunchLine):
-                return None
-            n = v6_29_launch_records(pace)
-            if n is not None and getattr(self, "_v6_29_launches_seen", None) is None:
-                self._v6_29_launches_seen = n
-            return n
-        except Exception:
-            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
-            return None
 
-    def _v6_29_first_launch(self, pace) -> None:
-        """v6.29, S8's first save, in the pass after its books: more launch records than at the last look are launches
-        S8 recorded -- flat, each a book first seen on an empty window -- and the first time there are, one session save
-        is asked for (_v6_29_save_due): the request's own save path (_research_save_session, after the pass) forces it,
-        then the normal cadence (research_session_save_every_n) runs on from it.  k72: a save earlier in the request
-        (the session sync's on a reset, v5.0.3's gate as it opens) carries the previous tick -- respond counts the
-        request's own -- so the save path after the pass skipped and the first save carrying a fresh UID's flat rates
-        came a whole cadence later (~100 requests, ~8 wall-min); a restart in between rebuilt the launch at v6.15's 2x.
-        Never raises: an error counts and no save is asked for (v6.28)."""
-        try:
-            n = v6_29_launch_records(pace) if isinstance(pace, V628FlatLaunchLine) else None
-            seen = getattr(self, "_v6_29_launches_seen", None)
-            if n is None or seen is None:
-                return
-            if n > seen and getattr(self, "_v6_29_save_asked", None) is None:
-                tick = int(getattr(self, "_tick", 0) or 0)
-                self._v6_29_save_due, self._v6_29_save_asked = True, tick
-            self._v6_29_launches_seen = n
-        except Exception:
-            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
 
-    def _v6_29_saved(self) -> None:
-        """v6.29, S8's first save: the session file was written while the save S8's first flat launch asked for was due
-        -- it carries the line's rates now, so that save is done.  Never raises."""
-        try:
-            tick = int(getattr(self, "_tick", 0) or 0)
-            self._v6_29_save_due, self._v6_29_save_done = False, tick
-        except Exception:
-            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
 
-    def _v6_29_report(self) -> None:
-        """v6.29: the V6_29_STATE row -- S9's switch, the look-back it used last and the pages it keeps, the running
-        tally of touch decisions, those the fundamental's move armed (it fell / rose), placements withheld and resting
-        quotes cancelled, and the decisions without a gate (no page that old, no fresh fundamental, no move); S8's
-        first save (asked for / done at which tick); the errors -- at the first pass, at the first request with an
-        error after one without, and every V62_STATE_EVERY_TICKS ticks; after the reply when the request defers its
-        telemetry (v6.2.9).  Never raises."""
-        try:
-            tick = int(getattr(self, "_tick", 0) or 0)
-            errors = int(getattr(self, "_v6_29_errors", 0) or 0)
-            erring = errors > int(getattr(self, "_v6_29_errors_seen", 0) or 0)
-            was_erring = bool(getattr(self, "_v6_29_erring", False))
-            self._v6_29_errors_seen, self._v6_29_erring = errors, erring
-            if not getattr(self, "_v6_29_reported", False):
-                reason = "start"
-            elif erring and not was_erring:
-                reason = "error"
-            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
-                reason = "periodic"
-            else:
-                return
-            self._v6_29_reported = True
-            row = dict(self._v6_29_snapshot(), reason=reason, tick=tick)
-            work = getattr(self, "_v629_request_work", None)
-            if work is not None:
-                work.add("v6_29_state_row", lambda: self._emit("V6_29_STATE", force=True, **row))   # after the reply
-            else:
-                self._emit("V6_29_STATE", force=True, **row)
-        except Exception:
-            self._v6_29_errors = int(getattr(self, "_v6_29_errors", 0) or 0) + 1
 
-    def _v6_29_snapshot(self) -> dict:
-        counts = dict(getattr(self, "_v6_29_counts", None) or {})
-        pages = getattr(self, "_v6_29_pages", None)
-        lookback = getattr(self, "_v6_29_lookback", None)
-        return {"version": V6_29_TOUCH_MOVE_VERSION,
-                "touch_fp_move_on": int(bool(getattr(self, "research_v629_touch_fp_move", False))),
-                "lookback_sim_s": (round(float(lookback), 3) if lookback is not None else None),
-                "pages": len(getattr(pages, "pages", None) or ()), "page_resets": int(getattr(pages, "resets", 0) or 0),
-                "touch_decisions": int(counts.get("touch_decisions", 0) or 0),
-                "fp_fell": int(counts.get("fp_fell", 0) or 0), "fp_rose": int(counts.get("fp_rose", 0) or 0),
-                "withheld": int(counts.get("withheld", 0) or 0), "cancelled": int(counts.get("cancelled", 0) or 0),
-                "no_history": int(counts.get("no_history", 0) or 0), "stale": int(counts.get("stale", 0) or 0),
-                "zero_move": int(counts.get("zero_move", 0) or 0),
-                "s8_save_due": int(bool(getattr(self, "_v6_29_save_due", False))),
-                "s8_save_asked": getattr(self, "_v6_29_save_asked", None),
-                "s8_save_done": getattr(self, "_v6_29_save_done", None),
-                "errors": int(getattr(self, "_v6_29_errors", 0) or 0)}
 
-    def _v6_30_request(self, state) -> None:
-        """v6.30, in the pass once per request before its books: is the identity profile on for this request?  The UID
-        this process fixed (at init from self.uid; else here from self.uid, else the state's addressee) must still be
-        self.uid and the addressee -- unknown, negative or another UID turns the profile off for the rest of the process
-        (D1 and D2 then run v6.29; the state row says why).  On, every book of the state has its draw (drawn once, from
-        this UID alone), and with D2 on S9's history holds what the longest look-back in use needs: the largest
-        multiple x W, never shrinking while the profile is on (KeepHorizon.hold); once the profile is off, None (v6.29's
-        prune).  Never raises: an error counts, the request runs v6.29 and the history's horizon is left as it was."""
-        try:
-            ident = self._v6_30_identity
-            on = bool(ident.check(getattr(self, "uid", None), v6_30_addressee(getattr(state, "accounts", None))))
-            keep = None
-            if on:
-                ident.extend(getattr(state, "books", None) or ())
-                if bool(getattr(self, "research_v630_s9_lookback", False)):
-                    keep = float(ident.max_m) * float(v6_29_lookback(getattr(self, "_v6_26_limit", None)))
-            pages = getattr(self, "_v6_29_pages", None)
-            if isinstance(pages, V6_30KeepHorizon):
-                if ident.off is not None:
-                    pages.keep_s = None                     # the profile is off for good: v6.29's prune
-                elif keep is not None:
-                    pages.hold(keep)                        # never shrinks while the profile is on
-            self._v6_30_on = on
-        except Exception:
-            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
-            self._v6_30_on = False                          # this request runs v6.29; the horizon stays as it was
 
-    def _v6_30_tier(self, book_id: int) -> int:
-        """v6.30 D1 (research_v630_deep_tier): the book's deep tier this request -- its draw in the identity profile while
-        the profile is on (1: one venue tick deeper), else 0 (v6.29's prices).  Never raises: an error counts and is 0."""
-        try:
-            if not bool(getattr(self, "_v6_30_on", False)):
-                return 0
-            return 1 if self._v6_30_identity.value(V6_30_D1, book_id) == 1 else 0
-        except Exception:
-            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
-            return 0
 
-    def _v6_30_deeper(self, price, side: str, ticks: int, ref, depth, vacuum: bool, raw_bid, raw_ask, tick_size, dec):
-        """v6.30 D1: (target, why) -- ``price``, a deep level's v6.29 target, ``ticks`` venue ticks further from the mid
-        (a buy lower, a sell higher) when that stays inside v6.3.3's keep band at ``depth`` around ``ref`` (the reference
-        the resting order is judged against), off its edge, and, for a ``vacuum`` order, strictly inside the touch;
-        else ``price`` with why (v6_30_deeper_target).  Never raises: an error counts and is (``price``, "error")."""
-        try:
-            return v6_30_deeper_target(price, side, ref=ref, depth=depth, tick=tick_size, decimals=dec, ticks=ticks,
-                                       inside=(raw_bid, raw_ask) if vacuum else None)
-        except Exception:
-            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
-            return price, "error"
 
-    def _v6_30_placed(self, level: int, why) -> None:
-        """v6.30 D1's tally, by level: a deep order of a tier-1 book placed one tick deeper, at v6.29's price because the
-        band (or its edge) or the touch clamped it, or at v6.29's price because an input was unreadable or an error
-        fell back.  Never raises."""
-        try:
-            kind = "deeper" if why == V6_30_DEEPER else "clamped" if why in (V6_30_CLAMPED_BAND, V6_30_CLAMPED_TOUCH) \
-                else "error"
-            self._v6_30_count("%s_l%d" % (kind, int(level)))
-        except Exception:
-            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
 
-    def _v6_30_paper(self, deep, book_id: int) -> None:
-        """v6.30 D1, in the pass right before the deep layer observes the book: the book's paper record is the kind its
-        tier rests -- a TierPaper, its paper orders one tick deeper, on tier 1; v6.3.3's PaperDeep otherwise; the same
-        record either way (v6_30_paper_for) -- so v6.8's per-book gate judges the level the book trades.  A book the
-        layer has not seen yet places no paper order on its first state (it has no depth), so it is the right kind
-        before its first paper order.  Never raises: an error counts and the record stays as it is."""
-        try:
-            db = (getattr(deep, "books", None) or {}).get(int(book_id))
-            if db is None:
-                return
-            ticks = self._v6_30_tier(book_id)
-            paper = v6_30_paper_for(db.paper, ticks)
-            if paper is not db.paper:
-                db.paper = paper
-                self._v6_30_count("paper_tier1" if ticks else "paper_tier0")
-        except Exception:
-            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
 
-    def _v6_30_decide(self, pages, book_id: int, fp, now_ts: int, lookback):
-        """v6.30 D2 (research_v630_s9_lookback), inside v6.29's S9 decision: (side, why) of v6.29's rule on its history
-        with this book's look-back, m x ``lookback`` (exactly v6.29's W), m the book's multiple in the identity profile;
-        None while the profile is off this request, for a book without a draw, or a history without KeepHorizon (v6.29's
-        decision at W then).  Tallies the decisions, the gates and why there is none, per m.  Never raises: an error
-        counts and is None."""
-        try:
-            if not bool(getattr(self, "_v6_30_on", False)) or not isinstance(pages, V6_30KeepHorizon):
-                return None
-            m = self._v6_30_identity.value(V6_30_D2, book_id)
-            if m is None:
-                return None
-            side, why = pages.decide(book_id, fp, now_ts, float(m) * float(lookback))
-            self._v6_30_count("s9_m%d_decisions" % m)
-            self._v6_30_count("s9_m%d_%s" % (m, "gated" if side is not None else why))
-            return side, why
-        except Exception:
-            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
-            return None
 
-    def _v6_30_count(self, key: str, n: int = 1) -> None:
-        """v6.30's tally.  Never raises: an error counts."""
-        try:
-            counts = getattr(self, "_v6_30_counts", None)
-            if counts is None:
-                counts = {}
-                self._v6_30_counts = counts
-            counts[key] = int(counts.get(key, 0) or 0) + int(n)
-        except Exception:
-            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
 
-    def _v6_30_report(self) -> None:
-        """v6.30: the V6_30_STATE row -- both switches, whether the profile is on, the UID fixed for this process and
-        where it came from, why the profile is off when it is, the table (its books, sha256, D1's tier-1 and D2's m = 2
-        counts, the draws), D1's placements one tick deeper / clamped by level and the paper records converted, S9's
-        decisions, gates and missing references by m and the history's keep horizon, and the errors -- at the first
-        pass, at the first request with an error after one without, at the request the profile turned off or the table
-        grew, and every V62_STATE_EVERY_TICKS ticks; after the reply when the request defers its telemetry (v6.2.9).
-        Never raises."""
-        try:
-            tick = int(getattr(self, "_tick", 0) or 0)
-            errors = int(getattr(self, "_v6_30_errors", 0) or 0)
-            erring = errors > int(getattr(self, "_v6_30_errors_seen", 0) or 0)
-            was_erring = bool(getattr(self, "_v6_30_erring", False))
-            self._v6_30_errors_seen, self._v6_30_erring = errors, erring
-            ident = getattr(self, "_v6_30_identity", None)
-            off = getattr(ident, "off", None)
-            drawn = len(getattr(ident, "table", None) or {})
-            if not getattr(self, "_v6_30_reported", False):
-                reason = "start"
-            elif erring and not was_erring:
-                reason = "error"
-            elif off is not None and off != getattr(self, "_v6_30_off_logged", None):
-                reason = "off"
-            elif drawn != int(getattr(self, "_v6_30_drawn_seen", 0) or 0):
-                reason = "table"
-            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
-                reason = "periodic"
-            else:
-                return
-            self._v6_30_reported = True
-            self._v6_30_off_logged, self._v6_30_drawn_seen = off, drawn
-            row = dict(self._v6_30_snapshot(), reason=reason, tick=tick)
-            work = getattr(self, "_v629_request_work", None)
-            if work is not None:
-                work.add("v6_30_state_row", lambda: self._emit("V6_30_STATE", force=True, **row))   # after the reply
-            else:
-                self._emit("V6_30_STATE", force=True, **row)
-        except Exception:
-            self._v6_30_errors = int(getattr(self, "_v6_30_errors", 0) or 0) + 1
 
-    def _v6_30_snapshot(self) -> dict:
-        ident = getattr(self, "_v6_30_identity", None)
-        counts = dict(getattr(self, "_v6_30_counts", None) or {})
-        pages = getattr(self, "_v6_29_pages", None)
-        keep = getattr(pages, "keep_s", None)
-        row = {"version": V6_30_IDENTITY_PROFILE_VERSION, "profile": V6_30_PROFILE_VERSION,
-               "deep_tier_on": int(bool(getattr(self, "research_v630_deep_tier", False))),
-               "s9_lookback_on": int(bool(getattr(self, "research_v630_s9_lookback", False))),
-               "profile_on": int(bool(getattr(self, "_v6_30_on", False)))}
-        row.update(ident.snapshot() if ident is not None else {})
-        row.update({
-            "deep_shifted": sum(int(v or 0) for k, v in counts.items() if k.startswith("deeper_l")),
-            "deep_clamped": sum(int(v or 0) for k, v in counts.items() if k.startswith("clamped_l")),
-            "deep_unchanged_error": sum(int(v or 0) for k, v in counts.items() if k.startswith("error_l")),
-            "deep_by_level": {k: int(v or 0) for k, v in sorted(counts.items())
-                              if k.startswith(("deeper_l", "clamped_l", "error_l"))},
-            "paper_tier1": int(counts.get("paper_tier1", 0) or 0), "paper_tier0": int(counts.get("paper_tier0", 0) or 0),
-            "s9_m1_decisions": int(counts.get("s9_m1_decisions", 0) or 0),
-            "s9_m1_gated": int(counts.get("s9_m1_gated", 0) or 0),
-            "s9_m1_no_history": int(counts.get("s9_m1_no_history", 0) or 0),
-            "s9_m2_decisions": int(counts.get("s9_m2_decisions", 0) or 0),
-            "s9_m2_gated": int(counts.get("s9_m2_gated", 0) or 0),
-            "s9_m2_no_history": int(counts.get("s9_m2_no_history", 0) or 0),
-            "s9_by_m": {k: int(v or 0) for k, v in sorted(counts.items()) if k.startswith("s9_m")},
-            "s9_keep_sim_s": (round(float(keep), 3) if keep is not None else None),
-            "errors": int(getattr(self, "_v6_30_errors", 0) or 0)})
-        return row
 
-    def _v6_31_note(self, book_id: int, book, own_ids, touch_on: bool) -> None:
-        """v6.31 S12b (research_v631_touch_improve), in the pass right after the book's ledger rows are read: notes the
-        book as this request shows it and our live order ids on it (the ledger's), with the book and the request, for
-        _v6_31_price -- which takes the others' touch from them only when a new touch quote is priced: a few books a
-        request, where taking it here would walk every book's best levels on every request (latency gates making).
-        Off, or without the touch quote: nothing noted.  Never raises: an error counts and leaves nothing noted."""
-        try:
-            if not bool(getattr(self, "research_v631_touch_improve", False)) or not touch_on:
-                self._v6_31_noted = None
-                return
-            self._v6_31_noted = (int(book_id), int(getattr(self, "_tick", 0) or 0), book, set(own_ids or ()))
-        except Exception:
-            self._v6_31_errors = int(getattr(self, "_v6_31_errors", 0) or 0) + 1
-            self._v6_31_noted = None
 
-    def _v6_31_price(self, book_id: int, side: str, join_px, fp, tick_size):
-        """v6.31 S12b (research_v631_touch_improve), in v6.17's touch quote right after it chose its join price: the
-        price a NEW quote on ``side`` takes -- one tick better than the others' best when v6.2.10's geometry accepts it
-        (strictly inside every opposite order, ours included, and strictly on our side of the others' mid), it is
-        strictly better than ``join_px`` and its edge vs the fresh fundamental ``fp`` is still v6.17's hurdle
-        (v6_31_improved_touch_price); else ``join_px``.  The others' touch is v6.2.10's touch view of the book
-        _v6_31_note noted for this book this request (none noted: the join), every order of ours left out -- by the
-        ledger's live order ids and by our client ids: v6.3's roles, v6.2's entries, v6.2.14's exits, v6.3.3's deep
-        layer and v6.17's own touch quote.  Tallies why.  Off: ``join_px``.  Never raises: an error counts,
-        ``join_px``."""
-        try:
-            if not bool(getattr(self, "research_v631_touch_improve", False)):
-                return join_px
-            noted = getattr(self, "_v6_31_noted", None)
-            view = None
-            if noted is not None and noted[0] == int(book_id) and noted[1] == int(getattr(self, "_tick", 0) or 0):
-                own_cids = (
-                    v63_own_client_ids(book_id) | set(v62_entry_client_ids(book_id))
-                    | set(v6214_exit_client_ids(book_id)) | v633_own_client_ids(book_id) | set(v617_client_ids(book_id))
-                )
-                view = v6210_touch_view(noted[2], own_ids=noted[3], own_cids=own_cids)
-            price, why = v6_31_improved_touch_price(side, view, fp, tick_size, join_price=join_px)
-            self._v6_31_count(why)
-            return join_px if price is None else price
-        except Exception:
-            self._v6_31_errors = int(getattr(self, "_v6_31_errors", 0) or 0) + 1
-            return join_px
 
-    def _v6_31_staged_save(self, force: bool) -> bool:
-        """v6.31 (research_v631_single_write_save), first in the session save: runs v6.30's whole save -- the frozen
-        base's payload write, then v6.30's re-read and owner / v6.8 deep / v6.1 lots / v6.21 pace / maker quality
-        rewrite -- with every read and write of the session file on a stage file (_research_session_path returns it
-        while it is set), and replaces the session file with the stage in ONE os.replace, only when the stage is whole:
-        it parses, carries the owner record (with research_v504_session_per_uid) and the maker quality.  A stop before
-        the rename leaves the previous whole file in place: v6.30 replaced the file twice, and pm2's SIGKILL (1.6 s
-        after its SIGINT) between the two writes left a file without its owner -- UNOWNED_REFUSED and a cold start
-        (UID 115, 10-14).  v6.29's _v6_29_saved now runs inside the body, microseconds before the rename.  No stage
-        written this call (the cadence skipped the save): nothing is renamed.  A stage left by a stopped save is removed
-        first, never renamed.  An incomplete stage or an error: counted, the stage removed, the session file untouched.
-        False (v6.30's save as it is) when off, when re-entered from the staged run itself, or without a session
-        identity; True otherwise.  Never raises; the stage is always reset."""
-        if not bool(getattr(self, "research_v631_single_write_save", False)):
-            return False
-        if getattr(self, "_v6_31_stage", None) is not None:
-            return False                                # re-entered: this is the staged run of v6.30's save
-        identity = getattr(self, "_research_session_identity", None)
-        if identity is None or not getattr(identity, "simulation_id", None):
-            return False
-        stage = None
-        try:
-            real = self._research_session_path(identity)
-            stage = real + V6_31_STAGE_SUFFIX
-            try:
-                os.unlink(stage)                        # a stage a stopped save left behind is never renamed
-            except OSError:
-                pass
-            self._v6_31_stage = stage
-            try:
-                self._research_save_session(force=force)            # v6.30's whole save, every write on the stage
-            finally:
-                self._v6_31_stage = None
-            if not os.path.isfile(stage):
-                return True                             # nothing written this call: the session file stays as it is
-            try:
-                with open(stage, encoding="utf-8") as handle:
-                    payload = json.load(handle)
-            except (OSError, TypeError, ValueError):
-                payload = None
-            whole = (isinstance(payload, dict) and "direct_maker_quality_a1_5_1" in payload
-                     and (OWNER_KEY in payload or not bool(getattr(self, "research_v504_session_per_uid", True))))
-            if whole:
-                os.replace(stage, real)                 # the one write of the session file
-                self._v6_31_count("staged_saves")
-                return True
-            self._v6_31_count("stage_incomplete")
-        except Exception:
-            self._v6_31_errors = int(getattr(self, "_v6_31_errors", 0) or 0) + 1
-        self._v6_31_stage = None
-        if stage is not None:
-            try:
-                os.unlink(stage)
-            except OSError:
-                pass
-        return True
 
-    def _v6_31_count(self, key: str, n: int = 1) -> None:
-        """v6.31's tally.  Never raises: an error counts."""
-        try:
-            counts = getattr(self, "_v6_31_counts", None)
-            if counts is None:
-                counts = {}
-                self._v6_31_counts = counts
-            counts[key] = int(counts.get(key, 0) or 0) + int(n)
-        except Exception:
-            self._v6_31_errors = int(getattr(self, "_v6_31_errors", 0) or 0) + 1
 
-    def _v6_31_report(self) -> None:
-        """v6.31: the V6_31_STATE row -- both switches and versions, S12b's new touch-quote prices by why (improved
-        buy / sell; joined: not inside, our own best, edge short, no view), the staged saves renamed into place and the
-        stages found incomplete, and the errors -- at the first pass, at the first request with an error after one
-        without, and every V62_STATE_EVERY_TICKS ticks; after the reply when the request defers its telemetry (v6.2.9).
-        Never raises."""
-        try:
-            tick = int(getattr(self, "_tick", 0) or 0)
-            errors = int(getattr(self, "_v6_31_errors", 0) or 0)
-            erring = errors > int(getattr(self, "_v6_31_errors_seen", 0) or 0)
-            was_erring = bool(getattr(self, "_v6_31_erring", False))
-            self._v6_31_errors_seen, self._v6_31_erring = errors, erring
-            if not getattr(self, "_v6_31_reported", False):
-                reason = "start"
-            elif erring and not was_erring:
-                reason = "error"
-            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
-                reason = "periodic"
-            else:
-                return
-            self._v6_31_reported = True
-            row = dict(self._v6_31_snapshot(), reason=reason, tick=tick)
-            work = getattr(self, "_v629_request_work", None)
-            if work is not None:
-                work.add("v6_31_state_row", lambda: self._emit("V6_31_STATE", force=True, **row))   # after the reply
-            else:
-                self._emit("V6_31_STATE", force=True, **row)
-        except Exception:
-            self._v6_31_errors = int(getattr(self, "_v6_31_errors", 0) or 0) + 1
 
-    def _v6_31_snapshot(self) -> dict:
-        counts = dict(getattr(self, "_v6_31_counts", None) or {})
-        row = {"version": V6_31_TOUCH_IMPROVE_VERSION, "save_version": V6_31_SINGLE_WRITE_SAVE_VERSION,
-               "touch_improve_on": int(bool(getattr(self, "research_v631_touch_improve", False))),
-               "single_write_save_on": int(bool(getattr(self, "research_v631_single_write_save", False)))}
-        row.update({why: int(counts.get(why, 0) or 0) for why in V6_31_REASONS})
-        row.update({"staged_saves": int(counts.get("staged_saves", 0) or 0),
-                    "stage_incomplete": int(counts.get("stage_incomplete", 0) or 0),
-                    "errors": int(getattr(self, "_v6_31_errors", 0) or 0)})
-        return row
 
-    def _v6_32_request(self, state) -> None:
-        """v6.32, in respond() once per request right after v6.23 read the state's release, before any decision.
 
-        S14 (research_v632_fee_making): the gate's activity (a state from a 0.6.4 validator, a positive weight) is read
-        first and handed to the realized tracker -- which counts our fills only while it is active and starts its window
-        empty at each inactive -> active transition -- then the tracker takes every book's trade prints of the state in
-        arrival order (the lazy raw mapping's wire dicts, nothing parsed) with the book's minimum order size and releases
-        our maker fills that are ready; the request's pooled estimate is set for the books below.  A state clock that
-        ran back starts the tracker's streams over.  P1 (research_v632_state_fundamental): the map {book: f} of the
-        books whose own fundamental is a finite number > 0, with this state's time and the S9 snapshot built from it,
-        for every reader below.  The time it takes is tallied.  Never raises: an error counts, no book is gated this
-        request and every reader keeps the page."""
-        started = time.perf_counter()
-        fee_on = bool(getattr(self, "research_v632_fee_making", False))
-        fp_on = bool(getattr(self, "research_v632_state_fundamental", False))
-        self._v6_32_active, self._v6_32_book, self._v6_32_fp, self._v6_32_est = False, None, None, None
-        req = {"gated_books": 0, "no_fee_rate_books": 0, "state_fp_books": 0}
-        self._v6_32_req = req
-        try:
-            now = int(getattr(state, "timestamp", 0) or 0)
-            cfg = getattr(state, "config", None)
-            spec = v623_validator_spec(getattr(state, "version", None))
-            self._v6_32_spec = spec
-            books = getattr(state, "books", None)
-            raw = getattr(books, "_raw_books", None)          # LazyBooks' wire dicts: no LazyBook built, nothing parsed
-            items = list(raw.items()) if isinstance(raw, dict) else list((books or {}).items())
-            tracker = None
-            active = False
-            top, per_book = 0.0, {}
-            if fee_on:
-                tracker = self._v6_32_tracker_ref()
-                if tracker.begin(now):
-                    self._v6_32_count("tracker_resets")     # a clock that ran back: the streams start over
-                active = bool(v6_32_gate_active(fee_on, spec, getattr(self, "research_v632_fee_weight", 0.0)))
-                if tracker.set_active(active, now):
-                    self._v6_32_count("window_starts")      # inactive -> active: the window starts empty here
-                top, per_book = self._v6_32_min_sizes(cfg)
-            uid = getattr(self, "uid", None)
-            fps: dict[int, float] = {}
-            v6_34_route = getattr(self, "_v6_34_route", None) or frozenset()   # v6.34: class 1's books (own estimate)
-            for raw_id, book in items:
-                book_id = int(raw_id)
-                rb = book if isinstance(book, dict) else getattr(book, "_raw", None)
-                if fp_on:
-                    f = v6_32_fundamental_value(rb if isinstance(rb, dict) else book)
-                    if f is not None:
-                        fps[book_id] = f
-                if v6_34_route and book_id in v6_34_route:
-                    continue        # v6.34: class 0 keeps its own pooled estimate (research_v634_class1_entry)
-                if tracker is not None:
-                    if isinstance(rb, dict):
-                        prints = [e for e in (rb.get("e") or ()) if isinstance(e, dict) and e.get("y") == "t"]
-                    else:
-                        prints = [e for e in (getattr(book, "events", None) or ())
-                                  if (e.get("y") if isinstance(e, dict) else getattr(e, "y", None)) == "t"]
-                    if prints:
-                        tracker.observe(book_id, prints, uid, per_book.get(book_id, top), now)
-            if tracker is not None:
-                tracker.release(now)
-                self._v6_32_est = tracker.estimate()
-                self._v6_32_active = active
-                if active:
-                    self._v6_32_count("active_requests")
-            if fp_on:
-                self._v6_32_fp = (now, fps, v6_32_s9_snapshot(fps, v626_state_sim_id(cfg), now))
-                req["state_fp_books"] = len(fps)
-                self._v6_32_count("state_fp_requests" if fps else "no_state_fp_requests")
-        except Exception:
-            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
-            self._v6_32_active, self._v6_32_book, self._v6_32_fp, self._v6_32_est = False, None, None, None
-        try:
-            samples = getattr(self, "_v6_32_ms", None)
-            if samples is None:
-                samples = []
-                self._v6_32_ms = samples
-            samples.append((time.perf_counter() - started) * 1000.0)
-            if len(samples) > 1024:
-                del samples[:-512]                      # the last 512 requests' times, for the row's p50 / p99
-        except Exception:
-            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
 
-    def _v6_32_tracker_ref(self):
-        """v6.32 S14: the realized tracker, made on first use."""
-        tracker = getattr(self, "_v6_32_tracker", None)
-        if not isinstance(tracker, V6_32RealizedTracker):
-            tracker = V6_32RealizedTracker()
-            self._v6_32_tracker = tracker
-        return tracker
 
-    def _v6_32_min_sizes(self, cfg):
-        """v6.32 S14: (the top-level minimum order size, {book: its class's}) -- the dust floor's voting bar the validator
-        reads per book -- read once per simulation."""
-        key = v626_state_sim_id(cfg)
-        cached = getattr(self, "_v6_32_mins", None)
-        if cached is not None and key and cached[0] == key:
-            return cached[1], cached[2]
-        top, per_book = v6_32_min_sizes(cfg)
-        self._v6_32_mins = (key, top, per_book)
-        return top, per_book
 
-    def _v6_32_note(self, book_id: int, inv) -> None:
-        """v6.32 S14, in the pass right after the book's ledger rows are read: while the gate is active this request,
-        the sides that hold no adding order on this book -- when the pooled estimate (our realized spread per notional
-        over the window, MIN_FILLS fills at least) does not exceed W x the book's current maker fee rate (its account's,
-        a fraction), every side whose fill would not reduce the book's TRUE inventory ``inv`` (v6.23 S1's adds: a flat
-        book both sides), for the deep layer and the v6.17 touch quote alike.  No rate: no gate (counted).  Never
-        raises: an error counts and the book has no gate."""
-        self._v6_32_book = None
-        try:
-            if not bool(getattr(self, "_v6_32_active", False)):
-                return
-            est = getattr(self, "_v6_32_est", None)
-            if est is None:
-                return                                  # fewer than MIN_FILLS fills released yet: nothing can gate
-            req = getattr(self, "_v6_32_req", None)
-            if req is None:
-                req = {}
-                self._v6_32_req = req
-            rate = v6_32_maker_fee_rate((getattr(self, "accounts", None) or {}).get(int(book_id)))
-            if rate is None:
-                req["no_fee_rate_books"] = int(req.get("no_fee_rate_books", 0) or 0) + 1
-                return
-            if not v6_32_fee_gated(est, rate, getattr(self, "research_v632_fee_weight", 0.0)):
-                return
-            sides = frozenset(s for s in (V63_SIDE_BUY, V63_SIDE_SELL) if v6_32_adds(s, inv))
-            req["gated_books"] = int(req.get("gated_books", 0) or 0) + 1
-            self._v6_32_book = (int(book_id), int(getattr(self, "_tick", 0) or 0), sides)
-        except Exception:
-            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
-            self._v6_32_book = None
 
-    def _v6_32_deep_pairs(self, book_id: int) -> frozenset:
-        """v6.32 S14, in the deep layer: the (side, level) pairs _v6_32_note withheld on this book this request -- every
-        level of each gated adding side (v6.23 S1's ``deep`` shape) -- else none.  Never raises: an error counts, none."""
-        try:
-            got = getattr(self, "_v6_32_book", None)
-            if got is None or got[0] != int(book_id) or got[1] != int(getattr(self, "_tick", 0) or 0):
-                return frozenset()
-            return v6_32_deep_pairs(got[2])
-        except Exception:
-            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
-            return frozenset()
 
-    def _v6_32_touch_sides(self, book_id: int) -> frozenset:
-        """v6.32 S14, in the v6.17 touch quote: the adding side(s) _v6_32_note withheld on this book this request, else
-        none.  Never raises: an error counts, none."""
-        try:
-            got = getattr(self, "_v6_32_book", None)
-            if got is None or got[0] != int(book_id) or got[1] != int(getattr(self, "_tick", 0) or 0):
-                return frozenset()
-            return frozenset(got[2])
-        except Exception:
-            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
-            return frozenset()
 
-    def _v6_32_state_fp(self, book_id: int, raw_bid, raw_ask):
-        """v6.32 P1: (fundamental, "state") of this book from this request's state map, after v6.16's book sanity -- or
-        None, and the reader takes the page: no map this request (a state without fundamentals, or the map of another
-        request), no usable value for the book, or a book that is not sane.  Never raises: an error counts, None."""
-        try:
-            got = getattr(self, "_v6_32_fp", None)
-            if got is None or not got[1] or got[0] != int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0):
-                return None
-            out = v6_32_book_value(got[1], book_id, raw_bid, raw_ask)
-            if out is None:
-                self._v6_32_count("fp_page_fallbacks")
-            return out
-        except Exception:
-            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
-            return None
 
-    def _v6_32_fundamental(self, book_id: int, raw_bid, raw_ask, fp, reason):
-        """v6.32 P1, in v6.16's centre and the v6.17 touch quote right after the page's (fp, reason): the state's own
-        (fundamental, "state") when the request's map has a usable one for the book, else the page's unchanged."""
-        got = self._v6_32_state_fp(book_id, raw_bid, raw_ask)
-        return (fp, reason) if got is None else got
 
-    def _v6_32_s9_snapshot(self):
-        """v6.32 P1, in S9's decision: this request's snapshot of the state's own fundamentals for S9's page history
-        ({fp, sim_id, sim_ts_ns}, built once per request), or None -- the page's snapshot, as v6.31.  Never raises."""
-        try:
-            got = getattr(self, "_v6_32_fp", None)
-            if got is None or got[0] != int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0):
-                return None
-            return got[2]
-        except Exception:
-            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
-            return None
 
-    def _v6_32_count(self, key: str, n: int = 1) -> None:
-        """v6.32's tally.  Never raises: an error counts."""
-        try:
-            counts = getattr(self, "_v6_32_counts", None)
-            if counts is None:
-                counts = {}
-                self._v6_32_counts = counts
-            counts[key] = int(counts.get(key, 0) or 0) + int(n)
-        except Exception:
-            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
 
-    def _v6_32_report(self) -> None:
-        """v6.32: the V6_32_STATE row -- both switches and versions, the gate's activity, spec and weight, the pooled
-        estimate (bps) and its window (its start, the gate's transitions, the fills counted / dropped while inactive),
-        the tracker's tally (prints, our fills, pending, released, stale, evicted) and time, the request's gated books,
-        the withheld / cancelled orders, P1's state-fundamental tally and the errors --
-        at the first pass, at the first request with an error after one without, and every V62_STATE_EVERY_TICKS ticks;
-        after the reply when the request defers its telemetry (v6.2.9).  Never raises."""
-        try:
-            tick = int(getattr(self, "_tick", 0) or 0)
-            errors = int(getattr(self, "_v6_32_errors", 0) or 0)
-            erring = errors > int(getattr(self, "_v6_32_errors_seen", 0) or 0)
-            was_erring = bool(getattr(self, "_v6_32_erring", False))
-            self._v6_32_errors_seen, self._v6_32_erring = errors, erring
-            if not getattr(self, "_v6_32_reported", False):
-                reason = "start"
-            elif erring and not was_erring:
-                reason = "error"
-            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
-                reason = "periodic"
-            else:
-                return
-            self._v6_32_reported = True
-            row = dict(self._v6_32_snapshot(), reason=reason, tick=tick)
-            work = getattr(self, "_v629_request_work", None)
-            if work is not None:
-                work.add("v6_32_state_row", lambda: self._emit("V6_32_STATE", force=True, **row))   # after the reply
-            else:
-                self._emit("V6_32_STATE", force=True, **row)
-        except Exception:
-            self._v6_32_errors = int(getattr(self, "_v6_32_errors", 0) or 0) + 1
-
-    def _v6_32_snapshot(self) -> dict:
-        counts = dict(getattr(self, "_v6_32_counts", None) or {})
-        req = dict(getattr(self, "_v6_32_req", None) or {})
-        tracker = getattr(self, "_v6_32_tracker", None)
-        snap = tracker.snapshot() if tracker is not None else {}
-        ms = sorted(float(x) for x in (getattr(self, "_v6_32_ms", None) or ()))
-        row = {"version": V6_32_FEE_MAKING_VERSION, "state_fp_version": V6_32_STATE_FUNDAMENTAL_VERSION,
-               "fee_making_on": int(bool(getattr(self, "research_v632_fee_making", False))),
-               "state_fundamental_on": int(bool(getattr(self, "research_v632_state_fundamental", False))),
-               "active": int(bool(getattr(self, "_v6_32_active", False))), "spec": getattr(self, "_v6_32_spec", None),
-               "fee_weight": float(getattr(self, "research_v632_fee_weight", 0.0) or 0.0),
-               "estimate_bps": snap.get("estimate_bps"), "window_start_ns": snap.get("window_start_ns")}
-        for key in ("window_fills", "activations", "deactivations", "counted", "dropped_inactive", "pending", "prints",
-                    "own_fills", "released", "stale", "evicted", "malformed"):
-            row[key] = int(snap.get(key, 0) or 0)
-        for key in ("gated_books", "no_fee_rate_books", "state_fp_books"):
-            row[key] = int(req.get(key, 0) or 0)
-        for key in ("active_requests", "window_starts", "deep_cancels", "deep_withheld", "touch_cancels",
-                    "touch_withheld", "tracker_resets", "state_fp_requests", "no_state_fp_requests", "fp_page_fallbacks"):
-            row[key] = int(counts.get(key, 0) or 0)
-        row["tracker_ms_p50"] = round(ms[len(ms) // 2], 3) if ms else None
-        row["tracker_ms_p99"] = round(ms[min(len(ms) - 1, int(0.99 * len(ms)))], 3) if ms else None
-        row["errors"] = int(getattr(self, "_v6_32_errors", 0) or 0)
-        return row
 
     def _v6_33_request(self) -> None:
         """v6.33 D4 (research_v633_touch_identity), in the pass once per request right after v6.30's identity profile
@@ -13609,6 +13102,16 @@ class Strategy1_Research_Simple(Strategy1_Research):
                                              is_paced=is_paced, s9_held=s9, fee_gated=gated, d4_off=d4_off,
                                              miner_held=self._v6_34_holds.held(book_id, side, now))
             self._v6_34_count("armed" if plan[side][1] is None else "held_" + str(plan[side][1]).lower())
+        v6_38_keep = None
+        if getattr(self, "_v6_38_l3_on", False):
+            # v6.38 L3 k118 keeper (research_v638_c1): K1 / K3 / K3B / K3Q's own side plan on this class-1 book (S9 and
+            # S17-R not applied; K3 the S9 with-move side only, K3B not the capture-surplus side, K3Q the adding side
+            # held while the class-1 leg would lower the shared q), each side's price outside v6.36's A radius
+            v6_38_keep = self._v6_38_k1_plan(book_id, inv=inv, clip=clip1, bound=bound1, min_size=min1,
+                                             is_paced=is_paced, s9=s9, gated=gated, d4_off=d4_off, capped=capped,
+                                             raw_bid=raw_bid, raw_ask=raw_ask, tick=tick1, decimals=pd1)
+            if v6_38_keep is not None:
+                plan = v6_38_keep["plan"]
         doomed, kept = [], set()
         for row in touch_rows or ():
             if int(row.order_id) in already:
@@ -13617,6 +13120,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             want, why_un = plan[side]
             why = v6_34_resting_verdict(side, float(row.price), getattr(row, "remaining", None), want, why_un,
                                         is_paced=is_paced, bid=raw_bid, ask=raw_ask, tick=tick1)
+            if v6_38_keep is not None:
+                # v6.38 L3 K1's keep rule: at most one tick farther from the mid than the target (no chase rule)
+                why = v6_38_k1_verdict(side, float(row.price), getattr(row, "remaining", None), want, why_un,
+                                       is_paced=is_paced, target_price=v6_38_keep["T"].get(side), tick=tick1)
             if why is None:
                 kept.add(side)
             else:
@@ -13642,6 +13149,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # the class-1 join (coordinator 03:35 JST): at the touch whenever the book is not crossed, a 1-tick spread
             # included -- post-only is the protection; the sanitizer at its minimum cushion must leave the price as is
             price = v6_34_join(side, raw_bid, raw_ask, tick1)
+            if v6_38_keep is not None:
+                price = v6_38_keep["T"].get(side)        # v6.38 L3 K1: the price nearest the mid A does not pull
+                expiry = V6_38_K1_LIFE_NS                  # v6.38 L3 K1: the keeper's 3,600-s life
             checked = None if price is None else sanitize_post_only_limit_price(
                 side=side, original_price=float(price), best_bid=raw_bid, best_ask=raw_ask, tick_size=tick1,
                 safety_ticks=1, price_decimals=pd1)
@@ -13782,338 +13292,14 @@ class Strategy1_Research_Simple(Strategy1_Research):
                "errors": int(getattr(self, "_v6_34_errors", 0) or 0)}
         return row
 
-    def _v6_36_request(self, state) -> None:
-        """v6.36 (research_v636_step_withdrawal), in respond() once per request right after v6.32 mapped the state's own
-        fundamentals, before any decision: the step grid from the configuration (v6_36_step_grid: K states per
-        fp_update_period; unreadable or off the state grid: nothing is withdrawn), the step record takes this state (the
-        agent's own fundamentals since its start: a step at the first state of each new block), every book's last
-        two-sided L1 is kept (the replay's book L1), and this state's plan is set -- on the pre-step state (phase K - 1)
-        each book with a radius and a mid gets A's (mid, r); on the step state and the next, when this block's step was
-        seen, each book the step moved gets D's stale side.  Off: nothing (v6.35).  Never raises: an error counts and
-        nothing is withdrawn this request."""
-        req = {"phase": None, "block": None, "pre_step": False, "hold": False, "books": {}}
-        self._v6_36_req = req
-        if not bool(getattr(self, "research_v636_step_withdrawal", False)):
-            return
-        try:
-            grid = v6_36_step_grid(getattr(state, "config", None))
-            self._v6_36_grid = grid
-            ok = grid.get("status") == V6_36_GRID_OK
-            if not ok:
-                self._v6_36_count("grid_" + str(grid.get("status")))
-            record = self._v6_36_record
-            if ok:
-                record.resize(grid.get("window_steps"))
-            now = int(getattr(state, "timestamp", 0) or 0)
-            books = getattr(state, "books", None)
-            fp = getattr(self, "_v6_32_fp", None)
-            if isinstance(fp, tuple) and len(fp) >= 2 and fp[0] == now and isinstance(fp[1], dict):
-                fps = fp[1]                                 # v6.32 P1's map of this very state
-            else:
-                fps = v6_36_state_map(books)
-            where = v6_36_block_phase(now, grid)
-            event = record.observe(now, None if where is None else where[0], fps)
-            self._v6_36_count("record_" + event.replace("reset+", ""))
-            l1 = self._v6_36_l1
-            if event.startswith("reset+"):
-                l1.clear()                                  # a clock that ran back: a new run
-                self._v6_36_count("resets")
-            raw = getattr(books, "_raw_books", None)
-            items = list(raw.items()) if isinstance(raw, dict) else list((books or {}).items())
-            for raw_id, book in items:
-                bid, ask = v6_36_l1_of(book)
-                if bid is not None and ask is not None:
-                    l1[int(raw_id)] = (bid, ask)            # the replay's book L1: the last state with both sides
-            if where is None:
-                return
-            block, phase = where
-            req["block"], req["phase"] = block, phase
-            excluded = grid.get("excluded") or frozenset()
-            plan = req["books"]
-            if v6_36_pre_step(phase, grid):
-                req["pre_step"] = True
-                self._v6_36_count("pre_step_states")
-                pooled, pooled_read = None, False
-                for raw_id, _book in items:
-                    book_id = int(raw_id)
-                    if book_id in excluded:
-                        continue
-                    own = record.steps.get(book_id)
-                    if (own is None or len(own) < record.min_own) and not pooled_read:
-                        pooled, pooled_read = record.pooled_bps(), True
-                    radius, is_own = record.radius(book_id, pooled)
-                    last = l1.get(book_id)
-                    mid = v6_36_mid_of(last[0], last[1]) if last else None
-                    if radius is None:
-                        self._v6_36_count("pull_no_radius")
-                    elif mid is None:
-                        self._v6_36_count("pull_no_mid")
-                    else:
-                        plan[book_id] = (mid, radius, None)
-                        self._v6_36_count("pull_own_radius" if is_own else "pull_pooled_radius")
-            if v6_36_hold_phase(phase) and record.step_block == block:
-                req["hold"] = True
-                self._v6_36_count("hold_states")
-                for raw_id, _book in items:
-                    book_id = int(raw_id)
-                    side = None if book_id in excluded else record.stale_side(book_id, block)
-                    if side is not None:
-                        prev = plan.get(book_id)
-                        plan[book_id] = (prev[0], prev[1], side) if prev else (None, None, side)
-                        self._v6_36_count("hold_books")
-        except Exception:
-            self._v6_36_errors = int(getattr(self, "_v6_36_errors", 0) or 0) + 1
-            self._v6_36_req = {"phase": None, "block": None, "pre_step": False, "hold": False, "books": {}}
 
-    def _v6_36_drop(self, response, state) -> None:
-        """v6.36 in build_mm_strategy_instructions, right after the final validator and before the pending ledger
-        records the placements: each limit placement on a book of this state's plan that A / D withdraw
-        (v6_36_withdrawal on the price it would rest at: v6.1.1's wire price truncated as the venue does) is dropped --
-        as a final-validator reject, so nothing records it as resting -- and a book whose resting orders A / D will
-        cancel keeps one instruction free under max_instructions_per_book for that cancel: its placements go from the
-        last one until it does (the cancel wins).  Never raises: an error counts and that book keeps its placements
-        (v6.35)."""
-        try:
-            plan = (getattr(self, "_v6_36_req", None) or {}).get("books") or {}
-            instructions = getattr(response, "instructions", None)
-            if not plan or not isinstance(instructions, list) or not bool(
-                    getattr(self, "research_v636_step_withdrawal", False)):
-                return
-            decimals = self._v61_price_decimals(state)
-            lift = bool(self._v611_price_lift_on())
-            drop: set[int] = set()
-            per_book: dict[int, list] = {}
-            for ix in instructions:
-                try:
-                    book_id = int(self._get(ix, "bookId", "book_id"))
-                except (TypeError, ValueError):
-                    continue
-                per_book.setdefault(book_id, []).append(ix)
-                if book_id not in plan or str(self._get(ix, "type") or "").upper() != "PLACE_ORDER_LIMIT":
-                    continue
-                try:
-                    mid, radius, hold_side = plan[book_id]
-                    why = v6_36_withdrawal(
-                        v6_36_side_of(self._get(ix, "direction", "side")),
-                        v6_36_placed_price(self._get(ix, "price", "limitPrice", "limit_price"), decimals, lift),
-                        mid=mid, radius=radius, hold_side=hold_side)
-                    if why is not None:
-                        drop.add(id(ix))
-                        self._v6_36_count("dropped_" + str(why).lower())
-                except Exception:
-                    self._v6_36_errors = int(getattr(self, "_v6_36_errors", 0) or 0) + 1
-            budget = int(getattr(self, "max_instructions_per_book", 5) or 5)
-            already = self._v6_36_cancelled(response)
-            for book_id in sorted(plan):
-                try:
-                    if not self._v6_36_doomed(book_id, plan[book_id], already):
-                        continue
-                    rows = [ix for ix in per_book.get(book_id, ()) if id(ix) not in drop]
-                    n = len(rows)
-                    if n + 1 <= budget:
-                        continue
-                    self._v6_36_count("cap_conflicts")
-                    for ix in reversed(rows):
-                        if n + 1 <= budget:
-                            break
-                        if str(self._get(ix, "type") or "").upper() in ("PLACE_ORDER_LIMIT", "PLACE_ORDER_MARKET"):
-                            drop.add(id(ix))
-                            n -= 1
-                            self._v6_36_count("cap_dropped")
-                except Exception:
-                    self._v6_36_errors = int(getattr(self, "_v6_36_errors", 0) or 0) + 1
-            if drop:
-                instructions[:] = [ix for ix in instructions if id(ix) not in drop]
-        except Exception:
-            self._v6_36_errors = int(getattr(self, "_v6_36_errors", 0) or 0) + 1
 
-    def _v6_36_cancel(self, response, state) -> None:
-        """v6.36 in respond(), after the last post-pass: every resting order of ours (the state's account orders) on a
-        book of this state's plan that A / D withdraw and that no cancel of this response names is cancelled -- one
-        instruction per book, placed FIRST among that book's instructions (the validator lands the first one per book at
-        the base delay); a book already at max_instructions_per_book has the ids merged into its first cancel
-        instruction, re-issued first (its count unchanged), and without one keeps its orders this state (counted).  The
-        cancels are registered as v6.2.14's are (A1.9's watch: an entry quote ENTRY_QUOTE_CANCEL, others REPRICE_CANCEL)
-        once the response holds them.  Then the V6_36_STATE row.  Never raises: an error counts and that book (or, in
-        the final reorder, the whole response) is left as it was."""
-        try:
-            plan = (getattr(self, "_v6_36_req", None) or {}).get("books") or {}
-            instructions = getattr(response, "instructions", None)
-            if plan and isinstance(instructions, list) and bool(getattr(self, "research_v636_step_withdrawal", False)):
-                budget = int(getattr(self, "max_instructions_per_book", 5) or 5)
-                already = self._v6_36_cancelled(response)
-                made: dict[int, tuple] = {}
-                for book_id in sorted(plan):
-                    try:
-                        doomed = self._v6_36_doomed(book_id, plan[book_id], already)
-                        if not doomed:
-                            continue
-                        ids = [oid for oid, _entry, _why in doomed]
-                        old = None
-                        if self._count_book_instructions(response, book_id) >= budget:
-                            old = next((ix for ix in instructions
-                                        if self._get(ix, "bookId", "book_id") == book_id
-                                        and str(self._get(ix, "type") or "").upper() == "CANCEL_ORDERS"), None)
-                            if old is None:
-                                self._v6_36_count("cap_unresolved")
-                                continue
-                        every = list(ids)
-                        if old is not None:
-                            every += [int(c.orderId) for c in (getattr(old, "cancellations", None) or ())
-                                      if int(c.orderId) not in ids]
-                        before = len(instructions)
-                        response.cancel_orders(book_id=book_id, order_ids=every, delay=0)
-                        new = instructions[before:]
-                        del instructions[before:]
-                        if len(new) != 1:
-                            raise ValueError("one instruction expected")
-                        made[book_id] = (new[0], old, doomed)
-                        already.update((book_id, oid) for oid in ids)
-                    except Exception:
-                        self._v6_36_errors = int(getattr(self, "_v6_36_errors", 0) or 0) + 1
-                if made:
-                    self._v6_36_first(instructions, made)       # each book's withdrawal cancel first among its own
-                    for book_id, (_new, old, doomed) in made.items():
-                        for disposition, quote in ((ABSENT_REPRICE_CANCEL, False), (ABSENT_ENTRY_QUOTE_CANCEL, True)):
-                            group = [oid for oid, entry, _why in doomed if entry == quote]
-                            if group:
-                                try:
-                                    self._a19_note_exit_cancel(book_id, group, disposition)
-                                except Exception:
-                                    pass
-                        self._v6_36_count("cancel_instructions")
-                        if old is not None:
-                            self._v6_36_count("merged")
-                        for _oid, _entry, why in doomed:
-                            self._v6_36_count("cancelled_" + str(why).lower())
-        except Exception:
-            self._v6_36_errors = int(getattr(self, "_v6_36_errors", 0) or 0) + 1
-        self._v6_36_report()
 
-    def _v6_36_first(self, instructions: list, made: dict) -> None:
-        """v6.36: the response's instructions in their order, each book of ``made`` ({book: (its withdrawal cancel, the
-        cancel it replaces or None, ...)}) with its withdrawal cancel placed right before the book's first instruction
-        (appended for a book without one) and the replaced cancel left out -- set in one assignment, so an error leaves
-        the list as it was (and raises: the caller then registers nothing)."""
-        gone = {id(old) for _new, old, *_rest in made.values() if old is not None}
-        out, first = [], set()
-        for ix in instructions:
-            if id(ix) in gone:
-                continue
-            b = self._get(ix, "bookId", "book_id")
-            if b in made and b not in first:
-                out.append(made[b][0])
-                first.add(b)
-            out.append(ix)
-        out += [entry[0] for b, entry in made.items() if b not in first]
-        instructions[:] = out
 
-    def _v6_36_doomed(self, book_id: int, entry, already) -> list:
-        """v6.36: [(order id, entry quote?, why)] of the book's resting orders -- the state's account orders: touch
-        quote, deep level 0, ladder, exit, whatever placed it -- that A / D withdraw this state (v6_36_withdrawal on
-        the plan's mid, radius and stale side) and that no cancel of this response names (``already``: (book, order
-        id) pairs)."""
-        mid, radius, hold_side = entry
-        out = []
-        for order in self._direct_account_orders(int(book_id)):
-            oid = getattr(order, "id", None)
-            if oid is None or (int(book_id), int(oid)) in already:
-                continue
-            why = v6_36_withdrawal(v6_36_side_of(getattr(order, "side", None)), getattr(order, "price", None),
-                                   mid=mid, radius=radius, hold_side=hold_side)
-            if why is not None:
-                out.append((int(oid), bool(self._direct_is_entry_quote_order(int(book_id), order)), why))
-        return out
 
-    def _v6_36_cancelled(self, response) -> set:
-        """v6.36: the (book, order id) pairs a cancel instruction of this response already names (the venue numbers
-        orders per book)."""
-        out = set()
-        for ix in list(getattr(response, "instructions", None) or ()):
-            cancellations = getattr(ix, "cancellations", None)
-            if not cancellations:
-                continue
-            try:
-                book_id = int(self._get(ix, "bookId", "book_id"))
-            except (TypeError, ValueError):
-                continue
-            for c in cancellations:
-                try:
-                    out.add((book_id, int(getattr(c, "orderId"))))
-                except (TypeError, ValueError, AttributeError):
-                    continue
-        return out
 
-    def _v6_36_count(self, key: str, n: int = 1) -> None:
-        """v6.36's tally.  Never raises: an error counts."""
-        try:
-            counts = getattr(self, "_v6_36_counts", None)
-            if counts is None:
-                counts = {}
-                self._v6_36_counts = counts
-            counts[key] = int(counts.get(key, 0) or 0) + int(n)
-        except Exception:
-            self._v6_36_errors = int(getattr(self, "_v6_36_errors", 0) or 0) + 1
 
-    def _v6_36_report(self) -> None:
-        """v6.36: the V6_36_STATE row -- the switch and version, the step grid (its source and status, the period, the
-        publish interval, K, the books of a class on another grid), the step record (books, steps seen, gaps, breaks,
-        resets, the pooled radius and the books' own radii p50), this request's phase, the pulls (A: cancelled resting /
-        dropped new), the holds (D: the same), the instruction-cap conflicts and the errors -- at the first request, at
-        the first request with an error after one without, and every V62_STATE_EVERY_TICKS ticks; after the reply when
-        the request defers its telemetry (v6.2.9).  Never raises."""
-        try:
-            tick = int(getattr(self, "_tick", 0) or 0)
-            errors = int(getattr(self, "_v6_36_errors", 0) or 0)
-            erring = errors > int(getattr(self, "_v6_36_errors_seen", 0) or 0)
-            was_erring = bool(getattr(self, "_v6_36_erring", False))
-            self._v6_36_errors_seen, self._v6_36_erring = errors, erring
-            if not getattr(self, "_v6_36_reported", False):
-                reason = "start"
-            elif erring and not was_erring:
-                reason = "error"
-            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
-                reason = "periodic"
-            else:
-                return
-            self._v6_36_reported = True
-            row = dict(self._v6_36_snapshot(), reason=reason, tick=tick)
-            work = getattr(self, "_v629_request_work", None)
-            if work is not None:
-                work.add("v6_36_state_row", lambda: self._emit("V6_36_STATE", force=True, **row))   # after the reply
-            else:
-                self._emit("V6_36_STATE", force=True, **row)
-        except Exception:
-            self._v6_36_errors = int(getattr(self, "_v6_36_errors", 0) or 0) + 1
 
-    def _v6_36_snapshot(self) -> dict:
-        grid = dict(getattr(self, "_v6_36_grid", None) or {})
-        record = getattr(self, "_v6_36_record", None)
-        snap = record.snapshot() if record is not None else {}
-        req = dict(getattr(self, "_v6_36_req", None) or {})
-        counts = dict(getattr(self, "_v6_36_counts", None) or {})
-        row = {"version": V6_36_STEP_WITHDRAWAL_VERSION,
-               "step_withdrawal_on": int(bool(getattr(self, "research_v636_step_withdrawal", False))),
-               "period_source": grid.get("source"), "period_status": grid.get("status"),
-               "fp_update_period_ns": grid.get("period_ns"), "publish_interval_ns": grid.get("interval_ns"),
-               "states_per_step": grid.get("k"), "step_ns": grid.get("step_ns"),
-               "excluded_books": len(grid.get("excluded") or ()),
-               "window_steps": snap.get("window_steps"), "min_own_steps": snap.get("min_own_steps"),
-               "radius_pooled_bps": snap.get("radius_pooled_bps"), "radius_own_p50_bps": snap.get("radius_own_p50_bps"),
-               "books_with_steps": int(snap.get("books_with_steps", 0) or 0),
-               "books_own_radius": int(snap.get("books_own_radius", 0) or 0),
-               "steps_seen": int(snap.get("steps_seen", 0) or 0), "step_gaps": int(snap.get("step_gaps", 0) or 0),
-               "record_breaks": int(snap.get("breaks", 0) or 0), "resets": int(snap.get("resets", 0) or 0),
-               "phase": req.get("phase"), "block": req.get("block"), "plan_books": len(req.get("books") or ()),
-               "pulls": {"cancelled": int(counts.get("cancelled_pull", 0) or 0),
-                         "dropped": int(counts.get("dropped_pull", 0) or 0)},
-               "holds": {"cancelled": int(counts.get("cancelled_hold", 0) or 0),
-                         "dropped": int(counts.get("dropped_hold", 0) or 0)},
-               "cap_conflicts": int(counts.get("cap_conflicts", 0) or 0),
-               "cap_dropped": int(counts.get("cap_dropped", 0) or 0), "merged": int(counts.get("merged", 0) or 0),
-               "cap_unresolved": int(counts.get("cap_unresolved", 0) or 0),
-               "counts": counts, "errors": int(getattr(self, "_v6_36_errors", 0) or 0)}
-        return row
 
     def _v619_snapshot(self) -> dict:
         age = getattr(self, "_v619_age", None)
@@ -14236,6 +13422,12 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # every level of an adding side while the deep fills' realized spread per notional does not cover W x the
             # book's maker fee rate: a resting one is cancelled, none is placed (research_v632_fee_making)
             v6_32_fee = self._v6_32_deep_pairs(book_id)
+        v6_38_ladder: frozenset = frozenset()
+        if getattr(self, "_v6_38_l3_on", False):
+            # v6.38 L3 KBL xl / K5 X4 (research_v638_kbl): the ladder levels this book holds no order on this request --
+            # KBL: those of its capture-surplus side over the making window; K5: every one; a resting one is cancelled,
+            # none is placed
+            v6_38_ladder = self._v6_38_kbl_ladder(book_id, levels_side)
         doomed = [(row, V633_CANCEL_OWNS_BOOK) for row in rows if int(row.order_id) not in already]
         resting: dict[Any, Any] = {}
         for row in deep_rows:
@@ -14250,6 +13442,8 @@ class Strategy1_Research_Simple(Strategy1_Research):
             elif v6_32_fee and (side, level) in v6_32_fee:
                 doomed.append((row, V6_32_CANCEL_FEE_GATE))  # v6.32 S14: its fills would not cover W x the maker fee
                 self._v6_32_count("deep_cancels")
+            elif v6_38_ladder and (side, level) in v6_38_ladder:
+                doomed.append((row, self._v6_38_kbl_ladder_why(book_id)))   # v6.38 L3 KBL xl / K5 X4
             elif side in held:
                 doomed.append((row, V619_CANCEL_SURPLUS))   # v6.19: the cap-bound leading side keeps no adding order
             elif not _room(side):
@@ -14331,6 +13525,9 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if v6_32_fee and (side, level) in v6_32_fee:
                     self._v6_32_count("deep_withheld")
                     continue                    # v6.32 S14: no adding deep order whose fills would not cover W x the fee
+                if v6_38_ladder and (side, level) in v6_38_ladder:
+                    self._v6_38_l3_count("kbl_ladder_withheld")
+                    continue                    # v6.38 L3 KBL xl / K5 X4: no ladder order on this (side, level)
                 if ladder and ((side, level) in resting or v69_slot_taken(slots, side, level)
                                or (side, level) in cancelled or (side, V69_WHOLE_SIDE) in cancelled):
                     continue
@@ -14696,6 +13893,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # touch draw, drawn once from this UID alone (the profile off: none) for the touch quotes below
             # (research_v633_touch_identity)
             self._v6_33_request()
+        if v6_34_c1 and getattr(self, "_v6_38_l3_on", False):
+            # v6.38 L3 k118 keepers (research_v638_c1): with the keeper's mode on, the class-1 entry runs only on the books
+            # its canary draws on (mode 1 the hash half, 2 all) -- the others take no class-1 quote (v6.36)
+            v6_34_c1 = self._v6_38_k1_books(v6_34_c1)
         # v6.19 S1: the making mirror's window and the cap, read once per request (research_v619_surplus_hold).
         v619_on = bool(getattr(self, "research_v619_surplus_hold", False))
         v619_mirror, v619_mature, v619_cap = None, False, 0.0
@@ -14748,6 +13949,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 except Exception:
                     self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
                     depth = None
+            if getattr(self, "_v6_38_l3_on", False):
+                # v6.38 L3 FBL (research_v638_lean): the book's lean sign before this state (the touch quote below reads
+                # it) and after it -- updated once the deep layer's sweep record is long enough (the replay's deep block)
+                self._v6_38_lean_note(book_id, depth, raw_bid, raw_ask, cfg)
             hist = mids.get(book_id)
             if hist is None:
                 hist = v63_new_history(V63_SIGNAL_STATES)
@@ -15420,6 +14625,11 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # sides (the step state and the next) for the filters after the chain (research_v636_step_withdrawal).
             # Never raises: an error counts and nothing is withdrawn this request.
             self._v6_36_request(state)
+        if getattr(self, "_v6_38_l3_counts", None) is not None:
+            # v6.38 layer 3, after v6.36's step record took this state and before any decision: whether any layer-3
+            # switch is on (else every layer-3 hook is inert: v6.37) and KBL's post-step window of this state
+            # (research_v638_kbl).  Never raises: an error counts and no window opens this request.
+            self._v6_38_l3_request(state)
         try:
             self._a1961_note_base_decimals(state)
         except Exception:
@@ -15546,6 +14756,10 @@ class Strategy1_Research_Simple(Strategy1_Research):
             # it at the base delay), within max_instructions_per_book -- then the V6_36_STATE row
             # (research_v636_step_withdrawal).  Never raises.
             self._v6_36_cancel(response, state)
+        if getattr(self, "_v6_38_l3_on", False):
+            # v6.38 layer 3, after v6.36's withdrawal cancels (the last post-pass): KBL X1 -- the touch quote's placement
+            # first among its book's instructions -- then the V6_38_L3_STATE row (research_v638_kbl).  Never raises.
+            self._v6_38_l3_post(response, state)
         # v6.2.9 D1: everything from here to the slow-request row is telemetry on a response already
         # decided.  It runs inline, or -- when handle() gave this request a queue -- after the reply, on a
         # frozen view of the state: the miner clears books/accounts/notices/config off the synapse on return.
@@ -17141,6 +16355,13 @@ class Strategy1_Research_Simple(Strategy1_Research):
                 if deep_ids:
                     self._v633_count("life_kept_partial", len(deep_ids))
                     conflicting_ids = [oid for oid in conflicting_ids if oid not in deep_ids]
+            if conflicting_ids and getattr(self, "_v6_38_l3_on", False):
+                # v6.38 L3 KBL X1 (research_v638_kbl): the touch quote is the touch slot's to end, as a deep order is the
+                # deep layer's (v6.3.3.2)
+                v6_38_ids = self._v6_38_kbl_touch_ids(int(book_id), order_by_id) & set(conflicting_ids)
+                if v6_38_ids:
+                    self._v6_38_l3_count("kbl_x1_kept_partial", len(v6_38_ids))
+                    conflicting_ids = [oid for oid in conflicting_ids if oid not in v6_38_ids]
             matching = [order_by_id[oid] for oid in kept_ids if oid in order_by_id]
 
             if conflicting_ids and self._count_book_instructions(response, int(book_id)) < self.max_instructions_per_book:
@@ -19477,6 +18698,450 @@ class Strategy1_Research_Simple(Strategy1_Research):
         )
         deduper = getattr(self, "_direct_trade_deduper", None)
         stats["direct_trade_dedup_cache_size"] = len(deduper) if isinstance(deduper, DirectTradeEventDeduper) else 0
+
+    # ---- v6.38 layer 3 (scratchpad k124): tonight's pre-registered candidates, each behind its own PARAMS switch, every
+    # one shipped 0 (off: no layer-3 code runs -- v6.37).  Piece 0: the per-(UID, book) canary draw; piece 1: KBL / K5.
+    def _v6_38_l3_count(self, key: str, n: int = 1) -> None:
+        """v6.38 layer 3's tally.  Never raises: an error counts."""
+        try:
+            counts = self._v6_38_l3_counts
+            counts[key] = int(counts.get(key, 0) or 0) + int(n)
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+
+    def _v6_38_l3_request(self, state) -> None:
+        """v6.38 layer 3, in respond() once per request right after v6.36's request: is any layer-3 switch on (else every
+        layer-3 hook is inert this request: v6.37), and -- KBL -- is this state inside [step, step + W) of a step v6.36's
+        own record saw (the block's step seen at its first state, phase x publish interval < W, W = the step period -
+        the validator's realized horizon), with each book's step direction (v6.36's StepRecord).  Without v6.36's
+        record (research_v636_step_withdrawal off or no grid) no window opens (fail closed).  Never raises: an error
+        counts and no window opens this request."""
+        self._v6_38_kbl_win = None
+        on = bool(self.research_v638_kbl or (self.research_v638_lean and self.research_v638_lean_arm)
+                  or (self.research_v638_c1 and self.research_v638_c1_arm))
+        self._v6_38_l3_on = on
+        if not on:
+            return
+        if self.research_v638_c1 and self.research_v638_c1_arm:
+            self._v6_38_k1_request()
+        try:
+            if not (self.research_v638_kbl or self.research_v638_lean_arm == V6_38_ARM_CD):
+                return
+            if not bool(getattr(self, "research_v636_step_withdrawal", False)):
+                self._v6_38_l3_count("kbl_no_step_record")
+                return
+            req = getattr(self, "_v6_36_req", None) or {}
+            grid = getattr(self, "_v6_36_grid", None) or {}
+            record = self._v6_36_record
+            width = v6_38_kbl_window_ns(grid.get("step_ns"))
+            if v6_38_kbl_in_window(req.get("block"), req.get("phase"), record.step_block, grid.get("interval_ns"), width):
+                self._v6_38_kbl_win = dict(record.direction)
+                self._v6_38_kbl_excluded = frozenset(grid.get("excluded") or ())
+                self._v6_38_l3_count("kbl_window_states")
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            self._v6_38_kbl_win = None
+
+    def _v6_38_l3_canary(self, family: str, book_id: int) -> bool:
+        """Piece 0: does the family's candidate run on this book this request -- mode 2 on every book, mode 1 on the
+        books whose pre-registered draw for this agent's OWN UID (v6.30's Identity, fixed once per process, its profile
+        on this request: D4's source) is 1, mode 0 or no arm on none.  The lean family (k116) draws with the tag
+        orthox-profile-k116-v1 and its arm's name (CA / CB / CC / CD), the class-1 family (k118) with
+        orthox-profile-k118-v1 and c1; each book once, never again (V6_38CanaryTable).  The callers restrict it to the
+        family's class.  The profile off: mode 1 runs on no book.  Never raises: an error counts and is False (v6.36)."""
+        try:
+            if family == V6_38_FAMILY_LEAN:
+                mode, tag, dim = self.research_v638_lean, V6_38_TAG_K116, V6_38_LEAN_ARMS.get(self.research_v638_lean_arm)
+            elif family == V6_38_FAMILY_C1:
+                mode, tag = self.research_v638_c1, V6_38_TAG_K118
+                dim = V6_38_DIM_C1 if self.research_v638_c1_arm in V6_38_C1_ARMS else None
+            else:
+                return False
+            if not mode or dim is None:
+                return False
+            if mode == V6_38_MODE_ALL:
+                return True
+            if not bool(getattr(self, "_v6_30_on", False)):
+                return False
+            table = self._v6_38_canary_tables.get((tag, dim))
+            if table is None:
+                table = V6_38CanaryTable(tag, dim)
+                self._v6_38_canary_tables[(tag, dim)] = table
+            return bool(v6_38_book_on(mode, table.value(self._v6_30_identity.uid, int(book_id))))
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            return False
+
+    def _v6_38_kbl_mode(self, book_id: int) -> int:
+        """KBL's mode on a book: research_v638_kbl's (1 KBL, 2 K5) on every class-0 book; else 1 (KBL) on the books the
+        lean canary runs CD on (CD = KBL + CB, k116 PREREG section 3); else 0.  A book of another asset class (v6.23
+        S2's foreign books) is 0: KBL is a class-0 rule (the L2B replay trades class 0 only)."""
+        b = int(book_id)
+        if b in (getattr(self, "_v6_23_foreign", None) or frozenset()):
+            return 0
+        if self.research_v638_kbl:
+            return int(self.research_v638_kbl)
+        if self.research_v638_lean_arm == V6_38_ARM_CD and self._v6_38_l3_canary(V6_38_FAMILY_LEAN, b):
+            return V6_38_KBL_MODE_KBL
+        return 0
+
+    def _v6_38_kbl_capture(self, book_id: int) -> tuple:
+        """The book's (buy, sell) capture over the making window from the agent's own making mirror (v6.19 S2m's
+        estimator; no mirror: (0, 0), a balanced book)."""
+        mirror = getattr(self, "_v62_mirror", None)
+        if mirror is None:
+            return 0.0, 0.0
+        return mirror.book_capture(int(book_id))
+
+    def _v6_38_kbl_window(self, book_id: int) -> str | None:
+        """KBL X2b (+ xb), at the top of v6.17's touch quote: the step's side on this book (up: buy, down: sell) when this
+        request is a window state (_v6_38_l3_request), the book runs KBL or K5 (_v6_38_kbl_mode), its class keeps v6.36's
+        step grid and the step moved it -- with KBL's xb None as well when that side is the book's capture-surplus side
+        over the making window; else None (v6.36's touch rules).  Never raises: an error counts and is None."""
+        try:
+            win = self._v6_38_kbl_win
+            if not win or int(book_id) in self._v6_38_kbl_excluded:
+                return None
+            mode = self._v6_38_kbl_mode(book_id)
+            if not mode:
+                return None
+            keyed = bool(v6_38_kbl_components(mode)["xb"])
+            buy, sell = self._v6_38_kbl_capture(book_id) if keyed else (0.0, 0.0)
+            direction = win.get(int(book_id), 0)
+            side = v6_38_kbl_window_side(direction, buy_capture=buy, sell_capture=sell, keyed=keyed)
+            if side is not None:
+                self._v6_38_l3_count("kbl_window_book_states")
+            elif direction:
+                self._v6_38_l3_count("kbl_xb_withheld")
+            return side
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            return None
+
+    def _v6_38_kbl_price(self, book_id: int, side: str, join_px, fp, tick_size):
+        """KBL X5 + X2b, right after v6.31 S12b priced the window quote: one tick better than the others' best when
+        v6.2.10's geometry accepts it -- S12b's own view of the book (_v6_31_note) and rule, without the fp-edge test
+        (research_v6_38_kbl.improve) -- else ``join_px``.  No view of the book this request (S12b off): ``join_px``.  Never
+        raises: an error counts and is ``join_px``."""
+        try:
+            noted = getattr(self, "_v6_31_noted", None)
+            if noted is None or noted[0] != int(book_id) or noted[1] != int(getattr(self, "_tick", 0) or 0):
+                self._v6_38_l3_count("kbl_join_no_view")
+                return join_px
+            price, why = v6_38_kbl_improve(side, noted[2], noted[3], book_id, fp, tick_size, join_px)
+            self._v6_38_l3_count("kbl_" + str(why))
+            return join_px if price is None else price
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            return join_px
+
+    def _v6_38_touch_size(self, book_id: int, side, inv, clip, size_scale, min_order, window):
+        """The touch quote's size before its lot and free-base steps when layer 3 sets it: FBL's clip (the lean shortfall
+        while the book's lean sign of the previous state is set, at most LEAN_CAP) and then KBL X3a -- the window quote
+        unscaled -- or the v6.20 lead scale; None when neither applies (v6.36's size).  Never raises: an error counts
+        and is None."""
+        try:
+            base, grown = float(clip), False
+            if self._v6_38_lean_has(book_id, "fbl"):
+                sign = int((getattr(self, "_v6_38_fbl_prev", None) or {}).get(int(book_id), 0) or 0)
+                fbl = float(v6_38_fbl_clip(side, inv, base, sign))
+                if fbl > base:
+                    base, grown = fbl, True
+                    self._v6_38_l3_count("fbl_clip_up")
+            if window is not None and side == window:
+                if size_scale < 1.0:
+                    self._v6_38_l3_count("kbl_x3a_unscaled")
+                return base
+            if not grown:
+                return None
+            return v620_scaled_quantity(base, size_scale, min_order) if size_scale < 1.0 else base
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            return None
+
+    def _v6_38_kbl_ladder(self, book_id: int, levels_side) -> frozenset:
+        """KBL xl / K5 X4, in v6.3.3's deep layer right after its ladder levels and S14's pairs: the (side, level) pairs
+        that hold no ladder order this request -- KBL: every ladder level of this request (deeper than its side's level
+        0) on the book's capture-surplus side over the making window (balanced: none); K5: levels 1 and 2 on both sides;
+        else none.  Never raises: an error counts and is empty (v6.36's ladder)."""
+        try:
+            mode = self._v6_38_kbl_mode(book_id)
+            if mode == V6_38_KBL_MODE_K5:
+                return v6_38_kbl_ladder_pairs((V63_SIDE_BUY, V63_SIDE_SELL), V6_38_KBL_LADDER_LEVELS)
+            if mode != V6_38_KBL_MODE_KBL:
+                return frozenset()
+            sur = v6_38_kbl_surplus_side(*self._v6_38_kbl_capture(book_id))
+            if sur is None:
+                return frozenset()
+            pairs = v6_38_kbl_ladder_pairs((sur,), [k for k, _d, _c in (levels_side or {}).get(sur, ())])
+            if pairs:
+                self._v6_38_l3_count("kbl_xl_book_states")
+            return pairs
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            return frozenset()
+
+    def _v6_38_kbl_ladder_why(self, book_id: int) -> str:
+        """The cancel reason of a ladder order KBL xl / K5 X4 takes off."""
+        return V6_38_CANCEL_LADDER_OFF if self._v6_38_kbl_mode(book_id) == V6_38_KBL_MODE_K5 else \
+            V6_38_CANCEL_SURPLUS_LADDER
+
+    def _v6_38_kbl_x1(self, book_id: int, client_id) -> bool:
+        """KBL X1 (a): is this order the touch quote of a book that runs KBL or K5 (the exit reprice and the A1.7.3
+        remainder cancel then spare it)?  Never raises: an error counts and is False."""
+        try:
+            return bool(v617_is_touch_client_id(client_id)) and bool(self._v6_38_kbl_mode(book_id))
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            return False
+
+    def _v6_38_kbl_touch_ids(self, book_id: int, orders_by_id: dict) -> set:
+        """KBL X1 (a): the touch quotes among a book's account orders when the book runs KBL or K5 -- by the order's own
+        client id, or by the one the ledger recorded from its placement notice (v6.3.3.2's reading)."""
+        if not self._v6_38_kbl_mode(book_id):
+            return set()
+        out = {oid for oid, order in orders_by_id.items() if v617_is_touch_client_id(self._direct_order_client_id(order))}
+        ledger = self._a19_ledger_ref()
+        if ledger is not None:
+            for row in ledger.live_orders(int(book_id)):
+                try:
+                    oid = int(row.order_id)
+                except (TypeError, ValueError):
+                    continue
+                if oid in orders_by_id and v617_is_touch_client_id(getattr(row, "client_id", None)):
+                    out.add(oid)
+        return out
+
+    def _v6_38_lean_has(self, book_id: int, part: str) -> bool:
+        """Piece 2: does the lean candidate run ``part`` (slope2 / fbl) on this book -- the lean canary on the book (a
+        class-0 book: v6.23 S2's foreign books never) and the arm carries the part (CA / CB / CD: slope2; CB / CC / CD:
+        fbl)?  Never raises: an error counts and is False."""
+        try:
+            if not self.research_v638_lean or not v6_38_lean_arm_parts(self.research_v638_lean_arm).get(part):
+                return False
+            if int(book_id) in (getattr(self, "_v6_23_foreign", None) or frozenset()):
+                return False
+            return bool(self._v6_38_l3_canary(V6_38_FAMILY_LEAN, int(book_id)))
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            return False
+
+    def _v6_38_lean_note(self, book_id: int, depth, raw_bid, raw_ask, cfg) -> None:
+        """Piece 2, FBL, in the pass right after the deep layer observed the book: the sign this state's touch quote
+        reads is the one the previous state left (_v6_38_fbl_prev); with the deep layer's record long enough (a depth)
+        the sign then takes this state -- set by the sign of ln(fp / mid) at |gap| >= 2.3 bps, held inside it, 0 without
+        a fresh fundamental (v6.17's) -- as the replay's deep block does after its touch decision.  A clock that ran back
+        starts every sign over.  Never raises: an error counts and leaves the sign as it was."""
+        try:
+            if not self._v6_38_lean_has(book_id, "fbl"):
+                return
+            b = int(book_id)
+            now = int(getattr(self, "_direct_current_state_timestamp_ns", 0) or 0)
+            last = getattr(self, "_v6_38_fbl_ts", None)
+            if last is not None and now < int(last):
+                self._v6_38_fbl_sign.clear()
+                self._v6_38_l3_count("fbl_resets")
+            self._v6_38_fbl_ts = now
+            prev = int(self._v6_38_fbl_sign.get(b, 0) or 0)
+            self._v6_38_fbl_prev[b] = prev
+            if depth is None:
+                return
+            fp = self._v617_fundamental(b, raw_bid, raw_ask, cfg)
+            self._v6_38_fbl_sign[b] = int(v6_38_fbl_sign(prev, fp, 0.5 * (float(raw_bid) + float(raw_ask))))
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+
+    def _v6_38_k1_request(self) -> None:
+        """Piece 3, in the request hook: the keeper's per-request reads -- v6.36's pooled radius (None without v6.36's
+        record) and, for K3Q, the shared-q parity hold from S14's two capture trackers: R1 / C1 of the class-1 fills,
+        q0 = clip(R0 / C0, 0, 1) of the class-0 fills (both net of W x fee, over the making window); hold while R1 -
+        q0 x C1 < 0 -- and each tracker's maker fee rates for its next releases (the accounts of this state).  Never
+        raises: an error counts, and no radius (the pooled read) / no hold (K3Q's read)."""
+        self._v6_38_k1_books_now = frozenset()
+        self._v6_38_k1_pooled = None
+        self._v6_38_k3q = {}
+        try:
+            if bool(getattr(self, "research_v636_step_withdrawal", False)):
+                self._v6_38_k1_pooled = self._v6_36_record.pooled_bps()
+            else:
+                self._v6_38_l3_count("k1_no_step_record")
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            self._v6_38_k1_pooled = None
+        try:
+            if v6_38_k1_arm_parts(self.research_v638_c1_arm)["k3q"]:
+                t0, t1 = getattr(self, "_v6_32_tracker", None), getattr(self, "_v6_34_tracker", None)
+                if isinstance(t0, V6_38CaptureTracker) and isinstance(t1, V6_38CaptureTracker):
+                    r0, c0 = t0.sums()
+                    r1, c1 = t1.sums()
+                    q0 = v6_38_k3q_q0(r0, c0)
+                    self._v6_38_k3q = {"r0": r0, "c0": c0, "r1": r1, "c1": c1, "q0": q0,
+                                       "hold": bool(v6_38_k3q_hold(r1, c1, q0))}
+                    rates = {}
+                    for b, acct in (getattr(self, "accounts", None) or {}).items():
+                        rate = v6_32_maker_fee_rate(acct)
+                        if rate is not None:
+                            rates[int(b)] = float(rate)
+                    t0.rates, t1.rates = rates, rates
+                else:
+                    self._v6_38_l3_count("k3q_no_tracker")
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            self._v6_38_k3q = {}
+
+    def _v6_38_k3q_trackers(self) -> None:
+        """Piece 3, at init: with K3Q selected (research_v638_c1 on, research_v638_c1_arm K3Q) S14's two realized
+        trackers -- class 0's (v6.32) and class 1's (v6.34) -- are made as K3Q's capture trackers: the same release and
+        window, every base result the base class's exactly, plus each counted fill's captured spread and W x its maker
+        fee.  Otherwise nothing (the trackers as v6.32 / v6.34 make them)."""
+        if self.research_v638_c1 and v6_38_k1_arm_parts(self.research_v638_c1_arm)["k3q"]:
+            weight = float(getattr(self, "research_v632_fee_weight", 0.0) or 0.0)
+            self._v6_32_tracker = V6_38CaptureTracker(weight=weight)
+            self._v6_34_tracker = V6_38CaptureTracker(weight=weight)
+
+    def _v6_38_k1_books(self, books) -> frozenset:
+        """Piece 3, in the pass after the profile's check: the class-1 books the keeper runs on this request -- the
+        canary's (mode 1 the drawn half, 2 all) among v6.34's class-1 books; the others leave the class-1 entry.  Never
+        raises: an error counts and is the empty set (no class-1 quote: v6.36).  The keeper's mode off: ``books`` as
+        they are (v6.34's C3f, when its own switch runs it)."""
+        if not (self.research_v638_c1 and self.research_v638_c1_arm):
+            return books
+        try:
+            on = frozenset(int(b) for b in books if self._v6_38_l3_canary(V6_38_FAMILY_C1, int(b)))
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            on = frozenset()
+        self._v6_38_k1_books_now = on
+        self._v6_38_l3_count("k1_books", len(on))
+        return on
+
+    def _v6_38_k1_life(self, book_id: int, client_id) -> bool:
+        """Piece 3: is this order a keeper -- a touch-slot order on a class-1 book the keeper runs on this request?"""
+        try:
+            return int(book_id) in self._v6_38_k1_books_now and bool(v617_is_touch_client_id(client_id))
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            return False
+
+    def _v6_38_k1_plan(self, book_id: int, *, inv, clip, bound, min_size, is_paced, s9, gated, d4_off, capped, raw_bid,
+                       raw_ask, tick, decimals):
+        """Piece 3 in v6.34's class-1 entry, after its plan: on a keeper book (_v6_38_k1_books) the keeper's plan --
+        each side v6.34's side plan with S9 and S17-R not applied (the cap, the bound, pacing and its unwind, S14 on the
+        class-1 estimate, D4 and the sizes as C3f), then the arm's own side rules (side_gate: K3's with-move side, K3B's
+        surplus side, K3Q's parity hold); no A radius yet: no quote -- and each side's target T (the price nearest the
+        mid that v6.36's A does not pull).  None: not a keeper book (v6.34's plan stands).  Never raises: an error
+        counts and the book takes no class-1 quote this request."""
+        b = int(book_id)
+        if b not in self._v6_38_k1_books_now:
+            return None
+        sides = (V63_SIDE_BUY, V63_SIDE_SELL)
+        try:
+            arm = self.research_v638_c1_arm
+            parts = v6_38_k1_arm_parts(arm)
+            radius = None
+            grid = getattr(self, "_v6_36_grid", None) or {}
+            if bool(getattr(self, "research_v636_step_withdrawal", False)) and b not in (grid.get("excluded") or ()):
+                radius = self._v6_36_record.radius(b, self._v6_38_k1_pooled)[0]
+            targets = {s: v6_38_k1_target(s, raw_bid, raw_ask, radius, tick, decimals) for s in sides}
+            move = v6_38_k1_move_side(s9) if parts["k3"] else None
+            surplus = v6_38_kbl_surplus_side(*self._v6_38_kbl_capture(b)) if parts["k3b"] else None
+            hold = bool((getattr(self, "_v6_38_k3q", None) or {}).get("hold")) if parts["k3q"] else False
+            plan = {}
+            for side in sides:
+                if capped:
+                    plan[side] = (0.0, V6_34_WHY_CAPPED)
+                elif radius is None:
+                    plan[side] = (0.0, V6_38_K1_WHY_NO_RADIUS)
+                else:
+                    p = v6_34_side_plan(side, inventory=inv, clip=clip, bound=bound, min_size=min_size,
+                                        is_paced=is_paced, s9_held=None, fee_gated=gated, d4_off=d4_off,
+                                        miner_held=False)
+                    if p[1] is None:
+                        why = v6_38_k1_side_gate(side, arm=arm, move=move, surplus=surplus,
+                                                 adding=bool(v641_adds(side, inv)), hold=hold)
+                        if why is not None:
+                            p = (0.0, why)
+                    plan[side] = p
+                self._v6_38_l3_count("k1_armed" if plan[side][1] is None else "k1_held_" + str(plan[side][1]).lower())
+            return {"plan": plan, "T": targets, "radius": radius}
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+            return {"plan": {s: (0.0, V6_38_K1_WHY_NO_RADIUS) for s in sides}, "T": {}, "radius": None}
+
+    def _v6_38_l3_post(self, response, state) -> None:
+        """v6.38 layer 3 in respond(), after v6.36's withdrawal cancels (the last post-pass): KBL X1 (b) -- on each book
+        that runs KBL or K5 the touch quote's placement becomes the book's FIRST instruction (the validator lands the
+        first instruction per book at the base delay, later ones + U(5, 25) ms), the book's other instructions keep
+        their order after it (one permutation of the list, set in one assignment) -- then the V6_38_L3_STATE row.
+        Never raises: an error counts and the response is left as it was."""
+        try:
+            instructions = getattr(response, "instructions", None)
+            if isinstance(instructions, list) and instructions and (
+                    self.research_v638_kbl or self.research_v638_lean_arm == V6_38_ARM_CD):
+
+                def book_of(ix):
+                    return self._get(ix, "bookId", "book_id")
+
+                def touch(ix):
+                    if str(self._get(ix, "type") or "").upper() != "PLACE_ORDER_LIMIT":
+                        return False
+                    b = book_of(ix)
+                    return b is not None and bool(v617_is_touch_client_id(
+                        self._get(ix, "clientOrderId", "client_order_id"))) and bool(self._v6_38_kbl_mode(int(b)))
+
+                out, ahead = v6_38_kbl_touch_first(instructions, book_of, touch)
+                if ahead:
+                    instructions[:] = out
+                    self._v6_38_l3_count("kbl_x1_touch_first", ahead)
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+        self._v6_38_l3_report()
+
+    def _v6_38_l3_report(self) -> None:
+        """v6.38 layer 3: the V6_38_L3_STATE row -- the switches, modes and arms, the canary tables (tag, dim, UID,
+        books, on books, sha256, the draws by ascending book), the counts and the errors -- at the first request with a
+        layer-3 switch on, at the first request with an error after one without, and every V62_STATE_EVERY_TICKS ticks;
+        after the reply when the request defers its telemetry (v6.2.9).  Every switch off: no row.  Never raises."""
+        try:
+            if not getattr(self, "_v6_38_l3_on", False):
+                return
+            tick = int(getattr(self, "_tick", 0) or 0)
+            errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0)
+            erring = errors > int(getattr(self, "_v6_38_l3_errors_seen", 0) or 0)
+            was_erring = bool(getattr(self, "_v6_38_l3_erring", False))
+            self._v6_38_l3_errors_seen, self._v6_38_l3_erring = errors, erring
+            if not getattr(self, "_v6_38_l3_reported", False):
+                reason = "start"
+            elif erring and not was_erring:
+                reason = "error"
+            elif tick > 0 and tick % V62_STATE_EVERY_TICKS == 0:
+                reason = "periodic"
+            else:
+                return
+            self._v6_38_l3_reported = True
+            row = dict(self._v6_38_l3_snapshot(), reason=reason, tick=tick)
+            work = getattr(self, "_v629_request_work", None)
+            if work is not None:
+                work.add("v6_38_l3_state_row", lambda: self._emit("V6_38_L3_STATE", force=True, **row))  # after reply
+            else:
+                self._emit("V6_38_L3_STATE", force=True, **row)
+        except Exception:
+            self._v6_38_l3_errors = int(getattr(self, "_v6_38_l3_errors", 0) or 0) + 1
+
+    def _v6_38_l3_snapshot(self) -> dict:
+        tables = [t.snapshot() for _k, t in sorted((getattr(self, "_v6_38_canary_tables", None) or {}).items())]
+        return {"versions": [V6_38_CANARY_VERSION, V6_38_KBL_VERSION, V6_38_LEAN_VERSION, V6_38_KEEPER_VERSION],
+                "kbl": int(self.research_v638_kbl), "lean": int(self.research_v638_lean),
+                "lean_arm": V6_38_LEAN_ARMS.get(self.research_v638_lean_arm), "c1": int(self.research_v638_c1),
+                "c1_arm": V6_38_C1_ARMS.get(self.research_v638_c1_arm),
+                "profile_on": int(bool(getattr(self, "_v6_30_on", False))), "canary_tables": tables,
+                "kbl_window": int(bool(getattr(self, "_v6_38_kbl_win", None))),
+                "fbl_signed_books": sum(1 for v in (getattr(self, "_v6_38_fbl_sign", None) or {}).values() if v),
+                "k1_books": len(getattr(self, "_v6_38_k1_books_now", None) or ()),
+                "k1_pooled_radius_bps": getattr(self, "_v6_38_k1_pooled", None),
+                "k3q": dict(getattr(self, "_v6_38_k3q", None) or {}),
+                "counts": dict(getattr(self, "_v6_38_l3_counts", None) or {}),
+                "errors": int(getattr(self, "_v6_38_l3_errors", 0) or 0)}
 
 
 

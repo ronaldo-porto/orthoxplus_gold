@@ -47,14 +47,15 @@ import test_research_v6_19 as t619  # noqa: E402
 import test_research_v6_22 as t622  # noqa: E402
 from _harness import extractor, method_source  # noqa: E402
 import _v638_undo  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
-MODELS = (ROOT / "taos" / "im" / "protocol" / "models.py").read_text()
-TAOS_AGENTS = (ROOT / "taos" / "im" / "agents" / "__init__.py").read_text()
-DTA = (STRATEGY / "DetailedTemplateAgent.py").read_text()
-S1SRC = (STRATEGY / "Strategy1.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
+MODELS = read_source(ROOT / "taos" / "im" / "protocol" / "models.py")
+TAOS_AGENTS = read_source(ROOT / "taos" / "im" / "agents" / "__init__.py")
+DTA = read_source(STRATEGY / "DetailedTemplateAgent.py")
+S1SRC = read_source(STRATEGY / "Strategy1.py")
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 S = 1_000_000_000
 NOW = t622.NOW
@@ -1036,6 +1037,10 @@ V6_36_IDENTIFIERS = {"research_v636_step_withdrawal", "V6_36_GRID_OK", "V6_36Ste
 # writing it into F2's three module switches and the exit ledger's dict -- assignments naming one.  The strip takes them
 # out (tests/test_research_v6_37.py checks them against v6.36), so every v6.22 statement stays pinned.
 V6_37_IDENTIFIERS = {"research_v637_fast_path"}
+# v6.38 layer 3 (research_v638_kbl, research_v638_lean + _arm, research_v638_c1 + _arm; scratchpad k124) only
+# adds: the strip takes its additions out as well (tests/test_research_v6_38_l3.py checks them against v6.37).
+V6_38_IDENTIFIERS = {"research_v638_kbl", "research_v638_lean",
+                     "research_v638_lean_arm", "research_v638_c1", "research_v638_c1_arm"}
 
 
 def _v622(rel):
@@ -1064,12 +1069,14 @@ def _mentions(node):
                                       or name in V6_34_IDENTIFIERS
                                       or name in V6_36_IDENTIFIERS
                                       or name in V6_37_IDENTIFIERS
+                                      or name in V6_38_IDENTIFIERS
                                       or name.startswith(("_v6_23_", "v6_23_", "_v6_24_", "v6_24_", "_v6_25_",
                                                           "v6_25_", "_v6_26_", "v6_26_", "_v6_27_", "v6_27_",
                                                           "_v6_28_", "v6_28_", "_v6_29_", "v6_29_", "_v6_30_",
                                                           "v6_30_", "_v6_31_", "v6_31_", "_v6_32_", "v6_32_",
                                                           "_v6_33_", "v6_33_", "_v6_34_", "v6_34_",
-                                                          "_v6_36_", "v6_36_", "_v6_37_", "v6_37_"))):
+                                                          "_v6_36_", "v6_36_", "_v6_37_", "v6_37_", "_v6_38_",
+                                                          "v6_38_"))):
             return True
     return False
 
@@ -1099,13 +1106,18 @@ class _Strip623(ast.NodeTransformer):
                                                                 "research_v6_33_touch_identity",
                                                                 "research_v6_34_class1",
                                                                 "research_v6_36_step_withdrawal",
-                                                                "research_v6_37_fast_path"):
+                                                                "research_v6_37_fast_path",
+                                                                "research_v6_38_canary",
+                                                                "research_v6_38_kbl",
+                                                                "research_v6_38_lean",
+                                                                "research_v6_38_keeper"):
                 continue
             if isinstance(st, ast.FunctionDef) and (st.name == "onStart"
                                                     or st.name.startswith(("_v6_23_", "_v6_24_", "_v6_25_", "_v6_26_",
                                                                            "_v6_27_", "_v6_28_", "_v6_29_", "_v6_30_",
                                                                            "_v6_31_", "_v6_32_", "_v6_33_",
-                                                                           "_v6_34_", "_v6_36_", "_v6_37_"))):
+                                                                           "_v6_34_", "_v6_36_", "_v6_37_",
+                                                                           "_v6_38_"))):
                 continue
             if isinstance(st, ast.If) and _mentions(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -1333,7 +1345,7 @@ def _block():
     return LAUNCHER[start:LAUNCHER.index('echo "[preflight] v6.23 validator 0.6.3 PASS', start)]
 
 
-def _file(var, name, agent_path=STRATEGY, script_dir=ROOT):
+def _file(var, name, agent_path=strategy_view(), script_dir=ROOT):
     return (Path(agent_path) if var == "AGENT_PATH" else Path(script_dir)) / name
 
 
@@ -1344,7 +1356,7 @@ def test_every_v623_preflight_pattern_is_in_the_file_it_checks():
         assert (single or double) in _file(var, name).read_text(), (single or double, name)
 
 
-def _run_block(params, agent_path=STRATEGY, script_dir=ROOT):
+def _run_block(params, agent_path=strategy_view(), script_dir=ROOT):
     start = LAUNCHER.index("# v6.23 S1-S3.")
     stop = LAUNCHER.index('echo "[preflight] v6.23 validator 0.6.3 PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -1395,8 +1407,8 @@ def test_the_v623_block_refuses_a_tree_without_each_line_it_checks():
             (tmp / "agents" / "strategy").mkdir(parents=True)
             (tmp / "taos" / "im" / "protocol").mkdir(parents=True)
             for n in ("Strategy1_Research_Simple.py", "research_v623_validator_063.py"):
-                shutil.copy(STRATEGY / n, tmp / "agents" / "strategy" / n)
-            shutil.copy(ROOT / "taos" / "im" / "protocol" / "models.py", tmp / "taos" / "im" / "protocol" / "models.py")
+                copy_source(STRATEGY / n, tmp / "agents" / "strategy" / n)
+            copy_source(ROOT / "taos" / "im" / "protocol" / "models.py", tmp / "taos" / "im" / "protocol" / "models.py")
             path = _file(var, name, tmp / "agents" / "strategy", tmp)
             text = path.read_text()
             assert text.count(needle) == 1, needle

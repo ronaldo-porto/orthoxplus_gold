@@ -6,9 +6,10 @@ ROOT = Path(__file__).parents[1]
 STRATEGY_DIR = ROOT / "agents" / "strategy"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(STRATEGY_DIR))
+from _harness import simple_text  # noqa: E402
 
 PATH = STRATEGY_DIR / "Strategy1_Research_Simple.py"
-SRC = PATH.read_text(encoding="utf-8")
+SRC = simple_text()
 TREE = ast.parse(SRC)
 CLASS = next(n for n in TREE.body if isinstance(n, ast.ClassDef) and n.name == "Strategy1_Research_Simple")
 METHODS = {n.name: n for n in CLASS.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}

@@ -43,10 +43,11 @@ import test_research_v6_25 as t625  # noqa: E402
 import test_research_v6_26 as t626  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-MODULE = (STRATEGY / "research_v627_touch_centre.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(STRATEGY / "research_v627_touch_centre.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 S = 1_000_000_000
 NOW = t623.NOW
@@ -730,6 +731,8 @@ V6_36_IDENTIFIERS = t623.V6_36_IDENTIFIERS
 # v6.37 (research_v637_fast_path) only adds: the strip takes its additions out as well
 # (tests/test_research_v6_37.py checks them against v6.36).
 V6_37_IDENTIFIERS = t623.V6_37_IDENTIFIERS
+# v6.38 layer 3 only adds: the strip takes its additions out as well (tests/test_research_v6_38_l3.py).
+V6_38_IDENTIFIERS = t623.V6_38_IDENTIFIERS
 
 
 def _mentions628(node):
@@ -743,10 +746,12 @@ def _mentions628(node):
                                       or name in V6_34_IDENTIFIERS
                                       or name in V6_36_IDENTIFIERS
                                       or name in V6_37_IDENTIFIERS
+                                      or name in V6_38_IDENTIFIERS
                                       or name.startswith(("_v6_28_", "v6_28_", "_v6_29_", "v6_29_", "_v6_30_",
                                                           "v6_30_", "_v6_31_", "v6_31_", "_v6_32_", "v6_32_",
                                                           "_v6_33_", "v6_33_", "_v6_34_", "v6_34_",
-                                                          "_v6_36_", "v6_36_", "_v6_37_", "v6_37_"))):
+                                                          "_v6_36_", "v6_36_", "_v6_37_", "v6_37_", "_v6_38_",
+                                                          "v6_38_"))):
             return True
     return False
 
@@ -771,11 +776,15 @@ class _Drop628(ast.NodeTransformer):
                                                                 "research_v6_33_touch_identity",
                                                                 "research_v6_34_class1",
                                                                 "research_v6_36_step_withdrawal",
-                                                                "research_v6_37_fast_path"):
+                                                                "research_v6_37_fast_path",
+                                                                "research_v6_38_canary",
+                                                                "research_v6_38_kbl",
+                                                                "research_v6_38_lean",
+                                                                "research_v6_38_keeper"):
                 continue
             if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_28_", "_v6_29_", "_v6_30_", "_v6_31_",
                                                                        "_v6_32_", "_v6_33_", "_v6_34_", "_v6_36_",
-                                                                       "_v6_37_")):
+                                                                       "_v6_37_", "_v6_38_")):
                 continue
             if isinstance(st, ast.If) and _mentions628(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -849,7 +858,7 @@ def test_only_the_switch_block_the_pass_and_the_touch_quote_changed_and_five_met
     for other in ("Strategy1_Research.py", "Strategy1.py", "research_v617_touch_quote.py", "research_v625_lean.py",
                   "research_v626_feed_clock.py", "research_v616_fair_value.py", "research_v641_pace.py",
                   "research_v610_paced_bound.py", "research_v623_validator_063.py"):
-        assert _v626(f"agents/strategy/{other}") == (STRATEGY / other).read_text(), other
+        assert _v626(f"agents/strategy/{other}") == read_source(STRATEGY / other), other
 
 
 def test_the_launcher_only_adds_to_v626s():
@@ -869,11 +878,11 @@ def test_the_launcher_only_adds_to_v626s():
     assert removed == [defaults, arm, 'research_v626_feed_clock=1"']
     block = []
     for head in ("# v6.27 S7.", "# v6.28 S8.", "# v6.29 S9.", "# v6.30.", "# v6.31.", "# v6.32.", "# v6.33.",
-                 "# v6.34.", "# v6.36.", "# v6.37."):
+                 "# v6.34.", "# v6.36.", "# v6.37.", "# v6.38 L3."):
         start = launcher.index(head)
         block += launcher[start:launcher.index("\nfi\n", start) + len("\nfi\n")].splitlines() + [""]
-    assert sorted(added) == sorted([defaults + "; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0",
-                                    arm + "; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1",
+    assert sorted(added) == sorted([defaults + "; V6_27_BUILD=0; V6_28_BUILD=0; V6_29_BUILD=0; V6_30_BUILD=0; V6_31_BUILD=0; V6_32_BUILD=0; V6_33_BUILD=0; V6_34_BUILD=0; V6_36_BUILD=0; V6_37_BUILD=0; V6_38_BUILD=0",
+                                    arm + "; V6_27_BUILD=1; V6_28_BUILD=1; V6_29_BUILD=1; V6_30_BUILD=1; V6_31_BUILD=1; V6_32_BUILD=1; V6_33_BUILD=1; V6_34_BUILD=1; V6_36_BUILD=1; V6_37_BUILD=1; V6_38_BUILD=1",
                                     "research_v626_feed_clock=1 \\", "research_v627_touch_centre=1 \\",
                                     "research_v628_flat_launch=1 \\", "research_v629_touch_fp_move=1 \\",
                                     "research_v630_deep_tier=1 \\", "research_v630_s9_lookback=1 \\",
@@ -885,7 +894,12 @@ def test_the_launcher_only_adds_to_v626s():
                                     "research_v633_touch_identity=1 \\",
                                     "research_v634_class1_entry=0 \\",
                                     "research_v636_step_withdrawal=1 \\",
-                                    'research_v637_fast_path=1"',
+                                    "research_v637_fast_path=1 \\",
+                                    "research_v638_kbl=0 \\",
+                                    "research_v638_lean=0 \\",
+                                    "research_v638_lean_arm=0 \\",
+                                    "research_v638_c1=0 \\",
+                                    'research_v638_c1_arm=0"',
                                     "      tests/test_research_v6_27.py \\", "      tests/test_research_v6_28.py \\",
                                     "      tests/test_research_v6_29.py \\", "      tests/test_research_v6_30.py \\",
                                     "      tests/test_research_v6_31.py \\",
@@ -894,6 +908,7 @@ def test_the_launcher_only_adds_to_v626s():
                                     "      tests/test_research_v6_34.py \\",
                                     "      tests/test_research_v6_36.py \\",
                                     "      tests/test_research_v6_37.py \\",
+                                    "      tests/test_research_v6_38_l3.py \\",
                                     *block])
 
 
@@ -923,13 +938,13 @@ def test_every_v627_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(_PATTERN, _block())
     assert len(pats) == 8, pats
     for needle, name, _msg in pats:
-        assert name in FILES and (STRATEGY / name).read_text().count(needle) == 1, (needle, name)
+        assert name in FILES and read_source(STRATEGY / name).count(needle) == 1, (needle, name)
     assert {p[0] for p in pats} == {
         "from research_v627_touch_centre import (", SWITCH_LINE, RESET_LINE, NOTE_LINE, BOUND_LINE, REPORT_LINE,
         "if isinstance(ts, bool) or isinstance(now_ts, bool) or int(ts) != int(now_ts):", "return min(b, c)"}
 
 
-def _run_block(params, agent_path=STRATEGY, build="1"):
+def _run_block(params, agent_path=strategy_view(), build="1"):
     start = LAUNCHER.index("# v6.27 S7.")
     stop = LAUNCHER.index('echo "[preflight] v6.27 touch centre PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -962,7 +977,7 @@ def test_the_v627_block_refuses_a_tree_without_each_line_it_checks(tmp_path):
         tmp = tmp_path / str(i)
         tmp.mkdir()
         for n in FILES:
-            shutil.copy(STRATEGY / n, tmp / n)
+            copy_source(STRATEGY / n, tmp / n)
         text = (tmp / name).read_text()
         assert text.count(needle) == 1, needle
         (tmp / name).write_text(text.replace(needle, "pass  # removed", 1))

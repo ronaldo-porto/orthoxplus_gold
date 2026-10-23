@@ -22,9 +22,10 @@ import research_v633_deep_layer as dl  # noqa: E402
 import test_research_v6_0_3_short_lot_release as t603  # noqa: E402
 from research_direct_exit_ledger import DirectExitLedger  # noqa: E402
 from _harness import extractor  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 BOOK = 107
 DUST = 0.1142                                   # book 107's dust on v6.3.3.1, tick 150
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")

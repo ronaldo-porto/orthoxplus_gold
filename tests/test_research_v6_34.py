@@ -55,10 +55,12 @@ import test_research_v6_32 as t632  # noqa: E402
 import test_research_v6_33 as t633  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
+import _v639_undo  # noqa: E402
+from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-MODULE = (STRATEGY / "research_v6_34_class1.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+MODULE = read_source(STRATEGY / "research_v6_34_class1.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 S = 1_000_000_000
 NOW = t632.NOW
@@ -298,14 +300,17 @@ V6_36_IDENTIFIERS = t623.V6_36_IDENTIFIERS
 # v6.37 (research_v637_fast_path) only adds: the strip takes its additions out as well
 # (tests/test_research_v6_37.py checks them against v6.36).
 V6_37_IDENTIFIERS = t623.V6_37_IDENTIFIERS
+# v6.38 layer 3 only adds: the strip takes its additions out as well (tests/test_research_v6_38_l3.py).
+V6_38_IDENTIFIERS = t623.V6_38_IDENTIFIERS
 
 
 def _mentions636(node):
     for n in ast.walk(node):
         name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else \
             n.arg if isinstance(n, (ast.arg, ast.keyword)) else n.value if isinstance(n, ast.Constant) else None
-        if isinstance(name, str) and (name in V6_36_IDENTIFIERS or name in V6_37_IDENTIFIERS
-                                      or name.startswith(("_v6_36_", "v6_36_", "_v6_37_", "v6_37_"))):
+        if isinstance(name, str) and (name in V6_36_IDENTIFIERS or name in V6_37_IDENTIFIERS or name in V6_38_IDENTIFIERS
+                                      or name.startswith(("_v6_36_", "v6_36_", "_v6_37_", "v6_37_", "_v6_38_",
+                                                          "v6_38_"))):
             return True
     return False
 
@@ -323,9 +328,13 @@ class _Drop636(ast.NodeTransformer):
         out = []
         for st in stmts:
             if isinstance(st, ast.ImportFrom) and st.module in ("research_v6_36_step_withdrawal",
-                                                                "research_v6_37_fast_path"):
+                                                                "research_v6_37_fast_path",
+                                                                "research_v6_38_canary",
+                                                                "research_v6_38_kbl",
+                                                                "research_v6_38_lean",
+                                                                "research_v6_38_keeper"):
                 continue
-            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_36_", "_v6_37_")):
+            if isinstance(st, ast.FunctionDef) and st.name.startswith(("_v6_36_", "_v6_37_", "_v6_38_")):
                 continue
             if isinstance(st, ast.If) and _mentions636(st.test):
                 out.extend(self._stmts(st.orelse))
@@ -1040,11 +1049,11 @@ def test_the_frozen_modules_and_protocol_are_v633s():
                   "research_v630_identity_profile.py", "research_v631_touch_improve.py", "research_v6_32_fee_making.py",
                   "research_v6_32_state_fp.py", "research_v633_deep_layer.py", "research_v641_pace.py",
                   "research_v623_validator_063.py", "research_contract_guard.py"):
-        assert t633._committed(f"agents/strategy/{other}") == (STRATEGY / other).read_text(), other
-    ledger = (STRATEGY / "research_direct_exit_ledger.py").read_text()          # k106 F2: its book index out
+        assert t633._committed(f"agents/strategy/{other}") == _v639_undo.source_v638(other, read_source(STRATEGY / other)), other   # k129: v6.39 S3's own edits out
+    ledger = read_source(STRATEGY / "research_direct_exit_ledger.py")          # k106 F2: its book index out
     committed = ast.parse(t633._committed("agents/strategy/research_direct_exit_ledger.py"))
     assert ast.dump(committed) == ast.dump(t623._drop_f2_models(t623._drop_v637_models(ast.parse(ledger))))
-    models = (ROOT / "taos" / "im" / "protocol" / "models.py").read_text()
+    models = read_source(ROOT / "taos" / "im" / "protocol" / "models.py")
     committed = ast.parse(t633._committed("taos/im/protocol/models.py"))               # k106 F2: its fast builds out
     assert ast.dump(committed) == ast.dump(t623._drop_f2_models(ast.parse(models)))
     digest = hashlib.sha256((STRATEGY / "research_v6_33_touch_identity.py").read_bytes()).hexdigest()
@@ -1093,7 +1102,7 @@ def test_every_v634_preflight_pattern_is_in_the_file_it_checks():
     assert '[[ -f "$AGENT_PATH/research_v6_34_class1.py" ]] || {' in _block()
 
 
-def _run_block(params, agent_path=STRATEGY, build="1"):
+def _run_block(params, agent_path=strategy_view(), build="1"):
     start = LAUNCHER.index("# v6.34.")
     stop = LAUNCHER.index('echo "[preflight] v6.34 class-1 entry PASS', start)
     script = "set -euo pipefail\n" + LAUNCHER[start:LAUNCHER.index("\nfi\n", stop) + len("\nfi\n")]
@@ -1138,13 +1147,13 @@ def test_the_v634_block_refuses_a_tree_without_each_line_it_checks(tmp_path):
         tmp = tmp_path / str(i)
         tmp.mkdir()
         for base in ("Strategy1_Research_Simple.py", "research_v6_34_class1.py"):
-            shutil.copy(STRATEGY / base, tmp / base)
+            copy_source(STRATEGY / base, tmp / base)
         path = tmp / name
         path.write_text(path.read_text().replace(needle, "pass  # removed", 1))
         out = _run_block(t617._shipped(), agent_path=tmp)
         assert out.returncode == 1 and needle in out.stderr and "PASS" not in out.stdout, (needle, out.stderr)
     bare = tmp_path / "no_module"
     bare.mkdir()
-    shutil.copy(STRATEGY / "Strategy1_Research_Simple.py", bare / "Strategy1_Research_Simple.py")
+    copy_source(STRATEGY / "Strategy1_Research_Simple.py", bare / "Strategy1_Research_Simple.py")
     out = _run_block(t617._shipped(), agent_path=bare)
     assert out.returncode == 1 and "v6.34 the class-1 entry module is missing" in out.stderr

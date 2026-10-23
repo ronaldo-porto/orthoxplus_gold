@@ -6,9 +6,10 @@ import pytest
 ROOT = Path(__file__).parents[1]
 STRATEGY_DIR = ROOT / 'agents' / 'strategy'
 sys.path.insert(0, str(STRATEGY_DIR))
+from _harness import simple_text, read_source  # noqa: E402
 
 PATH = STRATEGY_DIR / 'Strategy1_Research_Simple.py'
-SRC = PATH.read_text(encoding='utf-8')
+SRC = simple_text()
 TREE = ast.parse(SRC)
 CLASS = next(n for n in TREE.body if isinstance(n, ast.ClassDef) and n.name == 'Strategy1_Research_Simple')
 METHODS = {n.name: n for n in CLASS.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
@@ -48,7 +49,7 @@ def test_a170_keeps_strategy_authority_frozen():
 
 
 def test_a170_quote_manager_is_deterministic_not_learned():
-    qsrc = (STRATEGY_DIR / 'research_direct_quote_manager.py').read_text(encoding='utf-8').lower()
+    qsrc = read_source(STRATEGY_DIR / 'research_direct_quote_manager.py').lower()
     forbidden = ['makerlifecyclestats', 'posterior', 'ewma', 'rolling_pnl', 'learned_quality']
     for token in forbidden:
         assert token not in qsrc

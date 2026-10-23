@@ -21,16 +21,17 @@ from research_direct_book_ownership import DIRECT_BOOK_OWNERSHIP_VERSION, canoni
 from research_direct_inflight_reservation import PendingExposureOrder, pending_order_live
 from research_direct_inventory_truth import build_seed_plan
 from _harness import extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
-STRATEGY1 = (STRATEGY / "Strategy1.py").read_text()
-EPOCH = (STRATEGY / "research_direct_session_epoch.py").read_text()
-LEGACY = (STRATEGY / "research_direct_legacy_baseline.py").read_text()
-LIVENESS = (STRATEGY / "research_v5_dust_liveness.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
+STRATEGY1 = read_source(STRATEGY / "Strategy1.py")
+EPOCH = read_source(STRATEGY / "research_direct_session_epoch.py")
+LEGACY = read_source(STRATEGY / "research_direct_legacy_baseline.py")
+LIVENESS = read_source(STRATEGY / "research_v5_dust_liveness.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 MIN = 0.25
 EPS = 0.5e-4      # the execution flat epsilon at 4 volume decimals
 TOL = 2e-4        # two base units at 4 base decimals
@@ -364,7 +365,7 @@ def test_an_allowed_evaluation_ends_the_streak_and_the_floor_is_unchanged():
     assert agent._research_dust_compact_learning[21]["attempts"] == 0     # a refusal is not an attempt
     agent.research_v502_compactor_turn = False
     assert agent._v502_note_compaction_refusal(21) == 0
-    kappa = (STRATEGY / "research_direct_dust_kappa.py").read_text()
+    kappa = read_source(STRATEGY / "research_direct_dust_kappa.py")
     for literal in ("DIRECT_DUST_KAPPA_MAKER_FLOOR_BPS = -60.0", "DIRECT_A175_DUST_PATIENCE_TICKS = 600",
                     "DIRECT_A175_DUST_ESCALATION_TICKS = 2000", "DIRECT_A175_DUST_MAX_FLOOR_BPS = -250.0"):
         assert literal in kappa, literal

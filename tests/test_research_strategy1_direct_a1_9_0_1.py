@@ -18,6 +18,7 @@ still measurement only.
 from pathlib import Path
 
 import pytest
+from _harness import simple_text  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SIMPLE = ROOT / "agents" / "strategy" / "Strategy1_Research_Simple.py"
@@ -25,7 +26,7 @@ LEDGER = ROOT / "agents" / "strategy" / "research_direct_exit_ledger.py"
 FROZEN = ROOT / "agents" / "strategy" / "Strategy1_Research.py"
 LAUNCHER = ROOT / "run_strategy1_research_simple_multi.sh"
 
-SRC = SIMPLE.read_text()
+SRC = simple_text()
 LEDGER_SRC = LEDGER.read_text()
 
 from research_direct_exit_ledger import (  # noqa: E402
@@ -64,7 +65,7 @@ def test_launcher_pins_the_same_version_and_preflights_this_suite():
     # The launcher's case arm must recognise the build Simple reports.  This
     # used to pin a1_9_4 through the launcher's hardcoded version echo, which
     # went stale when A1.9.5 shipped; the echo now prints the detected version.
-    simple = (LAUNCHER.parent / "agents" / "strategy" / "Strategy1_Research_Simple.py").read_text()
+    simple = simple_text()
     version = simple.split('SIMPLE_POLICY_VERSION = "', 1)[1].split('"', 1)[0]
     assert f"  {version}) A19X_BUILD=1" in text
     assert "test_research_strategy1_direct_a1_9_0_1.py" in text

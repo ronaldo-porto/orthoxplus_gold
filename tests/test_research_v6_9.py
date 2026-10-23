@@ -39,9 +39,10 @@ import test_research_v6_5_deep_clips as t65  # noqa: E402
 import test_research_v6_8 as t68  # noqa: E402
 from research_direct_exit_ledger import DirectExitLedger  # noqa: E402
 from _harness import extractor  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 TICK = 0.01
 S = 1_000_000_000
@@ -546,7 +547,7 @@ def test_every_v69_preflight_pattern_is_in_the_file_it_checks():
     pats = re.findall(r"grep -qF '([^']+)' \"\$AGENT_PATH/([^\"]+)\"", block)
     assert len(pats) == 10, pats
     for pat, name in pats:
-        assert pat in (STRATEGY / name).read_text(), (pat, name)
+        assert pat in read_source(STRATEGY / name), (pat, name)
 
 
 def test_the_launcher_parses():

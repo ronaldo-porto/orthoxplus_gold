@@ -40,7 +40,8 @@ SIMPLE = STRATEGY_DIR / "Strategy1_Research_Simple.py"
 REFRESH = STRATEGY_DIR / "research_direct_exit_refresh.py"
 
 sys.path.insert(0, str(STRATEGY_DIR))
-SRC = SIMPLE.read_text()
+from _harness import simple_text, read_source  # noqa: E402
+SRC = simple_text()
 
 BOOK = 115
 
@@ -526,7 +527,7 @@ def test_new_telemetry_counters_are_reported():
 
 
 def test_launcher_refuses_an_a192_build_without_the_switch():
-    sh = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+    sh = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
     assert 'research_a192_book_risk_admission_enabled=1' in sh
     guard = sh.split("A192_BUILD:-0")[1]
     assert '"$PARAMS" ==' in guard        # by value, not by grepping the script
@@ -535,6 +536,6 @@ def test_launcher_refuses_an_a192_build_without_the_switch():
 def test_launcher_reachability_guard_matches_the_call_not_the_definition():
     """Grepping the bare name matches `def _a192_admission_verdict(` and can
     never fail, so a build whose gate is unreachable would pass preflight."""
-    sh = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+    sh = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
     assert r"self\._a192_admission_verdict(" in sh
     assert "grep -q '_a192_admission_verdict('" not in sh

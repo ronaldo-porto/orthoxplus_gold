@@ -41,6 +41,10 @@ V633_DEEP_LAYER_VERSION = "deep_layer_v6_3_3"
 SWEEP_QUANTILE = 0.9
 SWEEP_MIN = 20
 SWEEP_KEEP = 400
+# v6.39 (research_v6_39_runlen, S3.2): a book's sweep record keeps its sorted copy keyed on its own content, so depth()
+# and sweep_depths() sort once per change instead of once per call.  Written by the agent's constructor
+# (research_v6_39_runlen.apply); off here, so the module alone behaves as v6.38.
+_V639_SORTED_CACHE = False
 DEEP_CLIPS = 1.0
 DEEP_MAX_CLIPS = 2.0
 REPRICE_LOW = 0.5
@@ -130,7 +134,10 @@ def sweep_depths(trades: Iterable[dict], prev_bid: float, prev_ask: float, tick:
 
 
 def quantile(values: Iterable[float], q: float) -> float | None:
-    v = sorted(float(x) for x in values)
+    if _V639_SORTED_CACHE and isinstance(values, SweepRecord):
+        v = values.sorted_floats()
+    else:
+        v = sorted(float(x) for x in values)
     if not v:
         return None
     return v[min(len(v) - 1, int(float(q) * len(v)))]
@@ -202,11 +209,30 @@ class PaperDeep:
         return 0.0 if n <= 0 else m - (s_ / n) * d
 
 
+class SweepRecord(deque):
+    """v6.39: a book's sweep record -- the deque of v6.38 (maxlen SWEEP_KEEP) with its sorted copy kept beside it,
+    keyed on the record's content (tuple equality): every mutation path (observe, the v6.8 restore, a test) is
+    seen, and the copy is the same list `sorted(float(x) for x in record)` builds."""
+    __slots__ = ("_v639_key", "_v639_sorted")
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._v639_key = None
+        self._v639_sorted = None
+
+    def sorted_floats(self) -> list[float]:
+        key = tuple(self)
+        if self._v639_sorted is None or self._v639_key != key:
+            self._v639_sorted = sorted(float(x) for x in key)
+            self._v639_key = key
+        return self._v639_sorted
+
+
 class DeepBook:
     __slots__ = ("sweeps", "paper", "prev_touch")
 
     def __init__(self) -> None:
-        self.sweeps: deque = deque(maxlen=SWEEP_KEEP)
+        self.sweeps: deque = SweepRecord(maxlen=SWEEP_KEEP)
         self.paper = PaperDeep()
         self.prev_touch: tuple[float, float] | None = None
 
@@ -267,7 +293,10 @@ class DeepLayer:
         db = self.books.get(int(book_id))
         if db is None or len(db.sweeps) < SWEEP_MIN:
             return None
-        v = sorted(float(x) for x in db.sweeps)
+        if _V639_SORTED_CACHE and isinstance(db.sweeps, SweepRecord):
+            v = db.sweeps.sorted_floats()
+        else:
+            v = sorted(float(x) for x in db.sweeps)
         n = len(v)
         return tuple(v[min(n - 1, int(float(q) * n))] for q in quantiles)
 

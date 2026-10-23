@@ -29,11 +29,12 @@ import pytest
 import research_v61_lot_floor as lf
 from _harness import extractor
 from research_direct_exit import DIRECT_MAKER_EXIT_TARGET_BPS
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 
 _method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 

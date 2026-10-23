@@ -6,9 +6,10 @@ ROOT = Path(__file__).parents[1]
 STRATEGY_DIR = ROOT / "agents" / "strategy"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(STRATEGY_DIR))
+from _harness import simple_text, read_source  # noqa: E402
 
 PATH = STRATEGY_DIR / "Strategy1_Research_Simple.py"
-SRC = PATH.read_text(encoding="utf-8")
+SRC = simple_text()
 TREE = ast.parse(SRC)
 CLASS = next(n for n in TREE.body if isinstance(n, ast.ClassDef) and n.name == "Strategy1_Research_Simple")
 METHODS = {n.name: n for n in CLASS.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
@@ -176,6 +177,6 @@ def test_frozen_base_exit_liveness_and_fastpath_files_have_no_a174_patch():
         "Strategy1_Research.py", "research_direct_exit.py",
         "research_direct_liveness.py", "research_direct_fastpath.py",
     ]:
-        src = (STRATEGY_DIR / name).read_text(encoding="utf-8")
+        src = read_source(STRATEGY_DIR / name)
         assert "A174_" not in src
         assert "a1_7_4" not in src

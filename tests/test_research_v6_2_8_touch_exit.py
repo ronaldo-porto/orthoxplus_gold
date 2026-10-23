@@ -24,9 +24,10 @@ import research_v628_touch_exit as te  # noqa: E402
 import research_v625_cap_paced as cp  # noqa: E402
 import research_realization as rr  # noqa: E402
 from _harness import extractor  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _simple = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 BID, ASK, TICK = 100.00, 100.10, 0.01
@@ -186,7 +187,7 @@ def test_the_binding_is_scoped_to_the_one_evaluation_call():
 
 def test_only_one_inventory_util_call_feeds_the_evaluation():
     """The scope is safe because the frozen evaluation calls _inventory_util exactly once (the urgency input)."""
-    frozen = (STRATEGY / "Strategy1_Research.py").read_text()
+    frozen = read_source(STRATEGY / "Strategy1_Research.py")
     tree = ast.parse(frozen)
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
     fn = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_research_evaluate_realization")

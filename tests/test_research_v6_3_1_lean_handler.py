@@ -19,11 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import research_v631_lean_handler as lh  # noqa: E402
 from _harness import extractor  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-BASE_S1 = (STRATEGY / "Strategy1.py").read_text()
-TEMPLATE = (STRATEGY / "DetailedTemplateAgent.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+BASE_S1 = read_source(STRATEGY / "Strategy1.py")
+TEMPLATE = read_source(STRATEGY / "DetailedTemplateAgent.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 _simple = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 
 METHODS = ("_v631_lean_on", "_v631_count", "_v631_snapshot", "_predict_all_books",

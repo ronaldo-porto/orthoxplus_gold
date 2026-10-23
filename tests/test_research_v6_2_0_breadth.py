@@ -35,11 +35,12 @@ import research_v6214_touch_life as tl14  # noqa: E402
 import research_v6215_order_life as ol15
 import research_v63_trend_target as tt63  # noqa: E402
 import research_v631_sim_reset as sr631  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 
 _method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 

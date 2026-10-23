@@ -5,9 +5,10 @@ import sys
 ROOT = Path(__file__).parents[1]
 STRATEGY_DIR = ROOT / 'agents' / 'strategy'
 sys.path.insert(0, str(STRATEGY_DIR))
+from _harness import simple_text, read_source  # noqa: E402
 
 PATH = STRATEGY_DIR / 'Strategy1_Research_Simple.py'
-SRC = PATH.read_text(encoding='utf-8')
+SRC = simple_text()
 TREE = ast.parse(SRC)
 CLASS = next(n for n in TREE.body if isinstance(n, ast.ClassDef) and n.name == 'Strategy1_Research_Simple')
 METHODS = {n.name: n for n in CLASS.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
@@ -181,6 +182,6 @@ def test_overlay_injects_true_inventory_mtm_and_existing_veto_parameters():
 
 
 def test_frozen_base_still_untouched_by_a171_overlay():
-    base_src = (STRATEGY_DIR / 'Strategy1_Research.py').read_text(encoding='utf-8')
+    base_src = read_source(STRATEGY_DIR / 'Strategy1_Research.py')
     assert 'A171_EXIT_DIAGNOSTIC' not in base_src
     assert 'direct_observable_exit_v4_16_2_a1_7_1' not in base_src

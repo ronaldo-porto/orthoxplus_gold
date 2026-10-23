@@ -15,11 +15,12 @@ import research_v601_capacity as cap
 from research_direct_legacy_baseline import admission_decomposition
 from research_direct_liveness import admission_slots, dust_recovery_reserve_abs, normalization_allowed
 from _harness import extractor
+from _harness import simple_text, read_source  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 STRATEGY = ROOT / "agents" / "strategy"
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
+SIMPLE = simple_text()
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
 
 MIN = 0.25
 EPS = 0.00005

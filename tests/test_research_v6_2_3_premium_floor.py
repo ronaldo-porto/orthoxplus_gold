@@ -28,11 +28,12 @@ import research_v623_premium_floor as pf  # noqa: E402
 from research_direct_exit import DIRECT_MAKER_EXIT_TARGET_BPS  # noqa: E402
 from research_v61_lot_floor import fifo_close_net_bps  # noqa: E402
 from _harness import extractor  # noqa: E402
+from _harness import simple_text, read_source  # noqa: E402
 
-SIMPLE = (STRATEGY / "Strategy1_Research_Simple.py").read_text()
-RESEARCH = (STRATEGY / "Strategy1_Research.py").read_text()
-LAUNCHER = (ROOT / "run_strategy1_research_simple_multi.sh").read_text()
-MODULE = (STRATEGY / "research_v623_premium_floor.py").read_text()
+SIMPLE = simple_text()
+RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
+LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
+MODULE = read_source(STRATEGY / "research_v623_premium_floor.py")
 _method_source = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 S = 1_000_000_000
 
