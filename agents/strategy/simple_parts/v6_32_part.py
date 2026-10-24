@@ -63,6 +63,8 @@ class V632Part:
             top, per_book = 0.0, {}
             if fee_on:
                 tracker = self._v6_32_tracker_ref()
+                if getattr(self, "research_v640_s14_flush_spec", False):
+                    self._v6_40_flush(tracker, spec)            # v6.40 B4(6): the flush of this state's release
                 if tracker.begin(now):
                     self._v6_32_count("tracker_resets")     # a clock that ran back: the streams start over
                 active = bool(v6_32_gate_active(fee_on, spec, getattr(self, "research_v632_fee_weight", 0.0)))
@@ -125,6 +127,8 @@ class V632Part:
         """v6.32 S14: (the top-level minimum order size, {book: its class's}) -- the dust floor's voting bar the validator
         reads per book -- read once per simulation."""
         key = v626_state_sim_id(cfg)
+        if getattr(self, "research_v640_s14_class_key", False):
+            key = self._v6_40_s14_key(cfg, key)          # v6.40 B4(5): + the class list's digest
         cached = getattr(self, "_v6_32_mins", None)
         if cached is not None and key and cached[0] == key:
             return cached[1], cached[2]

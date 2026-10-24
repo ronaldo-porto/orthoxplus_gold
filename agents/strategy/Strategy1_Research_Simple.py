@@ -1212,12 +1212,13 @@ DIRECT_A175_SHADOW_HORIZON_TICKS = 200
 DIRECT_A175_SHADOW_LEDGER_MAX = 256
 
 
+from simple_parts.v6_40_part import V640Part
 from simple_parts.v6_36_part import V636Part
 from simple_parts.v6_32_part import V632Part
 from simple_parts.v6_30_part import V630Part
 from simple_parts.v6_31_part import V631Part
 from simple_parts.v6_29_part import V629Part
-class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
+class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
     """V4.16.2 A1.9.2 fee-conditioned book risk admission on A1.9.1.2.
 
     What is deliberately removed from the hot entry path:
@@ -2509,6 +2510,10 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
         self._v6_39_census_cache = {}
         if self.research_v639_runlen and getattr(self, "_a1992_idle_gc", None) is not None:
             self._a1992_idle_gc.deferred_full = True
+        # v6.40 (research_v640_*): the three-class layout of SN79 0.6.5 (scratchpad k139) -- per-class plumbing, the class
+        # arms C2P / C2D / C2J / C2Q / C1W of k137's vm739 (every one shipped off) and k138's class-guard / S14 fixes
+        # (on); every key read with its default by simple_parts/v6_40_part.py (V640Part._v6_40_init).
+        self._v6_40_init()
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -9526,7 +9531,10 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
         instructions = getattr(response, "instructions", None)
         if not instructions:
             return 0
-        moved = v611_lift_instruction_prices(instructions, self._v61_price_decimals(state))
+        if getattr(self, "_v6_40_decs", None):
+            moved = self._v6_40_lift(instructions, self._v61_price_decimals(state))   # v6.40: per-book decimals
+        else:
+            moved = v611_lift_instruction_prices(instructions, self._v61_price_decimals(state))
         total = 0
         for side, n in moved.items():
             if n:
@@ -11209,6 +11217,8 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
         n = len(books)
         if n <= 0:
             return
+        if getattr(self, "_v6_40_grids", None):
+            n = self._v6_40_caps_books(books, n)        # v6.40: a scaled class's books count in its units
         caps = v63_caps_for(n, clip=self._v63_clip())
         if getattr(self, "research_v65_deep_clip_mult", None) is not None and self._v633_on():
             # v6.5: every book may hold the deep layer's bound plus one deep order in flight (the final validator
@@ -12356,6 +12366,11 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
                 foreign, layout = frozenset(), V623_LAYOUT_UNREADABLE
             if layout == V623_LAYOUT_UNREADABLE:
                 self._v6_23_count("layout_unreadable_states")
+        if getattr(self, "_v6_40_counts", None) is not None:
+            # v6.40: the class map, the traded classes' grids and their books out of the foreign set; B4(2) an unreadable
+            # class list keeps the last readable foreign set, B4(3) the initial price is compared too (research_v640_*)
+            foreign, layout = self._v6_40_observe(state, foreign, layout,
+                                                  bool(getattr(self, "research_v623_class_guard", False)))
         self._v6_23_spec, self._v6_23_active = spec, active
         self._v6_23_foreign, self._v6_23_layout = foreign, layout
         if active:
@@ -12972,6 +12987,9 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
             if layout.get("status") == V6_34_STATUS_OK:
                 self._v6_34_c1 = frozenset(layout.get("books") or ())
                 self._v6_34_route = self._v6_34_c1          # class-1 books: their fills stay out of class 0's estimate
+                if getattr(self, "_v6_40_counts", None) is not None:
+                    # v6.40: the entry only on books whose price is class 1's market (else they stay foreign)
+                    self._v6_34_c1 = self._v6_40_c1_market(state, self._v6_34_c1)
             route = getattr(self, "_v6_34_route", None) or frozenset()
             if not route:
                 return
@@ -12988,6 +13006,8 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
             now = int(getattr(state, "timestamp", 0) or 0)
             spec = v623_validator_spec(getattr(state, "version", None))
             v6_34_tracker = self._v6_34_tracker_ref()
+            if getattr(self, "research_v640_s14_flush_spec", False):
+                self._v6_40_flush(v6_34_tracker, spec)          # v6.40 B4(6): the flush of this state's release
             if v6_34_tracker.begin(now):
                 self._v6_34_count("tracker_resets")         # a clock that ran back: the streams start over
             active = bool(v6_32_gate_active(getattr(self, "research_v632_fee_making", False), spec,
@@ -13098,9 +13118,11 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
             if capped:
                 plan[side] = (0.0, V6_34_WHY_CAPPED)
             else:
+                v6_40_c1w = bool(getattr(self, "research_v640_c1w", 0))   # v6.40 C1W: L3's join -- no S9, no S17-R
                 plan[side] = v6_34_side_plan(side, inventory=inv, clip=clip1, bound=bound1, min_size=min1,
-                                             is_paced=is_paced, s9_held=s9, fee_gated=gated, d4_off=d4_off,
-                                             miner_held=self._v6_34_holds.held(book_id, side, now))
+                                             is_paced=is_paced, s9_held=(None if v6_40_c1w else s9), fee_gated=gated,
+                                             d4_off=d4_off, miner_held=(False if v6_40_c1w else
+                                                                        self._v6_34_holds.held(book_id, side, now)))
             self._v6_34_count("armed" if plan[side][1] is None else "held_" + str(plan[side][1]).lower())
         v6_38_keep = None
         if getattr(self, "_v6_38_l3_on", False):
@@ -13914,9 +13936,17 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
         placed_total = 0
         # v6.8 S1: with a deep layer, a book it does not trade quotes nothing -- the v6.3.2 touch path is no fallback.
         no_fallback = v68_touch_fallback_retired(getattr(self, "research_v68_no_touch_fallback", False), deep is not None)
+        # v6.40: the traded non-home classes' books carry their class's grid (venue tick, price decimals, minimum; the
+        # deep layer's depth unit) -- empty with research_v640_traded_classes=0 (every book on the top level's, v6.39)
+        v6_40_grids = getattr(self, "_v6_40_grids", None) or {}
+        v6_40_base = (dec, tick_size, min_order)
         for raw_id in sorted(books, key=lambda x: int(x)):
             book_id = int(raw_id)
             book = books[raw_id]
+            v6_40_g = v6_40_grids.get(book_id) if v6_40_grids else None
+            if v6_40_grids:
+                dec, tick_size, min_order = v6_40_base if v6_40_g is None else (
+                    v6_40_g.dec, v6_40_g.tick, v6_40_g.min_order / v6_40_g.scale)   # the minimum in class-0 units
             try:
                 self._v6214_note_prints(book_id, book)
             except Exception:
@@ -13945,10 +13975,14 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
                         # v6.30 D1: the book's paper record rests its paper orders where its live deep orders go, so
                         # v6.8's gate judges the level the book trades (research_v630_deep_tier)
                         self._v6_30_paper(deep, book_id)
+                    if v6_40_g is not None:
+                        tick_size = v6_40_g.du          # v6.40: the record of a traded non-home book in its depth unit
                     depth = deep.observe(book_id, now_ts, trades, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
                 except Exception:
                     self._v633_errors = int(getattr(self, "_v633_errors", 0) or 0) + 1
                     depth = None
+                if v6_40_g is not None:
+                    tick_size = v6_40_g.tick            # v6.40: the venue tick again for everything below
             if getattr(self, "_v6_38_l3_on", False):
                 # v6.38 L3 FBL (research_v638_lean): the book's lean sign before this state (the touch quote below reads
                 # it) and after it -- updated once the deep layer's sweep record is long enough (the replay's deep block)
@@ -14010,6 +14044,8 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
                     inv = float(self._direct_signed_inventory(book_id))
                 except Exception:
                     inv = 0.0
+            if v6_40_g is not None and v6_40_g.scale != 1.0:
+                inv = float(inv) / v6_40_g.scale        # v6.40: a scaled class's position in class-0 units
             # v6.25 S5: v6_25_inv = inv - tau, the inventory every making decision of this book reads below (the touch
             # quote, S1, S2m, pacing's adding side, the bound, v6.12's half depth, v6.6's spacing); v6_25_fills = inv -
             # the previous request's tau, the one this state's fills rested under (v6.6's fill-side record).  Off, on a
@@ -14110,6 +14146,12 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
                 placed_total += self._v6_34_book(response, state, book_id, deep, raw_bid, raw_ask, inv, touch_rows,
                                                  rows + deep_rows, already, req, budget=budget, expiry=expiry, cfg=cfg)
                 continue
+            if v6_40_g is not None and self._v6_40_c2q_off(book_id):
+                # v6.40 C2Q (research_v640_c2q): below the break-even this block every order of ours on the class-2 book
+                # is cancelled and none placed
+                placed_total += self._v6_40_c2q_cancel(response, book_id, rows + deep_rows + touch_rows, already, req,
+                                                       budget=budget)
+                continue
             deep_open = False
             if deep is not None and depth is not None:
                 try:
@@ -14146,6 +14188,15 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
                         # v6.28 S8: the launch clip at the rate the book's launch runs at -- the deep layer's clip in a
                         # flat launch window, v6.15's in one restored without a rate (never raises: else v6.27's)
                         clip_b = self._v6_28_clip(deep.clip, clip_b, pace, book_id, now_ts)
+                if v6_40_g is not None:
+                    # v6.40: a traded non-home book -- v6.3.3's deep layer and v6.17's touch quote on its class's grid, depth
+                    # unit and size scale (simple_parts/v6_40_part.py); the launch clip as below
+                    placed_total += self._v6_40_book(
+                        response, book_id, deep, depth, raw_bid, raw_ask, v6_25_inv, rows, deep_rows, touch_rows, already,
+                        req, touch_on=touch_on, tick_size=tick_size, dec=dec, clip=clip_b, min_order=min_order,
+                        budget=budget, expiry=expiry, cfg=cfg, paced=paced, bound_scale=bound_scale, held=held,
+                        size_scale=size_scale, cap_skip=cap_skip, against=against)
+                    continue
                 if clip_b > deep.clip + 1e-12:
                     # v6.15: inside its launch window a book's deep orders carry the launch rate's clip (the bound stays);
                     # every other book takes the call below at the deep layer's clip, unchanged (v6.5 S1).
@@ -14608,6 +14659,8 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
             self._v6_23_errors = int(getattr(self, "_v6_23_errors", 0) or 0) + 1
             self._v6_23_active, self._v6_23_foreign = False, frozenset()     # v6.22 for this request
             self._v6_23_layout = V623_LAYOUT_UNREADABLE
+            if getattr(self, "research_v640_guard_hold", False):
+                self._v6_23_foreign = self._v6_40_held_foreign()   # v6.40 B4(2): fail closed -- the last readable set
         if getattr(self, "_v6_34_counts", None) is not None:
             # v6.34, before v6.32's tracker and any decision: the class map's class-1 books and units, their prints into
             # the class-1 realized tracker and S17-R's miner-taker clock (research_v634_class1_entry).  Never raises: an
@@ -14625,6 +14678,10 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
             # sides (the step state and the next) for the filters after the chain (research_v636_step_withdrawal).
             # Never raises: an error counts and nothing is withdrawn this request.
             self._v6_36_request(state)
+        if getattr(self, "_v6_40_counts", None) is not None:
+            # v6.40, after v6.36's plan and before any decision: C2Q's fee rates, C1W's pre-step withdrawal of every
+            # class-1 order (research_v640_c1w) and the V6_40_STATE row.  Never raises.
+            self._v6_40_request(state)
         if getattr(self, "_v6_38_l3_counts", None) is not None:
             # v6.38 layer 3, after v6.36's step record took this state and before any decision: whether any layer-3
             # switch is on (else every layer-3 hook is inert: v6.37) and KBL's post-step window of this state
@@ -17422,6 +17479,10 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
         # v6.34: the class-1 entry quotes this request placed, by (book, client id) (research_v634_class1_entry)
         v6_34_keys = (getattr(self, "_v6_34_keys", None) or set()) if bool(
             getattr(self, "research_v634_class1_entry", False)) else set()
+        # v6.40: each traded non-home book's own grid (venue tick, price decimals, minimum) for its placements below --
+        # empty with research_v640_traded_classes=0 (v6.39)
+        v6_40_fv = getattr(self, "_v6_40_vgrids", None) or {}
+        v6_40_fv0 = (tick_size, price_dec, min_size)
         for instruction in placements:
             raw_book = self._get(instruction, "bookId", "book_id")
             try:
@@ -17429,6 +17490,8 @@ class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part
             except (TypeError, ValueError):
                 continue
             side = self._research_instruction_side(instruction)
+            if v6_40_fv:
+                tick_size, price_dec, min_size = v6_40_fv.get(book_id, v6_40_fv0)
             if v6_34_keys and self._v6_34_passes(book_id, instruction, v6_34_keys):
                 # v6.34: a class-1 entry quote of this request -- built and checked by _v6_34_book on its class's own
                 # minimum, grids, bound, slot and cap -- passes as built; every other placement on a class-1 book still

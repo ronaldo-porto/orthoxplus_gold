@@ -40,6 +40,11 @@ from taos.common.config import add_miner_args
 from taos.common.agents import SimulationAgent
 from taos.common.protocol import SimulationStateUpdate, EventNotification
 
+# v6.40 (k139): upstream 0.6.5 (c36caa9) -- rounds are ~5.2 s apart and uvicorn closes an idle connection after 5 s,
+# so every round paid a new handshake; a longer keep-alive lets a validator that reuses its session keep the
+# connection.  Network only: no agent decision reads it.
+AXON_KEEP_ALIVE_S = 120
+
 
 class BaseMinerNeuron(BaseNeuron):
     """
@@ -72,6 +77,8 @@ class BaseMinerNeuron(BaseNeuron):
 
         # The axon handles request processing, allowing validators to send this miner requests.
         self.axon = bt.Axon(wallet=self.wallet, config=self.config, ip=self.config.axon.ip, port=self.config.axon.port, external_ip=self.config.axon.external_ip, external_port=self.config.axon.external_port)
+        # v6.40 (upstream 0.6.5): keep an idle validator connection open across rounds (uvicorn's default: 5 s)
+        self.axon.fast_config.timeout_keep_alive = AXON_KEEP_ALIVE_S
 
         # Attach determiners which functions are called when servicing a request.
         bt.logging.info("Attaching forward function to miner axon.")

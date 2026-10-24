@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import ast
 
+import _v640_undo   # v6.40 (k139): its exact text undo runs first in parse / source_v638 / launcher_v638
+
 SWITCH = "research_v639_runlen"
 V639_MODULE = "research_v6_39_runlen"
 SIMPLE_CLASS = "Strategy1_Research_Simple"
@@ -169,7 +171,9 @@ def _undo_observatory(tree, cls):
 
 
 def undo(tree):
-    """v6.39's changes undone in a parsed module, in place (see the module docstring); returns the tree."""
+    """v6.39's changes undone in a parsed module, in place (see the module docstring); returns the tree.  v6.40's hooks
+    go first (tests/_v640_undo.undo_tree), so every older strip inherits them."""
+    _v640_undo.undo_tree(tree)
     cls = _class(tree, SIMPLE_CLASS)
     if cls is not None:
         _undo_simple(tree, cls)
@@ -185,8 +189,9 @@ def undo(tree):
 
 
 def parse(text):
-    """``ast.parse(text)`` with v6.39 undone: v6.38 M-FROZEN_2's AST of the same file."""
-    return undo(ast.parse(text))
+    """``ast.parse(text)`` with v6.39 undone: v6.38 M-FROZEN_2's AST of the same file (v6.40's text edits reversed
+    first: tests/_v640_undo.py)."""
+    return undo(ast.parse(_v640_undo.joined_v639(text)))
 
 
 # The launcher: v6.39's text edits as (v6.39 text, v6.38 text) pairs, applied in order, each found exactly once.
@@ -211,7 +216,8 @@ V639_LAUNCHER_EDITS_S4 = (
 def launcher_v638(text):
     """v6.39's launcher text with v6.39's edits undone (S4's view first, then S3's block / key / gate entry): v6.38
     M-FROZEN_2's launcher, byte for byte (tests/test_research_v6_39.py pins its sha256).  Raises if an edit is not found
-    exactly once (then this is not v6.39's launcher)."""
+    exactly once (then this is not v6.39's launcher).  v6.40's launcher edits are reversed first (tests/_v640_undo.py)."""
+    text = _v640_undo.launcher_v639(text)
     for new, old in V639_LAUNCHER_EDITS_S4 + V639_LAUNCHER_EDITS:
         if text.count(new) != 1:
             raise AssertionError("v6.39 launcher edit not found exactly once: %r" % new[:80])
@@ -271,7 +277,9 @@ V639_TEXT_EDITS = {
 def source_v638(name, text):
     """``text`` of agents/strategy/<name> with v6.39 S3's edits undone: M-FROZEN_2b's file byte for byte
     (tests/test_research_v6_39.py pins it).  A module v6.39 did not edit comes back as it is.  Raises if one of the
-    edits is not found exactly once (then this is not v6.39's text of that module)."""
+    edits is not found exactly once (then this is not v6.39's text of that module).  v6.40's edits are reversed first
+    (tests/_v640_undo.py)."""
+    text = _v640_undo.source_v639(name, text)
     for new, old in reversed(V639_TEXT_EDITS.get(str(name).rsplit("/", 1)[-1], ())):
         if text.count(new) != 1:
             raise AssertionError("v6.39 text edit of %s not found exactly once: %r" % (name, new[:80]))

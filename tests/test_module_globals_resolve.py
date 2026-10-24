@@ -61,6 +61,8 @@ MODULES = [
     "simple_parts/v6_31_part.py",
     "simple_parts/v6_32_part.py",
     "simple_parts/v6_36_part.py",
+    "research_v6_40_classes.py",          # k139: v6.40
+    "simple_parts/v6_40_part.py",
     "research_v6214_touch_life.py",
     "research_v6215_order_life.py",
     "research_v63_trend_target.py",

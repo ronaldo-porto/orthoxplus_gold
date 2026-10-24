@@ -55,7 +55,9 @@ def _class(path):
 def _chain_surface():
     """Every method name and every ``self.x = ...`` target in the class chain."""
     surface = set()
-    for name in CHAIN:
+    # k139: Simple's mixins (simple_parts/*_part.py, Simple's bases since v6.39 S4; v6.40's V640Part assigns its own state)
+    parts = tuple("simple_parts/" + p.name for p in sorted((STRATEGY / "simple_parts").glob("*_part.py")))
+    for name in CHAIN + parts:
         path = STRATEGY / name
         if not path.exists():
             continue

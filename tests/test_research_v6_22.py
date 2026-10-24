@@ -616,7 +616,9 @@ def test_each_rule_is_wired_once_and_in_its_place_in_the_pass():
     assert observe < body.index(S2_LINE) < paced < body.index(S1_LINE) < body.index("if paced and v620_on:")
     assert body.index("if v621_on:\n            self._v621_pass(") < body.index("v6_22_aged = ")   # its status first
     assert body.index(S3_LINE) < body.index("placed_total += self._v633_book(")
-    assert body.count("cap_skip=cap_skip") == 4                      # the deep layer and the touch quote, both calls
+    import _v640_undo                                                       # k139: v6.40's routing call counted out
+    body639 = extractor(_v640_undo.joined_v639(SIMPLE), cls_name="Strategy1_Research_Simple")("_v63_pass")
+    assert body639.count("cap_skip=cap_skip") == 4                   # the deep layer and the touch quote, both calls
     assert _src("_v617_book").count("cap_skip=cap_skip") == 1
     assert "paced: bool = False, cap_skip: bool = False," in _src("_v633_book")
     assert "size_scale: float = 1.0, cap_skip: bool = False) -> int:" in _src("_v617_touch")

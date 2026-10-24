@@ -125,6 +125,7 @@ class V636Part:
                 return
             decimals = self._v61_price_decimals(state)
             lift = bool(self._v611_price_lift_on())
+            v6_40_decs = getattr(self, "_v6_40_decs", None) or {}     # v6.40: per-book decimals of traded classes
             drop: set[int] = set()
             per_book: dict[int, list] = {}
             for ix in instructions:
@@ -139,7 +140,8 @@ class V636Part:
                     mid, radius, hold_side = plan[book_id]
                     why = v6_36_withdrawal(
                         v6_36_side_of(self._get(ix, "direction", "side")),
-                        v6_36_placed_price(self._get(ix, "price", "limitPrice", "limit_price"), decimals, lift),
+                        v6_36_placed_price(self._get(ix, "price", "limitPrice", "limit_price"),
+                                           (v6_40_decs.get(book_id, decimals) if v6_40_decs else decimals), lift),
                         mid=mid, radius=radius, hold_side=hold_side)
                     if why is not None:
                         drop.add(id(ix))

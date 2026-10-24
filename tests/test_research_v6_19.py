@@ -204,7 +204,8 @@ def test_the_switch_ships_on_and_agrees_with_the_agent_default():
 
 def test_every_layer_on_the_book_takes_the_held_side():
     assert SIMPLE.count(RULE_LINE) == 1 and SIMPLE.count("from research_v619_surplus_hold import (") == 1
-    assert SIMPLE.count("paced=paced, bound_scale=bound_scale, held=held,") == 2       # the deep layer, both call sites
+    import _v640_undo                                                       # k139: v6.40's routing call counted out
+    assert _v640_undo.joined_v639(SIMPLE).count("paced=paced, bound_scale=bound_scale, held=held,") == 2  # deep, both sites
     assert SIMPLE.count("paced=paced, held=held") == 3                                # the touch quote, both + its guard (v6.20 appends size_scale)
     assert SIMPLE.count("doomed.append((row, V619_CANCEL_SURPLUS))") == 1
     assert SIMPLE.count("why = V619_CANCEL_SURPLUS") == 1

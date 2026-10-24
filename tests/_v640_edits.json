@@ -1,0 +1,156 @@
+{
+ "base_joined_sha256": "db56e75962e615af02d5169b7b702b9554e4a54cd5609dc04e0b13a8c7d6ac41",
+ "joined_sha256": "e0177099db1e4e5da298bd7c93948315f7472b75a61424363d43f0a70eff44b6",
+ "edits": [
+  {
+   "label": "init",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        if self.research_v639_runlen and getattr(self, \"_a1992_idle_gc\", None) is not None:\n            self._a1992_idle_gc.deferred_full = True\n",
+   "new": "        if self.research_v639_runlen and getattr(self, \"_a1992_idle_gc\", None) is not None:\n            self._a1992_idle_gc.deferred_full = True\n        # v6.40 (research_v640_*): the three-class layout of SN79 0.6.5 (scratchpad k139) -- per-class plumbing, the class\n        # arms C2P / C2D / C2J / C2Q / C1W of k137's vm739 (every one shipped off) and k138's class-guard / S14 fixes\n        # (on); every key read with its default by simple_parts/v6_40_part.py (V640Part._v6_40_init).\n        self._v6_40_init()\n"
+  },
+  {
+   "label": "observe",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "            if layout == V623_LAYOUT_UNREADABLE:\n                self._v6_23_count(\"layout_unreadable_states\")\n        self._v6_23_spec, self._v6_23_active = spec, active\n",
+   "new": "            if layout == V623_LAYOUT_UNREADABLE:\n                self._v6_23_count(\"layout_unreadable_states\")\n        if getattr(self, \"_v6_40_counts\", None) is not None:\n            # v6.40: the class map, the traded classes' grids and their books out of the foreign set; B4(2) an unreadable\n            # class list keeps the last readable foreign set, B4(3) the initial price is compared too (research_v640_*)\n            foreign, layout = self._v6_40_observe(state, foreign, layout,\n                                                  bool(getattr(self, \"research_v623_class_guard\", False)))\n        self._v6_23_spec, self._v6_23_active = spec, active\n"
+  },
+  {
+   "label": "observe_raised",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "            self._v6_23_active, self._v6_23_foreign = False, frozenset()     # v6.22 for this request\n            self._v6_23_layout = V623_LAYOUT_UNREADABLE\n",
+   "new": "            self._v6_23_active, self._v6_23_foreign = False, frozenset()     # v6.22 for this request\n            self._v6_23_layout = V623_LAYOUT_UNREADABLE\n            if getattr(self, \"research_v640_guard_hold\", False):\n                self._v6_23_foreign = self._v6_40_held_foreign()   # v6.40 B4(2): fail closed -- the last readable set\n"
+  },
+  {
+   "label": "request",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "            self._v6_36_request(state)\n        if getattr(self, \"_v6_38_l3_counts\", None) is not None:\n",
+   "new": "            self._v6_36_request(state)\n        if getattr(self, \"_v6_40_counts\", None) is not None:\n            # v6.40, after v6.36's plan and before any decision: C2Q's fee rates, C1W's pre-step withdrawal of every\n            # class-1 order (research_v640_c1w) and the V6_40_STATE row.  Never raises.\n            self._v6_40_request(state)\n        if getattr(self, \"_v6_38_l3_counts\", None) is not None:\n"
+  },
+  {
+   "label": "pass_grid",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        no_fallback = v68_touch_fallback_retired(getattr(self, \"research_v68_no_touch_fallback\", False), deep is not None)\n        for raw_id in sorted(books, key=lambda x: int(x)):\n            book_id = int(raw_id)\n            book = books[raw_id]\n",
+   "new": "        no_fallback = v68_touch_fallback_retired(getattr(self, \"research_v68_no_touch_fallback\", False), deep is not None)\n        # v6.40: the traded non-home classes' books carry their class's grid (venue tick, price decimals, minimum; the\n        # deep layer's depth unit) -- empty with research_v640_traded_classes=0 (every book on the top level's, v6.39)\n        v6_40_grids = getattr(self, \"_v6_40_grids\", None) or {}\n        v6_40_base = (dec, tick_size, min_order)\n        for raw_id in sorted(books, key=lambda x: int(x)):\n            book_id = int(raw_id)\n            book = books[raw_id]\n            v6_40_g = v6_40_grids.get(book_id) if v6_40_grids else None\n            if v6_40_grids:\n                dec, tick_size, min_order = v6_40_base if v6_40_g is None else (\n                    v6_40_g.dec, v6_40_g.tick, v6_40_g.min_order / v6_40_g.scale)   # the minimum in class-0 units\n"
+  },
+  {
+   "label": "pass_observe",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "                        self._v6_30_paper(deep, book_id)\n                    depth = deep.observe(book_id, now_ts, trades, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)\n                except Exception:\n                    self._v633_errors = int(getattr(self, \"_v633_errors\", 0) or 0) + 1\n                    depth = None\n",
+   "new": "                        self._v6_30_paper(deep, book_id)\n                    if v6_40_g is not None:\n                        tick_size = v6_40_g.du          # v6.40: the record of a traded non-home book in its depth unit\n                    depth = deep.observe(book_id, now_ts, trades, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)\n                except Exception:\n                    self._v633_errors = int(getattr(self, \"_v633_errors\", 0) or 0) + 1\n                    depth = None\n                if v6_40_g is not None:\n                    tick_size = v6_40_g.tick            # v6.40: the venue tick again for everything below\n"
+  },
+  {
+   "label": "pass_units",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "            inv = venue.get(book_id)\n            if inv is None:\n                try:\n                    inv = float(self._direct_signed_inventory(book_id))\n                except Exception:\n                    inv = 0.0\n",
+   "new": "            inv = venue.get(book_id)\n            if inv is None:\n                try:\n                    inv = float(self._direct_signed_inventory(book_id))\n                except Exception:\n                    inv = 0.0\n            if v6_40_g is not None and v6_40_g.scale != 1.0:\n                inv = float(inv) / v6_40_g.scale        # v6.40: a scaled class's position in class-0 units\n"
+  },
+  {
+   "label": "pass_c2q",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "                                                 rows + deep_rows, already, req, budget=budget, expiry=expiry, cfg=cfg)\n                continue\n            deep_open = False\n",
+   "new": "                                                 rows + deep_rows, already, req, budget=budget, expiry=expiry, cfg=cfg)\n                continue\n            if v6_40_g is not None and self._v6_40_c2q_off(book_id):\n                # v6.40 C2Q (research_v640_c2q): below the break-even this block every order of ours on the class-2 book\n                # is cancelled and none placed\n                placed_total += self._v6_40_c2q_cancel(response, book_id, rows + deep_rows + touch_rows, already, req,\n                                                       budget=budget)\n                continue\n            deep_open = False\n"
+  },
+  {
+   "label": "route",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "                if clip_b > deep.clip + 1e-12:\n                    # v6.15: inside its launch window a book's deep orders carry the launch rate's clip (the bound stays);\n",
+   "new": "                if v6_40_g is not None:\n                    # v6.40: a traded non-home book -- v6.3.3's deep layer and v6.17's touch quote on its class's grid, depth\n                    # unit and size scale (simple_parts/v6_40_part.py); the launch clip as below\n                    placed_total += self._v6_40_book(\n                        response, book_id, deep, depth, raw_bid, raw_ask, v6_25_inv, rows, deep_rows, touch_rows, already,\n                        req, touch_on=touch_on, tick_size=tick_size, dec=dec, clip=clip_b, min_order=min_order,\n                        budget=budget, expiry=expiry, cfg=cfg, paced=paced, bound_scale=bound_scale, held=held,\n                        size_scale=size_scale, cap_skip=cap_skip, against=against)\n                    continue\n                if clip_b > deep.clip + 1e-12:\n                    # v6.15: inside its launch window a book's deep orders carry the launch rate's clip (the bound stays);\n"
+  },
+  {
+   "label": "caps",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        books = getattr(state, \"books\", None) or {}\n        n = len(books)\n        if n <= 0:\n            return\n        caps = v63_caps_for(n, clip=self._v63_clip())\n",
+   "new": "        books = getattr(state, \"books\", None) or {}\n        n = len(books)\n        if n <= 0:\n            return\n        if getattr(self, \"_v6_40_grids\", None):\n            n = self._v6_40_caps_books(books, n)        # v6.40: a scaled class's books count in its units\n        caps = v63_caps_for(n, clip=self._v63_clip())\n"
+  },
+  {
+   "label": "validator_grid",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        for instruction in placements:\n            raw_book = self._get(instruction, \"bookId\", \"book_id\")\n            try:\n                book_id = int(raw_book)\n            except (TypeError, ValueError):\n                continue\n            side = self._research_instruction_side(instruction)\n            if v6_34_keys and self._v6_34_passes(book_id, instruction, v6_34_keys):\n",
+   "new": "        # v6.40: each traded non-home book's own grid (venue tick, price decimals, minimum) for its placements below --\n        # empty with research_v640_traded_classes=0 (v6.39)\n        v6_40_fv = getattr(self, \"_v6_40_vgrids\", None) or {}\n        v6_40_fv0 = (tick_size, price_dec, min_size)\n        for instruction in placements:\n            raw_book = self._get(instruction, \"bookId\", \"book_id\")\n            try:\n                book_id = int(raw_book)\n            except (TypeError, ValueError):\n                continue\n            side = self._research_instruction_side(instruction)\n            if v6_40_fv:\n                tick_size, price_dec, min_size = v6_40_fv.get(book_id, v6_40_fv0)\n            if v6_34_keys and self._v6_34_passes(book_id, instruction, v6_34_keys):\n"
+  },
+  {
+   "label": "lift",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        moved = v611_lift_instruction_prices(instructions, self._v61_price_decimals(state))\n",
+   "new": "        if getattr(self, \"_v6_40_decs\", None):\n            moved = self._v6_40_lift(instructions, self._v61_price_decimals(state))   # v6.40: per-book decimals\n        else:\n            moved = v611_lift_instruction_prices(instructions, self._v61_price_decimals(state))\n"
+  },
+  {
+   "label": "flush_c1",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "            v6_34_tracker = self._v6_34_tracker_ref()\n            if v6_34_tracker.begin(now):\n",
+   "new": "            v6_34_tracker = self._v6_34_tracker_ref()\n            if getattr(self, \"research_v640_s14_flush_spec\", False):\n                self._v6_40_flush(v6_34_tracker, spec)          # v6.40 B4(6): the flush of this state's release\n            if v6_34_tracker.begin(now):\n"
+  },
+  {
+   "label": "c1_market",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "            if layout.get(\"status\") == V6_34_STATUS_OK:\n                self._v6_34_c1 = frozenset(layout.get(\"books\") or ())\n                self._v6_34_route = self._v6_34_c1          # class-1 books: their fills stay out of class 0's estimate\n",
+   "new": "            if layout.get(\"status\") == V6_34_STATUS_OK:\n                self._v6_34_c1 = frozenset(layout.get(\"books\") or ())\n                self._v6_34_route = self._v6_34_c1          # class-1 books: their fills stay out of class 0's estimate\n                if getattr(self, \"_v6_40_counts\", None) is not None:\n                    # v6.40: the entry only on books whose price is class 1's market (else they stay foreign)\n                    self._v6_34_c1 = self._v6_40_c1_market(state, self._v6_34_c1)\n"
+  },
+  {
+   "label": "c1w_plan",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "                plan[side] = v6_34_side_plan(side, inventory=inv, clip=clip1, bound=bound1, min_size=min1,\n                                             is_paced=is_paced, s9_held=s9, fee_gated=gated, d4_off=d4_off,\n                                             miner_held=self._v6_34_holds.held(book_id, side, now))\n",
+   "new": "                v6_40_c1w = bool(getattr(self, \"research_v640_c1w\", 0))   # v6.40 C1W: L3's join -- no S9, no S17-R\n                plan[side] = v6_34_side_plan(side, inventory=inv, clip=clip1, bound=bound1, min_size=min1,\n                                             is_paced=is_paced, s9_held=(None if v6_40_c1w else s9), fee_gated=gated,\n                                             d4_off=d4_off, miner_held=(False if v6_40_c1w else\n                                                                        self._v6_34_holds.held(book_id, side, now)))\n"
+  },
+  {
+   "label": "flush_s14",
+   "file": "simple_parts/v6_32_part.py",
+   "old": "                tracker = self._v6_32_tracker_ref()\n                if tracker.begin(now):\n                    self._v6_32_count(\"tracker_resets\")     # a clock that ran back: the streams start over\n",
+   "new": "                tracker = self._v6_32_tracker_ref()\n                if getattr(self, \"research_v640_s14_flush_spec\", False):\n                    self._v6_40_flush(tracker, spec)            # v6.40 B4(6): the flush of this state's release\n                if tracker.begin(now):\n                    self._v6_32_count(\"tracker_resets\")     # a clock that ran back: the streams start over\n"
+  },
+  {
+   "label": "s14_key",
+   "file": "simple_parts/v6_32_part.py",
+   "old": "        key = v626_state_sim_id(cfg)\n        cached = getattr(self, \"_v6_32_mins\", None)\n",
+   "new": "        key = v626_state_sim_id(cfg)\n        if getattr(self, \"research_v640_s14_class_key\", False):\n            key = self._v6_40_s14_key(cfg, key)          # v6.40 B4(5): + the class list's digest\n        cached = getattr(self, \"_v6_32_mins\", None)\n"
+  },
+  {
+   "label": "drop_decs",
+   "file": "simple_parts/v6_36_part.py",
+   "old": "            decimals = self._v61_price_decimals(state)\n            lift = bool(self._v611_price_lift_on())\n            drop: set[int] = set()\n",
+   "new": "            decimals = self._v61_price_decimals(state)\n            lift = bool(self._v611_price_lift_on())\n            v6_40_decs = getattr(self, \"_v6_40_decs\", None) or {}     # v6.40: per-book decimals of traded classes\n            drop: set[int] = set()\n"
+  },
+  {
+   "label": "drop_price",
+   "file": "simple_parts/v6_36_part.py",
+   "old": "                        v6_36_placed_price(self._get(ix, \"price\", \"limitPrice\", \"limit_price\"), decimals, lift),\n",
+   "new": "                        v6_36_placed_price(self._get(ix, \"price\", \"limitPrice\", \"limit_price\"),\n                                           (v6_40_decs.get(book_id, decimals) if v6_40_decs else decimals), lift),\n"
+  }
+ ],
+ "split_edits": [
+  [
+   "class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
+   "class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
+  ],
+  [
+   "from simple_parts.v6_40_part import V640Part\nfrom simple_parts.v6_36_part import V636Part\n",
+   "from simple_parts.v6_36_part import V636Part\n"
+  ]
+ ],
+ "miner": [
+  {
+   "old": "from taos.common.protocol import SimulationStateUpdate, EventNotification\n",
+   "new": "from taos.common.protocol import SimulationStateUpdate, EventNotification\n\n# v6.40 (k139): upstream 0.6.5 (c36caa9) -- rounds are ~5.2 s apart and uvicorn closes an idle connection after 5 s,\n# so every round paid a new handshake; a longer keep-alive lets a validator that reuses its session keep the\n# connection.  Network only: no agent decision reads it.\nAXON_KEEP_ALIVE_S = 120\n"
+  },
+  {
+   "old": "        self.axon = bt.Axon(wallet=self.wallet, config=self.config, ip=self.config.axon.ip, port=self.config.axon.port, external_ip=self.config.axon.external_ip, external_port=self.config.axon.external_port)\n",
+   "new": "        self.axon = bt.Axon(wallet=self.wallet, config=self.config, ip=self.config.axon.ip, port=self.config.axon.port, external_ip=self.config.axon.external_ip, external_port=self.config.axon.external_port)\n        # v6.40 (upstream 0.6.5): keep an idle validator connection open across rounds (uvicorn's default: 5 s)\n        self.axon.fast_config.timeout_keep_alive = AXON_KEEP_ALIVE_S\n"
+  }
+ ],
+ "launcher": [
+  {
+   "old": "research_v639_runlen=1\"\n",
+   "new": "research_v639_runlen=1 \\\nresearch_v640_traded_classes=0 \\\nresearch_v640_c2du=0 \\\nresearch_v640_c2d=0 \\\nresearch_v640_c2j=0 \\\nresearch_v640_c2q=0 \\\nresearch_v640_c2q_pf=0 \\\nresearch_v640_c1w=0 \\\nresearch_v640_guard_hold=1 \\\nresearch_v640_guard_init_price=1 \\\nresearch_v640_s14_class_key=1 \\\nresearch_v640_s14_flush_spec=1\"\n"
+  },
+  {
+   "old": "fi\n\nif [[ \"${RESEARCH_PREFLIGHT_ONLY:-0}\" == \"1\" ]]; then\n",
+   "new": "fi\n\n# v6.40.  research_v640_*: the three-class layout of SN79 0.6.5 (scratchpad k139; the arms of k137's replay engine\n# vm739).  0.6.5 pays three asset classes (0-63 simulation_0, 64-95 simulation_1, 96-127 simulation_2 on a 4-decimal\n# grid; weights 0.50 / 0.25 / 0.25, one markout quality per uid); v6.23 S2 holds every non-home class.  v6.40 reads\n# the class map and each class's own grid from the state configuration, and carries (every one OFF):\n#   research_v640_traded_classes (vm739 ctr; 0, 0,1, 0,2 or 0,1,2): the classes the class-0 machinery trades, each\n#   on its own grid / minimum and k137's size rule (class 1 x min1 / min0, class 2 the class-0 sizes); class 1 by\n#   this plain path OR by v6.34's entry (research_v634_class1_entry, C1W's path), never both;\n#   research_v640_c2du (c2du): the deep layer's depth rules in the class's depth unit (0.0104 on class 2);\n#   research_v640_c2d (C2D) no class-2 touch quote; research_v640_c2j (C2J, 1 join / 2 one depth unit behind);\n#   research_v640_c2q + research_v640_c2q_pf (C2Q, the break-even guard on the validator's published class pools,\n#   read live from its report page; the pool factor > 0 is the fallback while the page has no class pools);\n#   research_v640_c1w (C1W, with research_v634_class1_entry=1 and research_v636_step_withdrawal=1): every class-1\n#   order withdrawn at the pre-step state, v6.34's S9 / S17-R holds not applied.\n# and k138's fixes (each ON; nothing changes on a readable layout of today): research_v640_guard_hold (the class\n# guard fails closed), research_v640_guard_init_price (the initial price compared too), research_v640_s14_class_key\n# (S14's minimum-size cache keyed on the class list too), research_v640_s14_flush_spec (S14's capture flush 300 sim-s\n# from a 0.6.5 validator, 60 below); and the upstream 0.6.5 axon keep-alive (120 s) in taos/common/neurons/miner.py.\n# Each key must appear exactly once with an allowed value; the block prints the state and refuses a build it cannot ship.\nif [[ \"${V6_38_BUILD:-0}\" == \"1\" ]]; then\n  for _v640_f in research_v6_40_classes.py simple_parts/v6_40_part.py; do\n    [[ -f \"$AGENT_PATH_REAL/$_v640_f\" ]] || { echo \"ERROR: v6.40 agents/strategy/$_v640_f is missing.\" >&2; exit 1; }\n  done\n  for _v640_pat in \\\n      'self._v6_40_init()' \\\n      'foreign, layout = self._v6_40_observe(state, foreign, layout,' \\\n      'self._v6_23_foreign = self._v6_40_held_foreign()' \\\n      'self._v6_40_request(state)' \\\n      'v6_40_grids = getattr(self, \"_v6_40_grids\", None) or {}' \\\n      'v6_40_g.dec, v6_40_g.tick, v6_40_g.min_order / v6_40_g.scale)' \\\n      'tick_size = v6_40_g.du' \\\n      'tick_size = v6_40_g.tick' \\\n      'inv = float(inv) / v6_40_g.scale' \\\n      'if v6_40_g is not None and self._v6_40_c2q_off(book_id):' \\\n      'placed_total += self._v6_40_book(' \\\n      'n = self._v6_40_caps_books(books, n)' \\\n      'v6_40_fv = getattr(self, \"_v6_40_vgrids\", None) or {}' \\\n      'tick_size, price_dec, min_size = v6_40_fv.get(book_id, v6_40_fv0)' \\\n      'moved = self._v6_40_lift(instructions, self._v61_price_decimals(state))' \\\n      'self._v6_40_flush(v6_34_tracker, spec)' \\\n      'self._v6_40_flush(tracker, spec)' \\\n      'key = self._v6_40_s14_key(cfg, key)' \\\n      's9_held=(None if v6_40_c1w else s9)' \\\n      'self._v6_34_c1 = self._v6_40_c1_market(state, self._v6_34_c1)' \\\n      '(v6_40_decs.get(book_id, decimals) if v6_40_decs else decimals), lift),'; do\n    grep -qF -- \"$_v640_pat\" \"$AGENT_PATH/Strategy1_Research_Simple.py\" || {\n      echo \"ERROR: v6.40 the agent lacks: $_v640_pat\" >&2\n      exit 1\n    }\n  done\n  grep -qF -- 'class Strategy1_Research_Simple(V640Part, V636Part, ' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" && \\\n    grep -qF -- 'from simple_parts.v6_40_part import V640Part' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" || {\n    echo \"ERROR: v6.40 Simple does not take V640Part as its first base.\" >&2\n    exit 1\n  }\n  for _v640_pat in \\\n      'class V640Part:' \\\n      'def _v6_40_init(self) -> None:' \\\n      'def _v6_40_deep_core(' \\\n      'def _v6_40_touch_core(' \\\n      'du = self._v6_40_du(book_id, tick_size)' \\\n      'unit, rest = self._v6_40_touch_units(book_id, tick_size)' \\\n      'scale, vmin, vdec = self._v6_40_units(book_id, min_order, cfg)' \\\n      'q = v62_lot_quantity(q_ * scale, vdec)' \\\n      'def _v6_40_c2q_update(self) -> None:' \\\n      'def _v6_40_book(' \\\n      'pf, src = self._v6_40_pool_factor(now)'; do\n    grep -qF -- \"$_v640_pat\" \"$AGENT_PATH_REAL/simple_parts/v6_40_part.py\" || {\n      echo \"ERROR: v6.40 the part lacks: $_v640_pat\" >&2\n      exit 1\n    }\n  done\n  for _v640_pat in \\\n      'def class_table(config: Any) -> dict[str, Any]:' \\\n      'def depth_unit(' \\\n      'def c2q_decision(' \\\n      'class ClassCaptureTracker(CaptureTracker):' \\\n      'def merge_foreign(' \\\n      'def flush_ns(spec: Any) -> int:' \\\n      'def size_scale(min_c: Any, min_0: Any) -> float:' \\\n      'class ClassGaugeFeed(SharedFeed):' \\\n      'def live_pool_factor('; do\n    grep -qF -- \"$_v640_pat\" \"$AGENT_PATH_REAL/research_v6_40_classes.py\" || {\n      echo \"ERROR: v6.40 the classes module lacks: $_v640_pat\" >&2\n      exit 1\n    }\n  done\n  for _v640_pat in \\\n      'AXON_KEEP_ALIVE_S = 120' \\\n      'self.axon.fast_config.timeout_keep_alive = AXON_KEEP_ALIVE_S'; do\n    grep -qF -- \"$_v640_pat\" \"$SCRIPT_DIR/taos/common/neurons/miner.py\" || {\n      echo \"ERROR: v6.40 the miner lacks: $_v640_pat\" >&2\n      exit 1\n    }\n  done\n  _v640_get() {\n    local _n _v\n    _n=$(tr ' ' '\\n' <<< \"$PARAMS\" | grep -c \"^$1=\" || true)\n    [[ \"$_n\" == \"1\" ]] || { echo \"ERROR: v6.40 build with $1 given ${_n} times in PARAMS (exactly once).\" >&2; exit 1; }\n    _v=$(tr ' ' '\\n' <<< \"$PARAMS\" | grep \"^$1=\" | cut -d= -f2-)\n    [[ \"$_v\" =~ ^($2)$ ]] || { echo \"ERROR: v6.40 $1=$_v is not one of: $2\" >&2; exit 1; }\n    printf '%s' \"$_v\"\n  }\n  _v640_tr=$(_v640_get research_v640_traded_classes '0|0,1|0,2|0,1,2') || exit 1\n  _v640_du=$(_v640_get research_v640_c2du '0|1') || exit 1\n  _v640_c2d=$(_v640_get research_v640_c2d '0|1') || exit 1\n  _v640_c2j=$(_v640_get research_v640_c2j '0|1|2') || exit 1\n  _v640_c2q=$(_v640_get research_v640_c2q '0|1') || exit 1\n  _v640_pf=$(_v640_get research_v640_c2q_pf '[0-9]+(\\.[0-9]+)?') || exit 1\n  _v640_c1w=$(_v640_get research_v640_c1w '0|1') || exit 1\n  _v640_gh=$(_v640_get research_v640_guard_hold '0|1') || exit 1\n  _v640_gi=$(_v640_get research_v640_guard_init_price '0|1') || exit 1\n  _v640_sk=$(_v640_get research_v640_s14_class_key '0|1') || exit 1\n  _v640_sf=$(_v640_get research_v640_s14_flush_spec '0|1') || exit 1\n  if [[ \"$_v640_c2d\" == \"1\" || \"$_v640_c2j\" != \"0\" || \"$_v640_c2q\" == \"1\" ]] && [[ \"$_v640_tr\" != *2* ]]; then\n    echo \"ERROR: v6.40 a class-2 arm (C2D / C2J / C2Q) needs class 2 traded (research_v640_traded_classes 0,2 or 0,1,2).\" >&2\n    exit 1\n  fi\n  if [[ \"$_v640_tr\" == *1* && \" $PARAMS \" == *\" research_v634_class1_entry=1 \"* ]]; then\n    echo \"ERROR: v6.40 class 1 is traded by the plain path (research_v640_traded_classes) or by v6.34's entry (research_v634_class1_entry), not both.\" >&2\n    exit 1\n  fi\n  if [[ \"$_v640_c2d\" == \"1\" && \"$_v640_c2j\" != \"0\" ]]; then\n    echo \"ERROR: v6.40 C2D (no class-2 touch quote) and C2J (its placement) exclude each other.\" >&2\n    exit 1\n  fi\n  if [[ \"$_v640_c2q\" == \"1\" ]]; then\n    awk -v p=\"$_v640_pf\" 'BEGIN { exit !(p > 0) }' || { echo \"ERROR: v6.40 C2Q needs research_v640_c2q_pf > 0 (the fallback pool factor while the report page carries no class pools).\" >&2; exit 1; }\n    [[ \" $PARAMS \" == *\" research_v632_fee_making=1 \"* ]] || { echo \"ERROR: v6.40 C2Q needs research_v632_fee_making=1 (S14's realized arithmetic).\" >&2; exit 1; }\n  fi\n  if [[ \"$_v640_c1w\" == \"1\" ]]; then\n    [[ \" $PARAMS \" == *\" research_v634_class1_entry=1 \"* && \" $PARAMS \" == *\" research_v636_step_withdrawal=1 \"* ]] || {\n      echo \"ERROR: v6.40 C1W needs research_v634_class1_entry=1 (the class-1 path) and research_v636_step_withdrawal=1 (the pre-step state).\" >&2\n      exit 1\n    }\n  fi\n  echo \"[preflight] v6.40 classes: traded ${_v640_tr}; c2du ${_v640_du}; arms C2D ${_v640_c2d} C2J ${_v640_c2j} C2Q ${_v640_c2q} (pf ${_v640_pf}) C1W ${_v640_c1w}; fixes guard_hold ${_v640_gh} init_price ${_v640_gi} s14_class_key ${_v640_sk} s14_flush_spec ${_v640_sf}; axon keep-alive 120 s\"\n  echo \"[preflight] v6.40 PASS (every v6.40 key explicit; traded ${_v640_tr}: off = v6.39's trading on the home class)\"\nfi\n\nif [[ \"${RESEARCH_PREFLIGHT_ONLY:-0}\" == \"1\" ]]; then\n"
+  },
+  {
+   "old": "      tests/test_research_v6_39.py \\\n",
+   "new": "      tests/test_research_v6_39.py \\\n      tests/test_research_v6_40.py \\\n"
+  }
+ ],
+ "launcher_base_sha256": "6adc46ba72a024b7084b2ca6dd7866b623bf8e570be993e721652f124feb2d65",
+ "launcher_sha256": "67d9123e4e67ccdbb046b89beb4e94e3de05fea45185a747bc2aab5dcec0cf65"
+}

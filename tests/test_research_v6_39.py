@@ -41,6 +41,7 @@ import research_v68_deep_owns as owns  # noqa: E402
 import research_v6_39_runlen as rl  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v639_undo  # noqa: E402
+import _v640_undo  # noqa: E402   (k139: v6.40's paths / text undo)
 from _harness import extractor, read_source, simple_text  # noqa: E402
 from test_research_a1_9_9_2_idle_gc import FakeGC, FakeLoop  # noqa: E402
 
@@ -588,7 +589,8 @@ def test_the_launcher_with_v639_undone_is_m_frozen_1s_byte_for_byte():
     assert _sha(_v639_undo.launcher_v638(LAUNCHER)) == M1_LAUNCHER_SHA256
     with pytest.raises(AssertionError):
         _v639_undo.launcher_v638(_v639_undo.launcher_v638(LAUNCHER))            # applies to v6.39's text only
-    assert len(_v639_undo.V639_LAUNCHER_EDITS) == 3 and all(LAUNCHER.count(n) == 1 for n, _ in _v639_undo.V639_LAUNCHER_EDITS)
+    l639 = _v640_undo.launcher_v639(LAUNCHER)                                   # k139: v6.40's launcher edits out
+    assert len(_v639_undo.V639_LAUNCHER_EDITS) == 3 and all(l639.count(n) == 1 for n, _ in _v639_undo.V639_LAUNCHER_EDITS)
 
 
 # ---- 8. the launcher ----------------------------------------------------------------------------------------------------
@@ -609,8 +611,12 @@ def test_the_v639_block_is_gated_preflighted_listed_and_ships_on():
         LAUNCHER.index('echo "[preflight] v6.39 runlen PASS') < \
         LAUNCHER.index('if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then')
     assert "      tests/test_research_v6_38_l3.py \\\n      tests/test_research_v6_39.py \\\n" in LAUNCHER
-    assert 'research_v638_c1_arm=0 \\\nresearch_v639_runlen=1"\n' in LAUNCHER
+    assert 'research_v638_c1_arm=0 \\\nresearch_v639_runlen=1"\n' in _v640_undo.launcher_v639(LAUNCHER)   # k139
+    assert 'research_v638_c1_arm=0 \\\nresearch_v639_runlen=1 \\\nresearch_v640_traded_classes=0 \\\n' in \
+        _v640_undo._unflip(LAUNCHER)                                            # k139: a documented flip undone
     params = _params().split()
+    assert [t.split("=")[0] for t in params[220:]] == list(_v640_undo.SWITCHES)   # k139: v6.40's 11 keys (values: t640)
+    params = params[:220]                                                       # (v6.40's 11 keys follow, in order)
     assert params[-1] == "research_v639_runlen=1" and len(params) == 220 and params.count("research_v639_runlen=1") == 1
     head = _block()[:_block().index('if [[ "${V6_38_BUILD:-0}" == "1" ]]; then')]
     for needle in ("STRUCTURAL", "k115", "k129", "STORE", "SWEEP", "IDLE", "OBS", "every decision as v6.38's",
@@ -689,6 +695,7 @@ def _git(*args):
 def test_v639s_path_set_is_exactly_its_new_files_on_disk_plus_the_modules_it_changes():
     new_on_disk = {p.relative_to(ROOT).as_posix() for p in [STRATEGY / "research_v6_39_runlen.py"]
                    + sorted((STRATEGY / "simple_parts").glob("*")) if p.is_file()}
+    new_on_disk -= _v640_undo.V640_NEW                                          # k139: v6.40's part is its own
     assert _v639_undo.V639_NEW == new_on_disk, (_v639_undo.V639_NEW ^ new_on_disk)
     assert _v639_undo.V639_PATHS == _v639_undo.V639_NEW | _v639_undo.V639_MODULES
     for rel in _v639_undo.V639_MODULES:
@@ -790,11 +797,13 @@ def _manifest():
 
 def test_the_joined_text_is_the_pre_split_file_byte_for_byte_and_its_digest_is_pinned():
     manifest = _manifest()
-    assert _sha(SIMPLE) == manifest["pre_split_sha256"] == PRE_SPLIT_SHA256        # the S3 Simple at the split
+    # k139: the joined text is v6.40's single file; v6.40's hook edits reversed it is the S3 Simple at the split
+    assert _sha(_v640_undo.joined_v639(SIMPLE)) == manifest["v640_base_sha256"] == PRE_SPLIT_SHA256
+    assert _sha(SIMPLE) == manifest["pre_split_sha256"] == _v640_undo.JOINED_SHA256
     assert SIMPLE != RAW_SIMPLE and len(RAW_SIMPLE.splitlines()) < len(SIMPLE.splitlines())
     sys.path.insert(0, str(PARTS))
     import join                                                                  # noqa: E402
-    assert join.joined_text(str(STRATEGY)) == SIMPLE and join.joined_sha256(str(STRATEGY)) == PRE_SPLIT_SHA256
+    assert join.joined_text(str(STRATEGY)) == SIMPLE and join.joined_sha256(str(STRATEGY)) == _v640_undo.JOINED_SHA256
     # every chunk: the part's lines are the pre-split file's lines at the recorded range, verbatim
     pre_lines = SIMPLE.splitlines(keepends=True)
     moved = 0
@@ -815,7 +824,8 @@ def test_every_moved_method_is_defined_once_in_its_part_and_nowhere_in_the_file(
     cls = next(n for n in raw.body if isinstance(n, ast.ClassDef) and n.name == "Strategy1_Research_Simple")
     in_file = {n.name for n in cls.body if isinstance(n, ast.FunctionDef)}
     bases = [ast.unparse(b) for b in cls.bases]
-    assert bases[-1] == "Strategy1_Research" and bases[:-1] == [p["cls"] for p in manifest["parts"]]
+    # k139: v6.40's mixin (simple_parts/v6_40_part.py, new methods only) is the first base, by a split edit of its own
+    assert bases[-1] == "Strategy1_Research" and bases[:-1] == ["V640Part"] + [p["cls"] for p in manifest["parts"]]
     for part in manifest["parts"]:
         tree = ast.parse((PARTS / part["file"]).read_text())
         pcls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == part["cls"])
@@ -870,7 +880,7 @@ def test_the_launcher_reads_the_joined_text_through_a_view_for_the_preflight_and
                    'for _part in "$AGENT_PATH/Strategy1_Research_Simple.py" "$AGENT_PATH"/simple_parts/*.py; do'):
         assert needle in view, needle
     # the 390 pins on "$AGENT_PATH/Strategy1_Research_Simple.py" are untouched by the split (they read the view)
-    assert LAUNCHER.count('"$AGENT_PATH/Strategy1_Research_Simple.py"') == N_LAUNCHER_SIMPLE_REFS
+    assert _v640_undo.launcher_v639(LAUNCHER).count('"$AGENT_PATH/Strategy1_Research_Simple.py"') == N_LAUNCHER_SIMPLE_REFS
     # the view really gives the joined text: run the view block alone against the real directory
     script = ('set -euo pipefail\nAGENT_PATH="$1"\n'
               + LAUNCHER[LAUNCHER.index('AGENT_PATH_REAL="$AGENT_PATH"'):LAUNCHER.index('AGENT_PATH="$SIMPLE_VIEW"\nfi\n') + len('AGENT_PATH="$SIMPLE_VIEW"\nfi\n')]
@@ -909,7 +919,8 @@ def test_the_preflight_view_is_a_full_copy_passes_the_launchers_key_check_and_is
     # (1) the launcher's own key check, run against the view: every one of the 220 shipped keys resolves
     out = _run_view(key_check, tmp_path / "t1")
     assert out.returncode == 0, out.stderr
-    assert "PARAMS keys resolve to agent code PASS (220 keys)" in out.stdout, (out.stdout, out.stderr)
+    n_keys = 220 + len(_v640_undo.SWITCHES)                                     # k139: + v6.40's 11 keys
+    assert "PARAMS keys resolve to agent code PASS (%d keys)" % n_keys in out.stdout, (out.stdout, out.stderr)
     view = Path(out.stdout.split("VIEW=")[1].split()[0])
     assert not view.exists() and list((tmp_path / "t1").iterdir()) == []          # removed by the EXIT trap
     # (2) the view's file set == the real directory's, every file byte-equal, Simple == the joined text; no symlink

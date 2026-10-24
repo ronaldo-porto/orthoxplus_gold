@@ -237,7 +237,8 @@ def test_the_switch_ships_on_and_agrees_with_the_agent_default():
 def test_the_room_line_replaces_the_rolling_line_and_the_size_reaches_every_layer():
     assert SIMPLE.count(LINE_LINE) == 1 and SIMPLE.count(SCALE_LINE) == 1
     assert SIMPLE.count("from research_v620_room_pace import (") == 1
-    assert SIMPLE.count("size_scale=size_scale") == 5          # the deep layer x2, the touch quote x2 + its guard
+    import _v640_undo                                                       # k139: v6.40's routing call counted out
+    assert _v640_undo.joined_v639(SIMPLE).count("size_scale=size_scale") == 5   # deep x2, the touch quote x2 + its guard
     # the deep layer's sizes and the touch quote's -- and v6.38 L3's FBL touch size (the same scale on its grown clip)
     assert SIMPLE.count("v620_scaled_quantity(") == 3
     l3 = SIMPLE[SIMPLE.index("    def _v6_38_touch_size("):]

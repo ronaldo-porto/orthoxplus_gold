@@ -479,7 +479,18 @@ research_v638_lean=0 \
 research_v638_lean_arm=0 \
 research_v638_c1=0 \
 research_v638_c1_arm=0 \
-research_v639_runlen=1"
+research_v639_runlen=1 \
+research_v640_traded_classes=0 \
+research_v640_c2du=0 \
+research_v640_c2d=0 \
+research_v640_c2j=0 \
+research_v640_c2q=0 \
+research_v640_c2q_pf=0 \
+research_v640_c1w=0 \
+research_v640_guard_hold=1 \
+research_v640_guard_init_price=1 \
+research_v640_s14_class_key=1 \
+research_v640_s14_flush_spec=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -4567,6 +4578,145 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
   echo "[preflight] v6.39 runlen PASS (${_v639_state}: the clean rolling store and the cached census, the sorted sweep record, the deferred idle full pass and the default gzip level, each behind the switch; every decision as v6.38's)"
 fi
 
+# v6.40.  research_v640_*: the three-class layout of SN79 0.6.5 (scratchpad k139; the arms of k137's replay engine
+# vm739).  0.6.5 pays three asset classes (0-63 simulation_0, 64-95 simulation_1, 96-127 simulation_2 on a 4-decimal
+# grid; weights 0.50 / 0.25 / 0.25, one markout quality per uid); v6.23 S2 holds every non-home class.  v6.40 reads
+# the class map and each class's own grid from the state configuration, and carries (every one OFF):
+#   research_v640_traded_classes (vm739 ctr; 0, 0,1, 0,2 or 0,1,2): the classes the class-0 machinery trades, each
+#   on its own grid / minimum and k137's size rule (class 1 x min1 / min0, class 2 the class-0 sizes); class 1 by
+#   this plain path OR by v6.34's entry (research_v634_class1_entry, C1W's path), never both;
+#   research_v640_c2du (c2du): the deep layer's depth rules in the class's depth unit (0.0104 on class 2);
+#   research_v640_c2d (C2D) no class-2 touch quote; research_v640_c2j (C2J, 1 join / 2 one depth unit behind);
+#   research_v640_c2q + research_v640_c2q_pf (C2Q, the break-even guard on the validator's published class pools,
+#   read live from its report page; the pool factor > 0 is the fallback while the page has no class pools);
+#   research_v640_c1w (C1W, with research_v634_class1_entry=1 and research_v636_step_withdrawal=1): every class-1
+#   order withdrawn at the pre-step state, v6.34's S9 / S17-R holds not applied.
+# and k138's fixes (each ON; nothing changes on a readable layout of today): research_v640_guard_hold (the class
+# guard fails closed), research_v640_guard_init_price (the initial price compared too), research_v640_s14_class_key
+# (S14's minimum-size cache keyed on the class list too), research_v640_s14_flush_spec (S14's capture flush 300 sim-s
+# from a 0.6.5 validator, 60 below); and the upstream 0.6.5 axon keep-alive (120 s) in taos/common/neurons/miner.py.
+# Each key must appear exactly once with an allowed value; the block prints the state and refuses a build it cannot ship.
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  for _v640_f in research_v6_40_classes.py simple_parts/v6_40_part.py; do
+    [[ -f "$AGENT_PATH_REAL/$_v640_f" ]] || { echo "ERROR: v6.40 agents/strategy/$_v640_f is missing." >&2; exit 1; }
+  done
+  for _v640_pat in \
+      'self._v6_40_init()' \
+      'foreign, layout = self._v6_40_observe(state, foreign, layout,' \
+      'self._v6_23_foreign = self._v6_40_held_foreign()' \
+      'self._v6_40_request(state)' \
+      'v6_40_grids = getattr(self, "_v6_40_grids", None) or {}' \
+      'v6_40_g.dec, v6_40_g.tick, v6_40_g.min_order / v6_40_g.scale)' \
+      'tick_size = v6_40_g.du' \
+      'tick_size = v6_40_g.tick' \
+      'inv = float(inv) / v6_40_g.scale' \
+      'if v6_40_g is not None and self._v6_40_c2q_off(book_id):' \
+      'placed_total += self._v6_40_book(' \
+      'n = self._v6_40_caps_books(books, n)' \
+      'v6_40_fv = getattr(self, "_v6_40_vgrids", None) or {}' \
+      'tick_size, price_dec, min_size = v6_40_fv.get(book_id, v6_40_fv0)' \
+      'moved = self._v6_40_lift(instructions, self._v61_price_decimals(state))' \
+      'self._v6_40_flush(v6_34_tracker, spec)' \
+      'self._v6_40_flush(tracker, spec)' \
+      'key = self._v6_40_s14_key(cfg, key)' \
+      's9_held=(None if v6_40_c1w else s9)' \
+      'self._v6_34_c1 = self._v6_40_c1_market(state, self._v6_34_c1)' \
+      '(v6_40_decs.get(book_id, decimals) if v6_40_decs else decimals), lift),'; do
+    grep -qF -- "$_v640_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: v6.40 the agent lacks: $_v640_pat" >&2
+      exit 1
+    }
+  done
+  grep -qF -- 'class Strategy1_Research_Simple(V640Part, V636Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+    grep -qF -- 'from simple_parts.v6_40_part import V640Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.40 Simple does not take V640Part as its first base." >&2
+    exit 1
+  }
+  for _v640_pat in \
+      'class V640Part:' \
+      'def _v6_40_init(self) -> None:' \
+      'def _v6_40_deep_core(' \
+      'def _v6_40_touch_core(' \
+      'du = self._v6_40_du(book_id, tick_size)' \
+      'unit, rest = self._v6_40_touch_units(book_id, tick_size)' \
+      'scale, vmin, vdec = self._v6_40_units(book_id, min_order, cfg)' \
+      'q = v62_lot_quantity(q_ * scale, vdec)' \
+      'def _v6_40_c2q_update(self) -> None:' \
+      'def _v6_40_book(' \
+      'pf, src = self._v6_40_pool_factor(now)'; do
+    grep -qF -- "$_v640_pat" "$AGENT_PATH_REAL/simple_parts/v6_40_part.py" || {
+      echo "ERROR: v6.40 the part lacks: $_v640_pat" >&2
+      exit 1
+    }
+  done
+  for _v640_pat in \
+      'def class_table(config: Any) -> dict[str, Any]:' \
+      'def depth_unit(' \
+      'def c2q_decision(' \
+      'class ClassCaptureTracker(CaptureTracker):' \
+      'def merge_foreign(' \
+      'def flush_ns(spec: Any) -> int:' \
+      'def size_scale(min_c: Any, min_0: Any) -> float:' \
+      'class ClassGaugeFeed(SharedFeed):' \
+      'def live_pool_factor('; do
+    grep -qF -- "$_v640_pat" "$AGENT_PATH_REAL/research_v6_40_classes.py" || {
+      echo "ERROR: v6.40 the classes module lacks: $_v640_pat" >&2
+      exit 1
+    }
+  done
+  for _v640_pat in \
+      'AXON_KEEP_ALIVE_S = 120' \
+      'self.axon.fast_config.timeout_keep_alive = AXON_KEEP_ALIVE_S'; do
+    grep -qF -- "$_v640_pat" "$SCRIPT_DIR/taos/common/neurons/miner.py" || {
+      echo "ERROR: v6.40 the miner lacks: $_v640_pat" >&2
+      exit 1
+    }
+  done
+  _v640_get() {
+    local _n _v
+    _n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c "^$1=" || true)
+    [[ "$_n" == "1" ]] || { echo "ERROR: v6.40 build with $1 given ${_n} times in PARAMS (exactly once)." >&2; exit 1; }
+    _v=$(tr ' ' '\n' <<< "$PARAMS" | grep "^$1=" | cut -d= -f2-)
+    [[ "$_v" =~ ^($2)$ ]] || { echo "ERROR: v6.40 $1=$_v is not one of: $2" >&2; exit 1; }
+    printf '%s' "$_v"
+  }
+  _v640_tr=$(_v640_get research_v640_traded_classes '0|0,1|0,2|0,1,2') || exit 1
+  _v640_du=$(_v640_get research_v640_c2du '0|1') || exit 1
+  _v640_c2d=$(_v640_get research_v640_c2d '0|1') || exit 1
+  _v640_c2j=$(_v640_get research_v640_c2j '0|1|2') || exit 1
+  _v640_c2q=$(_v640_get research_v640_c2q '0|1') || exit 1
+  _v640_pf=$(_v640_get research_v640_c2q_pf '[0-9]+(\.[0-9]+)?') || exit 1
+  _v640_c1w=$(_v640_get research_v640_c1w '0|1') || exit 1
+  _v640_gh=$(_v640_get research_v640_guard_hold '0|1') || exit 1
+  _v640_gi=$(_v640_get research_v640_guard_init_price '0|1') || exit 1
+  _v640_sk=$(_v640_get research_v640_s14_class_key '0|1') || exit 1
+  _v640_sf=$(_v640_get research_v640_s14_flush_spec '0|1') || exit 1
+  if [[ "$_v640_c2d" == "1" || "$_v640_c2j" != "0" || "$_v640_c2q" == "1" ]] && [[ "$_v640_tr" != *2* ]]; then
+    echo "ERROR: v6.40 a class-2 arm (C2D / C2J / C2Q) needs class 2 traded (research_v640_traded_classes 0,2 or 0,1,2)." >&2
+    exit 1
+  fi
+  if [[ "$_v640_tr" == *1* && " $PARAMS " == *" research_v634_class1_entry=1 "* ]]; then
+    echo "ERROR: v6.40 class 1 is traded by the plain path (research_v640_traded_classes) or by v6.34's entry (research_v634_class1_entry), not both." >&2
+    exit 1
+  fi
+  if [[ "$_v640_c2d" == "1" && "$_v640_c2j" != "0" ]]; then
+    echo "ERROR: v6.40 C2D (no class-2 touch quote) and C2J (its placement) exclude each other." >&2
+    exit 1
+  fi
+  if [[ "$_v640_c2q" == "1" ]]; then
+    awk -v p="$_v640_pf" 'BEGIN { exit !(p > 0) }' || { echo "ERROR: v6.40 C2Q needs research_v640_c2q_pf > 0 (the fallback pool factor while the report page carries no class pools)." >&2; exit 1; }
+    [[ " $PARAMS " == *" research_v632_fee_making=1 "* ]] || { echo "ERROR: v6.40 C2Q needs research_v632_fee_making=1 (S14's realized arithmetic)." >&2; exit 1; }
+  fi
+  if [[ "$_v640_c1w" == "1" ]]; then
+    [[ " $PARAMS " == *" research_v634_class1_entry=1 "* && " $PARAMS " == *" research_v636_step_withdrawal=1 "* ]] || {
+      echo "ERROR: v6.40 C1W needs research_v634_class1_entry=1 (the class-1 path) and research_v636_step_withdrawal=1 (the pre-step state)." >&2
+      exit 1
+    }
+  fi
+  echo "[preflight] v6.40 classes: traded ${_v640_tr}; c2du ${_v640_du}; arms C2D ${_v640_c2d} C2J ${_v640_c2j} C2Q ${_v640_c2q} (pf ${_v640_pf}) C1W ${_v640_c1w}; fixes guard_hold ${_v640_gh} init_price ${_v640_gi} s14_class_key ${_v640_sk} s14_flush_spec ${_v640_sf}; axon keep-alive 120 s"
+  echo "[preflight] v6.40 PASS (every v6.40 key explicit; traded ${_v640_tr}: off = v6.39's trading on the home class)"
+fi
+
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python -m py_compile "$AGENT_PATH/Strategy1_Research_Simple.py"
   # The gate runs through tests/run_tests.py, which uses pytest when it is importable and the
@@ -4694,6 +4844,7 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_38.py \
       tests/test_research_v6_38_l3.py \
       tests/test_research_v6_39.py \
+      tests/test_research_v6_40.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

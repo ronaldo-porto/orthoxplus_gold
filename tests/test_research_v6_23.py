@@ -1314,7 +1314,9 @@ def test_each_rule_is_wired_once_and_in_its_place():
     assert body.index('v6_23_active = bool(getattr(self, "_v6_23_active", False))') < body.index("for raw_id in sorted(books")
     s3 = body.index(t622.S3_LINE)
     assert s3 < body.index(FOREIGN_LINE) < body.index(AGAINST_LINE) < body.index("placed_total += self._v633_book(")
-    assert body.count("against=against") == 2 and body.count("cap_skip=cap_skip") == 4
+    import _v640_undo                                                       # k139: v6.40's routing call counted out
+    body639 = extractor(_v640_undo.joined_v639(SIMPLE), cls_name="Strategy1_Research_Simple")("_v63_pass")
+    assert body639.count("against=against") == 2 and body639.count("cap_skip=cap_skip") == 4
     deep = _src("_v633_book")
     assert "cap_skip: bool = False,\n                   against: frozenset = frozenset(),\n" in deep
     judge = deep[deep.index("for row in deep_rows:"):deep.index("cancelled: set = set()")]

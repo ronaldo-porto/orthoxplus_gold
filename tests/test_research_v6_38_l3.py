@@ -42,7 +42,8 @@ from _harness import extractor  # noqa: E402
 from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
 SIMPLE = simple_text()
-LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
+import _v640_undo  # noqa: E402   (k139)
+LAUNCHER = _v640_undo.launcher_v639(read_source(ROOT / "run_strategy1_research_simple_multi.sh"))   # k139: v6.39's launcher
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 S = 1_000_000_000
 BUY, SELL = tq.SIDE_BUY, tq.SIDE_SELL

@@ -374,5 +374,7 @@ def undo(tree):
 
 
 def parse(text):
-    """``ast.parse(text)`` with v6.38 undone: v6.37's AST of the same file."""
-    return undo(ast.parse(text))
+    """``ast.parse(text)`` with v6.38 undone: v6.37's AST of the same file (v6.40's exact text edits reversed first:
+    tests/_v640_undo.py; v6.39's AST strip inside undo())."""
+    import _v640_undo
+    return undo(ast.parse(_v640_undo.joined_v639(text)))

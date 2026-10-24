@@ -43,6 +43,7 @@ import test_research_v6_22 as t622  # noqa: E402
 import test_research_v6_23 as t623  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
+import _v640_undo  # noqa: E402   (k139: v6.40's text / AST undo)
 from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
 SIMPLE = simple_text()
@@ -333,7 +334,7 @@ def test_the_pass_reads_the_true_inventory_only_where_the_map_says():
     v6.3.3's gate (book_open), v6.32 S14's fee gate (_v6_32_note: the side that adds to the TRUE position) and v6.34's
     class-1 entry (_v6_34_book: no lean on class 1); v6_25_inv for S2m, S1, the deep layer (both calls) and the touch
     quote (both calls); v6_25_fills for v6.6's fill-side record."""
-    fn = ast.parse(_src("_v63_pass")).body[0]
+    fn = _v640_undo.undo_node(ast.parse(_src("_v63_pass")).body[0])          # k139: v6.40's hooks out (v6.39's pass)
     uses: dict = {"inv": [], "v6_25_inv": [], "v6_25_fills": []}
     for node in ast.walk(fn):
         if isinstance(node, ast.Call):
@@ -1110,7 +1111,8 @@ def test_every_v625_preflight_pattern_is_in_the_file_it_checks():
     regex, fixed = absent[0][1], absent[1][1]
     assert regex == "^[[:space:]]+response, book_id, deep, depth, raw_bid, raw_ask, inv,"
     assert not re.search(r"^\s+response, book_id, deep, depth, raw_bid, raw_ask, inv,", SIMPLE, re.M)
-    assert len(re.findall(r"^\s+response, book_id, deep, depth, raw_bid, raw_ask, v6_25_inv,", SIMPLE, re.M)) == 2
+    assert len(re.findall(r"^\s+response, book_id, deep, depth, raw_bid, raw_ask, v6_25_inv,",
+                          _v640_undo.joined_v639(SIMPLE), re.M)) == 2              # k139: + v6.40's routing call (t640)
     assert fixed not in SIMPLE and fixed.replace("inv,", "v6_25_inv,") in SIMPLE
 
 

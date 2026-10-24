@@ -50,11 +50,12 @@ from research_v62_breadth import V62_STATE_EVERY_TICKS  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v639_undo  # noqa: E402
+import _v640_undo  # noqa: E402   (k139: v6.40's paths / text undo)
 from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
 SIMPLE = simple_text()
 MODULE = read_source(STRATEGY / "research_v6_36_step_withdrawal.py")
-LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
+LAUNCHER = _v640_undo.launcher_v639(read_source(ROOT / "run_strategy1_research_simple_multi.sh"))   # k139: v6.39's
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
 _dbg = extractor(read_source(STRATEGY / "Strategy1_Debug.py"), cls_name="Strategy1_Debug")
 _dta = extractor(read_source(STRATEGY / "DetailedTemplateAgent.py"), cls_name="DetailedTemplateAgent")
@@ -1017,7 +1018,8 @@ def test_the_frozen_modules_are_v635s():
     # v6.38 layer 3's four modules (listed once committed, k126)
     later = ({"agents/strategy/research_v6_37_fast_path.py"} | _v638_undo.V638_NEW | _v638_undo.V638_MODULES
              | _v638_undo.V638_ARCHIVED | _v638_undo.V638_L3_MODULES
-             | (_v639_undo.V639_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"}))   # k129: v6.39's, either state
+             | (_v639_undo.V639_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"})   # k129: v6.39's, either state
+             | (_v640_undo.V640_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"}))   # k139: v6.40's, either state
     assert [n for n in out.stdout.split() if n not in f2 | v636 | later] == ["agents/strategy/Strategy1_Research_Simple.py"]
     assert (STRATEGY / "research_v6_36_step_withdrawal.py").is_file()           # + the new module
 

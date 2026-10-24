@@ -56,6 +56,7 @@ import test_research_v6_33 as t633  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v639_undo  # noqa: E402
+import _v640_undo  # noqa: E402   (k139: v6.40's paths / text undo)
 from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
 SIMPLE = simple_text()
@@ -761,7 +762,7 @@ def test_a_resting_quote_rests_at_the_touch_is_left_behind_two_ticks_and_a_cance
 
 
 def test_the_final_validator_lets_this_requests_class_1_quotes_through_s2_and_nothing_else():
-    fn = ast.parse(_src("_research_final_validate_instructions")).body[0]
+    fn = _v640_undo.undo_node(ast.parse(_src("_research_final_validate_instructions")).body[0])   # k139: v6.40's hooks out
     loop = next(n for n in fn.body if isinstance(n, ast.For) and ast.unparse(n.target) == "instruction")
     tests = [ast.unparse(st.test) if isinstance(st, ast.If) else None for st in loop.body]
     i = tests.index(PASS_TEST)
@@ -979,7 +980,7 @@ def test_each_line_is_wired_once_in_its_place():
 
 
 def test_the_class_1_branch_sits_after_v632s_note_and_before_any_class_0_layer():
-    fn = ast.parse(_src("_v63_pass")).body[0]
+    fn = _v640_undo.undo_node(ast.parse(_src("_v63_pass")).body[0])          # k139: v6.40's hooks out (v6.39's pass)
     loop = next(n for n in fn.body if isinstance(n, ast.For) and "sorted(books" in ast.unparse(n.iter))
     top = [ast.unparse(st.test) if isinstance(st, ast.If) else ast.unparse(st)[:40] for st in loop.body]
     i = top.index("v6_34_c1 and book_id in v6_34_c1")

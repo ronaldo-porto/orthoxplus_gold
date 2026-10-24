@@ -130,7 +130,9 @@ def test_every_key_the_launcher_ships_today_resolves():
     # research_a193_breadth_admission_enabled (retired), +1 research_enable_fill_hazard (P2L), +1 research_v638_fast_path.
     # +5 v6.38 layer 3 (research_v638_kbl, _lean, _lean_arm, _c1, _c1_arm; all 0).
     # +1 research_v639_runlen (v6.39, k129).
-    assert len(keys) == 220, len(keys)
+    # +11 v6.40 (k139): research_v640_traded_classes, _c2du, _c2d, _c2j, _c2q, _c2q_pf, _c1w, _guard_hold,
+    # _guard_init_price, _s14_class_key, _s14_flush_spec.
+    assert len(keys) == 231, len(keys)
     out = _run_guard(" ".join(f"{k}=x" for k in keys))
     assert out.returncode == 0, out.stderr
-    assert "(220 keys)" in out.stdout
+    assert "(231 keys)" in out.stdout

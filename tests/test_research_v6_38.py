@@ -47,11 +47,12 @@ import test_research_v6_37 as t637  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v639_undo  # noqa: E402
+import _v640_undo  # noqa: E402   (k139: v6.40's paths / text undo)
 from _harness import simple_text, read_source, strategy_view  # noqa: E402
 
 SIMPLE = simple_text()
 MODULE = read_source(STRATEGY / "research_v6_38_fast_path.py")
-LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
+LAUNCHER = _v640_undo.launcher_v639(read_source(ROOT / "run_strategy1_research_simple_multi.sh"))   # k139: v6.39's
 MODELS = read_source(ROOT / "taos" / "im" / "protocol" / "models.py")
 LEDGER_SRC = read_source(STRATEGY / "research_direct_exit_ledger.py")
 RESEARCH = read_source(STRATEGY / "Strategy1_Research.py")
@@ -646,6 +647,7 @@ def test_the_changed_paths_are_f2s_and_v638s_own():
     f2 = {"agents/strategy/Strategy1_Research_Simple.py", "agents/strategy/research_direct_exit_ledger.py",
           "agents/strategy/research_direct_idle_gc.py", "taos/im/protocol/models.py"}
     v639 = _v639_undo.V639_PATHS                       # k129: v6.39's paths, untracked or tracked (its test pins them)
+    v639 = v639 | _v640_undo.V640_PATHS                # k139: v6.40's paths, either state (tests/_v640_undo.py)
     assert listed - new - v639 == (f2 | _v638_undo.V638_MODULES | _v638_undo.V638_ARCHIVED) - v639
     assert (STRATEGY / "research_v6_38_fast_path.py").is_file()
 

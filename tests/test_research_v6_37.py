@@ -65,11 +65,12 @@ import test_research_v6_23 as t623  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v639_undo  # noqa: E402
+import _v640_undo  # noqa: E402   (k139: v6.40's paths / text undo)
 from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
 SIMPLE = simple_text()
 MODULE = read_source(STRATEGY / "research_v6_37_fast_path.py")
-LAUNCHER = read_source(ROOT / "run_strategy1_research_simple_multi.sh")
+LAUNCHER = _v640_undo.launcher_v639(read_source(ROOT / "run_strategy1_research_simple_multi.sh"))   # k139: v6.39's
 MODELS_PATH = ROOT / "taos" / "im" / "protocol" / "models.py"
 MODELS = MODELS_PATH.read_text()
 GC_MODULE = read_source(STRATEGY / "research_direct_idle_gc.py")
@@ -944,6 +945,7 @@ def test_the_changed_files_are_simple_and_f2s_three_and_the_new_module():
     v638 = _v638_undo.V638_MODULES | _v638_undo.V638_ARCHIVED                       # v6.38's own (its test pins them)
     v639 = _v639_undo.V639_PATHS - {"agents/strategy/Strategy1_Research_Simple.py",
                                     "agents/strategy/research_direct_idle_gc.py"}   # k129: v6.39's, untracked or tracked
+    v639 |= _v640_undo.V640_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"}   # k139: v6.40's, either state
     assert sorted(listed - new - v638 - v639) == ["agents/strategy/Strategy1_Research_Simple.py",
                                            "agents/strategy/research_direct_exit_ledger.py",
                                            "agents/strategy/research_direct_idle_gc.py", "taos/im/protocol/models.py"]

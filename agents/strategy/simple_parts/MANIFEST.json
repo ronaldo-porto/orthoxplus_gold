@@ -1,6 +1,14 @@
 {
- "pre_split_sha256": "db56e75962e615af02d5169b7b702b9554e4a54cd5609dc04e0b13a8c7d6ac41",
+ "pre_split_sha256": "e0177099db1e4e5da298bd7c93948315f7472b75a61424363d43f0a70eff44b6",
  "simple_edits": [
+  [
+   "class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
+   "class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
+  ],
+  [
+   "from simple_parts.v6_40_part import V640Part\nfrom simple_parts.v6_36_part import V636Part\n",
+   "from simple_parts.v6_36_part import V636Part\n"
+  ],
   [
    "class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
    "class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, Strategy1_Research):\n"
@@ -46,66 +54,66 @@
    "chunks": [
     {
      "name": "_v6_36_request",
-     "orig_start": 13991,
-     "orig_end": 14072,
+     "orig_start": 14016,
+     "orig_end": 14097,
      "part_start": 29,
      "part_end": 110
     },
     {
      "name": "_v6_36_drop",
-     "orig_start": 14074,
-     "orig_end": 14134,
+     "orig_start": 14099,
+     "orig_end": 14161,
      "part_start": 112,
-     "part_end": 172
+     "part_end": 174
     },
     {
      "name": "_v6_36_cancel",
-     "orig_start": 14136,
-     "orig_end": 14197,
-     "part_start": 174,
-     "part_end": 235
+     "orig_start": 14163,
+     "orig_end": 14224,
+     "part_start": 176,
+     "part_end": 237
     },
     {
      "name": "_v6_36_first",
-     "orig_start": 14199,
-     "orig_end": 14215,
-     "part_start": 237,
-     "part_end": 253
+     "orig_start": 14226,
+     "orig_end": 14242,
+     "part_start": 239,
+     "part_end": 255
     },
     {
      "name": "_v6_36_doomed",
-     "orig_start": 14217,
-     "orig_end": 14232,
-     "part_start": 255,
-     "part_end": 270
+     "orig_start": 14244,
+     "orig_end": 14259,
+     "part_start": 257,
+     "part_end": 272
     },
     {
      "name": "_v6_36_cancelled",
-     "orig_start": 14234,
-     "orig_end": 14251,
-     "part_start": 272,
-     "part_end": 289
+     "orig_start": 14261,
+     "orig_end": 14278,
+     "part_start": 274,
+     "part_end": 291
     },
     {
      "name": "_v6_36_count",
-     "orig_start": 14253,
-     "orig_end": 14262,
-     "part_start": 291,
-     "part_end": 300
+     "orig_start": 14280,
+     "orig_end": 14289,
+     "part_start": 293,
+     "part_end": 302
     },
     {
      "name": "_v6_36_report",
-     "orig_start": 14264,
-     "orig_end": 14293,
-     "part_start": 302,
-     "part_end": 331
+     "orig_start": 14291,
+     "orig_end": 14320,
+     "part_start": 304,
+     "part_end": 333
     },
     {
      "name": "_v6_36_snapshot",
-     "orig_start": 14295,
-     "orig_end": 14322,
-     "part_start": 333,
-     "part_end": 360
+     "orig_start": 14322,
+     "orig_end": 14349,
+     "part_start": 335,
+     "part_end": 362
     }
    ]
   },
@@ -116,87 +124,87 @@
    "chunks": [
     {
      "name": "_v6_32_request",
-     "orig_start": 13303,
-     "orig_end": 13382,
+     "orig_start": 13317,
+     "orig_end": 13398,
      "part_start": 35,
-     "part_end": 114
+     "part_end": 116
     },
     {
      "name": "_v6_32_tracker_ref",
-     "orig_start": 13384,
-     "orig_end": 13390,
-     "part_start": 116,
-     "part_end": 122
+     "orig_start": 13400,
+     "orig_end": 13406,
+     "part_start": 118,
+     "part_end": 124
     },
     {
      "name": "_v6_32_min_sizes",
-     "orig_start": 13392,
-     "orig_end": 13401,
-     "part_start": 124,
-     "part_end": 133
+     "orig_start": 13408,
+     "orig_end": 13419,
+     "part_start": 126,
+     "part_end": 137
     },
     {
      "name": "_v6_32_note",
-     "orig_start": 13403,
-     "orig_end": 13432,
-     "part_start": 135,
-     "part_end": 164
+     "orig_start": 13421,
+     "orig_end": 13450,
+     "part_start": 139,
+     "part_end": 168
     },
     {
      "name": "_v6_32_deep_pairs",
-     "orig_start": 13434,
-     "orig_end": 13444,
-     "part_start": 166,
-     "part_end": 176
+     "orig_start": 13452,
+     "orig_end": 13462,
+     "part_start": 170,
+     "part_end": 180
     },
     {
      "name": "_v6_32_touch_sides",
-     "orig_start": 13446,
-     "orig_end": 13456,
-     "part_start": 178,
-     "part_end": 188
+     "orig_start": 13464,
+     "orig_end": 13474,
+     "part_start": 182,
+     "part_end": 192
     },
     {
      "name": "_v6_32_state_fp",
-     "orig_start": 13458,
-     "orig_end": 13472,
-     "part_start": 190,
-     "part_end": 204
+     "orig_start": 13476,
+     "orig_end": 13490,
+     "part_start": 194,
+     "part_end": 208
     },
     {
      "name": "_v6_32_fundamental",
-     "orig_start": 13474,
-     "orig_end": 13478,
-     "part_start": 206,
-     "part_end": 210
+     "orig_start": 13492,
+     "orig_end": 13496,
+     "part_start": 210,
+     "part_end": 214
     },
     {
      "name": "_v6_32_s9_snapshot",
-     "orig_start": 13480,
-     "orig_end": 13490,
-     "part_start": 212,
-     "part_end": 222
+     "orig_start": 13498,
+     "orig_end": 13508,
+     "part_start": 216,
+     "part_end": 226
     },
     {
      "name": "_v6_32_count",
-     "orig_start": 13492,
-     "orig_end": 13501,
-     "part_start": 224,
-     "part_end": 233
+     "orig_start": 13510,
+     "orig_end": 13519,
+     "part_start": 228,
+     "part_end": 237
     },
     {
      "name": "_v6_32_report",
-     "orig_start": 13503,
-     "orig_end": 13532,
-     "part_start": 235,
-     "part_end": 264
+     "orig_start": 13521,
+     "orig_end": 13550,
+     "part_start": 239,
+     "part_end": 268
     },
     {
      "name": "_v6_32_snapshot",
-     "orig_start": 13534,
-     "orig_end": 13557,
-     "part_start": 266,
-     "part_end": 289
+     "orig_start": 13552,
+     "orig_end": 13575,
+     "part_start": 270,
+     "part_end": 293
     }
    ]
   },
@@ -207,64 +215,64 @@
    "chunks": [
     {
      "name": "_v6_30_request",
-     "orig_start": 12973,
-     "orig_end": 12998,
+     "orig_start": 12987,
+     "orig_end": 13012,
      "part_start": 28,
      "part_end": 53
     },
     {
      "name": "_v6_30_tier",
-     "orig_start": 13000,
-     "orig_end": 13009,
+     "orig_start": 13014,
+     "orig_end": 13023,
      "part_start": 55,
      "part_end": 64
     },
     {
      "name": "_v6_30_deeper",
-     "orig_start": 13011,
-     "orig_end": 13021,
+     "orig_start": 13025,
+     "orig_end": 13035,
      "part_start": 66,
      "part_end": 76
     },
     {
      "name": "_v6_30_placed",
-     "orig_start": 13023,
-     "orig_end": 13032,
+     "orig_start": 13037,
+     "orig_end": 13046,
      "part_start": 78,
      "part_end": 87
     },
     {
      "name": "_v6_30_paper",
-     "orig_start": 13034,
-     "orig_end": 13050,
+     "orig_start": 13048,
+     "orig_end": 13064,
      "part_start": 89,
      "part_end": 105
     },
     {
      "name": "_v6_30_decide",
-     "orig_start": 13052,
-     "orig_end": 13070,
+     "orig_start": 13066,
+     "orig_end": 13084,
      "part_start": 107,
      "part_end": 125
     },
     {
      "name": "_v6_30_count",
-     "orig_start": 13072,
-     "orig_end": 13081,
+     "orig_start": 13086,
+     "orig_end": 13095,
      "part_start": 127,
      "part_end": 136
     },
     {
      "name": "_v6_30_report",
-     "orig_start": 13083,
-     "orig_end": 13121,
+     "orig_start": 13097,
+     "orig_end": 13135,
      "part_start": 138,
      "part_end": 176
     },
     {
      "name": "_v6_30_snapshot",
-     "orig_start": 13123,
-     "orig_end": 13149,
+     "orig_start": 13137,
+     "orig_end": 13163,
      "part_start": 178,
      "part_end": 204
     }
@@ -277,43 +285,43 @@
    "chunks": [
     {
      "name": "_v6_31_note",
-     "orig_start": 13151,
-     "orig_end": 13164,
+     "orig_start": 13165,
+     "orig_end": 13178,
      "part_start": 30,
      "part_end": 43
     },
     {
      "name": "_v6_31_price",
-     "orig_start": 13166,
-     "orig_end": 13192,
+     "orig_start": 13180,
+     "orig_end": 13206,
      "part_start": 45,
      "part_end": 71
     },
     {
      "name": "_v6_31_staged_save",
-     "orig_start": 13194,
-     "orig_end": 13249,
+     "orig_start": 13208,
+     "orig_end": 13263,
      "part_start": 73,
      "part_end": 128
     },
     {
      "name": "_v6_31_count",
-     "orig_start": 13251,
-     "orig_end": 13260,
+     "orig_start": 13265,
+     "orig_end": 13274,
      "part_start": 130,
      "part_end": 139
     },
     {
      "name": "_v6_31_report",
-     "orig_start": 13262,
-     "orig_end": 13290,
+     "orig_start": 13276,
+     "orig_end": 13304,
      "part_start": 141,
      "part_end": 169
     },
     {
      "name": "_v6_31_snapshot",
-     "orig_start": 13292,
-     "orig_end": 13301,
+     "orig_start": 13306,
+     "orig_end": 13315,
      "part_start": 171,
      "part_end": 180
     }
@@ -326,54 +334,55 @@
    "chunks": [
     {
      "name": "_v6_29_held",
-     "orig_start": 12824,
-     "orig_end": 12865,
+     "orig_start": 12838,
+     "orig_end": 12879,
      "part_start": 22,
      "part_end": 63
     },
     {
      "name": "_v6_29_count",
-     "orig_start": 12867,
-     "orig_end": 12876,
+     "orig_start": 12881,
+     "orig_end": 12890,
      "part_start": 65,
      "part_end": 74
     },
     {
      "name": "_v6_29_launches",
-     "orig_start": 12878,
-     "orig_end": 12892,
+     "orig_start": 12892,
+     "orig_end": 12906,
      "part_start": 76,
      "part_end": 90
     },
     {
      "name": "_v6_29_first_launch",
-     "orig_start": 12894,
-     "orig_end": 12913,
+     "orig_start": 12908,
+     "orig_end": 12927,
      "part_start": 92,
      "part_end": 111
     },
     {
      "name": "_v6_29_saved",
-     "orig_start": 12915,
-     "orig_end": 12922,
+     "orig_start": 12929,
+     "orig_end": 12936,
      "part_start": 113,
      "part_end": 120
     },
     {
      "name": "_v6_29_report",
-     "orig_start": 12924,
-     "orig_end": 12953,
+     "orig_start": 12938,
+     "orig_end": 12967,
      "part_start": 122,
      "part_end": 151
     },
     {
      "name": "_v6_29_snapshot",
-     "orig_start": 12955,
-     "orig_end": 12971,
+     "orig_start": 12969,
+     "orig_end": 12985,
      "part_start": 153,
      "part_end": 169
     }
    ]
   }
- ]
+ ],
+ "v640_base_sha256": "db56e75962e615af02d5169b7b702b9554e4a54cd5609dc04e0b13a8c7d6ac41"
 }
