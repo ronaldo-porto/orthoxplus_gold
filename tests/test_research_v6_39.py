@@ -42,6 +42,8 @@ import research_v6_39_runlen as rl  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v639_undo  # noqa: E402
 import _v640_undo  # noqa: E402   (k139: v6.40's paths / text undo)
+import _v641_undo  # noqa: E402  (k144: v6.41's undo, tests/_v641_undo.py)
+import _v642_undo  # noqa: E402  (k150: v6.42's undo, tests/_v642_undo.py)
 from _harness import extractor, read_source, simple_text  # noqa: E402
 from test_research_a1_9_9_2_idle_gc import FakeGC, FakeLoop  # noqa: E402
 
@@ -615,7 +617,8 @@ def test_the_v639_block_is_gated_preflighted_listed_and_ships_on():
     assert 'research_v638_c1_arm=0 \\\nresearch_v639_runlen=1 \\\nresearch_v640_traded_classes=0 \\\n' in \
         _v640_undo._unflip(LAUNCHER)                                            # k139: a documented flip undone
     params = _params().split()
-    assert [t.split("=")[0] for t in params[220:]] == list(_v640_undo.SWITCHES)   # k139: v6.40's 11 keys (values: t640)
+    assert [t.split("=")[0] for t in params[220:]] == (list(_v640_undo.SWITCHES) + list(_v641_undo.SWITCHES)
+                                                        + list(_v642_undo.SWITCHES))   # k139 / k144 / k150
     params = params[:220]                                                       # (v6.40's 11 keys follow, in order)
     assert params[-1] == "research_v639_runlen=1" and len(params) == 220 and params.count("research_v639_runlen=1") == 1
     head = _block()[:_block().index('if [[ "${V6_38_BUILD:-0}" == "1" ]]; then')]
@@ -696,6 +699,11 @@ def test_v639s_path_set_is_exactly_its_new_files_on_disk_plus_the_modules_it_cha
     new_on_disk = {p.relative_to(ROOT).as_posix() for p in [STRATEGY / "research_v6_39_runlen.py"]
                    + sorted((STRATEGY / "simple_parts").glob("*")) if p.is_file()}
     new_on_disk -= _v640_undo.V640_NEW                                          # k139: v6.40's part is its own
+    new_on_disk -= _v641_undo.V641_NEW                                          # k144: v6.41's part is its own
+    new_on_disk -= _v641_undo.V641_NEW                                          # k144: v6.41's part is its own
+    new_on_disk -= _v641_undo.V641_NEW                                          # k144: v6.41's part is its own
+    new_on_disk -= _v641_undo.V641_NEW                                          # k144: v6.41's part is its own
+    new_on_disk -= _v642_undo.V642_NEW                                          # k150: v6.42's part is its own
     assert _v639_undo.V639_NEW == new_on_disk, (_v639_undo.V639_NEW ^ new_on_disk)
     assert _v639_undo.V639_PATHS == _v639_undo.V639_NEW | _v639_undo.V639_MODULES
     for rel in _v639_undo.V639_MODULES:
@@ -799,11 +807,13 @@ def test_the_joined_text_is_the_pre_split_file_byte_for_byte_and_its_digest_is_p
     manifest = _manifest()
     # k139: the joined text is v6.40's single file; v6.40's hook edits reversed it is the S3 Simple at the split
     assert _sha(_v640_undo.joined_v639(SIMPLE)) == manifest["v640_base_sha256"] == PRE_SPLIT_SHA256
-    assert _sha(SIMPLE) == manifest["pre_split_sha256"] == _v640_undo.JOINED_SHA256
+    assert _sha(SIMPLE) == manifest["pre_split_sha256"] == _v642_undo.JOINED_SHA256          # k150: v6.42's single file
+    assert _sha(_v642_undo.joined_v641(SIMPLE)) == _v641_undo.JOINED_SHA256 == manifest["v642_base_sha256"]
+    assert _sha(_v641_undo.joined_v640(SIMPLE)) == _v640_undo.JOINED_SHA256 == manifest["v641_base_sha256"]
     assert SIMPLE != RAW_SIMPLE and len(RAW_SIMPLE.splitlines()) < len(SIMPLE.splitlines())
     sys.path.insert(0, str(PARTS))
     import join                                                                  # noqa: E402
-    assert join.joined_text(str(STRATEGY)) == SIMPLE and join.joined_sha256(str(STRATEGY)) == _v640_undo.JOINED_SHA256
+    assert join.joined_text(str(STRATEGY)) == SIMPLE and join.joined_sha256(str(STRATEGY)) == _v642_undo.JOINED_SHA256
     # every chunk: the part's lines are the pre-split file's lines at the recorded range, verbatim
     pre_lines = SIMPLE.splitlines(keepends=True)
     moved = 0
@@ -825,7 +835,10 @@ def test_every_moved_method_is_defined_once_in_its_part_and_nowhere_in_the_file(
     in_file = {n.name for n in cls.body if isinstance(n, ast.FunctionDef)}
     bases = [ast.unparse(b) for b in cls.bases]
     # k139: v6.40's mixin (simple_parts/v6_40_part.py, new methods only) is the first base, by a split edit of its own
-    assert bases[-1] == "Strategy1_Research" and bases[:-1] == ["V640Part"] + [p["cls"] for p in manifest["parts"]]
+    # k144: v6.41's mixin (simple_parts/v6_41_part.py) goes first, before v6.40's
+    # k150: v6.42's mixin (simple_parts/v6_42_part.py) goes first, before v6.41's
+    assert bases[-1] == "Strategy1_Research" and bases[:-1] == (["V642Part", "V641Part", "V640Part"]
+                                                                + [p["cls"] for p in manifest["parts"]])
     for part in manifest["parts"]:
         tree = ast.parse((PARTS / part["file"]).read_text())
         pcls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == part["cls"])
@@ -919,7 +932,7 @@ def test_the_preflight_view_is_a_full_copy_passes_the_launchers_key_check_and_is
     # (1) the launcher's own key check, run against the view: every one of the 220 shipped keys resolves
     out = _run_view(key_check, tmp_path / "t1")
     assert out.returncode == 0, out.stderr
-    n_keys = 220 + len(_v640_undo.SWITCHES)                                     # k139: + v6.40's 11 keys
+    n_keys = 220 + len(_v640_undo.SWITCHES) + len(_v641_undo.SWITCHES) + len(_v642_undo.SWITCHES)   # k139 / k144 / k150
     assert "PARAMS keys resolve to agent code PASS (%d keys)" % n_keys in out.stdout, (out.stdout, out.stderr)
     view = Path(out.stdout.split("VIEW=")[1].split()[0])
     assert not view.exists() and list((tmp_path / "t1").iterdir()) == []          # removed by the EXIT trap

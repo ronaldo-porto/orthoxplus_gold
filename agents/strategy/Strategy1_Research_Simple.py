@@ -1212,13 +1212,15 @@ DIRECT_A175_SHADOW_HORIZON_TICKS = 200
 DIRECT_A175_SHADOW_LEDGER_MAX = 256
 
 
+from simple_parts.v6_42_part import V642Part
+from simple_parts.v6_41_part import V641Part
 from simple_parts.v6_40_part import V640Part
 from simple_parts.v6_36_part import V636Part
 from simple_parts.v6_32_part import V632Part
 from simple_parts.v6_30_part import V630Part
 from simple_parts.v6_31_part import V631Part
 from simple_parts.v6_29_part import V629Part
-class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
+class Strategy1_Research_Simple(V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
     """V4.16.2 A1.9.2 fee-conditioned book risk admission on A1.9.1.2.
 
     What is deliberately removed from the hot entry path:
@@ -2514,6 +2516,13 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
         # arms C2P / C2D / C2J / C2Q / C1W of k137's vm739 (every one shipped off) and k138's class-guard / S14 fixes
         # (on); every key read with its default by simple_parts/v6_40_part.py (V640Part._v6_40_init).
         self._v6_40_init()
+        # v6.41 (research_v641_speed; scratchpad k141 P3): reply-time changes B / A / F1 / D / C / G / H behind one
+        # switch, every decision as v6.40.1's (research_v6_41_speed).  Off: v6.40.1's code on every path.
+        self.research_v641_speed = self._as_bool(getattr(self.config, "research_v641_speed", False))
+        self._v6_41_switches = self._v6_41_apply(self.research_v641_speed)
+        # v6.41 (research_v641_*; scratchpad k144): per-class units of the legacy layers, C2Q's inventory, per-class
+        # statistic pools -- every key read with its default by simple_parts/v6_41_part.py (V641Part._v6_41_init).
+        self._v6_41_init()
         self._v69_counts: dict[str, int] = {}
         self._v69_errors = 0
         self._v627_counts: dict[str, int] = {}
@@ -2822,6 +2831,14 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
         # v6.38 P3 (research_v638_fast_path): a new request -- the trade walkers' shared parse starts empty.
         if getattr(self, "research_v638_fast_path", False):
             v6_38_trades_reset()
+        # v6.41 C (research_v641_speed): a state timestamp that runs back voids the incremental kappa refresh's
+        # history invariant (I3) until the frozen body has rebuilt it.
+        if getattr(self, "research_v641_speed", False):
+            v641_ts = int(getattr(state, "timestamp", 0) or 0)
+            v641_prev = getattr(self, "_v641_prev_state_ts", None)
+            if v641_prev is not None and v641_ts < v641_prev:
+                self._v641_ts_backstep = True
+            self._v641_prev_state_ts = v641_ts
         # v6.23 S3: one count per state, so the start notices one state carries are told from a later state's
         # (research_v623_start_once; the request tick stands still while the v5.0.3 quiet gate holds).
         self._v6_23_update_seq = int(getattr(self, "_v6_23_update_seq", 0) or 0) + 1
@@ -6680,6 +6697,8 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
         recomputing against the passive touch and possibly disagreeing.
         """
         bid = int(book_id)
+        if getattr(self, "research_v641_unit_safety", False):
+            state = self._v6_41_book_state(state, bid)      # v6.41 B2: the book's class's tick / decimals
         store = self._a191_verdict_store()
         cached = store.get(bid)
         if cached is not None:
@@ -9442,7 +9461,11 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
         if memo is not None and memo[0] == stamp and memo[1] is history and memo[2] is persisted:
             self._v61_memo_hits = int(getattr(self, "_v61_memo_hits", 0) or 0) + 1
             return None
-        super()._research_refresh_rolling_kappa_cache()
+        if getattr(self, "research_v641_speed", False):
+            # v6.41 C: the frozen refresh's outputs from the previous result + the unseen history tail
+            self._v6_41_kappa(super()._research_refresh_rolling_kappa_cache)
+        else:
+            super()._research_refresh_rolling_kappa_cache()
         self._v61_memo_misses = int(getattr(self, "_v61_memo_misses", 0) or 0) + 1
         self._v61_kappa_memo = (
             stamp, history, getattr(self, "_research_persisted_observation_timestamps", None),
@@ -10945,6 +10968,7 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
             now_ns = 0
         tick = int(getattr(self, "_tick", 0) or 0)
         tick_size = self._a19_tick_size(state)
+        v6_41_tick0 = tick_size
         ttl_ms = float(getattr(self, "_v6215_order_life_ms", None) or getattr(self, "research_profitable_exit_ttl_ms", 4000.0) or 4000.0)
         budget = int(getattr(self, "max_instructions_per_book", 5) or 5)
         eps = float(self._execution_flat_epsilon())
@@ -10986,6 +11010,8 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
             book = resolve_book_from_state_mapping(books, book_id)
             if book is None:
                 continue
+            if getattr(self, "research_v641_unit_safety", False):
+                tick_size = self._v6_41_tick(book_id, v6_41_tick0)   # v6.41 B2: the book's class's tick
             try:
                 bids = getattr(book, "bids", None) or []
                 asks = getattr(book, "asks", None) or []
@@ -13450,6 +13476,12 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
             # KBL: those of its capture-surplus side over the making window; K5: every one; a resting one is cancelled,
             # none is placed
             v6_38_ladder = self._v6_38_kbl_ladder(book_id, levels_side)
+        v6_42_fold = None
+        if getattr(self, "research_v642_l1t", 0) and ladder:
+            # v6.42 L1T (research_v642_l1t): per side, the L1 size (after the ladder's own size caps) a NEW level-0 order
+            # carries while the L1T gate is open (0.0: closed), and whether our live level 0 there carries it --
+            # simple_parts/v6_42_part.py
+            v6_42_fold = self._v6_42_fold(book_id, inv, vac, levels_side, clip, size_scale, min_order, cfg)
         doomed = [(row, V633_CANCEL_OWNS_BOOK) for row in rows if int(row.order_id) not in already]
         resting: dict[Any, Any] = {}
         for row in deep_rows:
@@ -13487,6 +13519,10 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
                 doomed.append((row, V633_CANCEL_REPRICE))
             else:
                 resting[(side, level) if ladder else side] = row
+        if v6_42_fold is not None:
+            # v6.42 L1T: a carrying level 0 the gate no longer opens is cancelled (the ladder rule re-places level 0 at
+            # its own size and L1 returns); while one rests, the side's resting L1 is cancelled
+            self._v6_42_doom(book_id, v6_42_fold, doomed, resting, deep_rows, already)
         cancelled: set = set()
         if doomed and self._count_book_instructions(response, book_id) < budget:
             ids = [int(row.order_id) for row, _why in doomed]
@@ -13510,6 +13546,8 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
                     self._a19_note_exit_cancel(book_id, ids, ABSENT_REPRICE_CANCEL)
                 except Exception:
                     pass
+        if v6_42_fold is not None:
+            self._v6_42_cancelled(book_id, v6_42_fold, cancelled)     # v6.42 L1T: a cancelled level 0 carries nothing
         if cap_skip:
             return 0                   # v6.22 S3: at its cap the book's cancels went out; a new order would be dropped
         live_sides: set = set()
@@ -13550,6 +13588,8 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
                 if v6_38_ladder and (side, level) in v6_38_ladder:
                     self._v6_38_l3_count("kbl_ladder_withheld")
                     continue                    # v6.38 L3 KBL xl / K5 X4: no ladder order on this (side, level)
+                if v6_42_fold is not None and level == 1 and v6_42_fold.holds_l1(side):
+                    continue                    # v6.42 L1T: our level 0 carries this side's L1 while it rests
                 if ladder and ((side, level) in resting or v69_slot_taken(slots, side, level)
                                or (side, level) in cancelled or (side, V69_WHOLE_SIDE) in cancelled):
                     continue
@@ -13565,6 +13605,8 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
                 if q + 1e-12 < min_order:
                     self._v633_count("below_min_order")
                     continue
+                if v6_42_fold is not None and level == 0:
+                    q = v6_42_fold.carried(side, q)     # v6.42 L1T: a new level 0 carries L1's size while the gate is open
                 if level:
                     price = v633_deep_price(mid, level_d, side, bid=raw_bid, ask=raw_ask, tick=tick_size, decimals=dec)
                 elif vac is not None:
@@ -13623,6 +13665,9 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
                     continue
                 placed += 1
                 req["placed_deep"] += 1
+                if v6_42_fold is not None and level == 0:
+                    # v6.42 L1T: the side's level-0 tag follows the new order; a resting L1 goes with a carrying one
+                    self._v6_42_placed(response, book_id, side, v6_42_fold, resting, budget, req)
                 if v6_30_why is not None:
                     self._v6_30_placed(level, v6_30_why)            # v6.30 D1: one tick deeper, clamped or unchanged
                 if level:
@@ -13940,6 +13985,10 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
         # deep layer's depth unit) -- empty with research_v640_traded_classes=0 (every book on the top level's, v6.39)
         v6_40_grids = getattr(self, "_v6_40_grids", None) or {}
         v6_40_base = (dec, tick_size, min_order)
+        if getattr(self, "research_v641_s9_page", False):
+            # v6.41 B7: S9's page history observes this request's page once, before the books (whichever reach a touch
+            # decision) -- simple_parts/v6_41_part.py (research_v641_s9_page)
+            self._v6_41_s9_page(state)
         for raw_id in sorted(books, key=lambda x: int(x)):
             book_id = int(raw_id)
             book = books[raw_id]
@@ -14056,6 +14105,11 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
                 v6_25_inv, v6_25_fills = self._v6_25_lean(book_id, raw_bid, raw_ask, cfg, inv, now_ts, v6_25_req)
                 if v6_27_on:
                     self._v6_27_note(book_id, now_ts)        # v6.27 S7: the lean S5 just set, for the touch quote
+            if getattr(self, "research_v642_l1t", 0):
+                # v6.42 L1T (research_v642_l1t): this book's TRUE position and this request's v6.25 lean tau, which the
+                # L1T gate in the deep layer reads (the layer is handed inv - tau), and whether it is a class-0 book (no
+                # class grid, not foreign) -- simple_parts/v6_42_part.py
+                self._v6_42_note(book_id, now_ts, inv, v6_40_g is None and book_id not in v6_23_foreign)
             if spacing is not None:
                 # v6.6 S1: our fills in this state's prints, against the inventory they left, mark each side's last add.
                 try:
@@ -14149,9 +14203,19 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
             if v6_40_g is not None and self._v6_40_c2q_off(book_id):
                 # v6.40 C2Q (research_v640_c2q): below the break-even this block every order of ours on the class-2 book
                 # is cancelled and none placed
-                placed_total += self._v6_40_c2q_cancel(response, book_id, rows + deep_rows + touch_rows, already, req,
-                                                       budget=budget)
+                if getattr(self, "research_v641_c2q_reduce", False):
+                    # v6.41 B2b: disarmed = stop making, not freeze inventory -- every order of ours cancelled except one
+                    # reduce-only passive exit on the class's grid (research_v641_c2q_reduce)
+                    placed_total += self._v6_41_c2q_exit(response, book_id, rows + deep_rows + touch_rows, already, req,
+                                                         budget=budget, raw_bid=raw_bid, raw_ask=raw_ask, inv=inv,
+                                                         clip=float(getattr(deep, "clip", 0.0) or 0.0), expiry=expiry)
+                else:
+                    placed_total += self._v6_40_c2q_cancel(response, book_id, rows + deep_rows + touch_rows, already,
+                                                           req, budget=budget)
                 continue
+            if v6_40_g is not None and getattr(self, "research_v641_c2q_reduce", False):
+                # v6.41 B2b: during a C2Q probe the adding side of a class-2 book carrying a clip or more holds
+                held = self._v6_41_probe_held(book_id, inv, deep, held)
             deep_open = False
             if deep is not None and depth is not None:
                 try:
@@ -14600,6 +14664,10 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
                         self._v629_emit_timing(tick)
             except Exception:
                 self._v629_errors = int(getattr(self, "_v629_errors", 0) or 0) + 1
+        if work is not None and getattr(self, "research_v641_speed", False):
+            # v6.41 B: the v6.38 trade-parse cache holds this state's event lists; emptied after the reply, so their
+            # deallocation is not paid inside the next request (a cache keyed by list identity: no value changes)
+            work.add("v641_release_parse", v6_38_trades_reset)
         if work is not None:
             try:
                 work.schedule(loop)
@@ -15973,6 +16041,8 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
         self._v61_restored_lots = self._v61_lots_from_session(raw.get("direct_v61_lots"))
         # v6.8 S3: the deep layer's record for this simulation, put back when the layer is built.
         self._v68_deep_restore = raw.get(V68_DEEP_SESSION_KEY) if bool(getattr(self, "research_v68_deep_persist", False)) else None
+        if getattr(self, "research_v641_c2q_persist", False):
+            self._v6_41_read_c2q(raw)                   # v6.41 B2b(3): C2Q's saved window, put back at its first decision
         if getattr(self, "_v633_deep", None) is not None:
             self._v68_apply_deep_restore(self._v633_deep)
         # v6.21 S2: this UID's pace line for this simulation, put back at its first request (research_v621_young_window)
@@ -16039,6 +16109,16 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
     def _research_save_session(self, force: bool = False) -> None:
         # v6.29: the one session save S8's first flat launch asked for is forced at this save; then the normal cadence
         force = force or bool(getattr(self, "_v6_29_save_due", False))
+        # v6.41 A (research_v641_speed): an unforced save asked for inside a request runs as the FIRST job of the
+        # v6.29 post-reply queue -- the state it reads is final once the decisions are, and the queue runs before the
+        # next request reads or changes anything (its flush).  Forced saves, the v6.31 stage's own re-entry and the
+        # deferred run itself save now, as before.
+        if (not force and getattr(self, "research_v641_speed", False)
+                and getattr(self, "_v6_31_stage", None) is None and not getattr(self, "_v641_saving", False)):
+            v641_work = getattr(self, "_v629_request_work", None)
+            if v641_work is not None:
+                v641_work.add_first("v641_session_save", self._v641_deferred_save)
+                return
         if bool(getattr(self, "research_v631_single_write_save", False)) and self._v6_31_staged_save(force):
             return                      # v6.31: this whole save ran on a stage file, renamed into place only when whole
         super()._research_save_session(force=force)
@@ -16093,6 +16173,8 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
                     )
                 },
             }
+            if getattr(self, "research_v641_c2q_persist", False):
+                self._v6_41_save_c2q(payload)          # v6.41 B2b(3): C2Q's window survives a relaunch
             tmp = path + f".direct.tmp.{os.getpid()}"
             with open(tmp, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
@@ -16222,6 +16304,8 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
             min_size = max(
                 1e-12, float(getattr(self, "_research_exchange_min_order_size", 0.25) or 0.25)
             )
+            if getattr(self, "research_v641_unit_safety", False):
+                min_size = self._v6_41_min(bid, min_size)      # v6.41 B2: the book's class's minimum
             plan = partial_recovery_plan(
                 before=float(before), after=float(after), min_order=min_size, eps=eps,
             )
@@ -16350,7 +16434,10 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
         instructions = 0
         holds = 0
         deep_partial = bool(getattr(self, "research_v6332_deep_partial", False)) and self._v6332_on()
+        v6_41_min0 = min_size
         for book_id, row in list(registry.items()):
+            if getattr(self, "research_v641_unit_safety", False):
+                min_size = self._v6_41_min(int(book_id), v6_41_min0)  # v6.41 B2: the book's class's minimum
             net = float(self._direct_signed_inventory(int(book_id)))
             if not direct_is_dust_inventory(net, min_order=min_size, eps=eps):
                 self._direct_partial_recovery.pop(int(book_id), None)
@@ -16828,16 +16915,19 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
         return ledger
 
     def _direct_order_client_id(self, order):
+        # v6.41 F1: fast_getattr == getattr, without pydantic's two AttributeErrors for each absent name
+        v6_41_ga = self._v6_41_getattr if getattr(self, "research_v641_speed", False) else getattr
         for name in ("clientOrderId", "client_order_id", "clientId", "client_id"):
-            value = getattr(order, name, None)
+            value = v6_41_ga(order, name, None)
             if value is not None:
                 return value
         return None
 
     def _direct_order_remaining_qty(self, order) -> float:
+        v6_41_ga = self._v6_41_getattr if getattr(self, "research_v641_speed", False) else getattr      # v6.41 F1
         for name in ("remainingQuantity", "remaining_quantity", "quantity", "qty", "size"):
             try:
-                value = float(getattr(order, name, 0.0) or 0.0)
+                value = float(v6_41_ga(order, name, 0.0) or 0.0)
             except (TypeError, ValueError):
                 continue
             if value > 0.0:
@@ -17830,7 +17920,11 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
         self._research_dust_compact_ids_this_tick = self._select_dust_compaction_books(state)
         stats["direct_dust_compact_selected"] = len(self._research_dust_compact_ids_this_tick)
         compact_before = int(getattr(self, "_research_dust_compact_orders", 0) or 0)
-        compact_instructions = self._direct_compact_selected_dust(response, state)
+        if getattr(self, "research_v641_unit_safety", False):
+            # v6.41 B2: the compactor per class, each in its own units (research_v641_unit_safety)
+            compact_instructions = self._v6_41_compact(response, state)
+        else:
+            compact_instructions = self._direct_compact_selected_dust(response, state)
         stats["direct_dust_compact_instructions"] = int(compact_instructions)
         stats["direct_dust_compact_orders_delta"] = max(
             0, int(getattr(self, "_research_dust_compact_orders", 0) or 0) - compact_before
@@ -18091,16 +18185,29 @@ class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part
             self._direct_liveness_blocked_ticks = 0
         stats["direct_liveness_blocked_ticks"] = int(self._direct_liveness_blocked_ticks)
 
-        normalize_n = self._direct_normalize_irreducible_dust(
-            response,
-            state,
-            effective_abs=effective_abs_now,
-            effective_active=effective_active_now,
-            effective_open=effective_open_now,
-            force_liveness=bool(
-                selected_ids and self._direct_liveness_blocked_ticks >= DIRECT_LIVENESS_TRIGGER_TICKS
-            ),
-        )
+        if getattr(self, "research_v641_unit_safety", False) or getattr(self, "research_v641_c2q_reduce", False):
+            # v6.41 B2 / B2b: the normalizer per class in its own units; class 2 left out while C2Q is disarmed
+            normalize_n = self._v6_41_normalize(
+                response,
+                state,
+                effective_abs=effective_abs_now,
+                effective_active=effective_active_now,
+                effective_open=effective_open_now,
+                force_liveness=bool(
+                    selected_ids and self._direct_liveness_blocked_ticks >= DIRECT_LIVENESS_TRIGGER_TICKS
+                ),
+            )
+        else:
+            normalize_n = self._direct_normalize_irreducible_dust(
+                response,
+                state,
+                effective_abs=effective_abs_now,
+                effective_active=effective_active_now,
+                effective_open=effective_open_now,
+                force_liveness=bool(
+                    selected_ids and self._direct_liveness_blocked_ticks >= DIRECT_LIVENESS_TRIGGER_TICKS
+                ),
+            )
         if normalize_n:
             stats["direct_dust_normalize_instructions"] = int(normalize_n)
             stats["instructions"] += int(normalize_n)

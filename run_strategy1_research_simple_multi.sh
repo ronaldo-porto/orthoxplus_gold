@@ -460,7 +460,7 @@ research_v625_lean_cap=48 \
 research_v626_feed_clock=1 \
 research_v627_touch_centre=1 \
 research_v628_flat_launch=1 \
-research_v629_touch_fp_move=1 \
+research_v629_touch_fp_move=0 \
 research_v630_deep_tier=1 \
 research_v630_s9_lookback=1 \
 research_v631_touch_improve=1 \
@@ -490,7 +490,14 @@ research_v640_c1w=0 \
 research_v640_guard_hold=1 \
 research_v640_guard_init_price=1 \
 research_v640_s14_class_key=1 \
-research_v640_s14_flush_spec=1"
+research_v640_s14_flush_spec=1 \
+research_v641_speed=1 \
+research_v641_unit_safety=1 \
+research_v641_c2q_reduce=1 \
+research_v641_c2q_persist=1 \
+research_v641_s9_page=1 \
+research_v642_l1t=2 \
+research_v642_l1c=4"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -3573,8 +3580,8 @@ if [[ "${V6_29_BUILD:-0}" == "1" ]]; then
     echo "ERROR: v6.29 S8's first save: a written session file does not end the request (it would force every save)." >&2
     exit 1
   }
-  [[ " $PARAMS " == *" research_v629_touch_fp_move=1 "* ]] || {
-    echo "ERROR: v6.29 S9 build without research_v629_touch_fp_move=1 in PARAMS." >&2
+  [[ " $PARAMS " == *" research_v629_touch_fp_move=1 "* || " $PARAMS " == *" research_v629_touch_fp_move=0 "* ]] || {
+    echo "ERROR: v6.29 S9 build without research_v629_touch_fp_move=0 or 1 in PARAMS (v6.41 ships 0: k140 R5 S9X)." >&2
     exit 1
   }
   for key in research_v617_touch_quote research_v626_feed_clock research_v628_flat_launch research_v621_pace_persist; do
@@ -3678,7 +3685,8 @@ if [[ "${V6_30_BUILD:-0}" == "1" ]]; then
     echo "ERROR: v6.30 build without research_v630_s9_lookback=1 in PARAMS." >&2
     exit 1
   }
-  for key in research_v633_deep_layer research_v629_touch_fp_move research_v626_feed_clock; do
+  # v6.41 (k144, B4): S9 may ship off (research_v629_touch_fp_move=0); D2 then multiplies no look-back (inert)
+  for key in research_v633_deep_layer research_v626_feed_clock; do
     [[ " $PARAMS " == *" $key=1 "* ]] || {
       echo "ERROR: v6.30 build without $key=1 in PARAMS (D1 moves the deep layer's orders; D2 multiplies S9's look-back, S6's limit)." >&2
       exit 1
@@ -4627,7 +4635,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qF -- 'class Strategy1_Research_Simple(V640Part, V636Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V642Part, )?(V641Part, )?V640Part, V636Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_40_part import V640Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.40 Simple does not take V640Part as its first base." >&2
     exit 1
@@ -4715,6 +4723,200 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
   fi
   echo "[preflight] v6.40 classes: traded ${_v640_tr}; c2du ${_v640_du}; arms C2D ${_v640_c2d} C2J ${_v640_c2j} C2Q ${_v640_c2q} (pf ${_v640_pf}) C1W ${_v640_c1w}; fixes guard_hold ${_v640_gh} init_price ${_v640_gi} s14_class_key ${_v640_sk} s14_flush_spec ${_v640_sf}; axon keep-alive 120 s"
   echo "[preflight] v6.40 PASS (every v6.40 key explicit; traded ${_v640_tr}: off = v6.39's trading on the home class)"
+fi
+
+# v6.41.  research_v641_*: the final SN79 0.6.5 build (scratchpad k144); every key shipped 1 (0 = v6.40.1's code on
+# that path, by a PARAMS edit, no rebuild):
+#   research_v641_speed (k141 P3: B defer-free, A defer-save, F1 miss path, D scan-once, C kappa-inc, G gc-hold,
+#   H sweep-key -- reply time only, every instruction as v6.40.1's);
+#   research_v641_unit_safety (B2: the contract-reject guard, dust parking / compaction / normalizer, the partial-fill
+#   recovery, v6.2.14's touch life and A1.9.1's reprice in each traded class's own tick / decimals / minimum);
+#   research_v641_c2q_reduce (B2b: C2Q disarmed keeps one reduce-only passive exit per class-2 book; a probe never adds
+#   on a book carrying a clip); research_v641_c2q_persist (B2b: C2Q's window and last verdict survive a relaunch in
+#   the same simulation); research_v641_s9_page (B7, rule parity with vm739: S9's page history observes every
+#   request's page once, before the books, whichever of them reach a touch decision).
+# Each key must appear exactly once as 0 or 1; the block prints the state.
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  for _v641_f in research_v6_41_speed.py research_v6_41_units.py simple_parts/v6_41_part.py; do
+    [[ -f "$AGENT_PATH_REAL/$_v641_f" ]] || { echo "ERROR: v6.41 agents/strategy/$_v641_f is missing." >&2; exit 1; }
+  done
+  for _v641_pat in \
+      'self._v6_41_init()' \
+      'self._v6_41_switches = self._v6_41_apply(self.research_v641_speed)' \
+      'self._v6_41_kappa(super()._research_refresh_rolling_kappa_cache)' \
+      'work.add("v641_release_parse", v6_38_trades_reset)' \
+      'v641_work.add_first("v641_session_save", self._v641_deferred_save)' \
+      'v6_41_ga = self._v6_41_getattr if getattr(self, "research_v641_speed", False) else getattr' \
+      'prints = self._v6_41_raw_trades(rb.get("e"))' \
+      'compact_instructions = self._v6_41_compact(response, state)' \
+      'normalize_n = self._v6_41_normalize(' \
+      'min_size = self._v6_41_min(bid, min_size)' \
+      'min_size = self._v6_41_min(int(book_id), v6_41_min0)' \
+      'tick_size = self._v6_41_tick(book_id, v6_41_tick0)' \
+      'state = self._v6_41_book_state(state, bid)' \
+      'placed_total += self._v6_41_c2q_exit(response, book_id, rows + deep_rows + touch_rows, already, req,' \
+      'held = self._v6_41_probe_held(book_id, inv, deep, held)' \
+      'self._v6_41_save_c2q(payload)' \
+      'self._v6_41_read_c2q(raw)' \
+      'self._v6_41_s9_page(state)'; do
+    grep -qF -- "$_v641_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: v6.41 the agent lacks: $_v641_pat" >&2
+      exit 1
+    }
+  done
+  grep -qE -- '^class Strategy1_Research_Simple\((V642Part, )?V641Part, V640Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+    grep -qF -- 'from simple_parts.v6_41_part import V641Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.41 Simple does not take V641Part as its first base." >&2
+    exit 1
+  }
+  for _v641_pat in \
+      'class V641Part:' \
+      'def _v6_41_init(self) -> None:' \
+      'def _research_apply_contract_reject_guard(self, response, state):' \
+      'def _select_dust_compaction_books(self, state):' \
+      'def _v6_41_c2q_exit(' \
+      'def _v6_41_probe_held(' \
+      'def _v6_41_save_c2q(self, payload) -> None:' \
+      'def _v6_41_s9_page(self, state) -> None:'; do
+    grep -qF -- "$_v641_pat" "$AGENT_PATH_REAL/simple_parts/v6_41_part.py" || {
+      echo "ERROR: v6.41 the part lacks: $_v641_pat" >&2
+      exit 1
+    }
+  done
+  for _v641_pat in \
+      'class UnitState:' \
+      'def reduce_exit(' \
+      'def probe_held(' \
+      'def exit_quantity('; do
+    grep -qF -- "$_v641_pat" "$AGENT_PATH_REAL/research_v6_41_units.py" || {
+      echo "ERROR: v6.41 the units module lacks: $_v641_pat" >&2
+      exit 1
+    }
+  done
+  for _v641_pat in \
+      'def apply(on) -> dict:' \
+      'def fast_getattr(obj, name: str, default=None):' \
+      'def kappa_refresh(agent, frozen) -> None:'; do
+    grep -qF -- "$_v641_pat" "$AGENT_PATH_REAL/research_v6_41_speed.py" || {
+      echo "ERROR: v6.41 the speed module lacks: $_v641_pat" >&2
+      exit 1
+    }
+  done
+  grep -qF -- 'def v641_raw_trades(raw_events):' "$SCRIPT_DIR/taos/im/protocol/models.py" || { echo "ERROR: v6.41 taos/im/protocol/models.py lacks: def v641_raw_trades(raw_events):" >&2; exit 1; }
+  grep -qF -- '_V641_SCAN_ONCE = False' "$AGENT_PATH_REAL/research_v6_38_fast_path.py" || { echo "ERROR: v6.41 agents/strategy/research_v6_38_fast_path.py lacks: _V641_SCAN_ONCE = False" >&2; exit 1; }
+  grep -qF -- 'def add_first(self, name: str, fn: Callable[[], Any]) -> None:' "$AGENT_PATH_REAL/research_v629_reply_path.py" || { echo "ERROR: v6.41 agents/strategy/research_v629_reply_path.py lacks: def add_first(self, name: str, fn: Callable[[], Any]) -> None:" >&2; exit 1; }
+  grep -qF -- 'V641_HOLD_THROUGH_GAP = False' "$AGENT_PATH_REAL/research_direct_idle_gc.py" || { echo "ERROR: v6.41 agents/strategy/research_direct_idle_gc.py lacks: V641_HOLD_THROUGH_GAP = False" >&2; exit 1; }
+  grep -qF -- '_V641_VERSION_KEY = False' "$AGENT_PATH_REAL/research_v633_deep_layer.py" || { echo "ERROR: v6.41 agents/strategy/research_v633_deep_layer.py lacks: _V641_VERSION_KEY = False" >&2; exit 1; }
+  _v641_get() {
+    local _n _v
+    _n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c "^$1=" || true)
+    [[ "$_n" == "1" ]] || { echo "ERROR: v6.41 build with $1 given ${_n} times in PARAMS (exactly once)." >&2; exit 1; }
+    _v=$(tr ' ' '\n' <<< "$PARAMS" | grep "^$1=" | cut -d= -f2-)
+    [[ "$_v" =~ ^(0|1)$ ]] || { echo "ERROR: v6.41 $1=$_v is not 0 or 1" >&2; exit 1; }
+    printf '%s' "$_v"
+  }
+  _v641_sp=$(_v641_get research_v641_speed) || exit 1
+  _v641_us=$(_v641_get research_v641_unit_safety) || exit 1
+  _v641_cr=$(_v641_get research_v641_c2q_reduce) || exit 1
+  _v641_cp=$(_v641_get research_v641_c2q_persist) || exit 1
+  _v641_s9=$(_v641_get research_v641_s9_page) || exit 1
+  echo "[preflight] v6.41: speed ${_v641_sp}; unit_safety ${_v641_us}; c2q_reduce ${_v641_cr}; c2q_persist ${_v641_cp}; s9_page ${_v641_s9}"
+  echo "[preflight] v6.41 B4: S9 research_v629_touch_fp_move=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v629_touch_fp_move=' | cut -d= -f2) (k140 R5 S9X: shipped 0; S12b on)"
+  echo "[preflight] v6.41 PASS (every v6.41 key explicit; 0 = v6.40.1's code on that path)"
+fi
+
+# v6.42.  research_v642_l1t: k149's L1T rule as a live port (scratchpad k150; rule research_v6_42_l1t, agent
+# simple_parts/v6_42_part.py) -- on a class-0 book side whose L1T gate is open, a NEW level-0 deep order carries the
+# p99 ladder level's (L1's) size and L1 rests nowhere while it does; the gate closing re-places it at its own size.
+# Total resting size per side unchanged.  0 = v6.41's code on every path; 1 L1T (reducing toward tau AND the side tau
+# leans to); 2 L1TS (reducing AND (that side OR the side trading with the 30-s block's fp step)); 3 L1TI (that side
+# AND (reducing OR the step with the lean)).  1 / 2 / 3 need the deep ladder (research_v69_deep_ladder=1); 2 / 3 read
+# v6.36's step record (research_v636_step_withdrawal=1).  research_v642_l1c (k151): the carried size within the gap to
+# tau on the true position -- 0 off; 1 CAP min(L1, max(0, |inv - tau| - q0)) on every folded side; 3 FAR-CAP the same on
+# the far side only; 4 AG-CAP (k153) the far side as 3 and the toward side capped while it trades against the 30-s
+# block's step (needs l1t 2); below the minimum no fold; a larger resting carrying level 0 is re-placed; only with l1t
+# 1 or 2.  Each key must appear exactly once (l1t 0, 1, 2 or 3; l1c 0, 1, 3 or 4).
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  for _v642_f in research_v6_42_l1t.py simple_parts/v6_42_part.py; do
+    [[ -f "$AGENT_PATH_REAL/$_v642_f" ]] || { echo "ERROR: v6.42 agents/strategy/$_v642_f is missing." >&2; exit 1; }
+  done
+  for _v642_pat in \
+      'self._v6_42_note(book_id, now_ts, inv, v6_40_g is None and book_id not in v6_23_foreign)' \
+      'v6_42_fold = self._v6_42_fold(book_id, inv, vac, levels_side, clip, size_scale, min_order, cfg)' \
+      'self._v6_42_doom(book_id, v6_42_fold, doomed, resting, deep_rows, already)' \
+      'self._v6_42_cancelled(book_id, v6_42_fold, cancelled)' \
+      'if v6_42_fold is not None and level == 1 and v6_42_fold.holds_l1(side):' \
+      'q = v6_42_fold.carried(side, q)' \
+      'self._v6_42_placed(response, book_id, side, v6_42_fold, resting, budget, req)'; do
+    grep -qF -- "$_v642_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: v6.42 the agent lacks: $_v642_pat" >&2
+      exit 1
+    }
+  done
+  grep -qF -- 'class Strategy1_Research_Simple(V642Part, V641Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+    grep -qF -- 'from simple_parts.v6_42_part import V642Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.42 Simple does not take V642Part as its first base." >&2
+    exit 1
+  }
+  for _v642_pat in \
+      'class V642Part:' \
+      'class V642FoldPlan:' \
+      'def _v6_42_init(self) -> None:' \
+      'def _v6_42_note(self, book_id, now_ts, inv, eligible) -> None:' \
+      'def _v6_42_fold(self, book_id, inv, vac, levels_side, clip, size_scale, min_order, cfg) -> V642FoldPlan:' \
+      'def _v6_42_doom(self, book_id, plan, doomed, resting, deep_rows, already) -> None:' \
+      'def _v6_42_placed(self, response, book_id, side, plan, resting, budget, req) -> None:' \
+      'def _v6_42_report(self) -> None:'; do
+    grep -qF -- "$_v642_pat" "$AGENT_PATH_REAL/simple_parts/v6_42_part.py" || {
+      echo "ERROR: v6.42 the part lacks: $_v642_pat" >&2
+      exit 1
+    }
+  done
+  for _v642_pat in \
+      'def parse_mode(value: Any) -> int | None:' \
+      'def gate(mode: Any, side: Any, inventory: Any, tau: Any, step: Any = 0, **context: Any) -> bool:' \
+      'GATES = {MODE_L1T: gate_l1t, MODE_L1TS: gate_l1ts, MODE_L1TI: gate_l1ti}' \
+      'def carried_size(mode: Any, q0: Any, q1: Any, gap: Any, toward: Any, against: Any = False) -> float:' \
+      'CARRIED = {L1C_CAP: carried_cap, L1C_FAR_CAP: carried_far_cap, L1C_AG_CAP: carried_ag_cap}' \
+      'def fold_quantity(levels: Any, clip: Any, size_scale: Any, min_order: Any, volume_decimals: Any) -> float:' \
+      'from research_v641_pace import adds as _adds'; do
+    grep -qF -- "$_v642_pat" "$AGENT_PATH_REAL/research_v6_42_l1t.py" || {
+      echo "ERROR: v6.42 the rule module lacks: $_v642_pat" >&2
+      exit 1
+    }
+  done
+  _v642_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_v642_l1t=' || true)
+  [[ "$_v642_n" == "1" ]] || { echo "ERROR: v6.42 build with research_v642_l1t given ${_v642_n} times in PARAMS (exactly once)." >&2; exit 1; }
+  _v642_l1t=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v642_l1t=' | cut -d= -f2-)
+  [[ "$_v642_l1t" =~ ^(0|1|2|3)$ ]] || { echo "ERROR: v6.42 research_v642_l1t=$_v642_l1t is not 0, 1, 2 or 3" >&2; exit 1; }
+  if [[ "$_v642_l1t" != "0" ]]; then
+    [[ "$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v69_deep_ladder=' | cut -d= -f2-)" == "1" ]] || {
+      echo "ERROR: v6.42 research_v642_l1t=$_v642_l1t (level 0 carries L1) needs the deep ladder: research_v69_deep_ladder=1" >&2
+      exit 1
+    }
+  fi
+  if [[ "$_v642_l1t" == "2" || "$_v642_l1t" == "3" ]]; then
+    [[ "$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v636_step_withdrawal=' | cut -d= -f2-)" == "1" ]] || {
+      echo "ERROR: v6.42 research_v642_l1t=$_v642_l1t reads the 30-s block's step: research_v636_step_withdrawal=1 is required" >&2
+      exit 1
+    }
+  fi
+  _v642_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_v642_l1c=' || true)
+  [[ "$_v642_n" == "1" ]] || { echo "ERROR: v6.42 build with research_v642_l1c given ${_v642_n} times in PARAMS (exactly once)." >&2; exit 1; }
+  _v642_l1c=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v642_l1c=' | cut -d= -f2-)
+  [[ "$_v642_l1c" =~ ^(0|1|3|4)$ ]] || { echo "ERROR: v6.42 research_v642_l1c=$_v642_l1c is not 0, 1, 3 or 4" >&2; exit 1; }
+  if [[ "$_v642_l1c" != "0" && "$_v642_l1t" != "1" && "$_v642_l1t" != "2" ]]; then
+    echo "ERROR: v6.42 research_v642_l1c=$_v642_l1c bounds the reducing l1t folds: it needs research_v642_l1t=1 or 2 (got $_v642_l1t)" >&2
+    exit 1
+  fi
+  if [[ "$_v642_l1c" == "4" && "$_v642_l1t" != "2" ]]; then
+    echo "ERROR: v6.42 research_v642_l1c=4 (AG-CAP) reads the 30-s block's step: it needs research_v642_l1t=2 (got $_v642_l1t)" >&2
+    exit 1
+  fi
+  case "$_v642_l1t" in 0) _v642_name=off;; 1) _v642_name=L1T;; 2) _v642_name=L1TS;; 3) _v642_name=L1TI;; esac
+  case "$_v642_l1c" in 0) _v642_cname=off;; 1) _v642_cname=CAP;; 3) _v642_cname=FAR_CAP;; 4) _v642_cname=AG_CAP;; esac
+  echo "[preflight] v6.42: l1t ${_v642_l1t} l1c ${_v642_l1c} (${_v642_name} / ${_v642_cname})"
+  echo "[preflight] v6.42 PASS (research_v642_l1t / research_v642_l1c explicit; 0 0 = v6.41's code on every path)"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
@@ -4845,6 +5047,8 @@ if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
       tests/test_research_v6_38_l3.py \
       tests/test_research_v6_39.py \
       tests/test_research_v6_40.py \
+      tests/test_research_v6_41.py \
+      tests/test_research_v6_42.py \
       tests/test_module_globals_resolve.py \
       tests/test_version_pins.py \
       tests/test_preflight_gate.py \

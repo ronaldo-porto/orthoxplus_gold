@@ -33,6 +33,7 @@ it is reported (None in the result and one line on stdout) instead of stopping t
 from __future__ import annotations
 
 import importlib
+import sys
 
 from research_v62_making_mirror import trade_dict
 from research_v6214_touch_life import last_taker_side as _v6214_last_taker_side
@@ -49,6 +50,8 @@ SHARED = frozenset({"taos.im.protocol.models"})
 # it is cached), emptied at the start of each request's update (trades_reset); bounded in case a request never resets
 _TRADES: dict[int, tuple[object, list]] = {}
 _MAX_LISTS = 4096
+# v6.41 D (research_v641_speed, written by research_v6_41_speed.apply): read the protocol's recorded trade candidates
+_V641_SCAN_ONCE = False
 
 
 def apply(on) -> dict:
@@ -73,6 +76,10 @@ def apply(on) -> dict:
 def trades_reset() -> None:
     """Empties the parse cache: the start of a request's update, so the cache holds one request's event lists."""
     _TRADES.clear()
+    models = sys.modules.get("taos.im.protocol.models")         # v6.41 D: the protocol's side tables with it
+    reset = getattr(models, "v641_reset", None)
+    if reset is not None:
+        reset()
 
 
 def trades_of(events) -> list:
@@ -84,8 +91,15 @@ def trades_of(events) -> list:
     hit = _TRADES.get(id(events))
     if hit is not None and hit[0] is events:
         return hit[1]
+    src = events
+    if _V641_SCAN_ONCE:                                         # v6.41 D: only the elements trade_dict can parse
+        models = sys.modules.get("taos.im.protocol.models")
+        cand_of = getattr(models, "v641_trade_candidates", None)
+        cand = cand_of(events) if cand_of is not None else None
+        if cand is not None:
+            src = cand
     out = []
-    for ev in events:
+    for ev in src:
         t = trade_dict(ev)
         if t is not None:
             out.append(t)

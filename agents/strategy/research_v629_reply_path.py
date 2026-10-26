@@ -123,6 +123,10 @@ class DeferredWork:
     def add(self, name: str, fn: Callable[[], Any]) -> None:
         self._queue.append((str(name), fn))
 
+    def add_first(self, name: str, fn: Callable[[], Any]) -> None:
+        """v6.41 A: a task that must run before every task queued so far (the request's own session save)."""
+        self._queue.insert(0, (str(name), fn))
+
     def lap(self, name: str) -> None:
         """Inside a running task: book the time since the previous lap (or the task's start) to ``name``."""
         if self._lap_t is None:

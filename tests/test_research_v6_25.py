@@ -44,6 +44,7 @@ import test_research_v6_23 as t623  # noqa: E402
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v640_undo  # noqa: E402   (k139: v6.40's text / AST undo)
+import _v642_undo  # noqa: E402  (k150: v6.42's undo, tests/_v642_undo.py)
 from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
 SIMPLE = simple_text()
@@ -316,7 +317,7 @@ def test_the_deep_layer_and_the_touch_quote_read_their_inventory_only_from_the_a
                         ("_v617_touch", {"v641_adds", "v617_room", "_v6_38_touch_size"}),
                         ("_v619_side", {"v619_held_side"}),
                         ("_v6_23_against", {"v623_withheld"})):
-        fn = ast.parse(_src(name)).body[0]
+        fn = _v642_undo.undo_node(ast.parse(_src(name)).body[0])   # k150: v6.42's hooks out (its gate reads the noted TRUE position)
         assert "inv" in [a.arg for a in fn.args.args], name
         text = ast.unparse(fn)
         for s in sources:

@@ -65,6 +65,11 @@ A1992_HEAP_SAMPLE_EVERY = 100
 # generation; a fallback turns automatic collection back on.  Only where the gc module offers isenabled / disable /
 # enable.
 F2_REQUEST_GC_HOLD = True
+# v6.41 G (research_v641_speed, written by research_v6_41_speed.apply): the F2 hold is kept across the idle gap -- the
+# idle pass still collects (young or full, as v6.39 decides), but automatic collection stays off until the next request
+# starts, so the next request's decompress (before Simple.handle) pays no young-generation passes either.  Every
+# fallback still turns automatic collection back on.
+V641_HOLD_THROUGH_GAP = False
 
 FALLBACK_NO_EVENT_LOOP = "NO_EVENT_LOOP"
 FALLBACK_NO_IDLE_GAP = "NO_IDLE_GAP"
@@ -186,7 +191,8 @@ class IdleCollector:
             self._fall_back(FALLBACK_COLLECT_ERROR)
             return None
         if F2_REQUEST_GC_HOLD:
-            self._f2_release()
+            if not V641_HOLD_THROUGH_GAP:       # v6.41 G: the hold is kept across the idle gap
+                self._f2_release()
         ms = (self._clock() - started) * 1000.0
         if generation != 2:                 # v6.39: a young pass -- the gap was used, the full-pass counters untouched
             self.idle_young_passes += 1

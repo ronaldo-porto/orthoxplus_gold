@@ -53,6 +53,7 @@ import test_research_v6_25 as t625  # noqa: E402
 import test_research_v6_26 as t626  # noqa: E402
 import test_research_v6_27 as t627  # noqa: E402
 import test_research_v6_28 as t628  # noqa: E402
+import _v641_undo  # noqa: E402  (k144: v6.41's undo, tests/_v641_undo.py)
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v639_undo  # noqa: E402
@@ -1000,8 +1001,10 @@ def test_without_v629_state_the_save_path_is_v628s(tmp_path):
 
 def test_the_switch_ships_on_and_agrees_with_its_agent_default():
     params = t617._params()
-    assert "research_v629_touch_fp_move=1 " in t617._shipped() + " " and params.count("research_v629_touch_fp_move=") == 1
-    assert 'research_v628_flat_launch=1 \\\nresearch_v629_touch_fp_move=1 \\\n' in LAUNCHER    # after v6.28's (v6.30's next)
+    # k144 B4: v6.41 ships S9 OFF (k140 R5 S9X passed, SX failed); the agent's default stays on (SWITCH_LINE below)
+    assert "research_v629_touch_fp_move=0 " in t617._shipped() + " " and params.count("research_v629_touch_fp_move=") == 1
+    assert 'research_v628_flat_launch=1 \\\nresearch_v629_touch_fp_move=0 \\\n' in LAUNCHER    # after v6.28's (v6.30's next)
+    assert 'research_v628_flat_launch=1 \\\nresearch_v629_touch_fp_move=1 \\\n' in _v641_undo.launcher_v640(LAUNCHER)  # v6.40.1
     for key in ("research_v617_touch_quote=1", "research_v626_feed_clock=1", "research_v628_flat_launch=1",
                 "research_v621_pace_persist=1", "research_v616_fair_value=1"):
         assert f" {key} " in f" {t617._shipped()} ", key                                      # what v6.29 sits on
@@ -1339,9 +1342,13 @@ def test_the_v629_block_passes_the_shipped_params_and_refuses_a_build_without_th
     assert out.returncode == 0 and out.stderr == "", out.stderr
     assert out.stdout.startswith("[preflight] v6.29 touch on the fp move PASS (S9: the touch quote toward the "
                                  "fundamental is withheld"), out.stdout
-    for bad in ("research_v629_touch_fp_move=0", "", "research_v629_touch_fp_move=true", "research_v629_touch_fp_move=11"):
-        out = _run_block(shipped.replace("research_v629_touch_fp_move=1", bad))
-        assert out.returncode == 1 and "without research_v629_touch_fp_move=1" in out.stderr and "PASS" not in out.stdout, bad
+    # k144 B4: the shipped S9 is 0; the block passes it at 0 and at 1 and refuses anything else (or none)
+    assert " research_v629_touch_fp_move=0 " in f" {shipped} "
+    out = _run_block(shipped.replace("research_v629_touch_fp_move=0", "research_v629_touch_fp_move=1"))
+    assert out.returncode == 0 and out.stderr == "", out.stderr
+    for bad in ("", "research_v629_touch_fp_move=true", "research_v629_touch_fp_move=11", "research_v629_touch_fp_move=01"):
+        out = _run_block(shipped.replace("research_v629_touch_fp_move=0", bad))
+        assert out.returncode == 1 and "without research_v629_touch_fp_move=0 or 1" in out.stderr and "PASS" not in out.stdout, bad
     for key in ("research_v617_touch_quote=1", "research_v626_feed_clock=1", "research_v628_flat_launch=1",
                 "research_v621_pace_persist=1"):
         assert f" {key} " in f" {shipped} ", key

@@ -66,13 +66,15 @@ from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v639_undo  # noqa: E402
 import _v640_undo  # noqa: E402   (k139: v6.40's paths / text undo)
+import _v641_undo  # noqa: E402  (k144: v6.41's undo, tests/_v641_undo.py)
+import _v642_undo  # noqa: E402  (k150: v6.42's undo, tests/_v642_undo.py)
 from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
 SIMPLE = simple_text()
 MODULE = read_source(STRATEGY / "research_v6_37_fast_path.py")
 LAUNCHER = _v640_undo.launcher_v639(read_source(ROOT / "run_strategy1_research_simple_multi.sh"))   # k139: v6.39's
 MODELS_PATH = ROOT / "taos" / "im" / "protocol" / "models.py"
-MODELS = MODELS_PATH.read_text()
+MODELS = _v641_undo.source_v640("models.py", MODELS_PATH.read_text())   # k144: v6.41 B1's edits out (v6.40.1's file)
 GC_MODULE = read_source(STRATEGY / "research_direct_idle_gc.py")
 LEDGER_SRC = read_source(STRATEGY / "research_direct_exit_ledger.py")
 _src = extractor(SIMPLE, cls_name="Strategy1_Research_Simple")
@@ -946,6 +948,15 @@ def test_the_changed_files_are_simple_and_f2s_three_and_the_new_module():
     v639 = _v639_undo.V639_PATHS - {"agents/strategy/Strategy1_Research_Simple.py",
                                     "agents/strategy/research_direct_idle_gc.py"}   # k129: v6.39's, untracked or tracked
     v639 |= _v640_undo.V640_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"}   # k139: v6.40's, either state
+    v639 |= _v641_undo.V641_PATHS - {"agents/strategy/Strategy1_Research_Simple.py",    # k144: v6.41's, either state
+                                     "agents/strategy/research_direct_idle_gc.py", "taos/im/protocol/models.py"}
+    v639 |= _v641_undo.V641_PATHS - {"agents/strategy/Strategy1_Research_Simple.py",    # k144: v6.41's, either state
+                                     "agents/strategy/research_direct_idle_gc.py", "taos/im/protocol/models.py"}
+    v639 |= _v641_undo.V641_PATHS - {"agents/strategy/Strategy1_Research_Simple.py",    # k144: v6.41's, either state
+                                     "agents/strategy/research_direct_idle_gc.py", "taos/im/protocol/models.py"}
+    v639 |= _v641_undo.V641_PATHS - {"agents/strategy/Strategy1_Research_Simple.py",    # k144: v6.41's, either state
+                                     "agents/strategy/research_direct_idle_gc.py", "taos/im/protocol/models.py"}
+    v639 |= _v642_undo.V642_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"}   # k150: v6.42's, either state
     assert sorted(listed - new - v638 - v639) == ["agents/strategy/Strategy1_Research_Simple.py",
                                            "agents/strategy/research_direct_exit_ledger.py",
                                            "agents/strategy/research_direct_idle_gc.py", "taos/im/protocol/models.py"]

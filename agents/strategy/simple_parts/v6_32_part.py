@@ -85,7 +85,13 @@ class V632Part:
                     continue        # v6.34: class 0 keeps its own pooled estimate (research_v634_class1_entry)
                 if tracker is not None:
                     if isinstance(rb, dict):
-                        prints = [e for e in (rb.get("e") or ()) if isinstance(e, dict) and e.get("y") == "t"]
+                        if getattr(self, "research_v641_speed", False):
+                            # v6.41 D: the raw trade dicts the P5 pass recorded for this very list (None: not recorded)
+                            prints = self._v6_41_raw_trades(rb.get("e"))
+                            if prints is None:
+                                prints = [e for e in (rb.get("e") or ()) if isinstance(e, dict) and e.get("y") == "t"]
+                        else:
+                            prints = [e for e in (rb.get("e") or ()) if isinstance(e, dict) and e.get("y") == "t"]
                     else:
                         prints = [e for e in (getattr(book, "events", None) or ())
                                   if (e.get("y") if isinstance(e, dict) else getattr(e, "y", None)) == "t"]

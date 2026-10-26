@@ -2435,7 +2435,90 @@ def _v638_events(raw_events):
     """LazyBook.events with only the trade events validated, each by TradeInfo's validator as the switch-off path calls
     it (F2's direct call, else model_validate); every other event stays the wire dict, in its place."""
     trade = TradeInfo.__pydantic_validator__.validate_python if _F2_FAST else TradeInfo.model_validate
+    if _V641_SCAN_ONCE:
+        return _v641_events(raw_events, trade)
     return [trade(e) if e.get("y") == "t" else e for e in raw_events]
+
+
+# v6.41 D (research_v641_speed, the agent's apply writes it; ships OFF like _V638_TRADES_ONLY): the P5 pass, the same
+# list built by the same calls in the same order, also records (a) the elements v6.2's trade_dict can turn into a trade
+# -- the validated trades and any element that is not a dict carrying "y" (trade_dict skips exactly the dicts whose
+# get("y", "t") != "t") -- for the shared trade parse, and (b) the raw trade dicts (isinstance dict and y == "t") for
+# v6.32's prints filter.  Keyed by list identity with the list held and its length checked; the agent empties both at
+# each request's start (research_v6_38_fast_path.trades_reset) and, with v6.41 B, after the reply.
+_V641_SCAN_ONCE = False
+_V641_CAND: dict = {}
+_V641_RAW: dict = {}
+_V641_MAX = 4096
+
+
+def _v641_events(raw_events, trade):
+    out = []
+    cand = []
+    raw_trades = []
+    o_app, c_app, r_app = out.append, cand.append, raw_trades.append
+    try:
+        all_dicts = set(map(type, raw_events)) <= {dict}       # the wire's case: every event a plain dict
+    except TypeError:
+        all_dicts = False
+    if all_dicts:
+        # a candidate superset is exact (trade_dict returns None for the extra ones): every dict whose y is None
+        for e in raw_events:
+            y = e.get("y")
+            if y == "t":
+                m = trade(e)
+                o_app(m)
+                c_app(m)
+                r_app(e)
+            else:
+                o_app(e)
+                if y is None:
+                    c_app(e)
+    else:
+        for e in raw_events:
+            y = e.get("y")
+            if y == "t":
+                m = trade(e)
+                o_app(m)
+                c_app(m)
+                if isinstance(e, dict):
+                    r_app(e)
+            else:
+                o_app(e)
+                if y is None or not isinstance(e, dict):
+                    c_app(e)
+    if len(_V641_CAND) >= _V641_MAX or len(_V641_RAW) >= _V641_MAX:
+        _V641_CAND.clear()
+        _V641_RAW.clear()
+    _V641_CAND[id(out)] = (out, len(out), cand)
+    if isinstance(raw_events, list):
+        _V641_RAW[id(raw_events)] = (raw_events, len(raw_events), raw_trades)
+    return out
+
+
+def v641_trade_candidates(events):
+    """The recorded candidates of a P5 list (the very list, unchanged length), else None."""
+    if not _V641_SCAN_ONCE:
+        return None
+    hit = _V641_CAND.get(id(events))
+    if hit is None or hit[0] is not events or len(events) != hit[1]:
+        return None
+    return hit[2]
+
+
+def v641_raw_trades(raw_events):
+    """A new list of the raw trade dicts recorded for this very wire list (unchanged length), else None."""
+    if not _V641_SCAN_ONCE or not raw_events:
+        return None
+    hit = _V641_RAW.get(id(raw_events))
+    if hit is None or hit[0] is not raw_events or len(raw_events) != hit[1]:
+        return None
+    return list(hit[2])
+
+
+def v641_reset():
+    _V641_CAND.clear()
+    _V641_RAW.clear()
 
 
 def _v638_all_events(raw_events):

@@ -1,0 +1,88 @@
+{
+ "base_joined_sha256": "cb95f54e2c47673af6e8d2546a944b9738559501909b5f84bf71745dd8d9351e",
+ "joined_sha256": "7841b03fe70ff369c89c36734e86881da8ef905c4c38d3dbf510527538df26c5",
+ "edits": [
+  {
+   "label": "l1t_note",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "                if v6_27_on:\n                    self._v6_27_note(book_id, now_ts)        # v6.27 S7: the lean S5 just set, for the touch quote\n",
+   "new": "                if v6_27_on:\n                    self._v6_27_note(book_id, now_ts)        # v6.27 S7: the lean S5 just set, for the touch quote\n            if getattr(self, \"research_v642_l1t\", 0):\n                # v6.42 L1T (research_v642_l1t): this book's TRUE position and this request's v6.25 lean tau, which the\n                # L1T gate in the deep layer reads (the layer is handed inv - tau), and whether it is a class-0 book (no\n                # class grid, not foreign) -- simple_parts/v6_42_part.py\n                self._v6_42_note(book_id, now_ts, inv, v6_40_g is None and book_id not in v6_23_foreign)\n"
+  },
+  {
+   "label": "l1t_fold",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "            # none is placed\n            v6_38_ladder = self._v6_38_kbl_ladder(book_id, levels_side)\n        doomed = [(row, V633_CANCEL_OWNS_BOOK) for row in rows if int(row.order_id) not in already]\n",
+   "new": "            # none is placed\n            v6_38_ladder = self._v6_38_kbl_ladder(book_id, levels_side)\n        v6_42_fold = None\n        if getattr(self, \"research_v642_l1t\", 0) and ladder:\n            # v6.42 L1T (research_v642_l1t): per side, the L1 size (after the ladder's own size caps) a NEW level-0 order\n            # carries while the L1T gate is open (0.0: closed), and whether our live level 0 there carries it --\n            # simple_parts/v6_42_part.py\n            v6_42_fold = self._v6_42_fold(book_id, inv, vac, levels_side, clip, size_scale, min_order, cfg)\n        doomed = [(row, V633_CANCEL_OWNS_BOOK) for row in rows if int(row.order_id) not in already]\n"
+  },
+  {
+   "label": "l1t_doom",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "            else:\n                resting[(side, level) if ladder else side] = row\n        cancelled: set = set()\n        if doomed and self._count_book_instructions(response, book_id) < budget:\n            ids = [int(row.order_id) for row, _why in doomed]\n            try:\n                response.cancel_orders(book_id=book_id, order_ids=ids, delay=0)\n",
+   "new": "            else:\n                resting[(side, level) if ladder else side] = row\n        if v6_42_fold is not None:\n            # v6.42 L1T: a carrying level 0 the gate no longer opens is cancelled (the ladder rule re-places level 0 at\n            # its own size and L1 returns); while one rests, the side's resting L1 is cancelled\n            self._v6_42_doom(book_id, v6_42_fold, doomed, resting, deep_rows, already)\n        cancelled: set = set()\n        if doomed and self._count_book_instructions(response, book_id) < budget:\n            ids = [int(row.order_id) for row, _why in doomed]\n            try:\n                response.cancel_orders(book_id=book_id, order_ids=ids, delay=0)\n"
+  },
+  {
+   "label": "l1t_cancelled",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        if cap_skip:\n            return 0                   # v6.22 S3: at its cap the book's cancels went out; a new order would be dropped\n",
+   "new": "        if v6_42_fold is not None:\n            self._v6_42_cancelled(book_id, v6_42_fold, cancelled)     # v6.42 L1T: a cancelled level 0 carries nothing\n        if cap_skip:\n            return 0                   # v6.22 S3: at its cap the book's cancels went out; a new order would be dropped\n"
+  },
+  {
+   "label": "l1t_hold_l1",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "                    continue                    # v6.38 L3 KBL xl / K5 X4: no ladder order on this (side, level)\n                if ladder and ((side, level) in resting or v69_slot_taken(slots, side, level)\n",
+   "new": "                    continue                    # v6.38 L3 KBL xl / K5 X4: no ladder order on this (side, level)\n                if v6_42_fold is not None and level == 1 and v6_42_fold.holds_l1(side):\n                    continue                    # v6.42 L1T: our level 0 carries this side's L1 while it rests\n                if ladder and ((side, level) in resting or v69_slot_taken(slots, side, level)\n"
+  },
+  {
+   "label": "l1t_carry",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "                q = v62_lot_quantity(q_, getattr(cfg, \"volumeDecimals\", 4))\n                if q + 1e-12 < min_order:\n                    self._v633_count(\"below_min_order\")\n                    continue\n",
+   "new": "                q = v62_lot_quantity(q_, getattr(cfg, \"volumeDecimals\", 4))\n                if q + 1e-12 < min_order:\n                    self._v633_count(\"below_min_order\")\n                    continue\n                if v6_42_fold is not None and level == 0:\n                    q = v6_42_fold.carried(side, q)     # v6.42 L1T: a new level 0 carries L1's size while the gate is open\n"
+  },
+  {
+   "label": "l1t_placed",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "                placed += 1\n                req[\"placed_deep\"] += 1\n                if v6_30_why is not None:\n",
+   "new": "                placed += 1\n                req[\"placed_deep\"] += 1\n                if v6_42_fold is not None and level == 0:\n                    # v6.42 L1T: the side's level-0 tag follows the new order; a resting L1 goes with a carrying one\n                    self._v6_42_placed(response, book_id, side, v6_42_fold, resting, budget, req)\n                if v6_30_why is not None:\n"
+  }
+ ],
+ "split_edits": [
+  [
+   "class Strategy1_Research_Simple(V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
+   "class Strategy1_Research_Simple(V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
+  ],
+  [
+   "from simple_parts.v6_42_part import V642Part\nfrom simple_parts.v6_41_part import V641Part\n",
+   "from simple_parts.v6_41_part import V641Part\n"
+  ]
+ ],
+ "new_files": [
+  "agents/strategy/research_v6_42_l1t.py",
+  "agents/strategy/simple_parts/v6_42_part.py"
+ ],
+ "launcher": [
+  {
+   "old": "research_v641_s9_page=1\"\n",
+   "new": "research_v641_s9_page=1 \\\nresearch_v642_l1t=2 \\\nresearch_v642_l1c=4\"\n"
+  },
+  {
+   "old": "  grep -qE -- '^class Strategy1_Research_Simple\\((V641Part, )?V640Part, V636Part, ' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" && \\\n",
+   "new": "  grep -qE -- '^class Strategy1_Research_Simple\\((V642Part, )?(V641Part, )?V640Part, V636Part, ' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" && \\\n"
+  },
+  {
+   "old": "  grep -qF -- 'class Strategy1_Research_Simple(V641Part, V640Part, ' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" && \\\n",
+   "new": "  grep -qE -- '^class Strategy1_Research_Simple\\((V642Part, )?V641Part, V640Part, ' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" && \\\n"
+  },
+  {
+   "old": "fi\n\nif [[ \"${RESEARCH_PREFLIGHT_ONLY:-0}\" == \"1\" ]]; then\n",
+   "new": "fi\n\n# v6.42.  research_v642_l1t: k149's L1T rule as a live port (scratchpad k150; rule research_v6_42_l1t, agent\n# simple_parts/v6_42_part.py) -- on a class-0 book side whose L1T gate is open, a NEW level-0 deep order carries the\n# p99 ladder level's (L1's) size and L1 rests nowhere while it does; the gate closing re-places it at its own size.\n# Total resting size per side unchanged.  0 = v6.41's code on every path; 1 L1T (reducing toward tau AND the side tau\n# leans to); 2 L1TS (reducing AND (that side OR the side trading with the 30-s block's fp step)); 3 L1TI (that side\n# AND (reducing OR the step with the lean)).  1 / 2 / 3 need the deep ladder (research_v69_deep_ladder=1); 2 / 3 read\n# v6.36's step record (research_v636_step_withdrawal=1).  research_v642_l1c (k151): the carried size within the gap to\n# tau on the true position -- 0 off; 1 CAP min(L1, max(0, |inv - tau| - q0)) on every folded side; 3 FAR-CAP the same on\n# the far side only; 4 AG-CAP (k153) the far side as 3 and the toward side capped while it trades against the 30-s\n# block's step (needs l1t 2); below the minimum no fold; a larger resting carrying level 0 is re-placed; only with l1t\n# 1 or 2.  Each key must appear exactly once (l1t 0, 1, 2 or 3; l1c 0, 1, 3 or 4).\nif [[ \"${V6_38_BUILD:-0}\" == \"1\" ]]; then\n  for _v642_f in research_v6_42_l1t.py simple_parts/v6_42_part.py; do\n    [[ -f \"$AGENT_PATH_REAL/$_v642_f\" ]] || { echo \"ERROR: v6.42 agents/strategy/$_v642_f is missing.\" >&2; exit 1; }\n  done\n  for _v642_pat in \\\n      'self._v6_42_note(book_id, now_ts, inv, v6_40_g is None and book_id not in v6_23_foreign)' \\\n      'v6_42_fold = self._v6_42_fold(book_id, inv, vac, levels_side, clip, size_scale, min_order, cfg)' \\\n      'self._v6_42_doom(book_id, v6_42_fold, doomed, resting, deep_rows, already)' \\\n      'self._v6_42_cancelled(book_id, v6_42_fold, cancelled)' \\\n      'if v6_42_fold is not None and level == 1 and v6_42_fold.holds_l1(side):' \\\n      'q = v6_42_fold.carried(side, q)' \\\n      'self._v6_42_placed(response, book_id, side, v6_42_fold, resting, budget, req)'; do\n    grep -qF -- \"$_v642_pat\" \"$AGENT_PATH/Strategy1_Research_Simple.py\" || {\n      echo \"ERROR: v6.42 the agent lacks: $_v642_pat\" >&2\n      exit 1\n    }\n  done\n  grep -qF -- 'class Strategy1_Research_Simple(V642Part, V641Part, ' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" && \\\n    grep -qF -- 'from simple_parts.v6_42_part import V642Part' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" || {\n    echo \"ERROR: v6.42 Simple does not take V642Part as its first base.\" >&2\n    exit 1\n  }\n  for _v642_pat in \\\n      'class V642Part:' \\\n      'class V642FoldPlan:' \\\n      'def _v6_42_init(self) -> None:' \\\n      'def _v6_42_note(self, book_id, now_ts, inv, eligible) -> None:' \\\n      'def _v6_42_fold(self, book_id, inv, vac, levels_side, clip, size_scale, min_order, cfg) -> V642FoldPlan:' \\\n      'def _v6_42_doom(self, book_id, plan, doomed, resting, deep_rows, already) -> None:' \\\n      'def _v6_42_placed(self, response, book_id, side, plan, resting, budget, req) -> None:' \\\n      'def _v6_42_report(self) -> None:'; do\n    grep -qF -- \"$_v642_pat\" \"$AGENT_PATH_REAL/simple_parts/v6_42_part.py\" || {\n      echo \"ERROR: v6.42 the part lacks: $_v642_pat\" >&2\n      exit 1\n    }\n  done\n  for _v642_pat in \\\n      'def parse_mode(value: Any) -> int | None:' \\\n      'def gate(mode: Any, side: Any, inventory: Any, tau: Any, step: Any = 0, **context: Any) -> bool:' \\\n      'GATES = {MODE_L1T: gate_l1t, MODE_L1TS: gate_l1ts, MODE_L1TI: gate_l1ti}' \\\n      'def carried_size(mode: Any, q0: Any, q1: Any, gap: Any, toward: Any, against: Any = False) -> float:' \\\n      'CARRIED = {L1C_CAP: carried_cap, L1C_FAR_CAP: carried_far_cap, L1C_AG_CAP: carried_ag_cap}' \\\n      'def fold_quantity(levels: Any, clip: Any, size_scale: Any, min_order: Any, volume_decimals: Any) -> float:' \\\n      'from research_v641_pace import adds as _adds'; do\n    grep -qF -- \"$_v642_pat\" \"$AGENT_PATH_REAL/research_v6_42_l1t.py\" || {\n      echo \"ERROR: v6.42 the rule module lacks: $_v642_pat\" >&2\n      exit 1\n    }\n  done\n  _v642_n=$(tr ' ' '\\n' <<< \"$PARAMS\" | grep -c '^research_v642_l1t=' || true)\n  [[ \"$_v642_n\" == \"1\" ]] || { echo \"ERROR: v6.42 build with research_v642_l1t given ${_v642_n} times in PARAMS (exactly once).\" >&2; exit 1; }\n  _v642_l1t=$(tr ' ' '\\n' <<< \"$PARAMS\" | grep '^research_v642_l1t=' | cut -d= -f2-)\n  [[ \"$_v642_l1t\" =~ ^(0|1|2|3)$ ]] || { echo \"ERROR: v6.42 research_v642_l1t=$_v642_l1t is not 0, 1, 2 or 3\" >&2; exit 1; }\n  if [[ \"$_v642_l1t\" != \"0\" ]]; then\n    [[ \"$(tr ' ' '\\n' <<< \"$PARAMS\" | grep '^research_v69_deep_ladder=' | cut -d= -f2-)\" == \"1\" ]] || {\n      echo \"ERROR: v6.42 research_v642_l1t=$_v642_l1t (level 0 carries L1) needs the deep ladder: research_v69_deep_ladder=1\" >&2\n      exit 1\n    }\n  fi\n  if [[ \"$_v642_l1t\" == \"2\" || \"$_v642_l1t\" == \"3\" ]]; then\n    [[ \"$(tr ' ' '\\n' <<< \"$PARAMS\" | grep '^research_v636_step_withdrawal=' | cut -d= -f2-)\" == \"1\" ]] || {\n      echo \"ERROR: v6.42 research_v642_l1t=$_v642_l1t reads the 30-s block's step: research_v636_step_withdrawal=1 is required\" >&2\n      exit 1\n    }\n  fi\n  _v642_n=$(tr ' ' '\\n' <<< \"$PARAMS\" | grep -c '^research_v642_l1c=' || true)\n  [[ \"$_v642_n\" == \"1\" ]] || { echo \"ERROR: v6.42 build with research_v642_l1c given ${_v642_n} times in PARAMS (exactly once).\" >&2; exit 1; }\n  _v642_l1c=$(tr ' ' '\\n' <<< \"$PARAMS\" | grep '^research_v642_l1c=' | cut -d= -f2-)\n  [[ \"$_v642_l1c\" =~ ^(0|1|3|4)$ ]] || { echo \"ERROR: v6.42 research_v642_l1c=$_v642_l1c is not 0, 1, 3 or 4\" >&2; exit 1; }\n  if [[ \"$_v642_l1c\" != \"0\" && \"$_v642_l1t\" != \"1\" && \"$_v642_l1t\" != \"2\" ]]; then\n    echo \"ERROR: v6.42 research_v642_l1c=$_v642_l1c bounds the reducing l1t folds: it needs research_v642_l1t=1 or 2 (got $_v642_l1t)\" >&2\n    exit 1\n  fi\n  if [[ \"$_v642_l1c\" == \"4\" && \"$_v642_l1t\" != \"2\" ]]; then\n    echo \"ERROR: v6.42 research_v642_l1c=4 (AG-CAP) reads the 30-s block's step: it needs research_v642_l1t=2 (got $_v642_l1t)\" >&2\n    exit 1\n  fi\n  case \"$_v642_l1t\" in 0) _v642_name=off;; 1) _v642_name=L1T;; 2) _v642_name=L1TS;; 3) _v642_name=L1TI;; esac\n  case \"$_v642_l1c\" in 0) _v642_cname=off;; 1) _v642_cname=CAP;; 3) _v642_cname=FAR_CAP;; 4) _v642_cname=AG_CAP;; esac\n  echo \"[preflight] v6.42: l1t ${_v642_l1t} l1c ${_v642_l1c} (${_v642_name} / ${_v642_cname})\"\n  echo \"[preflight] v6.42 PASS (research_v642_l1t / research_v642_l1c explicit; 0 0 = v6.41's code on every path)\"\nfi\n\nif [[ \"${RESEARCH_PREFLIGHT_ONLY:-0}\" == \"1\" ]]; then\n"
+  },
+  {
+   "old": "      tests/test_research_v6_41.py \\\n",
+   "new": "      tests/test_research_v6_41.py \\\n      tests/test_research_v6_42.py \\\n"
+  }
+ ],
+ "launcher_sha256": "5e8cce2c24db3ff8fce67bc5d4f2966e5f9113181ef8e5c1949964bbe0886009",
+ "launcher_base_sha256": "8a48a9c3d954aa4176227163d81618f0c008d76ad479ec86479eb07be1b7437a",
+ "launcher_l1t_default": "2",
+ "launcher_l1c_default": "4"
+}

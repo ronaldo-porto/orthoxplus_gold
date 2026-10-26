@@ -1,0 +1,252 @@
+{
+ "base_joined_sha256": "e0177099db1e4e5da298bd7c93948315f7472b75a61424363d43f0a70eff44b6",
+ "joined_sha256": "cb95f54e2c47673af6e8d2546a944b9738559501909b5f84bf71745dd8d9351e",
+ "edits": [
+  {
+   "label": "init",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        # (on); every key read with its default by simple_parts/v6_40_part.py (V640Part._v6_40_init).\n        self._v6_40_init()\n",
+   "new": "        # (on); every key read with its default by simple_parts/v6_40_part.py (V640Part._v6_40_init).\n        self._v6_40_init()\n        # v6.41 (research_v641_speed; scratchpad k141 P3): reply-time changes B / A / F1 / D / C / G / H behind one\n        # switch, every decision as v6.40.1's (research_v6_41_speed).  Off: v6.40.1's code on every path.\n        self.research_v641_speed = self._as_bool(getattr(self.config, \"research_v641_speed\", False))\n        self._v6_41_switches = self._v6_41_apply(self.research_v641_speed)\n        # v6.41 (research_v641_*; scratchpad k144): per-class units of the legacy layers, C2Q's inventory, per-class\n        # statistic pools -- every key read with its default by simple_parts/v6_41_part.py (V641Part._v6_41_init).\n        self._v6_41_init()\n"
+  },
+  {
+   "label": "b1_c_i3",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        if getattr(self, \"research_v638_fast_path\", False):\n            v6_38_trades_reset()\n        # v6.23 S3: one count per state, so the start notices one state carries are told from a later state's\n",
+   "new": "        if getattr(self, \"research_v638_fast_path\", False):\n            v6_38_trades_reset()\n        # v6.41 C (research_v641_speed): a state timestamp that runs back voids the incremental kappa refresh's\n        # history invariant (I3) until the frozen body has rebuilt it.\n        if getattr(self, \"research_v641_speed\", False):\n            v641_ts = int(getattr(state, \"timestamp\", 0) or 0)\n            v641_prev = getattr(self, \"_v641_prev_state_ts\", None)\n            if v641_prev is not None and v641_ts < v641_prev:\n                self._v641_ts_backstep = True\n            self._v641_prev_state_ts = v641_ts\n        # v6.23 S3: one count per state, so the start notices one state carries are told from a later state's\n"
+  },
+  {
+   "label": "b1_c_kappa",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        super()._research_refresh_rolling_kappa_cache()\n        self._v61_memo_misses = int(getattr(self, \"_v61_memo_misses\", 0) or 0) + 1\n",
+   "new": "        if getattr(self, \"research_v641_speed\", False):\n            # v6.41 C: the frozen refresh's outputs from the previous result + the unseen history tail\n            self._v6_41_kappa(super()._research_refresh_rolling_kappa_cache)\n        else:\n            super()._research_refresh_rolling_kappa_cache()\n        self._v61_memo_misses = int(getattr(self, \"_v61_memo_misses\", 0) or 0) + 1\n"
+  },
+  {
+   "label": "b1_b_release",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        if work is not None:\n            try:\n                work.schedule(loop)\n",
+   "new": "        if work is not None and getattr(self, \"research_v641_speed\", False):\n            # v6.41 B: the v6.38 trade-parse cache holds this state's event lists; emptied after the reply, so their\n            # deallocation is not paid inside the next request (a cache keyed by list identity: no value changes)\n            work.add(\"v641_release_parse\", v6_38_trades_reset)\n        if work is not None:\n            try:\n                work.schedule(loop)\n"
+  },
+  {
+   "label": "b1_a_save",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        force = force or bool(getattr(self, \"_v6_29_save_due\", False))\n",
+   "new": "        force = force or bool(getattr(self, \"_v6_29_save_due\", False))\n        # v6.41 A (research_v641_speed): an unforced save asked for inside a request runs as the FIRST job of the\n        # v6.29 post-reply queue -- the state it reads is final once the decisions are, and the queue runs before the\n        # next request reads or changes anything (its flush).  Forced saves, the v6.31 stage's own re-entry and the\n        # deferred run itself save now, as before.\n        if (not force and getattr(self, \"research_v641_speed\", False)\n                and getattr(self, \"_v6_31_stage\", None) is None and not getattr(self, \"_v641_saving\", False)):\n            v641_work = getattr(self, \"_v629_request_work\", None)\n            if v641_work is not None:\n                v641_work.add_first(\"v641_session_save\", self._v641_deferred_save)\n                return\n"
+  },
+  {
+   "label": "b1_f1_cid",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "    def _direct_order_client_id(self, order):\n        for name in (\"clientOrderId\", \"client_order_id\", \"clientId\", \"client_id\"):\n            value = getattr(order, name, None)\n",
+   "new": "    def _direct_order_client_id(self, order):\n        # v6.41 F1: fast_getattr == getattr, without pydantic's two AttributeErrors for each absent name\n        v6_41_ga = self._v6_41_getattr if getattr(self, \"research_v641_speed\", False) else getattr\n        for name in (\"clientOrderId\", \"client_order_id\", \"clientId\", \"client_id\"):\n            value = v6_41_ga(order, name, None)\n"
+  },
+  {
+   "label": "b1_f1_qty",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "    def _direct_order_remaining_qty(self, order) -> float:\n        for name in (\"remainingQuantity\", \"remaining_quantity\", \"quantity\", \"qty\", \"size\"):\n            try:\n                value = float(getattr(order, name, 0.0) or 0.0)\n",
+   "new": "    def _direct_order_remaining_qty(self, order) -> float:\n        v6_41_ga = self._v6_41_getattr if getattr(self, \"research_v641_speed\", False) else getattr      # v6.41 F1\n        for name in (\"remainingQuantity\", \"remaining_quantity\", \"quantity\", \"qty\", \"size\"):\n            try:\n                value = float(v6_41_ga(order, name, 0.0) or 0.0)\n"
+  },
+  {
+   "label": "b1_d_prints",
+   "file": "simple_parts/v6_32_part.py",
+   "old": "                        prints = [e for e in (rb.get(\"e\") or ()) if isinstance(e, dict) and e.get(\"y\") == \"t\"]\n",
+   "new": "                        if getattr(self, \"research_v641_speed\", False):\n                            # v6.41 D: the raw trade dicts the P5 pass recorded for this very list (None: not recorded)\n                            prints = self._v6_41_raw_trades(rb.get(\"e\"))\n                            if prints is None:\n                                prints = [e for e in (rb.get(\"e\") or ()) if isinstance(e, dict) and e.get(\"y\") == \"t\"]\n                        else:\n                            prints = [e for e in (rb.get(\"e\") or ()) if isinstance(e, dict) and e.get(\"y\") == \"t\"]\n"
+  },
+  {
+   "label": "b2_compact",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        compact_instructions = self._direct_compact_selected_dust(response, state)\n",
+   "new": "        if getattr(self, \"research_v641_unit_safety\", False):\n            # v6.41 B2: the compactor per class, each in its own units (research_v641_unit_safety)\n            compact_instructions = self._v6_41_compact(response, state)\n        else:\n            compact_instructions = self._direct_compact_selected_dust(response, state)\n"
+  },
+  {
+   "label": "b2_normalize",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        normalize_n = self._direct_normalize_irreducible_dust(\n            response,\n            state,\n            effective_abs=effective_abs_now,\n            effective_active=effective_active_now,\n            effective_open=effective_open_now,\n            force_liveness=bool(\n                selected_ids and self._direct_liveness_blocked_ticks >= DIRECT_LIVENESS_TRIGGER_TICKS\n            ),\n        )\n",
+   "new": "        if getattr(self, \"research_v641_unit_safety\", False) or getattr(self, \"research_v641_c2q_reduce\", False):\n            # v6.41 B2 / B2b: the normalizer per class in its own units; class 2 left out while C2Q is disarmed\n            normalize_n = self._v6_41_normalize(\n                response,\n                state,\n                effective_abs=effective_abs_now,\n                effective_active=effective_active_now,\n                effective_open=effective_open_now,\n                force_liveness=bool(\n                    selected_ids and self._direct_liveness_blocked_ticks >= DIRECT_LIVENESS_TRIGGER_TICKS\n                ),\n            )\n        else:\n            normalize_n = self._direct_normalize_irreducible_dust(\n                response,\n                state,\n                effective_abs=effective_abs_now,\n                effective_active=effective_active_now,\n                effective_open=effective_open_now,\n                force_liveness=bool(\n                    selected_ids and self._direct_liveness_blocked_ticks >= DIRECT_LIVENESS_TRIGGER_TICKS\n                ),\n            )\n"
+  },
+  {
+   "label": "b2_partial_note",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "            min_size = max(\n                1e-12, float(getattr(self, \"_research_exchange_min_order_size\", 0.25) or 0.25)\n            )\n            plan = partial_recovery_plan(\n",
+   "new": "            min_size = max(\n                1e-12, float(getattr(self, \"_research_exchange_min_order_size\", 0.25) or 0.25)\n            )\n            if getattr(self, \"research_v641_unit_safety\", False):\n                min_size = self._v6_41_min(bid, min_size)      # v6.41 B2: the book's class's minimum\n            plan = partial_recovery_plan(\n"
+  },
+  {
+   "label": "b2_partial_service",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        deep_partial = bool(getattr(self, \"research_v6332_deep_partial\", False)) and self._v6332_on()\n        for book_id, row in list(registry.items()):\n            net = float(self._direct_signed_inventory(int(book_id)))\n",
+   "new": "        deep_partial = bool(getattr(self, \"research_v6332_deep_partial\", False)) and self._v6332_on()\n        v6_41_min0 = min_size\n        for book_id, row in list(registry.items()):\n            if getattr(self, \"research_v641_unit_safety\", False):\n                min_size = self._v6_41_min(int(book_id), v6_41_min0)  # v6.41 B2: the book's class's minimum\n            net = float(self._direct_signed_inventory(int(book_id)))\n"
+  },
+  {
+   "label": "b2_life_tick0",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        tick_size = self._a19_tick_size(state)\n        ttl_ms = float(getattr(self, \"_v6215_order_life_ms\", None) or getattr(self, \"research_profitable_exit_ttl_ms\", 4000.0) or 4000.0)\n",
+   "new": "        tick_size = self._a19_tick_size(state)\n        v6_41_tick0 = tick_size\n        ttl_ms = float(getattr(self, \"_v6215_order_life_ms\", None) or getattr(self, \"research_profitable_exit_ttl_ms\", 4000.0) or 4000.0)\n"
+  },
+  {
+   "label": "b2_life_tick",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        for book_id, rows in live_by_book.items():\n            book = resolve_book_from_state_mapping(books, book_id)\n            if book is None:\n                continue\n",
+   "new": "        for book_id, rows in live_by_book.items():\n            book = resolve_book_from_state_mapping(books, book_id)\n            if book is None:\n                continue\n            if getattr(self, \"research_v641_unit_safety\", False):\n                tick_size = self._v6_41_tick(book_id, v6_41_tick0)   # v6.41 B2: the book's class's tick\n"
+  },
+  {
+   "label": "b2_a191",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        bid = int(book_id)\n        store = self._a191_verdict_store()\n        cached = store.get(bid)\n",
+   "new": "        bid = int(book_id)\n        if getattr(self, \"research_v641_unit_safety\", False):\n            state = self._v6_41_book_state(state, bid)      # v6.41 B2: the book's class's tick / decimals\n        store = self._a191_verdict_store()\n        cached = store.get(bid)\n"
+  },
+  {
+   "label": "b2b_exit",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "                placed_total += self._v6_40_c2q_cancel(response, book_id, rows + deep_rows + touch_rows, already, req,\n                                                       budget=budget)\n                continue\n",
+   "new": "                if getattr(self, \"research_v641_c2q_reduce\", False):\n                    # v6.41 B2b: disarmed = stop making, not freeze inventory -- every order of ours cancelled except one\n                    # reduce-only passive exit on the class's grid (research_v641_c2q_reduce)\n                    placed_total += self._v6_41_c2q_exit(response, book_id, rows + deep_rows + touch_rows, already, req,\n                                                         budget=budget, raw_bid=raw_bid, raw_ask=raw_ask, inv=inv,\n                                                         clip=float(getattr(deep, \"clip\", 0.0) or 0.0), expiry=expiry)\n                else:\n                    placed_total += self._v6_40_c2q_cancel(response, book_id, rows + deep_rows + touch_rows, already,\n                                                           req, budget=budget)\n                continue\n            if v6_40_g is not None and getattr(self, \"research_v641_c2q_reduce\", False):\n                # v6.41 B2b: during a C2Q probe the adding side of a class-2 book carrying a clip or more holds\n                held = self._v6_41_probe_held(book_id, inv, deep, held)\n"
+  },
+  {
+   "label": "b2b_save",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "            }\n            tmp = path + f\".direct.tmp.{os.getpid()}\"\n",
+   "new": "            }\n            if getattr(self, \"research_v641_c2q_persist\", False):\n                self._v6_41_save_c2q(payload)          # v6.41 B2b(3): C2Q's window survives a relaunch\n            tmp = path + f\".direct.tmp.{os.getpid()}\"\n"
+  },
+  {
+   "label": "b2b_read",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        self._v68_deep_restore = raw.get(V68_DEEP_SESSION_KEY) if bool(getattr(self, \"research_v68_deep_persist\", False)) else None\n",
+   "new": "        self._v68_deep_restore = raw.get(V68_DEEP_SESSION_KEY) if bool(getattr(self, \"research_v68_deep_persist\", False)) else None\n        if getattr(self, \"research_v641_c2q_persist\", False):\n            self._v6_41_read_c2q(raw)                   # v6.41 B2b(3): C2Q's saved window, put back at its first decision\n"
+  },
+  {
+   "label": "b7_s9_page",
+   "file": "Strategy1_Research_Simple.py",
+   "old": "        v6_40_base = (dec, tick_size, min_order)\n",
+   "new": "        v6_40_base = (dec, tick_size, min_order)\n        if getattr(self, \"research_v641_s9_page\", False):\n            # v6.41 B7: S9's page history observes this request's page once, before the books (whichever reach a touch\n            # decision) -- simple_parts/v6_41_part.py (research_v641_s9_page)\n            self._v6_41_s9_page(state)\n"
+  }
+ ],
+ "split_edits": [
+  [
+   "class Strategy1_Research_Simple(V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
+   "class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
+  ],
+  [
+   "from simple_parts.v6_41_part import V641Part\nfrom simple_parts.v6_40_part import V640Part\n",
+   "from simple_parts.v6_40_part import V640Part\n"
+  ]
+ ],
+ "modules": {
+  "agents/strategy/research_direct_idle_gc.py": {
+   "base_sha256": "98e88fd9e1570c430bda3170e2892a60bcb8c32eb20c30d96b681d1d2b5443d8",
+   "sha256": "b06cd3a75a47ffb254d8fe43c1b26508c7c54ba821ba513c8f90ba362e70114e"
+  },
+  "agents/strategy/research_v629_reply_path.py": {
+   "base_sha256": "e87ed689a3add4a98ab18c1c61f82fdd58a7553512a1a600ee06ae093c398b8a",
+   "sha256": "967ea947815b66c596017096b7b2a75cb6bdf58a318891ad981322c33d88b922"
+  },
+  "agents/strategy/research_v633_deep_layer.py": {
+   "base_sha256": "6208fa1427973de78f0ea03e3af449b079337e2b9de6da1a3131466e0eefb474",
+   "sha256": "0c2454b3d6e3672dbeaf1853cb9da6c8cd653c7e7733ea0ceef3b44d8fafc833"
+  },
+  "agents/strategy/research_v6_38_fast_path.py": {
+   "base_sha256": "2ae29769c9f88c48507299195d143d465e679e9ebdfa7db10d62b991a56a9af3",
+   "sha256": "03079a2627127ed7a04b2d5da3284f0d5a9e90a35d592bd4666a4948a0c9ccd9"
+  },
+  "taos/im/protocol/models.py": {
+   "base_sha256": "198f191535229011eb9921eddc82416dd822f373fa4b8abd2b3be638c9c8b8d4",
+   "sha256": "f28fc0f7b88f7a70848a1d0c199343edd02f8f9165d45d9754cd714c8cef4289"
+  }
+ },
+ "launcher": [
+  {
+   "old": "research_v640_s14_flush_spec=1\"\n",
+   "new": "research_v640_s14_flush_spec=1 \\\nresearch_v641_speed=1 \\\nresearch_v641_unit_safety=1 \\\nresearch_v641_c2q_reduce=1 \\\nresearch_v641_c2q_persist=1 \\\nresearch_v641_s9_page=1\"\n"
+  },
+  {
+   "old": "  grep -qF -- 'class Strategy1_Research_Simple(V640Part, V636Part, ' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" && \\\n",
+   "new": "  grep -qE -- '^class Strategy1_Research_Simple\\((V641Part, )?V640Part, V636Part, ' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" && \\\n"
+  },
+  {
+   "old": "fi\n\nif [[ \"${RESEARCH_PREFLIGHT_ONLY:-0}\" == \"1\" ]]; then\n",
+   "new": "fi\n\n# v6.41.  research_v641_*: the final SN79 0.6.5 build (scratchpad k144); every key shipped 1 (0 = v6.40.1's code on\n# that path, by a PARAMS edit, no rebuild):\n#   research_v641_speed (k141 P3: B defer-free, A defer-save, F1 miss path, D scan-once, C kappa-inc, G gc-hold,\n#   H sweep-key -- reply time only, every instruction as v6.40.1's);\n#   research_v641_unit_safety (B2: the contract-reject guard, dust parking / compaction / normalizer, the partial-fill\n#   recovery, v6.2.14's touch life and A1.9.1's reprice in each traded class's own tick / decimals / minimum);\n#   research_v641_c2q_reduce (B2b: C2Q disarmed keeps one reduce-only passive exit per class-2 book; a probe never adds\n#   on a book carrying a clip); research_v641_c2q_persist (B2b: C2Q's window and last verdict survive a relaunch in\n#   the same simulation); research_v641_s9_page (B7, rule parity with vm739: S9's page history observes every\n#   request's page once, before the books, whichever of them reach a touch decision).\n# Each key must appear exactly once as 0 or 1; the block prints the state.\nif [[ \"${V6_38_BUILD:-0}\" == \"1\" ]]; then\n  for _v641_f in research_v6_41_speed.py research_v6_41_units.py simple_parts/v6_41_part.py; do\n    [[ -f \"$AGENT_PATH_REAL/$_v641_f\" ]] || { echo \"ERROR: v6.41 agents/strategy/$_v641_f is missing.\" >&2; exit 1; }\n  done\n  for _v641_pat in \\\n      'self._v6_41_init()' \\\n      'self._v6_41_switches = self._v6_41_apply(self.research_v641_speed)' \\\n      'self._v6_41_kappa(super()._research_refresh_rolling_kappa_cache)' \\\n      'work.add(\"v641_release_parse\", v6_38_trades_reset)' \\\n      'v641_work.add_first(\"v641_session_save\", self._v641_deferred_save)' \\\n      'v6_41_ga = self._v6_41_getattr if getattr(self, \"research_v641_speed\", False) else getattr' \\\n      'prints = self._v6_41_raw_trades(rb.get(\"e\"))' \\\n      'compact_instructions = self._v6_41_compact(response, state)' \\\n      'normalize_n = self._v6_41_normalize(' \\\n      'min_size = self._v6_41_min(bid, min_size)' \\\n      'min_size = self._v6_41_min(int(book_id), v6_41_min0)' \\\n      'tick_size = self._v6_41_tick(book_id, v6_41_tick0)' \\\n      'state = self._v6_41_book_state(state, bid)' \\\n      'placed_total += self._v6_41_c2q_exit(response, book_id, rows + deep_rows + touch_rows, already, req,' \\\n      'held = self._v6_41_probe_held(book_id, inv, deep, held)' \\\n      'self._v6_41_save_c2q(payload)' \\\n      'self._v6_41_read_c2q(raw)' \\\n      'self._v6_41_s9_page(state)'; do\n    grep -qF -- \"$_v641_pat\" \"$AGENT_PATH/Strategy1_Research_Simple.py\" || {\n      echo \"ERROR: v6.41 the agent lacks: $_v641_pat\" >&2\n      exit 1\n    }\n  done\n  grep -qF -- 'class Strategy1_Research_Simple(V641Part, V640Part, ' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" && \\\n    grep -qF -- 'from simple_parts.v6_41_part import V641Part' \"$AGENT_PATH_REAL/Strategy1_Research_Simple.py\" || {\n    echo \"ERROR: v6.41 Simple does not take V641Part as its first base.\" >&2\n    exit 1\n  }\n  for _v641_pat in \\\n      'class V641Part:' \\\n      'def _v6_41_init(self) -> None:' \\\n      'def _research_apply_contract_reject_guard(self, response, state):' \\\n      'def _select_dust_compaction_books(self, state):' \\\n      'def _v6_41_c2q_exit(' \\\n      'def _v6_41_probe_held(' \\\n      'def _v6_41_save_c2q(self, payload) -> None:' \\\n      'def _v6_41_s9_page(self, state) -> None:'; do\n    grep -qF -- \"$_v641_pat\" \"$AGENT_PATH_REAL/simple_parts/v6_41_part.py\" || {\n      echo \"ERROR: v6.41 the part lacks: $_v641_pat\" >&2\n      exit 1\n    }\n  done\n  for _v641_pat in \\\n      'class UnitState:' \\\n      'def reduce_exit(' \\\n      'def probe_held(' \\\n      'def exit_quantity('; do\n    grep -qF -- \"$_v641_pat\" \"$AGENT_PATH_REAL/research_v6_41_units.py\" || {\n      echo \"ERROR: v6.41 the units module lacks: $_v641_pat\" >&2\n      exit 1\n    }\n  done\n  for _v641_pat in \\\n      'def apply(on) -> dict:' \\\n      'def fast_getattr(obj, name: str, default=None):' \\\n      'def kappa_refresh(agent, frozen) -> None:'; do\n    grep -qF -- \"$_v641_pat\" \"$AGENT_PATH_REAL/research_v6_41_speed.py\" || {\n      echo \"ERROR: v6.41 the speed module lacks: $_v641_pat\" >&2\n      exit 1\n    }\n  done\n  grep -qF -- 'def v641_raw_trades(raw_events):' \"$SCRIPT_DIR/taos/im/protocol/models.py\" || { echo \"ERROR: v6.41 taos/im/protocol/models.py lacks: def v641_raw_trades(raw_events):\" >&2; exit 1; }\n  grep -qF -- '_V641_SCAN_ONCE = False' \"$AGENT_PATH_REAL/research_v6_38_fast_path.py\" || { echo \"ERROR: v6.41 agents/strategy/research_v6_38_fast_path.py lacks: _V641_SCAN_ONCE = False\" >&2; exit 1; }\n  grep -qF -- 'def add_first(self, name: str, fn: Callable[[], Any]) -> None:' \"$AGENT_PATH_REAL/research_v629_reply_path.py\" || { echo \"ERROR: v6.41 agents/strategy/research_v629_reply_path.py lacks: def add_first(self, name: str, fn: Callable[[], Any]) -> None:\" >&2; exit 1; }\n  grep -qF -- 'V641_HOLD_THROUGH_GAP = False' \"$AGENT_PATH_REAL/research_direct_idle_gc.py\" || { echo \"ERROR: v6.41 agents/strategy/research_direct_idle_gc.py lacks: V641_HOLD_THROUGH_GAP = False\" >&2; exit 1; }\n  grep -qF -- '_V641_VERSION_KEY = False' \"$AGENT_PATH_REAL/research_v633_deep_layer.py\" || { echo \"ERROR: v6.41 agents/strategy/research_v633_deep_layer.py lacks: _V641_VERSION_KEY = False\" >&2; exit 1; }\n  _v641_get() {\n    local _n _v\n    _n=$(tr ' ' '\\n' <<< \"$PARAMS\" | grep -c \"^$1=\" || true)\n    [[ \"$_n\" == \"1\" ]] || { echo \"ERROR: v6.41 build with $1 given ${_n} times in PARAMS (exactly once).\" >&2; exit 1; }\n    _v=$(tr ' ' '\\n' <<< \"$PARAMS\" | grep \"^$1=\" | cut -d= -f2-)\n    [[ \"$_v\" =~ ^(0|1)$ ]] || { echo \"ERROR: v6.41 $1=$_v is not 0 or 1\" >&2; exit 1; }\n    printf '%s' \"$_v\"\n  }\n  _v641_sp=$(_v641_get research_v641_speed) || exit 1\n  _v641_us=$(_v641_get research_v641_unit_safety) || exit 1\n  _v641_cr=$(_v641_get research_v641_c2q_reduce) || exit 1\n  _v641_cp=$(_v641_get research_v641_c2q_persist) || exit 1\n  _v641_s9=$(_v641_get research_v641_s9_page) || exit 1\n  echo \"[preflight] v6.41: speed ${_v641_sp}; unit_safety ${_v641_us}; c2q_reduce ${_v641_cr}; c2q_persist ${_v641_cp}; s9_page ${_v641_s9}\"\n  echo \"[preflight] v6.41 B4: S9 research_v629_touch_fp_move=$(tr ' ' '\\n' <<< \"$PARAMS\" | grep '^research_v629_touch_fp_move=' | cut -d= -f2) (k140 R5 S9X: shipped 0; S12b on)\"\n  echo \"[preflight] v6.41 PASS (every v6.41 key explicit; 0 = v6.40.1's code on that path)\"\nfi\n\nif [[ \"${RESEARCH_PREFLIGHT_ONLY:-0}\" == \"1\" ]]; then\n"
+  },
+  {
+   "old": "      tests/test_research_v6_40.py \\\n",
+   "new": "      tests/test_research_v6_40.py \\\n      tests/test_research_v6_41.py \\\n"
+  },
+  {
+   "old": "research_v629_touch_fp_move=1 \\\n",
+   "new": "research_v629_touch_fp_move=0 \\\n"
+  },
+  {
+   "old": "  [[ \" $PARAMS \" == *\" research_v629_touch_fp_move=1 \"* ]] || {\n    echo \"ERROR: v6.29 S9 build without research_v629_touch_fp_move=1 in PARAMS.\" >&2\n",
+   "new": "  [[ \" $PARAMS \" == *\" research_v629_touch_fp_move=1 \"* || \" $PARAMS \" == *\" research_v629_touch_fp_move=0 \"* ]] || {\n    echo \"ERROR: v6.29 S9 build without research_v629_touch_fp_move=0 or 1 in PARAMS (v6.41 ships 0: k140 R5 S9X).\" >&2\n"
+  },
+  {
+   "old": "  for key in research_v633_deep_layer research_v629_touch_fp_move research_v626_feed_clock; do\n",
+   "new": "  # v6.41 (k144, B4): S9 may ship off (research_v629_touch_fp_move=0); D2 then multiplies no look-back (inert)\n  for key in research_v633_deep_layer research_v626_feed_clock; do\n"
+  }
+ ],
+ "launcher_base_sha256": "bc52b8c3df2cd7758e98451b966bbee0ad71c04fcf9ded1d57a4cb0fbd5f278d",
+ "launcher_sha256": "8a48a9c3d954aa4176227163d81618f0c008d76ad479ec86479eb07be1b7437a",
+ "module_edits": {
+  "agents/strategy/research_direct_idle_gc.py": [
+   [
+    "F2_REQUEST_GC_HOLD = True\n\n",
+    "F2_REQUEST_GC_HOLD = True\n# v6.41 G (research_v641_speed, written by research_v6_41_speed.apply): the F2 hold is kept across the idle gap -- the\n# idle pass still collects (young or full, as v6.39 decides), but automatic collection stays off until the next request\n# starts, so the next request's decompress (before Simple.handle) pays no young-generation passes either.  Every\n# fallback still turns automatic collection back on.\nV641_HOLD_THROUGH_GAP = False\n\n"
+   ],
+   [
+    "        if F2_REQUEST_GC_HOLD:\n            self._f2_release()\n        ms = (self._clock() - started) * 1000.0\n",
+    "        if F2_REQUEST_GC_HOLD:\n            if not V641_HOLD_THROUGH_GAP:       # v6.41 G: the hold is kept across the idle gap\n                self._f2_release()\n        ms = (self._clock() - started) * 1000.0\n"
+   ]
+  ],
+  "agents/strategy/research_v629_reply_path.py": [
+   [
+    "\n    def lap(self, name: str) -> None:\n",
+    "\n    def add_first(self, name: str, fn: Callable[[], Any]) -> None:\n        \"\"\"v6.41 A: a task that must run before every task queued so far (the request's own session save).\"\"\"\n        self._queue.insert(0, (str(name), fn))\n\n    def lap(self, name: str) -> None:\n"
+   ]
+  ],
+  "agents/strategy/research_v633_deep_layer.py": [
+   [
+    "\nclass SweepRecord(deque):\n",
+    "\n_V641_VERSION_KEY = False       # v6.41 H (research_v641_speed, written by research_v6_41_speed.apply)\n\n\nclass SweepRecord(deque):\n"
+   ],
+   [
+    "    seen, and the copy is the same list `sorted(float(x) for x in record)` builds.\"\"\"\n    __slots__ = (\"_v639_key\", \"_v639_sorted\")\n\n",
+    "    seen, and the copy is the same list `sorted(float(x) for x in record)` builds.\"\"\"\n    __slots__ = (\"_v639_key\", \"_v639_sorted\", \"_v641_ver\", \"_v641_seen\")\n\n"
+   ],
+   [
+    "        self._v639_sorted = None\n\n",
+    "        self._v639_sorted = None\n        self._v641_ver = 0\n        self._v641_seen = -1\n\n    # v6.41 H (research_v641_speed): every mutator counts, so the sorted copy can be keyed on the count instead of a\n    # tuple of the whole record on every call; a mutation that leaves the content as it was only re-sorts it.\n    def append(self, x):\n        deque.append(self, x)\n        self._v641_ver += 1\n\n    def appendleft(self, x):\n        deque.appendleft(self, x)\n        self._v641_ver += 1\n\n    def extend(self, it):\n        items = list(it)\n        if items:                                   # an empty extend changes nothing: the copy stays valid\n            deque.extend(self, items)\n            self._v641_ver += 1\n\n    def extendleft(self, it):\n        items = list(it)\n        if items:\n            deque.extendleft(self, items)\n            self._v641_ver += 1\n\n    def pop(self):\n        self._v641_ver += 1\n        return deque.pop(self)\n\n    def popleft(self):\n        self._v641_ver += 1\n        return deque.popleft(self)\n\n    def remove(self, value):\n        self._v641_ver += 1\n        deque.remove(self, value)\n\n    def rotate(self, n=1):\n        deque.rotate(self, n)\n        self._v641_ver += 1\n\n    def clear(self):\n        deque.clear(self)\n        self._v641_ver += 1\n\n    def insert(self, i, x):\n        self._v641_ver += 1\n        deque.insert(self, i, x)\n\n    def reverse(self):\n        deque.reverse(self)\n        self._v641_ver += 1\n\n    def __setitem__(self, i, x):\n        self._v641_ver += 1\n        deque.__setitem__(self, i, x)\n\n    def __delitem__(self, i):\n        self._v641_ver += 1\n        deque.__delitem__(self, i)\n\n    def __iadd__(self, other):\n        items = list(other)\n        if items:\n            deque.extend(self, items)\n            self._v641_ver += 1\n        return self\n\n    def __imul__(self, n):\n        self._v641_ver += 1\n        return deque.__imul__(self, n)\n\n"
+   ],
+   [
+    "    def sorted_floats(self) -> list[float]:\n        key = tuple(self)\n",
+    "    def sorted_floats(self) -> list[float]:\n        if _V641_VERSION_KEY:\n            if self._v639_sorted is None or self._v641_seen != self._v641_ver:\n                self._v639_sorted = sorted(float(x) for x in self)\n                self._v641_seen = self._v641_ver\n                self._v639_key = None\n            return self._v639_sorted\n        key = tuple(self)\n"
+   ]
+  ],
+  "agents/strategy/research_v6_38_fast_path.py": [
+   [
+    "import importlib\n\n",
+    "import importlib\nimport sys\n\n"
+   ],
+   [
+    "_MAX_LISTS = 4096\n\n",
+    "_MAX_LISTS = 4096\n# v6.41 D (research_v641_speed, written by research_v6_41_speed.apply): read the protocol's recorded trade candidates\n_V641_SCAN_ONCE = False\n\n"
+   ],
+   [
+    "    _TRADES.clear()\n\n",
+    "    _TRADES.clear()\n    models = sys.modules.get(\"taos.im.protocol.models\")         # v6.41 D: the protocol's side tables with it\n    reset = getattr(models, \"v641_reset\", None)\n    if reset is not None:\n        reset()\n\n"
+   ],
+   [
+    "        return hit[1]\n    out = []\n",
+    "        return hit[1]\n    src = events\n    if _V641_SCAN_ONCE:                                         # v6.41 D: only the elements trade_dict can parse\n        models = sys.modules.get(\"taos.im.protocol.models\")\n        cand_of = getattr(models, \"v641_trade_candidates\", None)\n        cand = cand_of(events) if cand_of is not None else None\n        if cand is not None:\n            src = cand\n    out = []\n"
+   ],
+   [
+    "    out = []\n    for ev in events:\n        t = trade_dict(ev)\n",
+    "    out = []\n    for ev in src:\n        t = trade_dict(ev)\n"
+   ]
+  ],
+  "taos/im/protocol/models.py": [
+   [
+    "    trade = TradeInfo.__pydantic_validator__.validate_python if _F2_FAST else TradeInfo.model_validate\n    return [trade(e) if e.get(\"y\") == \"t\" else e for e in raw_events]\n",
+    "    trade = TradeInfo.__pydantic_validator__.validate_python if _F2_FAST else TradeInfo.model_validate\n    if _V641_SCAN_ONCE:\n        return _v641_events(raw_events, trade)\n    return [trade(e) if e.get(\"y\") == \"t\" else e for e in raw_events]\n"
+   ],
+   [
+    "    return [trade(e) if e.get(\"y\") == \"t\" else e for e in raw_events]\n\n",
+    "    return [trade(e) if e.get(\"y\") == \"t\" else e for e in raw_events]\n\n\n# v6.41 D (research_v641_speed, the agent's apply writes it; ships OFF like _V638_TRADES_ONLY): the P5 pass, the same\n# list built by the same calls in the same order, also records (a) the elements v6.2's trade_dict can turn into a trade\n# -- the validated trades and any element that is not a dict carrying \"y\" (trade_dict skips exactly the dicts whose\n# get(\"y\", \"t\") != \"t\") -- for the shared trade parse, and (b) the raw trade dicts (isinstance dict and y == \"t\") for\n# v6.32's prints filter.  Keyed by list identity with the list held and its length checked; the agent empties both at\n# each request's start (research_v6_38_fast_path.trades_reset) and, with v6.41 B, after the reply.\n_V641_SCAN_ONCE = False\n_V641_CAND: dict = {}\n_V641_RAW: dict = {}\n_V641_MAX = 4096\n\n\ndef _v641_events(raw_events, trade):\n    out = []\n    cand = []\n    raw_trades = []\n    o_app, c_app, r_app = out.append, cand.append, raw_trades.append\n    try:\n        all_dicts = set(map(type, raw_events)) <= {dict}       # the wire's case: every event a plain dict\n    except TypeError:\n        all_dicts = False\n    if all_dicts:\n        # a candidate superset is exact (trade_dict returns None for the extra ones): every dict whose y is None\n        for e in raw_events:\n            y = e.get(\"y\")\n            if y == \"t\":\n                m = trade(e)\n                o_app(m)\n                c_app(m)\n                r_app(e)\n            else:\n                o_app(e)\n                if y is None:\n                    c_app(e)\n    else:\n        for e in raw_events:\n            y = e.get(\"y\")\n            if y == \"t\":\n                m = trade(e)\n                o_app(m)\n                c_app(m)\n                if isinstance(e, dict):\n                    r_app(e)\n            else:\n                o_app(e)\n                if y is None or not isinstance(e, dict):\n                    c_app(e)\n    if len(_V641_CAND) >= _V641_MAX or len(_V641_RAW) >= _V641_MAX:\n        _V641_CAND.clear()\n        _V641_RAW.clear()\n    _V641_CAND[id(out)] = (out, len(out), cand)\n    if isinstance(raw_events, list):\n        _V641_RAW[id(raw_events)] = (raw_events, len(raw_events), raw_trades)\n    return out\n\n\ndef v641_trade_candidates(events):\n    \"\"\"The recorded candidates of a P5 list (the very list, unchanged length), else None.\"\"\"\n    if not _V641_SCAN_ONCE:\n        return None\n    hit = _V641_CAND.get(id(events))\n    if hit is None or hit[0] is not events or len(events) != hit[1]:\n        return None\n    return hit[2]\n\n\ndef v641_raw_trades(raw_events):\n    \"\"\"A new list of the raw trade dicts recorded for this very wire list (unchanged length), else None.\"\"\"\n    if not _V641_SCAN_ONCE or not raw_events:\n        return None\n    hit = _V641_RAW.get(id(raw_events))\n    if hit is None or hit[0] is not raw_events or len(raw_events) != hit[1]:\n        return None\n    return list(hit[2])\n\n\ndef v641_reset():\n    _V641_CAND.clear()\n    _V641_RAW.clear()\n\n"
+   ]
+  ]
+ }
+}

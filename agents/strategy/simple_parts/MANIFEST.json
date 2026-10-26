@@ -1,6 +1,22 @@
 {
- "pre_split_sha256": "e0177099db1e4e5da298bd7c93948315f7472b75a61424363d43f0a70eff44b6",
+ "pre_split_sha256": "7841b03fe70ff369c89c36734e86881da8ef905c4c38d3dbf510527538df26c5",
  "simple_edits": [
+  [
+   "class Strategy1_Research_Simple(V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
+   "class Strategy1_Research_Simple(V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
+  ],
+  [
+   "from simple_parts.v6_42_part import V642Part\nfrom simple_parts.v6_41_part import V641Part\n",
+   "from simple_parts.v6_41_part import V641Part\n"
+  ],
+  [
+   "class Strategy1_Research_Simple(V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
+   "class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
+  ],
+  [
+   "from simple_parts.v6_41_part import V641Part\nfrom simple_parts.v6_40_part import V640Part\n",
+   "from simple_parts.v6_40_part import V640Part\n"
+  ],
   [
    "class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
    "class Strategy1_Research_Simple(V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
@@ -54,64 +70,64 @@
    "chunks": [
     {
      "name": "_v6_36_request",
-     "orig_start": 14016,
-     "orig_end": 14097,
+     "orig_start": 14046,
+     "orig_end": 14127,
      "part_start": 29,
      "part_end": 110
     },
     {
      "name": "_v6_36_drop",
-     "orig_start": 14099,
-     "orig_end": 14161,
+     "orig_start": 14129,
+     "orig_end": 14191,
      "part_start": 112,
      "part_end": 174
     },
     {
      "name": "_v6_36_cancel",
-     "orig_start": 14163,
-     "orig_end": 14224,
+     "orig_start": 14193,
+     "orig_end": 14254,
      "part_start": 176,
      "part_end": 237
     },
     {
      "name": "_v6_36_first",
-     "orig_start": 14226,
-     "orig_end": 14242,
+     "orig_start": 14256,
+     "orig_end": 14272,
      "part_start": 239,
      "part_end": 255
     },
     {
      "name": "_v6_36_doomed",
-     "orig_start": 14244,
-     "orig_end": 14259,
+     "orig_start": 14274,
+     "orig_end": 14289,
      "part_start": 257,
      "part_end": 272
     },
     {
      "name": "_v6_36_cancelled",
-     "orig_start": 14261,
-     "orig_end": 14278,
+     "orig_start": 14291,
+     "orig_end": 14308,
      "part_start": 274,
      "part_end": 291
     },
     {
      "name": "_v6_36_count",
-     "orig_start": 14280,
-     "orig_end": 14289,
+     "orig_start": 14310,
+     "orig_end": 14319,
      "part_start": 293,
      "part_end": 302
     },
     {
      "name": "_v6_36_report",
-     "orig_start": 14291,
-     "orig_end": 14320,
+     "orig_start": 14321,
+     "orig_end": 14350,
      "part_start": 304,
      "part_end": 333
     },
     {
      "name": "_v6_36_snapshot",
-     "orig_start": 14322,
-     "orig_end": 14349,
+     "orig_start": 14352,
+     "orig_end": 14379,
      "part_start": 335,
      "part_end": 362
     }
@@ -124,87 +140,87 @@
    "chunks": [
     {
      "name": "_v6_32_request",
-     "orig_start": 13317,
-     "orig_end": 13398,
+     "orig_start": 13341,
+     "orig_end": 13428,
      "part_start": 35,
-     "part_end": 116
+     "part_end": 122
     },
     {
      "name": "_v6_32_tracker_ref",
-     "orig_start": 13400,
-     "orig_end": 13406,
-     "part_start": 118,
-     "part_end": 124
+     "orig_start": 13430,
+     "orig_end": 13436,
+     "part_start": 124,
+     "part_end": 130
     },
     {
      "name": "_v6_32_min_sizes",
-     "orig_start": 13408,
-     "orig_end": 13419,
-     "part_start": 126,
-     "part_end": 137
+     "orig_start": 13438,
+     "orig_end": 13449,
+     "part_start": 132,
+     "part_end": 143
     },
     {
      "name": "_v6_32_note",
-     "orig_start": 13421,
-     "orig_end": 13450,
-     "part_start": 139,
-     "part_end": 168
+     "orig_start": 13451,
+     "orig_end": 13480,
+     "part_start": 145,
+     "part_end": 174
     },
     {
      "name": "_v6_32_deep_pairs",
-     "orig_start": 13452,
-     "orig_end": 13462,
-     "part_start": 170,
-     "part_end": 180
+     "orig_start": 13482,
+     "orig_end": 13492,
+     "part_start": 176,
+     "part_end": 186
     },
     {
      "name": "_v6_32_touch_sides",
-     "orig_start": 13464,
-     "orig_end": 13474,
-     "part_start": 182,
-     "part_end": 192
+     "orig_start": 13494,
+     "orig_end": 13504,
+     "part_start": 188,
+     "part_end": 198
     },
     {
      "name": "_v6_32_state_fp",
-     "orig_start": 13476,
-     "orig_end": 13490,
-     "part_start": 194,
-     "part_end": 208
-    },
-    {
-     "name": "_v6_32_fundamental",
-     "orig_start": 13492,
-     "orig_end": 13496,
-     "part_start": 210,
+     "orig_start": 13506,
+     "orig_end": 13520,
+     "part_start": 200,
      "part_end": 214
     },
     {
-     "name": "_v6_32_s9_snapshot",
-     "orig_start": 13498,
-     "orig_end": 13508,
+     "name": "_v6_32_fundamental",
+     "orig_start": 13522,
+     "orig_end": 13526,
      "part_start": 216,
-     "part_end": 226
+     "part_end": 220
+    },
+    {
+     "name": "_v6_32_s9_snapshot",
+     "orig_start": 13528,
+     "orig_end": 13538,
+     "part_start": 222,
+     "part_end": 232
     },
     {
      "name": "_v6_32_count",
-     "orig_start": 13510,
-     "orig_end": 13519,
-     "part_start": 228,
-     "part_end": 237
+     "orig_start": 13540,
+     "orig_end": 13549,
+     "part_start": 234,
+     "part_end": 243
     },
     {
      "name": "_v6_32_report",
-     "orig_start": 13521,
-     "orig_end": 13550,
-     "part_start": 239,
-     "part_end": 268
+     "orig_start": 13551,
+     "orig_end": 13580,
+     "part_start": 245,
+     "part_end": 274
     },
     {
      "name": "_v6_32_snapshot",
-     "orig_start": 13552,
-     "orig_end": 13575,
-     "part_start": 270,
-     "part_end": 293
+     "orig_start": 13582,
+     "orig_end": 13605,
+     "part_start": 276,
+     "part_end": 299
     }
    ]
   },
@@ -215,64 +231,64 @@
    "chunks": [
     {
      "name": "_v6_30_request",
-     "orig_start": 12987,
-     "orig_end": 13012,
+     "orig_start": 13011,
+     "orig_end": 13036,
      "part_start": 28,
      "part_end": 53
     },
     {
      "name": "_v6_30_tier",
-     "orig_start": 13014,
-     "orig_end": 13023,
+     "orig_start": 13038,
+     "orig_end": 13047,
      "part_start": 55,
      "part_end": 64
     },
     {
      "name": "_v6_30_deeper",
-     "orig_start": 13025,
-     "orig_end": 13035,
+     "orig_start": 13049,
+     "orig_end": 13059,
      "part_start": 66,
      "part_end": 76
     },
     {
      "name": "_v6_30_placed",
-     "orig_start": 13037,
-     "orig_end": 13046,
+     "orig_start": 13061,
+     "orig_end": 13070,
      "part_start": 78,
      "part_end": 87
     },
     {
      "name": "_v6_30_paper",
-     "orig_start": 13048,
-     "orig_end": 13064,
+     "orig_start": 13072,
+     "orig_end": 13088,
      "part_start": 89,
      "part_end": 105
     },
     {
      "name": "_v6_30_decide",
-     "orig_start": 13066,
-     "orig_end": 13084,
+     "orig_start": 13090,
+     "orig_end": 13108,
      "part_start": 107,
      "part_end": 125
     },
     {
      "name": "_v6_30_count",
-     "orig_start": 13086,
-     "orig_end": 13095,
+     "orig_start": 13110,
+     "orig_end": 13119,
      "part_start": 127,
      "part_end": 136
     },
     {
      "name": "_v6_30_report",
-     "orig_start": 13097,
-     "orig_end": 13135,
+     "orig_start": 13121,
+     "orig_end": 13159,
      "part_start": 138,
      "part_end": 176
     },
     {
      "name": "_v6_30_snapshot",
-     "orig_start": 13137,
-     "orig_end": 13163,
+     "orig_start": 13161,
+     "orig_end": 13187,
      "part_start": 178,
      "part_end": 204
     }
@@ -285,43 +301,43 @@
    "chunks": [
     {
      "name": "_v6_31_note",
-     "orig_start": 13165,
-     "orig_end": 13178,
+     "orig_start": 13189,
+     "orig_end": 13202,
      "part_start": 30,
      "part_end": 43
     },
     {
      "name": "_v6_31_price",
-     "orig_start": 13180,
-     "orig_end": 13206,
+     "orig_start": 13204,
+     "orig_end": 13230,
      "part_start": 45,
      "part_end": 71
     },
     {
      "name": "_v6_31_staged_save",
-     "orig_start": 13208,
-     "orig_end": 13263,
+     "orig_start": 13232,
+     "orig_end": 13287,
      "part_start": 73,
      "part_end": 128
     },
     {
      "name": "_v6_31_count",
-     "orig_start": 13265,
-     "orig_end": 13274,
+     "orig_start": 13289,
+     "orig_end": 13298,
      "part_start": 130,
      "part_end": 139
     },
     {
      "name": "_v6_31_report",
-     "orig_start": 13276,
-     "orig_end": 13304,
+     "orig_start": 13300,
+     "orig_end": 13328,
      "part_start": 141,
      "part_end": 169
     },
     {
      "name": "_v6_31_snapshot",
-     "orig_start": 13306,
-     "orig_end": 13315,
+     "orig_start": 13330,
+     "orig_end": 13339,
      "part_start": 171,
      "part_end": 180
     }
@@ -334,55 +350,57 @@
    "chunks": [
     {
      "name": "_v6_29_held",
-     "orig_start": 12838,
-     "orig_end": 12879,
+     "orig_start": 12862,
+     "orig_end": 12903,
      "part_start": 22,
      "part_end": 63
     },
     {
      "name": "_v6_29_count",
-     "orig_start": 12881,
-     "orig_end": 12890,
+     "orig_start": 12905,
+     "orig_end": 12914,
      "part_start": 65,
      "part_end": 74
     },
     {
      "name": "_v6_29_launches",
-     "orig_start": 12892,
-     "orig_end": 12906,
+     "orig_start": 12916,
+     "orig_end": 12930,
      "part_start": 76,
      "part_end": 90
     },
     {
      "name": "_v6_29_first_launch",
-     "orig_start": 12908,
-     "orig_end": 12927,
+     "orig_start": 12932,
+     "orig_end": 12951,
      "part_start": 92,
      "part_end": 111
     },
     {
      "name": "_v6_29_saved",
-     "orig_start": 12929,
-     "orig_end": 12936,
+     "orig_start": 12953,
+     "orig_end": 12960,
      "part_start": 113,
      "part_end": 120
     },
     {
      "name": "_v6_29_report",
-     "orig_start": 12938,
-     "orig_end": 12967,
+     "orig_start": 12962,
+     "orig_end": 12991,
      "part_start": 122,
      "part_end": 151
     },
     {
      "name": "_v6_29_snapshot",
-     "orig_start": 12969,
-     "orig_end": 12985,
+     "orig_start": 12993,
+     "orig_end": 13009,
      "part_start": 153,
      "part_end": 169
     }
    ]
   }
  ],
- "v640_base_sha256": "db56e75962e615af02d5169b7b702b9554e4a54cd5609dc04e0b13a8c7d6ac41"
+ "v640_base_sha256": "db56e75962e615af02d5169b7b702b9554e4a54cd5609dc04e0b13a8c7d6ac41",
+ "v641_base_sha256": "e0177099db1e4e5da298bd7c93948315f7472b75a61424363d43f0a70eff44b6",
+ "v642_base_sha256": "cb95f54e2c47673af6e8d2546a944b9738559501909b5f84bf71745dd8d9351e"
 }

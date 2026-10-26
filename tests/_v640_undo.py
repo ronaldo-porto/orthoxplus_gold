@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import _v641_undo   # v6.41 (k144): its exact text / AST undo runs first in every function below
+
 _HERE = Path(__file__).resolve().parent
 EDITS = json.loads((_HERE / "_v640_edits.json").read_text(encoding="utf-8"))
 JOINED_EDITS = tuple((e["old"], e["new"]) for e in EDITS["edits"])
@@ -58,6 +60,7 @@ def joined_v639(text):
     none of them (an older build's, or already undone) comes back as it is; one that carries some but not all raises."""
     if not isinstance(text, str):
         return text
+    text = _v641_undo.joined_v640(text)                    # v6.41 first (tests/_v641_undo.py)
     present = [new for _old, new in JOINED_EDITS if new in text]
     if not present:
         return text
@@ -67,6 +70,7 @@ def joined_v639(text):
 def source_v639(name, text):
     """agents/strategy/<name> (or taos/common/neurons/miner.py) with v6.40's edits reversed: v6.39's file.  Simple's name
     takes the joined text; a file v6.40 did not edit comes back as it is."""
+    text = _v641_undo.source_v640(name, text)              # v6.41 first (tests/_v641_undo.py)
     base = str(name).rsplit("/", 1)[-1]
     if base == "Strategy1_Research_Simple.py":
         return joined_v639(text)
@@ -144,6 +148,7 @@ def _unflip(text):
 def launcher_v639(text):
     """v6.40's launcher with its edits reversed (a documented one-flip's values first put back): v6.39's launcher byte for
     byte (tests/test_research_v6_40.py pins the digest).  A launcher without the v6.40 block comes back as it is."""
+    text = _v641_undo.launcher_v640(text)                  # v6.41 first (tests/_v641_undo.py)
     if "# v6.40." not in text:
         return text
     return _reverse(_unflip(text), LAUNCHER_EDITS, "launcher")
@@ -212,6 +217,7 @@ def undo_tree(tree):
     v6.40 identifier (an if keeps its else branch), every conditional expression on one (the branch v6.40 off takes).
     On the joined Simple == ast.parse(joined_v639(text)) exactly (tests/test_research_v6_40.py); any module without
     v6.40 names is left as it is.  Returns the tree."""
+    _v641_undo.undo_tree(tree)                             # v6.41 first (tests/_v641_undo.py)
     tree.body = [st for st in tree.body if not (isinstance(st, _ast.ImportFrom) and st.module == PART_MODULE)]
     for st in tree.body:
         if isinstance(st, _ast.ClassDef) and st.name == SIMPLE_CLASS:
@@ -223,6 +229,7 @@ def undo_tree(tree):
 
 def undo_node(node):
     """undo_tree's statement / conditional-expression rules on one parsed node (a method, a loop), in place; returns it."""
+    _v641_undo.undo_node(node)                             # v6.41 first
     _IfExpBack().visit(node)
     _strip(node)
     return node

@@ -54,6 +54,7 @@ import test_research_v6_26 as t626  # noqa: E402
 import test_research_v6_27 as t627  # noqa: E402
 import test_research_v6_28 as t628  # noqa: E402
 import test_research_v6_29 as t629  # noqa: E402
+import _v641_undo  # noqa: E402  (k144: v6.41's undo, tests/_v641_undo.py)
 from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v639_undo  # noqa: E402
@@ -1255,9 +1256,12 @@ def test_the_switches_ship_on_and_agree_with_their_agent_defaults():
     params = t617._params()
     for key in ("research_v630_deep_tier", "research_v630_s9_lookback"):
         assert f"{key}=1 " in t617._shipped() + " " and params.count(f"{key}=") == 1, key
-    assert ('research_v629_touch_fp_move=1 \\\nresearch_v630_deep_tier=1 \\\nresearch_v630_s9_lookback=1 \\\n'
+    assert ('research_v629_touch_fp_move=0 \\\nresearch_v630_deep_tier=1 \\\nresearch_v630_s9_lookback=1 \\\n'
             in LAUNCHER)                                                                 # v6.31's keys next
-    for key in ("research_v633_deep_layer=1", "research_v629_touch_fp_move=1", "research_v626_feed_clock=1",
+    # k144 B4: S9 ships off (D2, S9's look-back multiple, is then inert); v6.40.1's launcher still carries it on
+    assert ('research_v629_touch_fp_move=1 \\\nresearch_v630_deep_tier=1 \\\nresearch_v630_s9_lookback=1 \\\n'
+            in _v641_undo.launcher_v640(LAUNCHER))
+    for key in ("research_v633_deep_layer=1", "research_v626_feed_clock=1",
                 "research_v69_deep_ladder=1", "research_v612_reduce_depth=1", "research_v64_vacuum=1"):
         assert f" {key} " in f" {t617._shipped()} ", key
     init = _src("_init_build_switches")
@@ -1579,7 +1583,11 @@ def test_the_v630_block_passes_the_shipped_params_and_refuses_a_build_without_a_
         for bad in (f"{key}=0", "", f"{key}=true", f"{key}=11", f"x{key}=1"):
             out = _run_block(f" {shipped} ".replace(f" {key}=1 ", f" {bad} "))
             assert out.returncode == 1 and f"without {key}=1" in out.stderr and "PASS" not in out.stdout, (key, bad)
-    for key in ("research_v633_deep_layer=1", "research_v629_touch_fp_move=1", "research_v626_feed_clock=1"):
+    # k144 B4: the block needs the deep layer and S6 on, S9 at 0 or 1 (it ships 0: D2 inert)
+    for s9 in ("research_v629_touch_fp_move=0", "research_v629_touch_fp_move=1"):
+        out = _run_block(f" {shipped} ".replace(" research_v629_touch_fp_move=0 ", f" {s9} "))
+        assert out.returncode == 0 and "PASS" in out.stdout, s9
+    for key in ("research_v633_deep_layer=1", "research_v626_feed_clock=1"):
         assert f" {key} " in f" {shipped} ", key
         out = _run_block(f" {shipped} ".replace(f" {key} ", f" {key[:-1]}0 "))
         assert out.returncode == 1 and f"v6.30 build without {key} in PARAMS" in out.stderr, key

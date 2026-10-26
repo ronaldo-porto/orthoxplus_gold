@@ -37,6 +37,8 @@ import research_v6_32_fee_making as fm  # noqa: E402
 import research_v6_38_keeper as kp  # noqa: E402
 import _v640_gen as gen  # noqa: E402
 import _v640_undo  # noqa: E402
+import _v641_undo  # noqa: E402  (k144: v6.41's undo, tests/_v641_undo.py)
+import _v642_undo  # noqa: E402  (k150: v6.42's undo, tests/_v642_undo.py)
 from _harness import simple_text  # noqa: E402
 
 SIMPLE = simple_text()
@@ -263,7 +265,8 @@ def _method(text, cls_name, name):
 
 
 def test_the_generated_copies_are_the_transforms_of_simples_live_originals_and_reverse_to_them():
-    deep0 = _method(SIMPLE, "Strategy1_Research_Simple", "_v633_book")
+    # k150: v6.42's hooks out of Simple's _v633_book first -- the L1T fold is class 0's; the class-2 core stays v6.41's
+    deep0 = _v642_undo.undo_node(_method(SIMPLE, "Strategy1_Research_Simple", "_v633_book"))
     touch0 = _method(SIMPLE, "Strategy1_Research_Simple", "_v617_touch")
     deep1 = _method(PART, "V640Part", "_v6_40_deep_core")
     touch1 = _method(PART, "V640Part", "_v6_40_touch_core")
@@ -602,17 +605,20 @@ def test_g2_the_state_row_carries_the_class2_monitor_the_c2q_verdict_and_the_rej
 
 def test_every_hook_edit_is_in_the_joined_text_once_and_the_undo_is_v639s_text_byte_for_byte():
     assert len(_v640_undo.JOINED_EDITS) == 19
+    s40 = _v641_undo.joined_v640(SIMPLE)                                     # k144: v6.40's joined text (v6.41 out)
     for old, new in _v640_undo.JOINED_EDITS:
-        assert SIMPLE.count(new) == 1, new[:80]
+        assert s40.count(new) == 1, new[:80]
     back = _v640_undo.joined_v639(SIMPLE)
     assert _sha(back) == V639_JOINED_SHA256 == _v640_undo.BASE_JOINED_SHA256
-    assert _sha(SIMPLE) == _v640_undo.JOINED_SHA256
+    assert _sha(s40) == _v640_undo.JOINED_SHA256
     assert _v640_undo.joined_v639(back) is back                               # idempotent: v6.39's text as it is
     with pytest.raises(AssertionError):
         _v640_undo.joined_v639(SIMPLE.replace(_v640_undo.JOINED_EDITS[3][1], "", 1))   # an edit missing
     manifest = json.loads((PARTS / "MANIFEST.json").read_text())
     assert manifest["pre_split_sha256"] == _sha(SIMPLE) and manifest["v640_base_sha256"] == V639_JOINED_SHA256
-    assert manifest["simple_edits"][:2] == [list(e) for e in _v640_undo.EDITS["split_edits"]]
+    assert manifest["simple_edits"][4:6] == [list(e) for e in _v640_undo.EDITS["split_edits"]]   # k144 / k150: newer first
+    assert manifest["simple_edits"][2:4] == [list(e) for e in _v641_undo.EDITS["split_edits"]]
+    assert manifest["simple_edits"][:2] == [list(e) for e in _v642_undo.EDITS["split_edits"]]
 
 
 def test_the_launcher_and_the_miner_with_v640_undone_are_v639s():
@@ -643,8 +649,8 @@ def test_the_miner_keeps_an_idle_validator_connection_120_s_right_after_the_axon
 
 def test_simple_takes_the_part_as_its_first_base_and_the_joined_view_stays_the_single_file():
     assert RAW_SIMPLE.count("from simple_parts.v6_40_part import V640Part\n") == 1
-    assert "class Strategy1_Research_Simple(V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, " \
-           "Strategy1_Research):" in RAW_SIMPLE
+    assert "class Strategy1_Research_Simple(V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, " \
+           "V629Part, Strategy1_Research):" in RAW_SIMPLE                    # k144 / k150: v6.41's, v6.42's mixins first
     assert "class Strategy1_Research_Simple(Strategy1_Research):" in SIMPLE      # the single file (no part bases)
     assert "import V640Part" not in SIMPLE and ", V636Part" not in SIMPLE
 

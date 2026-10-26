@@ -209,18 +209,98 @@ class PaperDeep:
         return 0.0 if n <= 0 else m - (s_ / n) * d
 
 
+_V641_VERSION_KEY = False       # v6.41 H (research_v641_speed, written by research_v6_41_speed.apply)
+
+
 class SweepRecord(deque):
     """v6.39: a book's sweep record -- the deque of v6.38 (maxlen SWEEP_KEEP) with its sorted copy kept beside it,
     keyed on the record's content (tuple equality): every mutation path (observe, the v6.8 restore, a test) is
     seen, and the copy is the same list `sorted(float(x) for x in record)` builds."""
-    __slots__ = ("_v639_key", "_v639_sorted")
+    __slots__ = ("_v639_key", "_v639_sorted", "_v641_ver", "_v641_seen")
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._v639_key = None
         self._v639_sorted = None
+        self._v641_ver = 0
+        self._v641_seen = -1
+
+    # v6.41 H (research_v641_speed): every mutator counts, so the sorted copy can be keyed on the count instead of a
+    # tuple of the whole record on every call; a mutation that leaves the content as it was only re-sorts it.
+    def append(self, x):
+        deque.append(self, x)
+        self._v641_ver += 1
+
+    def appendleft(self, x):
+        deque.appendleft(self, x)
+        self._v641_ver += 1
+
+    def extend(self, it):
+        items = list(it)
+        if items:                                   # an empty extend changes nothing: the copy stays valid
+            deque.extend(self, items)
+            self._v641_ver += 1
+
+    def extendleft(self, it):
+        items = list(it)
+        if items:
+            deque.extendleft(self, items)
+            self._v641_ver += 1
+
+    def pop(self):
+        self._v641_ver += 1
+        return deque.pop(self)
+
+    def popleft(self):
+        self._v641_ver += 1
+        return deque.popleft(self)
+
+    def remove(self, value):
+        self._v641_ver += 1
+        deque.remove(self, value)
+
+    def rotate(self, n=1):
+        deque.rotate(self, n)
+        self._v641_ver += 1
+
+    def clear(self):
+        deque.clear(self)
+        self._v641_ver += 1
+
+    def insert(self, i, x):
+        self._v641_ver += 1
+        deque.insert(self, i, x)
+
+    def reverse(self):
+        deque.reverse(self)
+        self._v641_ver += 1
+
+    def __setitem__(self, i, x):
+        self._v641_ver += 1
+        deque.__setitem__(self, i, x)
+
+    def __delitem__(self, i):
+        self._v641_ver += 1
+        deque.__delitem__(self, i)
+
+    def __iadd__(self, other):
+        items = list(other)
+        if items:
+            deque.extend(self, items)
+            self._v641_ver += 1
+        return self
+
+    def __imul__(self, n):
+        self._v641_ver += 1
+        return deque.__imul__(self, n)
 
     def sorted_floats(self) -> list[float]:
+        if _V641_VERSION_KEY:
+            if self._v639_sorted is None or self._v641_seen != self._v641_ver:
+                self._v639_sorted = sorted(float(x) for x in self)
+                self._v641_seen = self._v641_ver
+                self._v639_key = None
+            return self._v639_sorted
         key = tuple(self)
         if self._v639_sorted is None or self._v639_key != key:
             self._v639_sorted = sorted(float(x) for x in key)

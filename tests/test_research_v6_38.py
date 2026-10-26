@@ -48,6 +48,8 @@ from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v639_undo  # noqa: E402
 import _v640_undo  # noqa: E402   (k139: v6.40's paths / text undo)
+import _v641_undo  # noqa: E402  (k144: v6.41's undo, tests/_v641_undo.py)
+import _v642_undo  # noqa: E402  (k150: v6.42's undo, tests/_v642_undo.py)
 from _harness import simple_text, read_source, strategy_view  # noqa: E402
 
 SIMPLE = simple_text()
@@ -648,6 +650,11 @@ def test_the_changed_paths_are_f2s_and_v638s_own():
           "agents/strategy/research_direct_idle_gc.py", "taos/im/protocol/models.py"}
     v639 = _v639_undo.V639_PATHS                       # k129: v6.39's paths, untracked or tracked (its test pins them)
     v639 = v639 | _v640_undo.V640_PATHS                # k139: v6.40's paths, either state (tests/_v640_undo.py)
+    v639 = v639 | _v641_undo.V641_PATHS                # k144: v6.41's paths, either state (tests/_v641_undo.py)
+    v639 = v639 | _v641_undo.V641_PATHS                # k144: v6.41's paths, either state (tests/_v641_undo.py)
+    v639 = v639 | _v641_undo.V641_PATHS                # k144: v6.41's paths, either state (tests/_v641_undo.py)
+    v639 = v639 | _v641_undo.V641_PATHS                # k144: v6.41's paths, either state (tests/_v641_undo.py)
+    v639 = v639 | _v642_undo.V642_PATHS                # k150: v6.42's paths, either state (tests/_v642_undo.py)
     assert listed - new - v639 == (f2 | _v638_undo.V638_MODULES | _v638_undo.V638_ARCHIVED) - v639
     assert (STRATEGY / "research_v6_38_fast_path.py").is_file()
 

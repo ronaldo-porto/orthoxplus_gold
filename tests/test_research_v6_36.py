@@ -51,6 +51,8 @@ from _harness import extractor  # noqa: E402
 import _v638_undo  # noqa: E402
 import _v639_undo  # noqa: E402
 import _v640_undo  # noqa: E402   (k139: v6.40's paths / text undo)
+import _v641_undo  # noqa: E402  (k144: v6.41's undo, tests/_v641_undo.py)
+import _v642_undo  # noqa: E402  (k150: v6.42's undo, tests/_v642_undo.py)
 from _harness import simple_text, read_source, copy_source, strategy_view  # noqa: E402
 
 SIMPLE = simple_text()
@@ -1019,7 +1021,9 @@ def test_the_frozen_modules_are_v635s():
     later = ({"agents/strategy/research_v6_37_fast_path.py"} | _v638_undo.V638_NEW | _v638_undo.V638_MODULES
              | _v638_undo.V638_ARCHIVED | _v638_undo.V638_L3_MODULES
              | (_v639_undo.V639_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"})   # k129: v6.39's, either state
-             | (_v640_undo.V640_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"}))   # k139: v6.40's, either state
+             | (_v640_undo.V640_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"})    # k139: v6.40's, either state
+             | (_v641_undo.V641_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"})    # k144: v6.41's, either state
+             | (_v642_undo.V642_PATHS - {"agents/strategy/Strategy1_Research_Simple.py"}))   # k150: v6.42's, either state
     assert [n for n in out.stdout.split() if n not in f2 | v636 | later] == ["agents/strategy/Strategy1_Research_Simple.py"]
     assert (STRATEGY / "research_v6_36_step_withdrawal.py").is_file()           # + the new module
 

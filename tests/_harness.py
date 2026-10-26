@@ -54,11 +54,29 @@ def simple_text() -> str:
     return _SIMPLE_TEXT
 
 
+_V641_MODULES = ("research_direct_idle_gc.py", "research_v629_reply_path.py", "research_v633_deep_layer.py",
+                 "research_v6_38_fast_path.py", "models.py")
+
+
 def read_source(path) -> str:
-    """The text of a source file of the tree: Simple's is the joined text (simple_text), any other its file."""
+    """The text of a source file of the tree: Simple's is the joined text (simple_text), any other its file.
+
+    v6.41 (k144): B1's five module files (research_v641_speed, scratchpad k141 P3) read as v6.40.1's -- their v6.41
+    edits reversed by tests/_v641_undo.source_v640, byte for byte -- as every version test before v6.41 read them; the
+    v6.41 changes themselves are pinned by tests/test_research_v6_41.py (and k141's equivalence tests)."""
     import pathlib
     p = pathlib.Path(path)
-    return simple_text() if p.name == SIMPLE_NAME else p.read_text(encoding="utf-8")
+    if p.name == SIMPLE_NAME:
+        return simple_text()
+    text = p.read_text(encoding="utf-8")
+    if p.name in _V641_MODULES:
+        import sys as _sys
+        here = str(pathlib.Path(__file__).resolve().parent)
+        if here not in _sys.path:
+            _sys.path.insert(0, here)
+        import _v641_undo
+        text = _v641_undo.source_v640(p.name, text)
+    return text
 
 
 def copy_source(src, dst) -> None:

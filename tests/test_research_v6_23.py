@@ -856,7 +856,8 @@ def test_s3_two_runs_first_states_are_two_starts_while_the_request_tick_stands_s
     assert a._tick == 7 and a.resets == 2 and a._v6_23_counts == {"starts_reset": 2, "starts_skipped": 14}
     update = _src("update")
     first = next(st for st in ast.parse(update).body[0].body           # v6.38's P3 cache reset (an if on its switch) aside
-                 if not (isinstance(st, ast.If) and "research_v638_fast_path" in ast.unparse(st.test)))
+                 if not (isinstance(st, ast.If) and ("research_v638_fast_path" in ast.unparse(st.test)
+                                                      or "research_v641_speed" in ast.unparse(st.test))))   # k144: v6.41 C's I3
     assert ast.unparse(first) == "self._v6_23_update_seq = int(getattr(self, '_v6_23_update_seq', 0) or 0) + 1"
     assert 'key = v623_start_key(getattr(self, "_v6_23_update_seq", None), getattr(self, "_scoring_timestamp", None))' \
         in _src("onStart")
