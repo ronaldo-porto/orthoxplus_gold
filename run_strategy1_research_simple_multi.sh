@@ -497,7 +497,8 @@ research_v641_c2q_reduce=1 \
 research_v641_c2q_persist=1 \
 research_v641_s9_page=1 \
 research_v642_l1t=2 \
-research_v642_l1c=4"
+research_v642_l1c=4 \
+research_v643_rescue=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -4635,7 +4636,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qE -- '^class Strategy1_Research_Simple\((V642Part, )?(V641Part, )?V640Part, V636Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V643Part, )?(V642Part, )?(V641Part, )?V640Part, V636Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_40_part import V640Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.40 Simple does not take V640Part as its first base." >&2
     exit 1
@@ -4764,7 +4765,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qE -- '^class Strategy1_Research_Simple\((V642Part, )?V641Part, V640Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V643Part, )?(V642Part, )?V641Part, V640Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_41_part import V641Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.41 Simple does not take V641Part as its first base." >&2
     exit 1
@@ -4853,7 +4854,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qF -- 'class Strategy1_Research_Simple(V642Part, V641Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V643Part, )?V642Part, V641Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_42_part import V642Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.42 Simple does not take V642Part as its first base." >&2
     exit 1
@@ -4917,6 +4918,40 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
   case "$_v642_l1c" in 0) _v642_cname=off;; 1) _v642_cname=CAP;; 3) _v642_cname=FAR_CAP;; 4) _v642_cname=AG_CAP;; esac
   echo "[preflight] v6.42: l1t ${_v642_l1t} l1c ${_v642_l1c} (${_v642_name} / ${_v642_cname})"
   echo "[preflight] v6.42 PASS (research_v642_l1t / research_v642_l1c explicit; 0 0 = v6.41's code on every path)"
+fi
+
+# v6.43.  research_v643_rescue (USER emergency 10-27: about 1.5x the volume): from the deploy (the rescue start, kept in
+# the session's pace state across a restart), every young book's pace line gets one making window of extra room at 1.5x
+# the sustainable rate, paid back evenly to zero at the book's own roll-off (v6.15's launch shape, so the line still
+# reaches v6.21's aim and never the cap), and its deep clip is 1.5x while that window is open.  0 = v6.42's code on
+# every path.  The key must appear exactly once (0 or 1).
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  for _v643_f in research_v643_rescue.py simple_parts/v6_43_part.py; do
+    [[ -f "$AGENT_PATH_REAL/$_v643_f" ]] || { echo "ERROR: v6.43 agents/strategy/$_v643_f is missing." >&2; exit 1; }
+  done
+  for _v643_pat in \
+      'from simple_parts.v6_43_part import V643Part' \
+      'class Strategy1_Research_Simple(V643Part, V642Part,'; do
+    grep -qF -- "$_v643_pat" "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+      echo "ERROR: v6.43 the agent file lacks: $_v643_pat" >&2
+      exit 1
+    }
+  done
+  for _v643_pat in \
+      'return self._v6_43_line(pace, V628FlatLaunchLine)' \
+      'self._v6_43_restore(pace, payload, how, v628_restore_rates(pace, payload, how))' \
+      'self._v6_43_save(pace, state, v628_save_rates(pace, state))' \
+      'return self._v6_43_clip(got, pace, book_id, now_ts)'; do
+    grep -qF -- "$_v643_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || {
+      echo "ERROR: v6.43 the agent lacks: $_v643_pat" >&2
+      exit 1
+    }
+  done
+  _v643_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_v643_rescue=' || true)
+  [[ "$_v643_n" == "1" ]] || { echo "ERROR: v6.43 build with research_v643_rescue given ${_v643_n} times in PARAMS (exactly once)." >&2; exit 1; }
+  _v643_on=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v643_rescue=' | cut -d= -f2-)
+  [[ "$_v643_on" =~ ^(0|1)$ ]] || { echo "ERROR: v6.43 research_v643_rescue=$_v643_on is not 0 or 1" >&2; exit 1; }
+  echo "[preflight] v6.43 PASS (research_v643_rescue ${_v643_on}; 0 = v6.42's code on every path)"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then

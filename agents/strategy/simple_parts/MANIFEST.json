@@ -2,6 +2,14 @@
  "pre_split_sha256": "7841b03fe70ff369c89c36734e86881da8ef905c4c38d3dbf510527538df26c5",
  "simple_edits": [
   [
+   "class Strategy1_Research_Simple(V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
+   "class Strategy1_Research_Simple(V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
+  ],
+  [
+   "from simple_parts.v6_43_part import V643Part\nfrom simple_parts.v6_42_part import V642Part\n",
+   "from simple_parts.v6_42_part import V642Part\n"
+  ],
+  [
    "class Strategy1_Research_Simple(V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
    "class Strategy1_Research_Simple(V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
   ],

@@ -1212,6 +1212,7 @@ DIRECT_A175_SHADOW_HORIZON_TICKS = 200
 DIRECT_A175_SHADOW_LEDGER_MAX = 256
 
 
+from simple_parts.v6_43_part import V643Part
 from simple_parts.v6_42_part import V642Part
 from simple_parts.v6_41_part import V641Part
 from simple_parts.v6_40_part import V640Part
@@ -1220,7 +1221,7 @@ from simple_parts.v6_32_part import V632Part
 from simple_parts.v6_30_part import V630Part
 from simple_parts.v6_31_part import V631Part
 from simple_parts.v6_29_part import V629Part
-class Strategy1_Research_Simple(V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
+class Strategy1_Research_Simple(V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
     """V4.16.2 A1.9.2 fee-conditioned book risk admission on A1.9.1.2.
 
     What is deliberately removed from the hot entry path:
@@ -12756,7 +12757,7 @@ class Strategy1_Research_Simple(V642Part, V641Part, V640Part, V636Part, V632Part
         the sustainable rate for a launch this process starts, ``pace``'s own (v6.15's) for one without a record.
         Never raises: an error counts and the line is ``pace`` (v6.27)."""
         try:
-            return V628FlatLaunchLine(launch=pace.launch_on, guard=pace.guard_on, even=pace.even_on, rate=pace.rate)
+            return self._v6_43_line(pace, V628FlatLaunchLine)  # v6.43: the volume rescue's line when on, else v6.28's
         except Exception:
             self._v6_28_errors = int(getattr(self, "_v6_28_errors", 0) or 0) + 1
             return pace
@@ -12769,7 +12770,7 @@ class Strategy1_Research_Simple(V642Part, V641Part, V640Part, V636Part, V632Part
         try:
             if not isinstance(pace, V628FlatLaunchLine):
                 return
-            for key, n in v628_restore_rates(pace, payload, how).items():
+            for key, n in self._v6_43_restore(pace, payload, how, v628_restore_rates(pace, payload, how)).items():
                 if n:
                     self._v6_28_count("restored_" + str(key), int(n))
         except Exception:
@@ -12783,7 +12784,7 @@ class Strategy1_Research_Simple(V642Part, V641Part, V640Part, V636Part, V632Part
         try:
             pace = getattr(self, "_v66_pace", None)
             if isinstance(pace, V628FlatLaunchLine) and getattr(self, "_v621_prepared", False):
-                v628_save_rates(pace, state)
+                self._v6_43_save(pace, state, v628_save_rates(pace, state))  # v6.43: + the rescue start
         except Exception:
             self._v6_28_errors = int(getattr(self, "_v6_28_errors", 0) or 0) + 1
 
@@ -12798,7 +12799,7 @@ class Strategy1_Research_Simple(V642Part, V641Part, V640Part, V636Part, V632Part
             got = float(v628_launch_clip(clip, pace, book_id, now_ts))
             if got < float(v627_clip) - 1e-12:
                 self._v6_28_count("flat_clip_book_states")
-            return got
+            return self._v6_43_clip(got, pace, book_id, now_ts)  # v6.43: x the rescue rate in its window
         except Exception:
             self._v6_28_errors = int(getattr(self, "_v6_28_errors", 0) or 0) + 1
             return v627_clip
