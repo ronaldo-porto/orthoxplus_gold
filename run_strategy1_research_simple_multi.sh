@@ -480,7 +480,7 @@ research_v638_lean_arm=0 \
 research_v638_c1=0 \
 research_v638_c1_arm=0 \
 research_v639_runlen=1 \
-research_v640_traded_classes=0,2 \
+research_v640_traded_classes=0,1,2 \
 research_v640_c2du=1 \
 research_v640_c2d=1 \
 research_v640_c2j=0 \
@@ -498,7 +498,19 @@ research_v641_c2q_persist=1 \
 research_v641_s9_page=1 \
 research_v642_l1t=2 \
 research_v642_l1c=4 \
-research_v643_rescue=1"
+research_v643_rescue=1 \
+research_v644_c2t=1 \
+research_v644_fgk=1 \
+research_v644_c2qb=1 \
+research_v645_bsl=2 \
+research_v645_lbw=3 \
+research_v645_c2bc=1 \
+research_v645_c2sur=1 \
+research_v645_s3kf=3.5 \
+research_v645_s3tf=8752 \
+research_v645_s3kh=2 \
+research_v645_s3cl=1 \
+research_v645_s3c=0"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -4636,7 +4648,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qE -- '^class Strategy1_Research_Simple\((V643Part, )?(V642Part, )?(V641Part, )?V640Part, V636Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V645Part, )?(V644Part, )?(V643Part, )?(V642Part, )?(V641Part, )?V640Part, V636Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_40_part import V640Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.40 Simple does not take V640Part as its first base." >&2
     exit 1
@@ -4765,7 +4777,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qE -- '^class Strategy1_Research_Simple\((V643Part, )?(V642Part, )?V641Part, V640Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V645Part, )?(V644Part, )?(V643Part, )?(V642Part, )?V641Part, V640Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_41_part import V641Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.41 Simple does not take V641Part as its first base." >&2
     exit 1
@@ -4854,7 +4866,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qE -- '^class Strategy1_Research_Simple\((V643Part, )?V642Part, V641Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V645Part, )?(V644Part, )?(V643Part, )?V642Part, V641Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_42_part import V642Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.42 Simple does not take V642Part as its first base." >&2
     exit 1
@@ -4929,14 +4941,11 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
   for _v643_f in research_v643_rescue.py simple_parts/v6_43_part.py; do
     [[ -f "$AGENT_PATH_REAL/$_v643_f" ]] || { echo "ERROR: v6.43 agents/strategy/$_v643_f is missing." >&2; exit 1; }
   done
-  for _v643_pat in \
-      'from simple_parts.v6_43_part import V643Part' \
-      'class Strategy1_Research_Simple(V643Part, V642Part,'; do
-    grep -qF -- "$_v643_pat" "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
-      echo "ERROR: v6.43 the agent file lacks: $_v643_pat" >&2
-      exit 1
-    }
-  done
+  grep -qF -- 'from simple_parts.v6_43_part import V643Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+    grep -qE -- '^class Strategy1_Research_Simple\((V645Part, )?(V644Part, )?V643Part, V642Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.43 Simple does not take V643Part as its first base (after v6.44's)." >&2
+    exit 1
+  }
   for _v643_pat in \
       'return self._v6_43_line(pace, V628FlatLaunchLine)' \
       'self._v6_43_restore(pace, payload, how, v628_restore_rates(pace, payload, how))' \
@@ -4952,6 +4961,172 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
   _v643_on=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v643_rescue=' | cut -d= -f2-)
   [[ "$_v643_on" =~ ^(0|1)$ ]] || { echo "ERROR: v6.43 research_v643_rescue=$_v643_on is not 0 or 1" >&2; exit 1; }
   echo "[preflight] v6.43 PASS (research_v643_rescue ${_v643_on}; 0 = v6.42's code on every path)"
+fi
+
+# v6.44.  research_v644_c2t / research_v644_fgk / research_v644_c2qb (k173 EVENTS lines 110-111: C2T+FGK and
+# C2T+FGK+C2QB DEV CARRIED on the v6.43 BASE; the three: joint three-class PP +44 %, class 0 +5 %, whole span +37 %).
+# C2T: every traded class-2 book (while C2Q has class 2 armed or probing) takes ONE two-sided touch layer -- no lean, no
+# fp hurdle, no deep layer; the adding side at the touch clip inside the bound, not paced / fee-gated / held, the
+# reducing side at max(clip, |inventory|), D4 kept; v6.17's join and v6.31's one-tick improve.  FGK: S14's
+# realized-spread estimate per class (each book gated on its own class's fills; C2Q's tracker still sees every fill).
+# C2QB: C2Q disarms class 2 only when q2's one-sided confidence bound is below break-even (never alone: only with C2T
+# and FGK).  0 0 0 = v6.43's code on every path.  The rescue line (research_v643_rescue) is kept.  Each key must appear
+# exactly once (0 or 1).
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  for _v644_f in research_v644_c2t.py simple_parts/v6_44_part.py; do
+    [[ -f "$AGENT_PATH_REAL/$_v644_f" ]] || { echo "ERROR: v6.44 agents/strategy/$_v644_f is missing." >&2; exit 1; }
+  done
+  grep -qF -- 'from simple_parts.v6_44_part import V644Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+    grep -qE -- '^class Strategy1_Research_Simple\((V645Part, )?V644Part, V643Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.44 Simple does not take V644Part as its first base (after v6.45's)." >&2
+    exit 1
+  }
+  for _v644_pat in \
+      'and self._v6_44_c2t_on(book_id): placed_total += self._v6_44_c2t_book(' \
+      'def _v6_40_init(self) -> None:' \
+      'def _v6_32_note(self, book_id: int, inv) -> None:' \
+      'def _v6_40_c2q_update(self) -> None:'; do
+    grep -qF -- "$_v644_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" "$AGENT_PATH_REAL/simple_parts/v6_44_part.py" || {
+      echo "ERROR: v6.44 the agent lacks: $_v644_pat" >&2
+      exit 1
+    }
+  done
+  for _v644_key in research_v644_c2t research_v644_fgk research_v644_c2qb; do
+    _v644_n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c "^${_v644_key}=" || true)
+    [[ "$_v644_n" == "1" ]] || { echo "ERROR: v6.44 build with ${_v644_key} given ${_v644_n} times in PARAMS (exactly once)." >&2; exit 1; }
+    _v644_v=$(tr ' ' '\n' <<< "$PARAMS" | grep "^${_v644_key}=" | cut -d= -f2-)
+    [[ "$_v644_v" =~ ^(0|1)$ ]] || { echo "ERROR: v6.44 ${_v644_key}=$_v644_v is not 0 or 1" >&2; exit 1; }
+  done
+  _v644_c2t=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v644_c2t=' | cut -d= -f2-)
+  _v644_fgk=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v644_fgk=' | cut -d= -f2-)
+  _v644_c2qb=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v644_c2qb=' | cut -d= -f2-)
+  if [[ "$_v644_c2qb" == "1" && ( "$_v644_c2t" != "1" || "$_v644_fgk" != "1" ) ]]; then
+    echo "ERROR: v6.44 C2QB ships only with C2T and FGK (k171: alone it costs class 0 -24.6 %)." >&2
+    exit 1
+  fi
+  if [[ "$_v644_c2t" == "1" ]]; then
+    [[ " $PARAMS " == *" research_v617_touch_quote=1 "* ]] || { echo "ERROR: v6.44 C2T needs research_v617_touch_quote=1." >&2; exit 1; }
+    _v644_tc=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v640_traded_classes=' | cut -d= -f2-)
+    [[ ",$_v644_tc," == *",2,"* ]] || echo "[preflight] v6.44 note: C2T on with class 2 not traded (research_v640_traded_classes=$_v644_tc): no book takes it"
+  fi
+  if [[ "$_v644_fgk" == "1" ]]; then
+    [[ " $PARAMS " == *" research_v632_fee_making=1 "* ]] || { echo "ERROR: v6.44 FGK needs research_v632_fee_making=1." >&2; exit 1; }
+  fi
+  [[ " $PARAMS " == *" research_v643_rescue=1 "* ]] || { echo "ERROR: v6.44 keeps the v6.43 rescue line (research_v643_rescue=1)." >&2; exit 1; }
+  echo "[preflight] v6.44 PASS (research_v644_c2t ${_v644_c2t}, research_v644_fgk ${_v644_fgk}, research_v644_c2qb ${_v644_c2qb}; 0 0 0 = v6.43's code on every path; rescue kept)"
+fi
+
+# v6.45.  research_v645_* (USER 10-30 "build 3.5x": Round 4 follow-up D_F3.5, SP/round4/f35 -- DEV CARRIED vs CAND on
+# the dev panel, S +48.4 % / U +36.8 %; one dev market, no held-out set): v6.44 + six arms of the tested replay spec
+# (engine round4/vm_r4d.py), each behind its own switch, code default off:
+#   research_v645_bsl (bsl; 1 never against the fp, 2 signed): the v6.25 lean sized from the net convergence g - Pt,
+#   Pt = mid minus the triangular lookback mean of the book's own 1-s mids over 10,800 s (rings kept in the session's
+#   pace state, started over in a new simulation);
+#   research_v645_lbw (lbw; bit 1 classes 0 / 1, bit 2 class 2): those lookback means over the observed span only;
+#   research_v645_c2bc (c2bc): class 2's C2T layer centred on the lean of (g - gbar) - Pt (needs C2T and bsl 2);
+#   research_v645_c2sur (c2sur): class 2's adding C2T quote withheld on the making window's capture-surplus side;
+#   research_v640_traded_classes=0,1,2 (C1P): class 1 on v6.40's class-0 machinery in its own units -- no new code;
+#   research_v645_s3kf / s3tf / s3kh / s3cl / s3c (F3.5c0): the class-0 launch line min(cap, cap (kf min(x, Tf) +
+#   kh max(0, x - Tf)) / 86,400 s) on v6.43's rescue line, the deep clip x kf / kh / 1 (s3cl 1); never above the cap
+#   (the agent's hard cap stays the validator's: v6.22 S3 + the final validator at used >= cap).
+# Every key 0 (s3kf 0) = v6.44's code on every path; the v6.44 keys are kept.  Each key must appear exactly once.
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  for _v645_f in research_v645_bsl.py research_v645_frontload.py simple_parts/v6_45_part.py; do
+    [[ -f "$AGENT_PATH_REAL/$_v645_f" ]] || { echo "ERROR: v6.45 agents/strategy/$_v645_f is missing." >&2; exit 1; }
+  done
+  grep -qF -- 'from simple_parts.v6_45_part import V645Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+    grep -qE -- '^class Strategy1_Research_Simple\(V645Part, V644Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.45 Simple does not take V645Part as its first base." >&2
+    exit 1
+  }
+  _v645_lean_n=$(grep -cF -- 'v6_25_inv, v6_25_fills = self._v6_25_lean(book_id, raw_bid, raw_ask, cfg, inv, now_ts, v6_25_req)' "$AGENT_PATH/Strategy1_Research_Simple.py" || true)
+  _v645_def_n=$(grep -cF -- 'def _v6_25_lean(self, book_id: int, raw_bid, raw_ask, cfg, inv, now_ts: int, req) -> tuple:' "$AGENT_PATH/Strategy1_Research_Simple.py" || true)
+  [[ "$_v645_lean_n" == "1" && "$_v645_def_n" == "1" ]] || {
+    echo "ERROR: v6.45 binds its lean in place of Simple's one _v6_25_lean call (found ${_v645_lean_n} calls, ${_v645_def_n} definitions)." >&2
+    exit 1
+  }
+  for _v645_pat in \
+      'class V645Part:' \
+      'self._v6_25_lean = self._v6_45_lean' \
+      'def _v6_45_lean(self, book_id: int, raw_bid, raw_ask, cfg, inv, now_ts: int, req) -> tuple:' \
+      'def _v6_44_c2t_book(self, response, state, book_id: int, deep, raw_bid, raw_ask, inv, other_rows, touch_rows,' \
+      'def _v6_43_line(self, pace, flat_cls):' \
+      'def _v6_43_clip(self, got, pace, book_id, now_ts):' \
+      'def _v6_43_save(self, pace, state, rows):' \
+      'def _v6_43_restore(self, pace, payload, how, tallies):'; do
+    grep -qF -- "$_v645_pat" "$AGENT_PATH_REAL/simple_parts/v6_45_part.py" || {
+      echo "ERROR: v6.45 the part lacks: $_v645_pat" >&2
+      exit 1
+    }
+  done
+  for _v645_pat in \
+      'class LookbackRing:' \
+      'def bsl_tau(' \
+      'def c2bc_tau(' \
+      'def surplus_side(' \
+      'LOOKBACK_S = 10_800'; do
+    grep -qF -- "$_v645_pat" "$AGENT_PATH_REAL/research_v645_bsl.py" || { echo "ERROR: v6.45 research_v645_bsl lacks: $_v645_pat" >&2; exit 1; }
+  done
+  for _v645_pat in \
+      'class FrontLoadLine(RescueLine):' \
+      'def front_line(' \
+      'def front_factor('; do
+    grep -qF -- "$_v645_pat" "$AGENT_PATH_REAL/research_v645_frontload.py" || { echo "ERROR: v6.45 research_v645_frontload lacks: $_v645_pat" >&2; exit 1; }
+  done
+  _v645_get() {
+    local _n _v
+    _n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c "^$1=" || true)
+    [[ "$_n" == "1" ]] || { echo "ERROR: v6.45 build with $1 given ${_n} times in PARAMS (exactly once)." >&2; exit 1; }
+    _v=$(tr ' ' '\n' <<< "$PARAMS" | grep "^$1=" | cut -d= -f2-)
+    [[ "$_v" =~ ^($2)$ ]] || { echo "ERROR: v6.45 $1=$_v is not one of: $2" >&2; exit 1; }
+    printf '%s' "$_v"
+  }
+  _v645_bsl=$(_v645_get research_v645_bsl '0|1|2') || exit 1
+  _v645_lbw=$(_v645_get research_v645_lbw '0|1|2|3') || exit 1
+  _v645_c2bc=$(_v645_get research_v645_c2bc '0|1') || exit 1
+  _v645_c2sur=$(_v645_get research_v645_c2sur '0|1') || exit 1
+  _v645_kf=$(_v645_get research_v645_s3kf '[0-9]+(\.[0-9]+)?') || exit 1
+  _v645_tf=$(_v645_get research_v645_s3tf '[0-9]+(\.[0-9]+)?') || exit 1
+  _v645_kh=$(_v645_get research_v645_s3kh '[0-9]+(\.[0-9]+)?') || exit 1
+  _v645_cl=$(_v645_get research_v645_s3cl '0|1') || exit 1
+  _v645_cs=$(_v645_get research_v645_s3c '[0-2](,[0-2])*') || exit 1
+  _v645_tc=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v640_traded_classes=' | cut -d= -f2-)
+  for _v645_key in research_v644_c2t research_v644_fgk research_v644_c2qb; do
+    [[ " $PARAMS " == *" ${_v645_key}="* ]] || { echo "ERROR: v6.45 keeps the v6.44 key ${_v645_key} in PARAMS." >&2; exit 1; }
+  done
+  if [[ "$_v645_lbw" != "0" && "$_v645_bsl" == "0" ]]; then
+    echo "ERROR: v6.45 LBW (research_v645_lbw) changes BSL's lookback means: it needs research_v645_bsl 1 or 2." >&2
+    exit 1
+  fi
+  if [[ "$_v645_bsl" != "0" ]]; then
+    for _v645_key in research_v625_lean=1 research_v638_lean=0 research_v621_pace_persist=1 research_v628_flat_launch=1; do
+      [[ " $PARAMS " == *" ${_v645_key} "* ]] || { echo "ERROR: v6.45 BSL needs ${_v645_key} (the v6.25 lean it sizes; its rings ride in the v6.21 pace state)." >&2; exit 1; }
+    done
+  fi
+  if [[ "$_v645_c2bc" == "1" ]]; then
+    [[ "$_v645_bsl" == "2" && " $PARAMS " == *" research_v644_c2t=1 "* ]] || {
+      echo "ERROR: v6.45 C2BC needs research_v645_bsl=2 and research_v644_c2t=1 (it centres C2T's class-2 layer on the signed BSL form)." >&2
+      exit 1
+    }
+  fi
+  if [[ "$_v645_c2sur" == "1" ]]; then
+    [[ " $PARAMS " == *" research_v644_c2t=1 "* && " $PARAMS " == *" research_v619_surplus_hold=1 "* ]] || {
+      echo "ERROR: v6.45 C2SUR needs research_v644_c2t=1 (C2T's class-2 layer) and research_v619_surplus_hold=1 (the making mirror it reads)." >&2
+      exit 1
+    }
+  fi
+  if awk -v k="$_v645_kf" 'BEGIN { exit !(k > 0) }'; then
+    for _v645_key in research_v643_rescue=1 research_v621_even_spend=1 research_v621_pace_persist=1 research_v628_flat_launch=1 research_v622_cap_skip=1 research_v66_cap_closed=1; do
+      [[ " $PARAMS " == *" ${_v645_key} "* ]] || { echo "ERROR: v6.45 the front-load needs ${_v645_key} (v6.43's rescue line, v6.21's launch line and t_w kept, the hard cap)." >&2; exit 1; }
+    done
+    awk -v t="$_v645_tf" -v h="$_v645_kh" 'BEGIN { exit !(t > 0 && h > 0) }' || { echo "ERROR: v6.45 the front-load needs research_v645_s3tf > 0 and research_v645_s3kh > 0." >&2; exit 1; }
+    _v645_front="kf ${_v645_kf} Tf ${_v645_tf} s kh ${_v645_kh} clip ${_v645_cl} classes ${_v645_cs}"
+  else
+    _v645_front="off"
+  fi
+  [[ ",$_v645_tc," == *",1,"* ]] && _v645_c1="class 1 traded (C1P: v6.40's class-0 machinery in class-1 units)" || _v645_c1="class 1 not traded"
+  echo "[preflight] v6.45: bsl ${_v645_bsl} lbw ${_v645_lbw} c2bc ${_v645_c2bc} c2sur ${_v645_c2sur}; traded ${_v645_tc}: ${_v645_c1}; front-load ${_v645_front}"
+  echo "[preflight] v6.45 PASS (research_v645_bsl ${_v645_bsl}, research_v645_lbw ${_v645_lbw}, research_v645_c2bc ${_v645_c2bc}, research_v645_c2sur ${_v645_c2sur}, research_v645_s3kf ${_v645_kf}; 0 = v6.44's code on every path; v6.44 keys kept)"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then

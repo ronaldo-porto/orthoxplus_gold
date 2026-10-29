@@ -1212,6 +1212,8 @@ DIRECT_A175_SHADOW_HORIZON_TICKS = 200
 DIRECT_A175_SHADOW_LEDGER_MAX = 256
 
 
+from simple_parts.v6_45_part import V645Part
+from simple_parts.v6_44_part import V644Part
 from simple_parts.v6_43_part import V643Part
 from simple_parts.v6_42_part import V642Part
 from simple_parts.v6_41_part import V641Part
@@ -1221,7 +1223,7 @@ from simple_parts.v6_32_part import V632Part
 from simple_parts.v6_30_part import V630Part
 from simple_parts.v6_31_part import V631Part
 from simple_parts.v6_29_part import V629Part
-class Strategy1_Research_Simple(V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
+class Strategy1_Research_Simple(V645Part, V644Part, V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
     """V4.16.2 A1.9.2 fee-conditioned book risk admission on A1.9.1.2.
 
     What is deliberately removed from the hot entry path:
@@ -14218,6 +14220,7 @@ class Strategy1_Research_Simple(V643Part, V642Part, V641Part, V640Part, V636Part
                 # v6.41 B2b: during a C2Q probe the adding side of a class-2 book carrying a clip or more holds
                 held = self._v6_41_probe_held(book_id, inv, deep, held)
             deep_open = False
+            if getattr(self, "_v6_44_c2t_on", None) and self._v6_44_c2t_on(book_id): placed_total += self._v6_44_c2t_book(response, state, book_id, deep, raw_bid, raw_ask, inv, rows + deep_rows, touch_rows, already, req, paced=paced, held=held, tick_size=tick_size, min_order=min_order, budget=budget, expiry=expiry, cfg=cfg); continue  # v6.44 C2T (research_v644_c2t, simple_parts/v6_44_part.py): class 2 takes the two-sided touch layer, no deep layer
             if deep is not None and depth is not None:
                 try:
                     deep_open = bool(deep.book_open(book_id, floor, inv, inventory_bound=not owns_on))
@@ -14320,7 +14323,6 @@ class Strategy1_Research_Simple(V643Part, V642Part, V641Part, V640Part, V636Part
                     fee_ok = float(self._research_live_fee_bps(book_id, is_maker=True)) <= float(fee_cap) + 1e-9
                 except Exception:
                     fee_ok = True
-
             def _making_why(side, _depth=depth, _last=memo.get(book_id)):
                 own_d, other_d = (_depth[0], _depth[1]) if side == V63_SIDE_BUY else (_depth[1], _depth[0])
                 return v63_making_side_verdict(side, own_depth=own_d, other_depth=other_d, last_taker=_last)

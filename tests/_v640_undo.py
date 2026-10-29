@@ -100,6 +100,9 @@ FLIPS = {
     "CLASS1": {"research_v640_traded_classes": "0,1"},
     "CLASS2": {"research_v640_traded_classes": "0,2"},
     "CLASS12": {"research_v640_traded_classes": "0,1,2", "research_v640_c2du": "1"},
+    # v6.45 (USER 10-30 "build 3.5x", Round 4 C1P): G2 plus class 1 on the class-0 machinery (traded 0,1,2)
+    "G2C1": {"research_v640_traded_classes": "0,1,2", "research_v640_c2du": "1", "research_v640_c2d": "1",
+             "research_v640_c2q": "1", "research_v640_c2q_pf": None},
 }
 _DEFAULTS = dict(SHIPPED, research_v634_class1_entry="0")
 
