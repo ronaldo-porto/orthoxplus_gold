@@ -510,7 +510,19 @@ research_v645_s3kf=3.5 \
 research_v645_s3tf=8752 \
 research_v645_s3kh=2 \
 research_v645_s3cl=1 \
-research_v645_s3c=0"
+research_v645_s3c=0 \
+research_v646_c2np=1 \
+research_v646_c2tb=1 \
+research_v646_c2rf=1 \
+research_v646_c1exx=1 \
+research_v646_c1tu=1 \
+research_v646_s5tcu=1 \
+research_v646_s5x0=1 \
+research_v646_s5lkc=1 \
+research_v646_s5aw=1 \
+research_v647_s5sa=2 \
+research_v647_c2s2=1 \
+research_v647_c2s2p=1"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -4648,7 +4660,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qE -- '^class Strategy1_Research_Simple\((V645Part, )?(V644Part, )?(V643Part, )?(V642Part, )?(V641Part, )?V640Part, V636Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?(V643Part, )?(V642Part, )?(V641Part, )?V640Part, V636Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_40_part import V640Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.40 Simple does not take V640Part as its first base." >&2
     exit 1
@@ -4777,7 +4789,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qE -- '^class Strategy1_Research_Simple\((V645Part, )?(V644Part, )?(V643Part, )?(V642Part, )?V641Part, V640Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?(V643Part, )?(V642Part, )?V641Part, V640Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_41_part import V641Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.41 Simple does not take V641Part as its first base." >&2
     exit 1
@@ -4866,7 +4878,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qE -- '^class Strategy1_Research_Simple\((V645Part, )?(V644Part, )?(V643Part, )?V642Part, V641Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?(V643Part, )?V642Part, V641Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_42_part import V642Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.42 Simple does not take V642Part as its first base." >&2
     exit 1
@@ -4942,7 +4954,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
     [[ -f "$AGENT_PATH_REAL/$_v643_f" ]] || { echo "ERROR: v6.43 agents/strategy/$_v643_f is missing." >&2; exit 1; }
   done
   grep -qF -- 'from simple_parts.v6_43_part import V643Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
-    grep -qE -- '^class Strategy1_Research_Simple\((V645Part, )?(V644Part, )?V643Part, V642Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?V643Part, V642Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.43 Simple does not take V643Part as its first base (after v6.44's)." >&2
     exit 1
   }
@@ -4977,7 +4989,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
     [[ -f "$AGENT_PATH_REAL/$_v644_f" ]] || { echo "ERROR: v6.44 agents/strategy/$_v644_f is missing." >&2; exit 1; }
   done
   grep -qF -- 'from simple_parts.v6_44_part import V644Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
-    grep -qE -- '^class Strategy1_Research_Simple\((V645Part, )?V644Part, V643Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?(V645Part, )?V644Part, V643Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.44 Simple does not take V644Part as its first base (after v6.45's)." >&2
     exit 1
   }
@@ -5035,7 +5047,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
     [[ -f "$AGENT_PATH_REAL/$_v645_f" ]] || { echo "ERROR: v6.45 agents/strategy/$_v645_f is missing." >&2; exit 1; }
   done
   grep -qF -- 'from simple_parts.v6_45_part import V645Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
-    grep -qE -- '^class Strategy1_Research_Simple\(V645Part, V644Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?V645Part, V644Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.45 Simple does not take V645Part as its first base." >&2
     exit 1
   }
@@ -5127,6 +5139,218 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
   [[ ",$_v645_tc," == *",1,"* ]] && _v645_c1="class 1 traded (C1P: v6.40's class-0 machinery in class-1 units)" || _v645_c1="class 1 not traded"
   echo "[preflight] v6.45: bsl ${_v645_bsl} lbw ${_v645_lbw} c2bc ${_v645_c2bc} c2sur ${_v645_c2sur}; traded ${_v645_tc}: ${_v645_c1}; front-load ${_v645_front}"
   echo "[preflight] v6.45 PASS (research_v645_bsl ${_v645_bsl}, research_v645_lbw ${_v645_lbw}, research_v645_c2bc ${_v645_c2bc}, research_v645_c2sur ${_v645_c2sur}, research_v645_s3kf ${_v645_kf}; 0 = v6.44's code on every path; v6.44 keys kept)"
+fi
+
+# v6.46.  research_v646_* (USER D3 10-30: build GO once Round 5 Stage 4 4.3 AND 4.4 pass -- S4P7 4.3 PASS 10-31 03:58,
+# 4.4 PASS on the held-out T251 10-31 07:43 JST): v6.45 + the S4P7 combined arm's rules (engines round5/vm_r5m4.py
+# 907cbe99, classes 0 + 2, and round5/vm_r5b5.py dd01c9f4, class 1), each behind its own switch, code default off:
+#   class 2 (R6C2RQ):  research_v646_c2np (C2BC's centre without Pt), research_v646_c2tb (C2T's tie at the centre resolved
+#                      by the TRUE inventory), research_v646_c2rf (a resting adding-side C2T quote lives one state, re-placed
+#                      once the cancel is seen); c2rq (the same-response replace) is NOT built: BLOCKED (the live
+#                      A1.7.4.3.1 / v6.9 slot ownership admits no second touch order while the first is still in the book);
+#   class 1 (R5TU):    research_v646_c1exx (the class-1 touch quote exempt from the A1.9 size-shortfall cancel),
+#                      research_v646_c1tu (the centre-side touch quote sized max(clip, |inv - tau|)); uw / deepmax / pbnd
+#                      in class-0 units = v6.45 as is;
+#   class 0 (R10LKAW): research_v646_s5tcu (as c1tu), research_v646_s5x0 (as c1exx), research_v646_s5lkc (the lean centre
+#                      x s3kh while the front-load multiple is above 1), research_v646_s5aw (the deep layer holds the
+#                      adding capture-surplus side).
+# Every key 0 = v6.45's code on every path; the v6.45 keys are kept.  Each key must appear exactly once.
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  for _v646_f in research_v646_rules.py simple_parts/v6_46_part.py; do
+    [[ -f "$AGENT_PATH_REAL/$_v646_f" ]] || { echo "ERROR: v6.46 agents/strategy/$_v646_f is missing." >&2; exit 1; }
+  done
+  grep -qF -- 'from simple_parts.v6_46_part import V646Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+    grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?V646Part, V645Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.46 Simple does not take V646Part as its first base." >&2
+    exit 1
+  }
+  for _v646_pat in \
+      'def _v617_touch(self, response, book_id: int, deep, raw_bid, raw_ask, inv, touch_rows, already, req, *,' \
+      'return int(self._v617_touch(response, book_id, deep, raw_bid, raw_ask, inv, touch_rows, already, req,' \
+      'def _a191_decide(' \
+      'verdict = self._a191_decide(' \
+      'def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,' \
+      'placed_total += self._v633_book('; do
+    _v646_n=$(grep -cF -- "$_v646_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || true)
+    [[ "$_v646_n" != "0" ]] || { echo "ERROR: v6.46 binds on the instance in place of Simple's: $_v646_pat (not found)" >&2; exit 1; }
+  done
+  for _v646_pat in \
+      'class V646Part:' \
+      'self._v617_touch = self._v6_46_touch' \
+      'self._a191_decide = self._v6_46_a191_decide' \
+      'self._v633_book = self._v6_46_deep_book' \
+      'def _v6_46_touch(self, response, book_id: int, deep,' \
+      'def _v6_46_touch_core(self, response, book_id: int, deep,' \
+      'def _v6_46_c2t_core(self, response, state, book_id: int, deep,' \
+      't_ = self._v6_46_tcu_clip(book_id, toward, inv, clip)' \
+      'def _v6_45_lean(self, book_id: int, raw_bid, raw_ask, cfg, inv, now_ts: int, req) -> tuple:' \
+      'def _v6_45_c2bc(self, book_id: int, raw_bid, raw_ask, cfg, now_ts: int, mid: float) -> None:' \
+      'def _v6_44_c2t_entry(self, response, state, book_id: int, deep, raw_bid, raw_ask, inv, other_rows, touch_rows,' \
+      'def _v6_40_touch_core(self, response, book_id: int, deep, raw_bid, raw_ask, inv, touch_rows, already, req, **kw) -> int:'; do
+    grep -qF -- "$_v646_pat" "$AGENT_PATH_REAL/simple_parts/v6_46_part.py" || { echo "ERROR: v6.46 the part lacks: $_v646_pat" >&2; exit 1; }
+  done
+  for _v646_pat in 'def c2_side_plan(' 'def c2rf_refresh(' 'def c2np_tau(' 'def tcu_size(' 'def lkc_tau(' 'def aw_sides(' 'def front_k('; do
+    grep -qF -- "$_v646_pat" "$AGENT_PATH_REAL/research_v646_rules.py" || { echo "ERROR: v6.46 research_v646_rules lacks: $_v646_pat" >&2; exit 1; }
+  done
+  _v646_get() {
+    local _n _v
+    _n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c "^$1=" || true)
+    [[ "$_n" == "1" ]] || { echo "ERROR: v6.46 build with $1 given ${_n} times in PARAMS (exactly once)." >&2; exit 1; }
+    _v=$(tr ' ' '\n' <<< "$PARAMS" | grep "^$1=" | cut -d= -f2-)
+    [[ "$_v" =~ ^(0|1)$ ]] || { echo "ERROR: v6.46 $1=$_v is not 0 or 1" >&2; exit 1; }
+    printf '%s' "$_v"
+  }
+  _v646_c2np=$(_v646_get research_v646_c2np) || exit 1
+  _v646_c2tb=$(_v646_get research_v646_c2tb) || exit 1
+  _v646_c2rf=$(_v646_get research_v646_c2rf) || exit 1
+  _v646_c1exx=$(_v646_get research_v646_c1exx) || exit 1
+  _v646_c1tu=$(_v646_get research_v646_c1tu) || exit 1
+  _v646_tcu=$(_v646_get research_v646_s5tcu) || exit 1
+  _v646_x0=$(_v646_get research_v646_s5x0) || exit 1
+  _v646_lkc=$(_v646_get research_v646_s5lkc) || exit 1
+  _v646_aw=$(_v646_get research_v646_s5aw) || exit 1
+  [[ " $PARAMS " != *" research_v646_c2rq="* ]] || { echo "ERROR: v6.46 research_v646_c2rq is not built (BLOCKED): remove it from PARAMS." >&2; exit 1; }
+  for _v646_key in research_v645_bsl research_v645_lbw research_v645_c2bc research_v645_c2sur research_v645_s3kf research_v645_s3tf research_v645_s3kh research_v645_s3cl research_v645_s3c research_v644_c2t research_v644_fgk research_v644_c2qb; do
+    [[ " $PARAMS " == *" ${_v646_key}="* ]] || { echo "ERROR: v6.46 keeps the v6.45 / v6.44 key ${_v646_key} in PARAMS." >&2; exit 1; }
+  done
+  _v646_bsl=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v645_bsl=' | cut -d= -f2-)
+  _v646_kf=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v645_s3kf=' | cut -d= -f2-)
+  _v646_s3c=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v645_s3c=' | cut -d= -f2-)
+  _v646_tc=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v640_traded_classes=' | cut -d= -f2-)
+  _v646_lean=0
+  [[ " $PARAMS " == *" research_v625_lean=1 "* && "$_v646_bsl" != "0" ]] && _v646_lean=1
+  if [[ "$_v646_c2np" == "1" || "$_v646_c2tb" == "1" ]]; then
+    [[ " $PARAMS " == *" research_v645_c2bc=1 "* ]] || { echo "ERROR: v6.46 C2NP / C2TB act on C2BC's class-2 centre: they need research_v645_c2bc=1 (itself C2T + bsl 2)." >&2; exit 1; }
+  fi
+  if [[ "$_v646_c2rf" == "1" ]]; then
+    [[ " $PARAMS " == *" research_v644_c2t=1 "* ]] || { echo "ERROR: v6.46 C2RF refreshes C2T's class-2 quote: it needs research_v644_c2t=1." >&2; exit 1; }
+  fi
+  if [[ "$_v646_c1exx" == "1" || "$_v646_x0" == "1" ]]; then
+    [[ " $PARAMS " == *" research_a191_queue_preservation_enabled=1 "* && " $PARAMS " == *" research_v617_touch_quote=1 "* ]] || {
+      echo "ERROR: v6.46 C1EXX / S5X0 exempt the touch quote from the A1.9 size cancel: they need research_a191_queue_preservation_enabled=1 and research_v617_touch_quote=1." >&2
+      exit 1
+    }
+  fi
+  if [[ "$_v646_c1tu" == "1" || "$_v646_tcu" == "1" ]]; then
+    [[ "$_v646_lean" == "1" && " $PARAMS " == *" research_v617_touch_quote=1 "* ]] || {
+      echo "ERROR: v6.46 C1TU / S5TCU size the touch quote from the lean centre: they need research_v625_lean=1, research_v645_bsl 1 or 2 and research_v617_touch_quote=1." >&2
+      exit 1
+    }
+  fi
+  if [[ "$_v646_c1exx" == "1" || "$_v646_c1tu" == "1" ]] && [[ ",$_v646_tc," != *",1,"* ]]; then
+    echo "[preflight] v6.46 NOTE: class 1 not traded (research_v640_traded_classes ${_v646_tc}): C1EXX / C1TU act on no book."
+  fi
+  if [[ "$_v646_lkc" == "1" ]]; then
+    [[ "$_v646_lean" == "1" ]] && awk -v k="$_v646_kf" 'BEGIN { exit !(k > 0) }' && [[ ",$_v646_s3c," == *",0,"* ]] || {
+      echo "ERROR: v6.46 S5LKC scales the class-0 lean on the front-load line: it needs the lean (research_v625_lean=1, bsl 1 or 2) and the class-0 front-load (research_v645_s3kf > 0, s3c with 0)." >&2
+      exit 1
+    }
+  fi
+  if [[ "$_v646_aw" == "1" ]]; then
+    [[ "$_v646_lean" == "1" && " $PARAMS " == *" research_v619_surplus_hold=1 "* ]] || {
+      echo "ERROR: v6.46 S5AW holds the deep side from the lean centre and the making mirror: it needs the lean (research_v625_lean=1, bsl 1 or 2) and research_v619_surplus_hold=1." >&2
+      exit 1
+    }
+  fi
+  echo "[preflight] v6.46: class 2 c2np ${_v646_c2np} c2tb ${_v646_c2tb} c2rf ${_v646_c2rf} (c2rq NOT built: BLOCKED); class 1 c1exx ${_v646_c1exx} c1tu ${_v646_c1tu} (traded ${_v646_tc}); class 0 s5tcu ${_v646_tcu} s5x0 ${_v646_x0} s5lkc ${_v646_lkc} s5aw ${_v646_aw}"
+  echo "[preflight] v6.46 PASS (research_v646_c2np ${_v646_c2np}, research_v646_c2tb ${_v646_c2tb}, research_v646_c2rf ${_v646_c2rf}, research_v646_c1exx ${_v646_c1exx}, research_v646_c1tu ${_v646_c1tu}, research_v646_s5tcu ${_v646_tcu}, research_v646_s5x0 ${_v646_x0}, research_v646_s5lkc ${_v646_lkc}, research_v646_s5aw ${_v646_aw}; 0 = v6.45's code on every path; v6.45 keys kept)"
+fi
+
+# v6.47.  research_v647_* (USER 11-01 20:16 JST option (c): a second class-2 touch slot through an order-manager change;
+# 11-02 ~10:2x JST "I decided option C"): v6.46 + the Round 5 Stage 4 pass 10 REPORTED arm S4P10P (engine
+# round5/vm_r5c12.py 7f3b39e4, classes 0 + 2 = round5/s1r7/q/q_R7C2RQ.txt; class 1 = R5B_R5TU, as v6.46), each behind its
+# own switch, code default off:
+#   class 0 (R11SAG): research_v647_s5sa 0 / 1 / 2 (the k48 against side's deep level 0 + ladder held for the rest of the
+#                     30-s fp block whose step moved >= aggap against it; 1 only while it reduces the TRUE inventory,
+#                     2 = SAG either way) -- needs the step record (research_v636_step_withdrawal=1) and the against side
+#                     (research_v623_realized_mode not off, research_v623_against_gap_bps > 0 = the engine's aggap);
+#   class 2 (C2S2):   research_v647_c2s2 0 / 1 / 2 (a class-2 refresh cancel is a REPLACE through a second touch slot --
+#                     slot B, client ids 43000 + 10 x book + 3 | 4, v6.9 slot 8 -- 1 = A1.9's size cancel + C2RF's
+#                     refresh (c2rq's two kinds), 2 = the size cancel only) -- needs research_v644_c2t=1,
+#                     research_v646_c2rf=1, research_v617_touch_quote=1, research_a191_queue_preservation_enabled=1 and
+#                     the per-slot ownership (research_v6215_side_ownership=1, research_v69_deep_ladder=1);
+#                     research_v647_c2s2p 0 / 1 (1 = option P: the replacement placement BEFORE the old order's cancel, the
+#                     engine's c2rq emit order; both live 5-25 ms) -- needs research_v647_c2s2=1 (the only tested pairing).
+# Every key 0 = v6.46's code on every path; the v6.46 keys are kept.  Each key must appear exactly once.
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  for _v647_f in research_v647_rules.py research_v647_c2s2.py simple_parts/v6_47_part.py research_v617_touch_quote.py; do
+    [[ -f "$AGENT_PATH_REAL/$_v647_f" ]] || { echo "ERROR: v6.47 agents/strategy/$_v647_f is missing." >&2; exit 1; }
+  done
+  grep -qF -- 'from simple_parts.v6_47_part import V647Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+    grep -qE -- '^class Strategy1_Research_Simple\(V647Part, V646Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.47 Simple does not take V647Part as its first base." >&2
+    exit 1
+  }
+  for _v647_pat in \
+      'deep_slot = V617_TOUCH_SLOT - (int(self._get(instruction, "clientOrderId", "client_order_id")) % 10 - 1) // 2'; do
+    _v647_n=$(grep -cF -- "$_v647_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || true)
+    [[ "$_v647_n" == "1" ]] || { echo "ERROR: v6.47 the final validation's per-slot touch ownership (F3) is not in Simple exactly once: $_v647_pat" >&2; exit 1; }
+  done
+  for _v647_pat in \
+      'def _v633_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req, *,' \
+      'def _a191_decide(' \
+      'verdict = self._a191_decide('; do
+    _v647_n=$(grep -cF -- "$_v647_pat" "$AGENT_PATH/Strategy1_Research_Simple.py" || true)
+    [[ "$_v647_n" != "0" ]] || { echo "ERROR: v6.47 binds on the instance in place of Simple's: $_v647_pat (not found)" >&2; exit 1; }
+  done
+  for _v647_pat in \
+      'class V647Part:' \
+      'self._v633_book = self._v6_46_deep_book' \
+      'self._a191_decide = self._v6_47_a191_decide' \
+      'def _v6_46_deep_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,' \
+      'def _v6_44_c2t_entry(self, response, state, book_id: int, deep, raw_bid, raw_ask, inv, other_rows, touch_rows,' \
+      'def _v6_47_c2t_core(self, response, state, book_id: int, deep,' \
+      'def _v6_47_c2q_exit(self, response, book_id: int, rows, already, req,' \
+      'def _v6_47_view(self, book_id: int):' \
+      'cancelled = self._v6_47_cancel_first(response, book_id, doomed, req, budget)' \
+      'self._v6_47_cancel_after(response, book_id, req, budget)' \
+      '(buy_cid, sell_cid) = v617_client_ids(book_id, slot)' \
+      'if v6_47_touch_held(self._v69_live_slots(book_id), side):'; do
+    grep -qF -- "$_v647_pat" "$AGENT_PATH_REAL/simple_parts/v6_47_part.py" || { echo "ERROR: v6.47 the part lacks: $_v647_pat" >&2; exit 1; }
+  done
+  for _v647_pat in 'def sa_sides(' 'def signed_step(' 'def step_adverse(' 'def parse_value('; do
+    grep -qF -- "$_v647_pat" "$AGENT_PATH_REAL/research_v647_rules.py" || { echo "ERROR: v6.47 research_v647_rules lacks: $_v647_pat" >&2; exit 1; }
+  done
+  for _v647_pat in 'def split_rows(' 'def cancel_plan(' 'def slot_decision(' 'def size_shortfall(' 'def replace_kinds('; do
+    grep -qF -- "$_v647_pat" "$AGENT_PATH_REAL/research_v647_c2s2.py" || { echo "ERROR: v6.47 research_v647_c2s2 lacks: $_v647_pat" >&2; exit 1; }
+  done
+  for _v647_pat in 'TOUCH_SLOT_B = 8' 'def touch_slot(' 'def touch_held(' 'c % 10 in (1, 2, 3, 4)' 'out.setdefault(side_of_client_id(cid), set()).add(touch_slot(cid))'; do
+    grep -qF -- "$_v647_pat" "$AGENT_PATH_REAL/research_v617_touch_quote.py" || { echo "ERROR: v6.47 research_v617_touch_quote lacks the second slot: $_v647_pat" >&2; exit 1; }
+  done
+  _v647_get() {
+    local _n _v
+    _n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c "^$1=" || true)
+    [[ "$_n" == "1" ]] || { echo "ERROR: v6.47 build with $1 given ${_n} times in PARAMS (exactly once)." >&2; exit 1; }
+    _v=$(tr ' ' '\n' <<< "$PARAMS" | grep "^$1=" | cut -d= -f2-)
+    [[ "$_v" =~ $2 ]] || { echo "ERROR: v6.47 $1=$_v is not one of $3" >&2; exit 1; }
+    printf '%s' "$_v"
+  }
+  _v647_sa=$(_v647_get research_v647_s5sa '^(0|1|2)$' '0 / 1 / 2') || exit 1
+  _v647_c2=$(_v647_get research_v647_c2s2 '^(0|1|2)$' '0 / 1 / 2') || exit 1
+  _v647_p=$(_v647_get research_v647_c2s2p '^(0|1)$' '0 / 1') || exit 1
+  for _v647_key in research_v646_c2np research_v646_c2tb research_v646_c2rf research_v646_c1exx research_v646_c1tu research_v646_s5tcu research_v646_s5x0 research_v646_s5lkc research_v646_s5aw research_v645_bsl research_v645_c2bc research_v644_c2t research_v644_fgk research_v644_c2qb; do
+    [[ " $PARAMS " == *" ${_v647_key}="* ]] || { echo "ERROR: v6.47 keeps the v6.46 / v6.45 / v6.44 key ${_v647_key} in PARAMS." >&2; exit 1; }
+  done
+  if [[ "$_v647_sa" != "0" ]]; then
+    _v647_mode=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v623_realized_mode=' | cut -d= -f2- | tr 'A-Z' 'a-z')
+    _v647_gap=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v623_against_gap_bps=' | cut -d= -f2-)
+    [[ " $PARAMS " == *" research_v636_step_withdrawal=1 "* ]] && [[ ! "$_v647_mode" =~ ^(0|0\.0|false|no|off)$ ]] && \
+      awk -v g="${_v647_gap:-0}" 'BEGIN { exit !(g + 0 > 0) }' || {
+      echo "ERROR: v6.47 S5SA reads the fp step record and the k48 against side: it needs research_v636_step_withdrawal=1, research_v623_realized_mode not off and research_v623_against_gap_bps > 0." >&2
+      exit 1
+    }
+  fi
+  if [[ "$_v647_c2" != "0" ]]; then
+    for _v647_key in research_v644_c2t research_v646_c2rf research_v617_touch_quote research_a191_queue_preservation_enabled research_v6215_side_ownership research_v69_deep_ladder; do
+      [[ " $PARAMS " == *" ${_v647_key}=1 "* ]] || { echo "ERROR: v6.47 C2S2 replaces C2T's class-2 quote through a second touch slot: it needs ${_v647_key}=1." >&2; exit 1; }
+    done
+  fi
+  if [[ "$_v647_p" == "1" && "$_v647_c2" != "1" ]]; then
+    echo "ERROR: v6.47 C2S2P (option P) is tested only with research_v647_c2s2=1 (c2rq's two replace kinds)." >&2
+    exit 1
+  fi
+  echo "[preflight] v6.47: class 0 s5sa ${_v647_sa}; class 2 c2s2 ${_v647_c2} c2s2p ${_v647_p} (slot B = client ids + 3 | 4, v6.9 slot 8; option P = the replacement placement before the old order's cancel)"
+  echo "[preflight] v6.47 PASS (research_v647_s5sa ${_v647_sa}, research_v647_c2s2 ${_v647_c2}, research_v647_c2s2p ${_v647_p}; 0 = v6.46's code on every path; v6.46 keys kept)"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then

@@ -1212,6 +1212,8 @@ DIRECT_A175_SHADOW_HORIZON_TICKS = 200
 DIRECT_A175_SHADOW_LEDGER_MAX = 256
 
 
+from simple_parts.v6_47_part import V647Part
+from simple_parts.v6_46_part import V646Part
 from simple_parts.v6_45_part import V645Part
 from simple_parts.v6_44_part import V644Part
 from simple_parts.v6_43_part import V643Part
@@ -1223,7 +1225,7 @@ from simple_parts.v6_32_part import V632Part
 from simple_parts.v6_30_part import V630Part
 from simple_parts.v6_31_part import V631Part
 from simple_parts.v6_29_part import V629Part
-class Strategy1_Research_Simple(V645Part, V644Part, V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
+class Strategy1_Research_Simple(V647Part, V646Part, V645Part, V644Part, V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
     """V4.16.2 A1.9.2 fee-conditioned book risk admission on A1.9.1.2.
 
     What is deliberately removed from the hot entry path:
@@ -17627,7 +17629,7 @@ class Strategy1_Research_Simple(V645Part, V644Part, V643Part, V642Part, V641Part
             )
             if (deep_slot is None and v69_level_owned and bool(getattr(self, "research_v617_touch_quote", False))
                     and v617_is_touch_client_id(self._get(instruction, "clientOrderId", "client_order_id"))):
-                deep_slot = V617_TOUCH_SLOT          # v6.17: the touch quote owns its own slot on its side
+                deep_slot = V617_TOUCH_SLOT - (int(self._get(instruction, "clientOrderId", "client_order_id")) % 10 - 1) // 2  # v6.17: the touch quote owns its own slot on its side; v6.47 C2S2: per slot = research_v617_touch_quote.touch_slot (digit 1 | 2 -> 9 slot A, 3 | 4 -> 8 slot B)
             if deep_slot is not None:
                 if book_id in preexisting_order_books and book_id not in preexisting_order_slots:
                     preexisting_order_slots[book_id] = self._v69_live_slots(book_id)

@@ -39,6 +39,14 @@ simulation is fresh (v6.16's feed):
 Without a fresh page of this simulation, on a book the deep layer does not trade, or with the switch off, the book
 is v6.16 exactly.
 
+v6.47 C2S2 (research_v647_c2s2; scratchpad round5/s1r7/c2s2_design.md sec. 1.1-1.2, form D-a): a SECOND client-id range
+per book side -- slot B = 43000 + 10 x book + 3 | 4 (buy | sell), v6.9 slot TOUCH_SLOT_B = 8 -- used ONLY by class 2's
+C2T with research_v647_c2s2 on, so a refresh can place the new quote while the old one (slot A) is still in the book.
+One definition of "touch id" serves every consumer: ``is_touch_client_id`` takes units digits 1-4, ``side_of_client_id``
+reads buy from an odd digit, ``touch_slot`` / ``live_slots`` give each id its own slot (9 or 8), ``client_ids(book,
+slot)`` builds either pair.  With no slot-B id in the account every function returns exactly v6.17's value; a consumer
+that does not know slot B treats it as slot A (its placement is refused there: fail closed).  STRUCTURAL.
+
 STRUCTURAL: the side is the simulator's own reversion target; the threshold is the validator's size-neutral alpha hurdle
 (0.6.2 ``hurdle_bps`` = 2.3, the bar a book's alpha must clear per unit of filled notional); the clip, the bound, the
 volume line and the order rules are the deep layer's.  OBSERVED: the rest band (k21: 1, 2 and 3 ticks equal within
@@ -55,12 +63,14 @@ from research_v641_pace import adds as v641_adds
 from research_v69_deep_ladder import live_slots as v69_live_slots
 
 V617_TOUCH_QUOTE_VERSION = "touch_quote_v6_17"
-CLIENT_BASE = 43000          # 43001..44272: (buy, sell) = 43000 + 10 x book + 1 | 2 (the deep layer owns 40000-41999)
+CLIENT_BASE = 43000          # 43001..44274: slot A (buy, sell) = 43000 + 10 x book + 1 | 2, slot B + 3 | 4 (deep: 40000-41999)
 CLIENT_SPAN = 2000
 THRESHOLD_BPS = 2.3          # STRUCTURAL: the validator's alpha hurdle (bps of the uid's own filled notional per book)
 CLIP_DEEP_CLIPS = 1.0        # STRUCTURAL: the deep layer's own clip (k21: 2-4 clips won the flipping simulation, lost the quiet trend)
 REST_TICKS = 2               # OBSERVED (k21): re-placed once the touch is this many ticks better than the quote
 TOUCH_SLOT = 9               # its slot in v6.9's per-(side, level) ownership (deep levels are 0-2)
+TOUCH_SLOT_B = 8             # v6.47 C2S2: the class-2 second touch slot (ids + 2: units digit 3 | 4)
+TOUCH_SLOTS = (TOUCH_SLOT, TOUCH_SLOT_B)
 PLACEMENT_TYPES = ("PLACE_ORDER_LIMIT", "PLACE_ORDER_MARKET")
 
 CANCEL_FLIPPED = "TOUCH_FLIPPED"      # the fundamental is now on the other side of the mid
@@ -80,9 +90,12 @@ def _finite(value: Any) -> float | None:
     return v if math.isfinite(v) else None
 
 
-def client_ids(book_id: int) -> tuple[int, int]:
-    """(buy, sell) client ids of this book's touch quote."""
-    base = CLIENT_BASE + 10 * int(book_id)
+def client_ids(book_id: int, slot: int = TOUCH_SLOT) -> tuple[int, int]:
+    """(buy, sell) client ids of this book's touch quote in ``slot`` (TOUCH_SLOT: slot A, + 1 | 2; TOUCH_SLOT_B: slot B,
+    + 3 | 4).  Any other slot raises ValueError."""
+    if int(slot) not in TOUCH_SLOTS:
+        raise ValueError("touch slot %r" % (slot,))
+    base = CLIENT_BASE + 10 * int(book_id) + (2 if int(slot) == TOUCH_SLOT_B else 0)
     return base + 1, base + 2
 
 
@@ -91,13 +104,27 @@ def is_touch_client_id(cid: Any) -> bool:
         c = int(cid)
     except (TypeError, ValueError):
         return False
-    return CLIENT_BASE <= c < CLIENT_BASE + CLIENT_SPAN and c % 10 in (1, 2)
+    return CLIENT_BASE <= c < CLIENT_BASE + CLIENT_SPAN and c % 10 in (1, 2, 3, 4)
 
 
 def side_of_client_id(cid: Any) -> str | None:
     if not is_touch_client_id(cid):
         return None
-    return SIDE_BUY if int(cid) % 10 == 1 else SIDE_SELL
+    return SIDE_BUY if int(cid) % 2 == 1 else SIDE_SELL
+
+
+def touch_slot(cid: Any) -> int | None:
+    """The v6.9 slot a touch client id holds: TOUCH_SLOT for slot A (digit 1 | 2), TOUCH_SLOT_B for slot B (3 | 4);
+    None for any other id (the deep layer's digit rule: slot index (d - 1) // 2)."""
+    if not is_touch_client_id(cid):
+        return None
+    return TOUCH_SLOT if (int(cid) % 10 - 1) // 2 == 0 else TOUCH_SLOT_B
+
+
+def touch_held(slots: dict | None, side: Any) -> bool:
+    """Does an order of ours hold a touch slot (A or B) on ``side`` in v6.9's per-side slots?"""
+    held = (slots or {}).get(side) or frozenset()
+    return TOUCH_SLOT in held or TOUCH_SLOT_B in held
 
 
 def toward_side(mid: Any, fundamental: Any) -> str | None:
@@ -191,13 +218,14 @@ def placed_sides(instructions: Iterable[Any] | None, book_id: Any) -> set[str]:
 
 
 def live_slots(rows: Iterable[tuple[Any, Any]]) -> dict[str, frozenset]:
-    """v6.9's per-side slots of our live orders, with a touch quote holding TOUCH_SLOT instead of its whole side."""
+    """v6.9's per-side slots of our live orders, with a touch quote holding its own touch slot (TOUCH_SLOT for slot A,
+    TOUCH_SLOT_B for slot B -- v6.47 C2S2) instead of its whole side."""
     rows = list(rows)
     plain = [(s, c) for s, c in rows if not is_touch_client_id(c)]
     out = {k: set(v) for k, v in v69_live_slots(plain).items()}
     for _side, cid in rows:
         if is_touch_client_id(cid):
-            out.setdefault(side_of_client_id(cid), set()).add(TOUCH_SLOT)
+            out.setdefault(side_of_client_id(cid), set()).add(touch_slot(cid))
     return {k: frozenset(v) for k, v in out.items()}
 
 

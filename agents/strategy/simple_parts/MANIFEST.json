@@ -2,6 +2,22 @@
  "pre_split_sha256": "7841b03fe70ff369c89c36734e86881da8ef905c4c38d3dbf510527538df26c5",
  "simple_edits": [
   [
+   "class Strategy1_Research_Simple(V647Part, V646Part, V645Part, V644Part, V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
+   "class Strategy1_Research_Simple(V646Part, V645Part, V644Part, V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
+  ],
+  [
+   "from simple_parts.v6_47_part import V647Part\nfrom simple_parts.v6_46_part import V646Part\n",
+   "from simple_parts.v6_46_part import V646Part\n"
+  ],
+  [
+   "class Strategy1_Research_Simple(V646Part, V645Part, V644Part, V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
+   "class Strategy1_Research_Simple(V645Part, V644Part, V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
+  ],
+  [
+   "from simple_parts.v6_46_part import V646Part\nfrom simple_parts.v6_45_part import V645Part\n",
+   "from simple_parts.v6_45_part import V645Part\n"
+  ],
+  [
    "class Strategy1_Research_Simple(V645Part, V644Part, V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n",
    "class Strategy1_Research_Simple(V644Part, V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):\n"
   ],
