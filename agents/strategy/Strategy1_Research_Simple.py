@@ -1212,6 +1212,7 @@ DIRECT_A175_SHADOW_HORIZON_TICKS = 200
 DIRECT_A175_SHADOW_LEDGER_MAX = 256
 
 
+from simple_parts.v6_48_part import V648Part
 from simple_parts.v6_47_part import V647Part
 from simple_parts.v6_46_part import V646Part
 from simple_parts.v6_45_part import V645Part
@@ -1225,7 +1226,7 @@ from simple_parts.v6_32_part import V632Part
 from simple_parts.v6_30_part import V630Part
 from simple_parts.v6_31_part import V631Part
 from simple_parts.v6_29_part import V629Part
-class Strategy1_Research_Simple(V647Part, V646Part, V645Part, V644Part, V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
+class Strategy1_Research_Simple(V648Part, V647Part, V646Part, V645Part, V644Part, V643Part, V642Part, V641Part, V640Part, V636Part, V632Part, V630Part, V631Part, V629Part, Strategy1_Research):
     """V4.16.2 A1.9.2 fee-conditioned book risk admission on A1.9.1.2.
 
     What is deliberately removed from the hot entry path:

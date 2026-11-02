@@ -522,7 +522,11 @@ research_v646_s5lkc=1 \
 research_v646_s5aw=1 \
 research_v647_s5sa=2 \
 research_v647_c2s2=1 \
-research_v647_c2s2p=1"
+research_v647_c2s2p=1 \
+research_v648_fprec=1 \
+research_v648_sbh=1 \
+research_v648_sbh_scope=2 \
+research_v648_sbh_books=0,3,5,6,8,9,13,17,19,20,21,22,23,24,25,30,32,33,39,42,43,44,46,47,50,51,52,54,58,59,60,61"
 
 # Every PARAMS key must be read by name somewhere in the agent code.  A misspelled key is
 # otherwise completely silent: the agent takes its source default, the launcher still reports the
@@ -4660,7 +4664,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?(V643Part, )?(V642Part, )?(V641Part, )?V640Part, V636Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V648Part, )?(V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?(V643Part, )?(V642Part, )?(V641Part, )?V640Part, V636Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_40_part import V640Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.40 Simple does not take V640Part as its first base." >&2
     exit 1
@@ -4789,7 +4793,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?(V643Part, )?(V642Part, )?V641Part, V640Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V648Part, )?(V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?(V643Part, )?(V642Part, )?V641Part, V640Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_41_part import V641Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.41 Simple does not take V641Part as its first base." >&2
     exit 1
@@ -4878,7 +4882,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
       exit 1
     }
   done
-  grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?(V643Part, )?V642Part, V641Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+  grep -qE -- '^class Strategy1_Research_Simple\((V648Part, )?(V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?(V643Part, )?V642Part, V641Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
     grep -qF -- 'from simple_parts.v6_42_part import V642Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.42 Simple does not take V642Part as its first base." >&2
     exit 1
@@ -4954,7 +4958,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
     [[ -f "$AGENT_PATH_REAL/$_v643_f" ]] || { echo "ERROR: v6.43 agents/strategy/$_v643_f is missing." >&2; exit 1; }
   done
   grep -qF -- 'from simple_parts.v6_43_part import V643Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
-    grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?V643Part, V642Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    grep -qE -- '^class Strategy1_Research_Simple\((V648Part, )?(V647Part, )?(V646Part, )?(V645Part, )?(V644Part, )?V643Part, V642Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.43 Simple does not take V643Part as its first base (after v6.44's)." >&2
     exit 1
   }
@@ -4989,7 +4993,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
     [[ -f "$AGENT_PATH_REAL/$_v644_f" ]] || { echo "ERROR: v6.44 agents/strategy/$_v644_f is missing." >&2; exit 1; }
   done
   grep -qF -- 'from simple_parts.v6_44_part import V644Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
-    grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?(V645Part, )?V644Part, V643Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    grep -qE -- '^class Strategy1_Research_Simple\((V648Part, )?(V647Part, )?(V646Part, )?(V645Part, )?V644Part, V643Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.44 Simple does not take V644Part as its first base (after v6.45's)." >&2
     exit 1
   }
@@ -5047,7 +5051,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
     [[ -f "$AGENT_PATH_REAL/$_v645_f" ]] || { echo "ERROR: v6.45 agents/strategy/$_v645_f is missing." >&2; exit 1; }
   done
   grep -qF -- 'from simple_parts.v6_45_part import V645Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
-    grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?(V646Part, )?V645Part, V644Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    grep -qE -- '^class Strategy1_Research_Simple\((V648Part, )?(V647Part, )?(V646Part, )?V645Part, V644Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.45 Simple does not take V645Part as its first base." >&2
     exit 1
   }
@@ -5160,7 +5164,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
     [[ -f "$AGENT_PATH_REAL/$_v646_f" ]] || { echo "ERROR: v6.46 agents/strategy/$_v646_f is missing." >&2; exit 1; }
   done
   grep -qF -- 'from simple_parts.v6_46_part import V646Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
-    grep -qE -- '^class Strategy1_Research_Simple\((V647Part, )?V646Part, V645Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    grep -qE -- '^class Strategy1_Research_Simple\((V648Part, )?(V647Part, )?V646Part, V645Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.46 Simple does not take V646Part as its first base." >&2
     exit 1
   }
@@ -5277,7 +5281,7 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
     [[ -f "$AGENT_PATH_REAL/$_v647_f" ]] || { echo "ERROR: v6.47 agents/strategy/$_v647_f is missing." >&2; exit 1; }
   done
   grep -qF -- 'from simple_parts.v6_47_part import V647Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
-    grep -qE -- '^class Strategy1_Research_Simple\(V647Part, V646Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    grep -qE -- '^class Strategy1_Research_Simple\((V648Part, )?V647Part, V646Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
     echo "ERROR: v6.47 Simple does not take V647Part as its first base." >&2
     exit 1
   }
@@ -5351,6 +5355,104 @@ if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
   fi
   echo "[preflight] v6.47: class 0 s5sa ${_v647_sa}; class 2 c2s2 ${_v647_c2} c2s2p ${_v647_p} (slot B = client ids + 3 | 4, v6.9 slot 8; option P = the replacement placement before the old order's cancel)"
   echo "[preflight] v6.47 PASS (research_v647_s5sa ${_v647_sa}, research_v647_c2s2 ${_v647_c2}, research_v647_c2s2p ${_v647_p}; 0 = v6.46's code on every path; v6.46 keys kept)"
+fi
+
+# v6.48.  research_v648_* (USER 11-02 ~22:5x JST, reply to the coordinator's two Round 6 decisions: "1. Go  2. Live testnet
+# A/B of the sweep hold"): v6.47 (94d2eb0) + two switches, code default off:
+#   FPREC: research_v648_fprec 0 / 1 (the observatory records each book's state fundamental: key "fv" = the wire's "f",
+#          verbatim, on every recorded book row -- research_v648_fprec's shape, installed in the recorder at start; the
+#          frozen research_v5_observatory.py is not edited);
+#   SBH:   research_v648_sbh 0 / 1 / 2 (the Round 6 arm SBH, engine round6/vm_r6.py c6b13b83 r6sb: a class-0 book's deep side
+#          (level 0 + ladder) that a taker print swept >= 1 tick past the previous state's touch is held for the rest of that
+#          30-s block; 2 = SBR, only while the side reduces the TRUE inventory) -- needs the tested stack (research_v647_s5sa
+#          on, research_v633_deep_layer=1);
+#          research_v648_sbh_scope 0 / 1 / 2 (the A/B split fixed by the coordinator: 2 = the class-0 books listed in
+#          research_v648_sbh_books only -- exactly 32 distinct ids in 0..63, the coordinator's balanced split of 11-02 23:3x
+#          JST = round7/out/split_proposal_240.json "treated", 16 even, 8 per id mod 4, digest = sha256 of the ascending ids
+#          joined by "," (r7_split.py) -- every other class-0 book keeps v6.47's behaviour = the control; 1 = the EVEN
+#          class-0 books; 0 = every class-0 book, the engine's form) -- 1 / 2 need research_v648_sbh 1 or 2; scope 0 / 1
+#          carry no research_v648_sbh_books.
+# Every key 0 = v6.47's code on every path; the v6.47 keys are kept.  Each key must appear exactly once.
+if [[ "${V6_38_BUILD:-0}" == "1" ]]; then
+  for _v648_f in research_v648_rules.py research_v648_fprec.py simple_parts/v6_48_part.py; do
+    [[ -f "$AGENT_PATH_REAL/$_v648_f" ]] || { echo "ERROR: v6.48 agents/strategy/$_v648_f is missing." >&2; exit 1; }
+  done
+  grep -qF -- 'from simple_parts.v6_48_part import V648Part' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" && \
+    grep -qE -- '^class Strategy1_Research_Simple\(V648Part, V647Part, ' "$AGENT_PATH_REAL/Strategy1_Research_Simple.py" || {
+    echo "ERROR: v6.48 Simple does not take V648Part as its first base." >&2
+    exit 1
+  }
+  for _v648_pat in \
+      'class V648Part:' \
+      'def _v6_40_request(self, state) -> None:' \
+      'def _v6_48_sweep_pass(self, state) -> None:' \
+      'def _v6_46_deep_book(self, response, book_id, deep, depth, raw_bid, raw_ask, inv, rows, deep_rows, already, req,' \
+      'self._v633_book = self._v6_46_deep_book' \
+      'kw["held"] = frozenset(kw.get("held") or ()) | sides' \
+      'if v6_48_fprec.install():' \
+      'out["v6_48"] = self._v6_48_snapshot()'; do
+    grep -qF -- "$_v648_pat" "$AGENT_PATH_REAL/simple_parts/v6_48_part.py" || { echo "ERROR: v6.48 the part lacks: $_v648_pat" >&2; exit 1; }
+  done
+  for _v648_pat in 'def swept_sides(' 'def block_of(' 'def hold_decision(' 'def in_scope(' 'BLOCK_S = 30' 'SWEEP_TOL = 1e-9' 'return b % 2 == 0' \
+      'def parse_books(' 'def books_valid(' 'def books_sha(' 'BOOKS_N = 32' 'BOOKS_KEY = "research_v648_sbh_books"'; do
+    grep -qF -- "$_v648_pat" "$AGENT_PATH_REAL/research_v648_rules.py" || { echo "ERROR: v6.48 research_v648_rules lacks: $_v648_pat" >&2; exit 1; }
+  done
+  for _v648_pat in 'FV_KEY = "fv"' 'from research_v6_32_state_fp import BOOK_KEY' 'def install(' '_obs.shape_state = shape_state'; do
+    grep -qF -- "$_v648_pat" "$AGENT_PATH_REAL/research_v648_fprec.py" || { echo "ERROR: v6.48 research_v648_fprec lacks: $_v648_pat" >&2; exit 1; }
+  done
+  grep -qF -- 'BOOK_KEY = "f"' "$AGENT_PATH_REAL/research_v6_32_state_fp.py" && \
+    grep -qF -- 'row = shape_state(raw, tick=tick, ts=ts, depth=depth)' "$AGENT_PATH_REAL/research_v5_observatory.py" || {
+    echo "ERROR: v6.48 FPREC needs v6.32's raw key f and the recorder's per-state shape_state lookup (research_v5_observatory._write)." >&2
+    exit 1
+  }
+  _v648_get() {
+    local _n _v
+    _n=$(tr ' ' '\n' <<< "$PARAMS" | grep -c "^$1=" || true)
+    [[ "$_n" == "1" ]] || { echo "ERROR: v6.48 build with $1 given ${_n} times in PARAMS (exactly once)." >&2; exit 1; }
+    _v=$(tr ' ' '\n' <<< "$PARAMS" | grep "^$1=" | cut -d= -f2-)
+    [[ "$_v" =~ $2 ]] || { echo "ERROR: v6.48 $1=$_v is not one of $3" >&2; exit 1; }
+    printf '%s' "$_v"
+  }
+  _v648_fp=$(_v648_get research_v648_fprec '^(0|1)$' '0 / 1') || exit 1
+  _v648_sb=$(_v648_get research_v648_sbh '^(0|1|2)$' '0 / 1 / 2') || exit 1
+  _v648_sc=$(_v648_get research_v648_sbh_scope '^(0|1|2)$' '0 / 1 / 2') || exit 1
+  for _v648_key in research_v647_s5sa research_v647_c2s2 research_v647_c2s2p; do
+    [[ " $PARAMS " == *" ${_v648_key}="* ]] || { echo "ERROR: v6.48 keeps the v6.47 key ${_v648_key} in PARAMS." >&2; exit 1; }
+  done
+  if [[ "$_v648_sb" != "0" ]]; then
+    _v648_sa=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v647_s5sa=' | cut -d= -f2-)
+    [[ "$_v648_sa" =~ ^(1|2)$ ]] && [[ " $PARAMS " == *" research_v633_deep_layer=1 "* ]] || {
+      echo "ERROR: v6.48 SBH is tested on the v6.47 stack: it needs research_v647_s5sa on (1 or 2; PARAMS 2) and research_v633_deep_layer=1." >&2
+      exit 1
+    }
+  fi
+  if [[ "$_v648_sc" != "0" && ! "$_v648_sb" =~ ^(1|2)$ ]]; then
+    echo "ERROR: v6.48 the A/B scope research_v648_sbh_scope=${_v648_sc} needs research_v648_sbh 1 or 2." >&2
+    exit 1
+  fi
+  _v648_nb=$(tr ' ' '\n' <<< "$PARAMS" | grep -c '^research_v648_sbh_books=' || true)
+  _v648_books="none"
+  if [[ "$_v648_sc" == "2" ]]; then
+    [[ "$_v648_nb" == "1" ]] || { echo "ERROR: v6.48 scope 2 needs research_v648_sbh_books exactly once in PARAMS (given ${_v648_nb} times)." >&2; exit 1; }
+    _v648_bl=$(tr ' ' '\n' <<< "$PARAMS" | grep '^research_v648_sbh_books=' | cut -d= -f2-)
+    [[ "$_v648_bl" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "ERROR: v6.48 research_v648_sbh_books=${_v648_bl} is not a comma list of class-0 book ids." >&2; exit 1; }
+    _v648_ids=$(tr ',' '\n' <<< "$_v648_bl" | while read -r _x; do echo $((10#$_x)); done | sort -n)
+    _v648_n=$(grep -c '' <<< "$_v648_ids"); _v648_u=$(uniq <<< "$_v648_ids" | grep -c '')
+    _v648_max=$(tail -1 <<< "$_v648_ids")
+    [[ "$_v648_n" == "32" && "$_v648_u" == "32" && "$_v648_max" -le 63 ]] || {
+      echo "ERROR: v6.48 research_v648_sbh_books must name exactly 32 distinct class-0 books in 0..63 (given ${_v648_n}, distinct ${_v648_u}, max ${_v648_max})." >&2
+      exit 1
+    }
+    _v648_even=$(awk '$1 % 2 == 0' <<< "$_v648_ids" | grep -c '' || true)
+    _v648_m4=$(for _r in 0 1 2 3; do printf '%s' "$(awk -v r=$_r '$1 % 4 == r' <<< "$_v648_ids" | grep -c '' || true)"; if [[ $_r != 3 ]]; then printf '/'; fi; done)
+    _v648_sha=$(printf '%s' "$(paste -sd, <<< "$_v648_ids")" | sha256sum | cut -c1-64)
+    _v648_books="${_v648_n} books, ${_v648_even} even, mod 4 ${_v648_m4}, sha256 ${_v648_sha}"
+  elif [[ "$_v648_nb" != "0" ]]; then
+    echo "ERROR: v6.48 research_v648_sbh_books is scope 2's list: scope ${_v648_sc} must not carry it." >&2
+    exit 1
+  fi
+  echo "[preflight] v6.48: FPREC fprec ${_v648_fp} (observatory key fv = the state's f, verbatim); class 0 SBH sbh ${_v648_sb} scope ${_v648_sc} (2 = the listed class-0 books held, the others = the v6.47 control; 1 = even); treated list: ${_v648_books}"
+  echo "[preflight] v6.48 PASS (research_v648_fprec ${_v648_fp}, research_v648_sbh ${_v648_sb}, research_v648_sbh_scope ${_v648_sc}, research_v648_sbh_books ${_v648_books}; 0 = v6.47's code on every path; v6.47 keys kept)"
 fi
 
 if [[ "${RESEARCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
