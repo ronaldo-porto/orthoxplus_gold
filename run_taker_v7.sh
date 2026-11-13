@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# v7.2 TakerV7 launcher (agents/strategy/TakerV7.py + taker_v7_core.py): class 0 = the taker core (slope 0.005),
-# class 1 = the maker leg (flat two-sided post-only quotes).  Defaults: V7_CLASSES=0, V7_MAKER_CLASSES=1.
+# v7.4 TakerV7 launcher (agents/strategy/TakerV7.py + taker_v7_core.py): class 0 = the taker core (slope 0.005) with
+# a second, contrarian term inside its target; class 1 = the maker leg (post-only quotes at the touch, band centred on
+# a stepping target against the book's own move); class 2 = the class-relative stepping taker.
+# Defaults: V7_CLASSES=0, V7_MAKER_CLASSES=1, V7_MK_TARGET=2, V7_REL_CLASSES=2, V7_C0_CONTRA=1.
+# Each v7.4 leg has its own switch:  V7_REL_CLASSES=none turns the class-2 leg off;  V7_C0_CONTRA=0 is the v7.3
+# class-0 taker;  V7_MK_TARGET=1 is the v7.3 level target of the maker leg, =0 the v7.2 flat band.
+# (V7_REL_CLASSES=none V7_C0_CONTRA=0 V7_MK_TARGET=1 runs exactly v7.3.)
+# V7_MAKER_CLASSES=1,2 is accepted only with V7_MK_TARGET=0 and V7_REL_CLASSES=none: a class is made OR stepped, and
+# the target leg's fundamental guard would block every ask on class 2.
 # V7_MAKER_CLASSES=none turns the maker leg off; =1,2 adds class 2.  V7_CLASSES=0,1 (the v7.1 class-1 taker, option A)
 # is accepted only with V7_MAKER_CLASSES=none.
 #
@@ -33,6 +40,9 @@ HISTORY_ANCHOR_SOURCE="default"
 HISTORY_ANCHOR="${HISTORY_ANCHOR:-auto}"
 V7_CLASSES="${V7_CLASSES:-0}"
 V7_MAKER_CLASSES="${V7_MAKER_CLASSES:-1}"
+V7_MK_TARGET="${V7_MK_TARGET:-2}"
+V7_REL_CLASSES="${V7_REL_CLASSES:-2}"
+V7_C0_CONTRA="${V7_C0_CONTRA:-1}"
 EXTRA=()
 
 _normalized_args=()
@@ -84,6 +94,26 @@ case "$V7_MAKER_CLASSES" in
   none|1|1,2) ;;
   *) echo "ERROR: V7_MAKER_CLASSES must be none, 1 or 1,2 (got ${V7_MAKER_CLASSES})" >&2; exit 2 ;;
 esac
+case "$V7_MK_TARGET" in
+  0|1|2) ;;
+  *) echo "ERROR: V7_MK_TARGET must be 0, 1 or 2 (got ${V7_MK_TARGET})" >&2; exit 2 ;;
+esac
+case "$V7_REL_CLASSES" in
+  none|2) ;;
+  *) echo "ERROR: V7_REL_CLASSES must be none or 2 (got ${V7_REL_CLASSES})" >&2; exit 2 ;;
+esac
+case "$V7_C0_CONTRA" in
+  0|1) ;;
+  *) echo "ERROR: V7_C0_CONTRA must be 0 or 1 (got ${V7_C0_CONTRA})" >&2; exit 2 ;;
+esac
+if [[ "$V7_MK_TARGET" != "0" && "$V7_MAKER_CLASSES" == "1,2" ]]; then
+  echo "ERROR: V7_MAKER_CLASSES=1,2 needs V7_MK_TARGET=0: the maker target leg runs on class 1 only (use V7_MAKER_CLASSES=1)." >&2
+  exit 2
+fi
+if [[ "$V7_REL_CLASSES" == "2" && "$V7_MAKER_CLASSES" == "1,2" ]]; then
+  echo "ERROR: V7_REL_CLASSES=2 steps class 2, so V7_MAKER_CLASSES must not make it (use V7_MAKER_CLASSES=1 or V7_REL_CLASSES=none)." >&2
+  exit 2
+fi
 if [[ "$V7_CLASSES" == "0,1" && "$V7_MAKER_CLASSES" != "none" ]]; then
   echo "ERROR: V7_CLASSES=0,1 takes class 1, so V7_MAKER_CLASSES must be none (got ${V7_MAKER_CLASSES})." >&2
   exit 2
@@ -109,26 +139,36 @@ fi
 # v7 defaults (COPIED: l, clip, big from the mainnet class-0 winners; k 0.005 from the faster winners 174 / 223 / 20,
 # Round 24 T, USER 11-13 (the code default stays 0.0035); c1_k, c1_l, c1_clip_notional from mainnet uid 68 = Round 22
 # option A, used only with V7_CLASSES=0,1; the maker leg: mk_notional 1,800 and mk_guard_bp 10 COPIED, mk_band_clips,
-# mk_expiry_s MODEL, mk_pull the per-step pull; STRUCTURAL: the pace guard, cap = cap_mult x miner_wealth with
-# v7_cap=0).  lazy_load=1 and history_len=0 as the v6 launcher passes them.
+# mk_expiry_s MODEL, mk_pull the per-step pull; the v7.3 contrarian target: mk_k 0.005 W per bp and mk_l 0.45 W COPIED
+# from the added-book winners (Round 25 S), mk_ref_s 10,800 = the scoring lookback STRUCTURAL; STRUCTURAL: the pace
+# guard, cap = cap_mult x miner_wealth with v7_cap=0).  lazy_load=1 and history_len=0 as the v6 launcher passes them.
+# v7.4 (Round 27 X0 / X1; "hour" = 529.2 sim-s as the tracks count it): mk_dyn_hl_s 1,058.4 (2 "hours") and
+# mk_dyn_rate_h 0.03 W per "hour" COPIED from 5CFFZ7SE; rel_hl_s 2,116.8 (4 "hours"), rel_rate_h 0.0209 W per "hour",
+# rel_l 0.45 W COPIED from the 5GCSdbyd fit, rel_clip_notional 1,800 the replayed clip; step_thr_bp 3 and
+# step_max_dt_s 60 MODEL; c0_kc 0.005 and c0_lc 0.45 COPIED (the maker constants), c0_ref_s 10,800 STRUCTURAL.
 PARAMS="lazy_load=1 history_len=0 \
 v7_k=0.005 v7_l=0.55 v7_clip=7 v7_big=15 v7_classes=${V7_CLASSES} \
 v7_c1_k=0.036 v7_c1_l=0.50 v7_c1_clip_notional=3500 \
 v7_maker_classes=${V7_MAKER_CLASSES} v7_mk_notional=1800 v7_mk_guard_bp=10 v7_mk_band_clips=1 v7_mk_pull=1 v7_mk_expiry_s=60 \
+v7_mk_target=${V7_MK_TARGET} v7_mk_k=0.005 v7_mk_l=0.45 v7_mk_ref_s=10800 \
+v7_mk_dyn_hl_s=1058.4 v7_mk_dyn_rate_h=0.03 \
+v7_rel_classes=${V7_REL_CLASSES} v7_rel_hl_s=2116.8 v7_rel_rate_h=0.0209 v7_rel_l=0.45 v7_rel_clip_notional=1800 \
+v7_step_thr_bp=3 v7_step_max_dt_s=60 \
+v7_c0_contra=${V7_C0_CONTRA} v7_c0_kc=0.005 v7_c0_lc=0.45 v7_c0_ref_s=10800 \
 v7_pace=1 v7_cap=0 v7_cap_mult=10 v7_fee_margin=0.001 \
 v7_log_every=60 v7_gc_every=30 v7_log_dir=${LOG_DIR} v7_history_anchor=${HISTORY_ANCHOR}"
 
 _sha16() { sha256sum "$1" | cut -c1-16; }
-echo "[TakerV7] version=v7.2 TakerV7.py=$(_sha16 "$AGENT_PATH/TakerV7.py") taker_v7_core.py=$(_sha16 "$AGENT_PATH/taker_v7_core.py") test_taker_v7.py=$(_sha16 "$SCRIPT_DIR/tests/test_taker_v7.py")"
+echo "[TakerV7] version=v7.4 TakerV7.py=$(_sha16 "$AGENT_PATH/TakerV7.py") taker_v7_core.py=$(_sha16 "$AGENT_PATH/taker_v7_core.py") test_taker_v7.py=$(_sha16 "$SCRIPT_DIR/tests/test_taker_v7.py")"
 
 # ---- preflight: the v7 tests must pass -------------------------------------------------------------------------------
-echo "[preflight] v7.2: ${PYTHON} tests/run_tests.py tests/test_taker_v7.py"
+echo "[preflight] v7.4: ${PYTHON} tests/run_tests.py tests/test_taker_v7.py"
 if ! V7_LAUNCH_PARAMS="$PARAMS" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     "$PYTHON" "$SCRIPT_DIR/tests/run_tests.py" tests/test_taker_v7.py; then
-  echo "ERROR: v7.2 preflight FAILED: tests/test_taker_v7.py did not pass; nothing was launched." >&2
+  echo "ERROR: v7.4 preflight FAILED: tests/test_taker_v7.py did not pass; nothing was launched." >&2
   exit 1
 fi
-echo "[preflight] v7.2 PASS"
+echo "[preflight] v7.4 PASS"
 if [[ "${V7_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   exit 0
 fi

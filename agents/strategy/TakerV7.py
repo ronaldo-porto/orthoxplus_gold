@@ -1,8 +1,13 @@
 # SPDX-License-Identifier: MIT
-"""v7.2 TakerV7: the taker core on the mainnet winners' target-inventory rule (Round 21; USER GO 11-12 02:4x JST); v7.1
+"""v7.4 TakerV7: the taker core on the mainnet winners' target-inventory rule (Round 21; USER GO 11-12 02:4x JST); v7.1
 added class 1 = Round 22 option A behind v7_classes ("0" = v7.0.1 behaviour, "0,1" = classes 0 and 1); v7.2 (Round 24,
 USER 11-13) adds the maker leg behind v7_maker_classes ("none" = v7.1 behaviour, "1" or "1,2"): flat two-sided post-only
-quotes on the maker classes' books, built here as postOnly GTT limit orders.
+quotes on the maker classes' books, built here as postOnly GTT limit orders; v7.3 (Round 25 track S, USER 11-13)
+centres the maker leg's band on a contrarian target behind v7_mk_target (0 = the v7.2 flat band): all of it is in the
+core, this file only passes the parameters and logs the maker picture; v7.4 (Round 27 tracks X0 / X1, USER 11-13)
+adds the class-2 stepping taker (v7_rel_classes), the contrarian term inside the class-0 taker target (v7_c0_contra)
+and the class-1 stepping target (v7_mk_target = 2): all of it is in the core, the new takes are the same IOC orders,
+and this file logs the two new pictures (summary keys "rel" and "c0_contra").
 
 The agent class only.  The rule, the class map, the clamps and the pace guard live in taker_v7_core.py (stdlib only;
 see its docstring for every label and source).  This class:
@@ -181,6 +186,7 @@ class TakerV7(FinanceSimulationAgent):
                                   "c1": [min(lay["c1"]), max(lay["c1"])] if lay.get("c1") else None,
                                   "c1_grid": lay.get("c1_grid"),
                                   "maker_classes": list(self.v7["maker_classes"]),
+                                  "rel_classes": list(self.v7["rel_classes"]),
                                   "c2_ok": lay.get("c2_ok"), "c2_reason": lay.get("c2_reason"),
                                   "c2": [min(lay["c2"]), max(lay["c2"])] if lay.get("c2") else None,
                                   "c2_grid": lay.get("c2_grid")})
@@ -190,6 +196,8 @@ class TakerV7(FinanceSimulationAgent):
             self._pair_flags = self.core.pair_flags      # v7.0.1 diagnostic: aligned with pairs
             self._pairs_c1 = self.core.pairs_c1           # v7.1: class-1 (inv, T) pairs
             self._mk_stats = self.core.mk_stats           # v7.2: the maker leg's picture
+            self._rel_stats = self.core.rel_stats         # v7.4: the stepping taker's picture
+            self._c0_stats = self.core.c0_stats           # v7.4: the class-0 contrarian term's picture
         response = FinanceAgentResponse(agent_id=self.uid)
         expiry = int(self.v7["mk_expiry_s"] * 1e9)
         for a in actions:
@@ -246,6 +254,10 @@ class TakerV7(FinanceSimulationAgent):
         d1 = [abs(t - i) for i, t in p1]
         mk_stats = getattr(self, "_mk_stats", None)
         self._mk_stats = None
+        rel_stats = getattr(self, "_rel_stats", None)
+        self._rel_stats = None
+        c0_stats = getattr(self, "_c0_stats", None)
+        self._c0_stats = None
         try:
             split = core.split_pairs(pairs, flags) if pairs else None   # v7.0.1 diagnostic, never raises here
         except Exception as exc:
@@ -267,6 +279,11 @@ class TakerV7(FinanceSimulationAgent):
                     usedm = [rs.pace.used(b, rs.clock) for b in c.layout[f"c{ci}"]]
                     pace[f"mk_c{ci}_ledger_p50"] = core.pctl(usedm, 0.5)
                     pace[f"mk_c{ci}_ledger_max"] = max(usedm) if usedm else None
+            for ci in c.p["rel_classes"]:                  # v7.4: the stepping taker's own rolling ledger
+                if c.layout.get(f"c{ci}_ok"):
+                    usedr = [rs.pace.used(b, rs.clock) for b in c.layout[f"c{ci}"]]
+                    pace[f"rel_c{ci}_ledger_p50"] = core.pctl(usedr, 0.5)
+                    pace[f"rel_c{ci}_ledger_max"] = max(usedr) if usedr else None
         d = [abs(t - i) for i, t in pairs]
         self._writer.put({
             "kind": "summary", "n": self._n, "ts": getattr(state, "timestamp", None),
@@ -280,6 +297,7 @@ class TakerV7(FinanceSimulationAgent):
             "c0_abs_dev_p50": core.pctl(d, 0.5), "c0_split": split,
             "c1_corr_inv_target": core.corr(p1) if p1 else None, "c1_books": len(p1),
             "c1_abs_dev_p50": core.pctl(d1, 0.5), "pace": pace, "errors": self._errors,
+            "rel": rel_stats, "c0_contra": c0_stats,
             "maker": mk_stats, "maker_fills": {"buy_notional": round(c.mk_buy_notional, 2),
                                                "sell_notional": round(c.mk_sell_notional, 2)},
             "gc_idle_ms_p50": core.pctl(self._gc_ms, 0.5), "gc_idle_n": len(self._gc_ms),

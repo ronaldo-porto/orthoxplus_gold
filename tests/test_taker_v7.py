@@ -100,7 +100,8 @@ def _launcher_params():
     assert m, "run_taker_v7.sh has no PARAMS block"
     s = m.group(1).replace("\\\n", " ")
     return (s.replace("${LOG_DIR}", "/tmp/x").replace("${HISTORY_ANCHOR}", "established")
-            .replace("${V7_CLASSES}", "0").replace("${V7_MAKER_CLASSES}", "1"))
+            .replace("${V7_CLASSES}", "0").replace("${V7_MAKER_CLASSES}", "1").replace("${V7_MK_TARGET}", "2")
+            .replace("${V7_REL_CLASSES}", "2").replace("${V7_C0_CONTRA}", "1"))
 
 
 def test_params_from_the_launcher_parse_to_the_defaults():
@@ -114,6 +115,17 @@ def test_params_from_the_launcher_parse_to_the_defaults():
         assert p["maker_classes"] in ((), (1,), (1, 2)) and not set(p["maker_classes"]) & set(p["classes"])
         assert p["mk_notional"] == 1800.0 and p["mk_guard_bp"] == 10.0 and p["mk_band_clips"] == 1.0
         assert p["mk_pull"] is True and p["mk_expiry_s"] == 60.0
+        assert p["mk_target"] is (True if text is not env else p["mk_target"])          # v7.3 launch default
+        assert p["mk_k"] == 0.005 and p["mk_l"] == 0.45 and p["mk_ref_s"] == 10800.0
+        # v7.4 launch defaults: the three legs on, constants as the tracks replayed them
+        assert p["mk_dyn"] is (True if text is not env else p["mk_dyn"])
+        assert p["rel_classes"] == ((2,) if text is not env else p["rel_classes"]) and p["rel_classes"] in ((), (2,))
+        assert p["c0_contra"] is (True if text is not env else p["c0_contra"])
+        assert p["mk_dyn_hl_s"] == 1058.4 and p["mk_dyn_rate_h"] == 0.03
+        assert p["rel_hl_s"] == 2116.8 and p["rel_rate_h"] == 0.0209 and p["rel_l"] == 0.45
+        assert p["rel_clip_notional"] == 1800.0 and p["step_thr_bp"] == 3.0 and p["step_max_dt_s"] == 60.0
+        assert p["c0_kc"] == 0.005 and p["c0_lc"] == 0.45 and p["c0_ref_s"] == 10800.0
+        assert not set(p["rel_classes"]) & (set(p["maker_classes"]) | set(p["classes"]))
         assert p["c1_k"] == 0.036 and p["c1_l"] == 0.5 and p["c1_clip_notional"] == 3500.0
         assert p["pace"] is True and p["cap"] == 0.0
         assert getattr(ns, "lazy_load") == 1.0 and getattr(ns, "history_len") == 0.0
@@ -1114,7 +1126,8 @@ def test_v72_agent_builds_post_only_gtt_quotes_and_logs_the_maker_leg(tmp_path):
     agent.handle(_st(config, books, accounts, ts=2 * 10 ** 9))
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
-    assert lines[0]["version"] == "v7.2" and lines[0]["params"]["maker_classes"] == [1]
+    assert lines[0]["version"] == "v7.4" and lines[0]["params"]["maker_classes"] == [1]
+    assert lines[0]["params"]["mk_target"] is False                       # the code default: the v7.2 flat band
     assert lines[0]["params"]["k"] == 0.005
     lay = [x for x in lines if x["kind"] == "layout"][0]
     assert lay["maker_classes"] == [1] and lay["c2_ok"] is True and lay["c2"] == [192, 255]
@@ -1139,3 +1152,934 @@ def test_v72_handler_timing_with_the_maker_leg():
     p50, p95 = core.pctl(times, 0.5), core.pctl(times, 0.95)
     print(f"TIMING core.step 256 books (128 taker + 128 maker): p50 {p50:.3f} ms p95 {p95:.3f} ms")
     assert p95 < 50.0
+
+
+# ---- v7.3: the maker leg's contrarian target (Round 25 track S) -------------------------------------------------------
+
+MKT = dict(v7_maker_classes=1.0, v7_mk_target=1.0)
+C1_BI = 25000.0 / C1_MID                                                    # class-1 initial base in _mk_state
+
+
+def _q150(core_, ts, collect=False, **kw):
+    """One state built by _mk_state(**kw) -> the sides quoted on class-1 book 150."""
+    config, books, accounts = _mk_state(**kw)
+    actions, _ = core_.step(ts, "hk", config, books, accounts, [], collect=collect)
+    return {a[2] for a in actions if a[0] == core.ACT_QUOTE and a[1] == 150}
+
+
+def test_v73_params_target_and_bounds():
+    import pytest
+    p = P()
+    assert core.V7_VERSION == "v7.4"
+    assert p["mk_target"] is False and p["mk_k"] == 0.005 and p["mk_l"] == 0.45 and p["mk_ref_s"] == 10800.0
+    assert P(v7_mk_target=1.0)["mk_target"] is True and P(v7_mk_target=0.0)["mk_target"] is False
+    assert core.MK_REF_S_DEFAULT == core.DEPTH_S                           # the scoring lookback
+    for bad in ({"v7_mk_target": 3}, {"v7_mk_target": "on"}, {"v7_mk_k": 0}, {"v7_mk_k": 1.5}, {"v7_mk_l": 0},
+                {"v7_mk_l": 1.1}, {"v7_mk_ref_s": 0}):
+        with pytest.raises(ValueError):
+            core.parse_params(bad)
+
+
+def test_v73_target_off_is_the_v72_flat_band():
+    a = core.TakerCore(UID, P(v7_maker_classes=1.0))
+    b = core.TakerCore(UID, P(v7_maker_classes=1.0, v7_mk_target=0.0))
+    for i, (bid, ask, inv) in enumerate(((8.99, 9.01, 0.0), (8.97, 8.99, 0.0), (8.97, 8.99, 250.0),
+                                         (9.01, 9.03, -250.0))):
+        config, books, accounts = _mk_state(bid=bid, ask=ask, f_c1=0.5 * (bid + ask), inv_c1=inv)
+        xa, _ = a.step((i + 1) * 10 ** 9, "hk", config, books, accounts, [], collect=True)
+        xb, _ = b.step((i + 1) * 10 ** 9, "hk", config, books, accounts, [], collect=True)
+        assert xa == xb
+        got = {x[2] for x in xa if x[0] == core.ACT_QUOTE and x[1] == 150}
+        assert got == ({0, 1} if inv == 0.0 else {1} if inv > 0 else {0}), (i, got)   # flat band: the move is ignored
+    assert not a.runs["hk"].mk_ref and "target" not in a.mk_stats and "mk_ref_seed" not in a.c
+
+
+def test_v73_target_buys_what_fell_and_sells_what_rose():
+    core_ = core.TakerCore(UID, P(**MKT))
+    assert _q150(core_, 10 ** 9) == set()                                  # seed: flat, ref = mid, target 0: in band
+    rs = core_.runs["hk"]
+    assert core_.c["mk_ref_seed"] == 64 and rs.mk_ref[150][0] == 0.5 * (8.99 + 9.01) and len(rs.mk_ref) == 64
+    assert core_.c["mk_in_band"] == 64
+    # the mid falls 22 bp: target about +0.11 W -> ONE bid, no ask (buy what fell)
+    assert _q150(core_, 2 * 10 ** 9, bid=8.97, ask=8.99, f_c1=8.98) == {0}
+    assert core_.c["mk_quote_bid"] == 64 and "mk_quote_ask" not in core_.c and "mk_band_ask" not in core_.c
+    ref = rs.mk_ref[150][0]
+    w = 25000.0 + C1_BI * 8.98
+    tgt = -0.005 * 1e4 * (8.98 - ref) / ref * w                            # quote notional, about +5,560
+    assert 5000.0 < tgt < 6000.0
+    inv = tgt / 8.98
+    # bought up to the target: no quote; less than a clip either side of it: still none; one clip above it: the ask
+    assert _q150(core_, 3 * 10 ** 9, bid=8.97, ask=8.99, f_c1=8.98, inv_c1=inv) == set()
+    assert _q150(core_, 3 * 10 ** 9 + 1, bid=8.97, ask=8.99, f_c1=8.98, inv_c1=inv + 190.0) == set()
+    assert _q150(core_, 3 * 10 ** 9 + 2, bid=8.97, ask=8.99, f_c1=8.98, inv_c1=inv - 190.0) == set()
+    assert _q150(core_, 4 * 10 ** 9, bid=8.97, ask=8.99, f_c1=8.98, inv_c1=inv + 201.0) == {1}
+    assert _q150(core_, 4 * 10 ** 9 + 1, bid=8.97, ask=8.99, f_c1=8.98, inv_c1=inv - 201.0) == {0}
+    # the mid is back at the reference with that inventory: the target is about 0 again -> sell it down
+    assert _q150(core_, 5 * 10 ** 9, inv_c1=inv) == {1}
+    # the mid rises 22 bp above the reference with no inventory: target short -> no bid (sell what rose)
+    assert _q150(core_, 6 * 10 ** 9, bid=9.01, ask=9.03, f_c1=9.02) == {1}
+    # never an order of another kind on a maker book, and class 0 still takes
+    config, books, accounts = _mk_state(bid=8.97, ask=8.99, f_c1=8.98)
+    actions, _ = core_.step(7 * 10 ** 9, "hk", config, books, accounts, [])
+    assert all(a[0] == core.ACT_QUOTE for a in actions if 128 <= a[1] < 192)
+    assert len([a for a in actions if a[0] == core.ACT_TAKE and a[1] < 128]) == 128
+
+
+def test_v73_target_is_clipped_at_the_limit():
+    core_ = core.TakerCore(UID, P(**MKT))
+    _q150(core_, 10 ** 9)
+    assert _q150(core_, 2 * 10 ** 9, collect=True, bid=8.79, ask=8.81, f_c1=8.80) == {0}   # -222 bp: k x ret = 1.1
+    w = 25000.0 + C1_BI * 8.80
+    st = core_.mk_stats
+    assert st["target"] is True and st["refs"] == 64 and abs(st["tgt_abs_notional_max"] - 0.45 * w) < 1e-6
+    assert abs(st["tgt_abs_notional_p50"] - 0.45 * w) < 1e-6 and abs(st["dev_abs_notional_max"] - 0.45 * w) < 1e-6
+    lim_units = 0.45 * w / 8.80
+    assert _q150(core_, 3 * 10 ** 9, bid=8.79, ask=8.81, f_c1=8.80, inv_c1=lim_units) == set()   # at the limit: no more
+    assert _q150(core_, 4 * 10 ** 9, bid=8.79, ask=8.81, f_c1=8.80, inv_c1=lim_units + 205.0) == {1}
+
+
+def test_v73_seed_adopts_the_inventory_found():
+    core_ = core.TakerCore(UID, P(**MKT))
+    assert _q150(core_, 10 ** 9, inv_c1=450.0) == set()                    # 4,050 notional long: adopted as target
+    frac = 450.0 * C1_MID / (25000.0 + C1_BI * C1_MID)
+    assert abs(core_.runs["hk"].mk_ref[150][0] - C1_MID / (1.0 - frac / 50.0)) < 1e-9
+    assert _q150(core.TakerCore(UID, P(v7_maker_classes=1.0)), 10 ** 9, inv_c1=450.0) == {1}     # v7.2: sold down
+    core_ = core.TakerCore(UID, P(**MKT))
+    assert _q150(core_, 10 ** 9, inv_c1=-450.0) == set()
+    # beyond the limit the target is the limit: only the reducing side is quoted
+    core_ = core.TakerCore(UID, P(**MKT))
+    assert _q150(core_, 10 ** 9, inv_c1=3000.0) == {1}                     # 27,000 = 0.54 W > 0.45 W
+    core_ = core.TakerCore(UID, P(**MKT))
+    assert _q150(core_, 10 ** 9, inv_c1=-2750.0) == {0}
+    # the adopted target decays with the reference: one lookback later, same mid, it is 1/e of the inventory
+    core_ = core.TakerCore(UID, P(**MKT))
+    _q150(core_, 10 ** 9, inv_c1=450.0)
+    assert _q150(core_, 10 ** 9 + 10800 * 10 ** 9, collect=True, inv_c1=450.0) == {1}
+    assert abs(core_.mk_stats["tgt_abs_notional_max"] - 4050.0 * math.exp(-1.0)) < 5.0
+
+
+def test_v73_reference_follows_the_mid_slowly_and_resets():
+    core_ = core.TakerCore(UID, P(**MKT))
+    _q150(core_, 10 ** 9)
+    rs = core_.runs["hk"]
+    r0 = rs.mk_ref[150][0]
+    _q150(core_, 10 ** 9 + 10800 * 10 ** 9, bid=8.97, ask=8.99, f_c1=8.98)      # one scoring lookback later
+    m1 = 0.5 * (8.97 + 8.99)
+    assert abs(rs.mk_ref[150][0] - (r0 + (1.0 - math.exp(-1.0)) * (m1 - r0))) < 1e-12
+    # it follows on a pull state too (no quote there) ...
+    r1 = rs.mk_ref[150][0]
+    assert _q150(core_, (10801 + 28) * 10 ** 9, bid=8.95, ask=8.97, f_c1=8.96) == set()
+    assert core_.c["mk_pull_states"] == 1 and rs.mk_ref[150][0] < r1
+    # ... and with an unusable f (no quote), but not on a one-sided book
+    r2 = rs.mk_ref[150][0]
+    config, books, accounts = _mk_state(bid=8.93, ask=8.95)
+    for b in range(128, 192):
+        books[b]["f"] = None
+    books[151]["a"] = []
+    r2b = rs.mk_ref[151][0]
+    actions, _ = core_.step((10801 + 29) * 10 ** 9, "hk", config, books, accounts, [])
+    assert not [a for a in actions if a[0] == core.ACT_QUOTE and a[1] >= 128] and core_.c["mk_bad_book"] == 64
+    assert rs.mk_ref[150][0] < r2 and rs.mk_ref[151][0] == r2b
+    # a new simulation clears the references: fresh endowments, re-seeded at the mid found
+    config, books, accounts = _mk_state(bid=8.89, ask=8.91, f_c1=8.90)
+    config["simulation_id"] = "sim_b"
+    actions, _ = core_.step(5 * 10 ** 9, "hk", config, books, accounts, [])
+    assert rs.mk_ref[150][0] == 0.5 * (8.89 + 8.91)
+    assert not [a for a in actions if a[0] == core.ACT_QUOTE and a[1] >= 128]
+    # a book-count change clears them too (book ids move between classes)
+    config, books, accounts = _state(128, classes=_classes((64, 32, 32)))
+    core_.step(6 * 10 ** 9, "hk", config, books, accounts, [])
+    assert 150 not in rs.mk_ref and set(rs.mk_ref) <= set(range(64, 96)) and core_.c["pace_reset_layout"] == 1
+    # references are per validator stream
+    config, books, accounts = _mk_state()
+    core_.step(7 * 10 ** 9, "other", config, books, accounts, [])
+    assert core_.runs["other"].mk_ref is not rs.mk_ref and 150 in core_.runs["other"].mk_ref
+
+
+def test_v73_guard_and_pull_still_apply_with_the_target():
+    core_ = core.TakerCore(UID, P(**MKT))
+    _q150(core_, 10 ** 9)
+    # the mid fell 22 bp, so the target wants the bid, but f is 20 bp below the bid: the guard withholds it
+    assert _q150(core_, 2 * 10 ** 9, bid=8.97, ask=8.99, f_c1=8.952) == set()
+    assert core_.c["mk_guard_bid"] == 64 and "mk_quote_bid" not in core_.c
+    # likewise the ask after a rise, when f is more than 10 bp above it
+    assert _q150(core_, 3 * 10 ** 9, bid=9.01, ask=9.03, f_c1=9.05) == set()
+    assert core_.c["mk_guard_ask"] == 64
+    # the last state before the fundamental step: a resting bid is cancelled and nothing is placed
+    config, books, accounts = _mk_state(bid=8.97, ask=8.99, f_c1=8.98, orders={150: [(7, 0, 8.97, 200.0)]})
+    actions, _ = core_.step(29 * 10 ** 9, "hk", config, books, accounts, [])
+    assert [a for a in actions if a[1] == 150] == [(core.ACT_CANCEL, 150, [7])]
+    # the next state: the bid is quoted again; a resting bid at the wanted price is kept, a resting ask is cancelled
+    config, books, accounts = _mk_state(bid=8.97, ask=8.99, f_c1=8.98,
+                                        orders={150: [(8, 0, 8.97, 200.0), (9, 1, 8.99, 200.0)]})
+    actions, _ = core_.step(30 * 10 ** 9, "hk", config, books, accounts, [])
+    assert [a for a in actions if a[1] == 150] == [(core.ACT_CANCEL, 150, [9])]
+    assert {a[2] for a in actions if a[0] == core.ACT_QUOTE and a[1] == 151} == {0}
+
+
+def test_v73_target_fails_to_the_flat_band_without_a_wealth_figure():
+    core_ = core.TakerCore(UID, P(**MKT))
+    config, books, accounts = _mk_state()
+    del config["miner_wealth"]
+    accounts[UID][150]["qb"]["i"] = None
+    actions, _ = core_.step(10 ** 9, "hk", config, books, accounts, [])
+    assert 150 not in core_.runs["hk"].mk_ref and 151 in core_.runs["hk"].mk_ref and core_.c["mk_no_wealth"] == 1
+    assert not [a for a in actions if a[1] == 150]                         # target 0, flat: nothing to do
+    # ... and an inventory there is only worked flat
+    config, books, accounts = _mk_state(inv_c1=450.0)
+    del config["miner_wealth"]
+    accounts[UID][150]["qb"]["i"] = None
+    actions, _ = core_.step(2 * 10 ** 9, "hk", config, books, accounts, [])
+    assert {a[2] for a in actions if a[0] == core.ACT_QUOTE and a[1] == 150} == {1} and core_.c["mk_no_wealth"] == 2
+    # the config's miner_wealth is the fallback, as for the taker
+    config, books, accounts = _mk_state(bid=8.97, ask=8.99, f_c1=8.98)
+    accounts[UID][150]["qb"]["i"] = None
+    actions, _ = core_.step(3 * 10 ** 9, "hk", config, books, accounts, [])
+    assert 150 in core_.runs["hk"].mk_ref and core_.c["mk_no_wealth"] == 2
+
+
+def test_v73_target_respects_the_pace_guard_and_free_balances():
+    core_ = core.TakerCore(UID, P(**MKT))
+    _q150(core_, 10 ** 9)
+    config, books, accounts = _mk_state(bid=8.97, ask=8.99, f_c1=8.98)
+    accounts[UID][150]["v"] = 499_000.0                                    # the validator's rolling volume: capped
+    accounts[UID][151]["qb"]["f"] = 900.0                                  # little free quote: the bid is clamped
+    accounts[UID][152]["qb"]["f"] = 0.0
+    actions, _ = core_.step(2 * 10 ** 9, "hk", config, books, accounts, [])
+    q = {(a[1], a[2]): a[3] for a in actions if a[0] == core.ACT_QUOTE}
+    assert (150, core.SIDE_BUY) not in q and core_.c["mk_paced_ledger"] == 1
+    assert q[(151, core.SIDE_BUY)] == core.floor_to(900.0 / (8.97 * 1.001), 4)
+    assert (152, core.SIDE_BUY) not in q and core_.c["mk_no_quote"] == 1
+    assert q[(153, core.SIDE_BUY)] == core.floor_to(1800.0 / 8.98, 4)
+
+
+def test_v73_agent_logs_the_target_picture(tmp_path):
+    real = _real_taos()
+    mod = _load_agent_class(stubbed=not real)
+    agent = _agent(mod, tmp_path, v7_k=0.005, **MKT)
+    config, books, accounts = _mk_state()
+    agent.handle(_st(config, books, accounts))
+    config, books, accounts = _mk_state(bid=8.97, ask=8.99, f_c1=8.98)
+    resp = agent.handle(_st(config, books, accounts, ts=2 * 10 ** 9))
+    if real:
+        quotes = [i for i in resp.instructions if i.type == "PLACE_ORDER_LIMIT" and i.bookId >= 128]
+        assert len(quotes) == 64 and all(i.postOnly is True and i.price == 8.97 for i in quotes)
+    else:
+        quotes = [kw for kind, kw in resp.instructions if kind == "limit" and kw["book_id"] >= 128]
+        assert len(quotes) == 64 and all(kw["postOnly"] is True and kw["price"] == 8.97 and int(kw["direction"]) == 0
+                                         for kw in quotes)
+    assert agent._writer.flush()
+    lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
+    assert lines[0]["version"] == "v7.4" and lines[0]["core"] == core.CORE_VERSION
+    assert lines[0]["params"]["mk_target"] is True and lines[0]["params"]["mk_k"] == 0.005
+    assert lines[0]["params"]["mk_l"] == 0.45 and lines[0]["params"]["mk_ref_s"] == 10800.0
+    summ = [x for x in lines if x["kind"] == "summary"][0]
+    mk = summ["maker"]
+    assert summ["errors"] == 0 and mk["target"] is True and mk["refs"] == 64 and mk["books"] == 64
+    assert mk["sides_1"] == 64 and 5000.0 < mk["tgt_abs_notional_p50"] < 6000.0
+    assert mk["dev_abs_notional_p50"] == mk["tgt_abs_notional_p50"] and mk["corr_inv_target"] is None
+    assert summ["counts"]["mk_quote_bid"] == 64 and summ["counts"]["mk_ref_seed"] == 64
+    assert summ["counts"]["mk_in_band"] == 64 and "mk_quote_ask" not in summ["counts"]
+    sp = mk["split"]                                                       # core 5.1 logging only
+    assert sp["out_bid"] == 64 and sp["free"]["n"] == 64 and sp["blocked"]["n"] == 0
+    assert sp["free"]["dev_abs_p50"] == mk["dev_abs_notional_p50"] and summ["counts"]["mk_out_bid"] == 64
+
+
+def test_v73_core51_split_by_the_guard_is_logging_only():
+    assert core.CORE_VERSION == "taker_v7_core_6" and core.V7_VERSION == "v7.4"
+    keys = {"in_band", "out_bid", "out_ask", "blocked_bid", "blocked_ask", "free", "blocked"}
+    # seed flat: everything in band and free
+    core_ = core.TakerCore(UID, P(**MKT))
+    assert _q150(core_, 10 ** 9, collect=True) == set()
+    sp = core_.mk_stats["split"]
+    assert set(sp) == keys and sp["in_band"] == 64 and sp["free"]["n"] == 64 and sp["blocked"]["n"] == 0
+    assert sp["blocked"] == {"n": 0, "corr": None, "dev_abs_p50": None, "dev_abs_max": None}
+    assert "mk_out_bid" not in core_.c and "mk_out_ask" not in core_.c
+    # the mid fell 22 bp with f at the mid: the bid is wanted and allowed -> out_bid, free
+    assert _q150(core_, 2 * 10 ** 9, collect=True, bid=8.97, ask=8.99, f_c1=8.98) == {0}
+    sp = core_.mk_stats["split"]
+    assert sp["out_bid"] == 64 and sp["in_band"] == sp["out_ask"] == sp["blocked_bid"] == sp["blocked_ask"] == 0
+    assert sp["free"]["n"] == 64 and sp["free"]["dev_abs_p50"] == core_.mk_stats["dev_abs_notional_p50"]
+    assert core_.c["mk_out_bid"] == 64 and "mk_guard_bid" not in core_.c
+    # the same fall with f 20 bp below the bid: the guard withholds the bid -> blocked_bid
+    assert _q150(core_, 3 * 10 ** 9, collect=True, bid=8.97, ask=8.99, f_c1=8.952) == set()
+    sp = core_.mk_stats["split"]
+    assert sp["blocked_bid"] == 64 and sp["free"]["n"] == 0 and sp["blocked"]["n"] == 64
+    assert sp["blocked"]["dev_abs_max"] == core_.mk_stats["dev_abs_notional_max"] and sp["free"]["dev_abs_p50"] is None
+    assert core_.c["mk_guard_bid"] == 64 and core_.c["mk_out_bid"] == 64
+    # a rise with f 34 bp above the mid (the testnet picture): the ask is wanted and withheld -> blocked_ask
+    assert _q150(core_, 4 * 10 ** 9, collect=True, bid=9.01, ask=9.03, f_c1=9.0507) == set()
+    sp = core_.mk_stats["split"]
+    assert sp["blocked_ask"] == 64 and sp["blocked"]["n"] == 64 and "mk_out_ask" not in core_.c
+    # the same rise with f at the mid: allowed -> out_ask
+    assert _q150(core_, 5 * 10 ** 9, collect=True, bid=9.01, ask=9.03, f_c1=9.02) == {1}
+    sp = core_.mk_stats["split"]
+    assert sp["out_ask"] == 64 and sp["free"]["n"] == 64 and core_.c["mk_out_ask"] == 64
+    # a mixed state: one book long by more than a clip over its target under a far f, the rest in band
+    core_ = core.TakerCore(UID, P(**MKT))
+    _q150(core_, 10 ** 9)
+    config, books, accounts = _mk_state()
+    a = acc(base_total=C1_BI + 250.0, base_init=C1_BI, quote_init=25000.0, base_free=C1_BI + 250.0, quote_free=25000.0)
+    a["b"] = 150
+    accounts[UID][150] = a
+    books[150] = book(8.99, 9.01, 9.0306)                                  # f 34 bp above the mid of book 150 only
+    actions, _ = core_.step(2 * 10 ** 9, "hk", config, books, accounts, [], collect=True)
+    assert not [x for x in actions if x[0] == core.ACT_QUOTE and x[1] == 150]
+    sp = core_.mk_stats["split"]
+    assert sp["blocked_ask"] == 1 and sp["in_band"] == 63 and sp["free"]["n"] == 63 and sp["blocked"]["n"] == 1
+    assert abs(sp["blocked"]["dev_abs_p50"] - 2250.0) < 5.0 and sp["free"]["dev_abs_max"] < 5.0
+    assert sp["in_band"] + sp["out_bid"] + sp["out_ask"] + sp["blocked_bid"] + sp["blocked_ask"] == 64
+    # the helper refuses misaligned input instead of raising
+    assert core.mk_split([(1.0, 2.0)], [])["error"] == "misaligned" and core.mk_split(None, None)["pairs"] is None
+    # target off (the v7.2 flat band): no split, no new counters
+    c2 = core.TakerCore(UID, P(v7_maker_classes=1.0))
+    _q150(c2, 10 ** 9, collect=True)
+    assert "split" not in c2.mk_stats and "mk_out_bid" not in c2.c and "mk_out_ask" not in c2.c
+
+
+def test_v73_handler_timing_with_the_target():
+    fx, books, accounts = _recorded_state()
+    config = C1CFG()
+    config.update(STEP_CFG)
+    core_ = core.TakerCore(UID, P(v7_maker_classes="1,2", v7_k=0.005, v7_mk_target=1.0))
+    times = []
+    ts = fx["timestamp"]
+    for i in range(300):
+        t0 = time.perf_counter()
+        core_.step(ts + i * 10 ** 9, "hk", config, books, accounts, [], collect=(i % 60 == 59))
+        times.append((time.perf_counter() - t0) * 1000.0)
+    p50, p95 = core.pctl(times, 0.5), core.pctl(times, 0.95)
+    print(f"TIMING core.step 256 books (128 taker + 128 maker with the target): p50 {p50:.3f} ms p95 {p95:.3f} ms")
+    assert p95 < 50.0 and len(core_.runs["hk"].mk_ref) == 128
+
+
+# ---- v7.4: class-2 stepping taker, class-0 contrarian term, class-1 stepping target (Round 27 X0 / X1) ----------------
+
+V74 = dict(v7_k=0.005, v7_maker_classes=1.0, v7_mk_target=2.0, v7_rel_classes=2.0, v7_c0_contra=1.0)
+REL_STEP = 0.0209 * 60.0 / 529.2                                            # W per 60 sim-s of the class-2 target
+DYN_STEP = 0.03 * 60.0 / 529.2                                              # W per 60 sim-s of the class-1 target
+S60 = 60 * 10 ** 9
+
+
+def _c0_state(mid, gap_bp=0.0, inv=0.0, n=256, sim="sim_a"):
+    """Every book at ``mid`` (touch +-0.01) with f = mid x (1 + gap_bp / 1e4) and ``inv`` units of inventory."""
+    books, accounts = {}, {}
+    for b in range(n):
+        books[b] = book(round(mid - 0.01, 2), round(mid + 0.01, 2), mid * (1.0 + gap_bp / 1e4))
+        a = acc(base_total=BI + inv, base_init=BI, quote_init=QI, base_free=BI + inv, quote_free=QI)
+        a["b"] = b
+        accounts[b] = a
+    return cfg(n, simulation_id=sim), books, {UID: accounts}
+
+
+def _rel_state(mids=None, inv=None, free=None, classes=True, **kw):
+    """_mk_state with the class-2 books (192-255) at their own mids: ``mids`` = {book: mid} (the rest 9.00), touch
+    +-0.01, f = 9.60 (far above the mid, as on mainnet); ``inv`` = {book: units}; ``free`` = {book: free base}."""
+    config, books, accounts = _mk_state(classes=classes, **kw)
+    mids, inv, free = mids or {}, inv or {}, free or {}
+    for b in range(192, 256):
+        m = mids.get(b, C1_MID)
+        books[b] = book(round(m - 0.01, 4), round(m + 0.01, 4), 9.6) if m is not None else book(8.99, None, 9.6)
+        x = inv.get(b, 0.0)
+        a = acc(base_total=C1_BI + x, base_init=C1_BI, quote_init=25000.0, base_free=free.get(b, C1_BI + x),
+                quote_free=25000.0)
+        a["b"] = b
+        a["o"] = accounts[UID][b]["o"]
+        accounts[UID][b] = a
+    return config, books, accounts
+
+
+def _c2(actions):
+    return [a for a in actions if 192 <= a[1] < 256]
+
+
+def test_v74_params_switches_bounds_and_conflicts():
+    import pytest
+    p = P()
+    assert core.V7_VERSION == "v7.4" and core.CORE_VERSION == "taker_v7_core_6"
+    # the code defaults are v7.3: every v7.4 leg off
+    assert p["rel_classes"] == () and p["c0_contra"] is False and p["mk_target"] is False and p["mk_dyn"] is False
+    assert p["rel_hl_s"] == 4 * 529.2 == 2116.8 and p["rel_rate_h"] == 0.0209 and p["rel_l"] == 0.45
+    assert p["rel_clip_notional"] == 1800.0 == p["mk_notional"] and p["step_thr_bp"] == 3.0
+    assert p["step_max_dt_s"] == 60.0 and p["mk_dyn_hl_s"] == 2 * 529.2 == 1058.4 and p["mk_dyn_rate_h"] == 0.03
+    assert p["c0_kc"] == p["mk_k"] == 0.005 and p["c0_lc"] == p["mk_l"] == 0.45
+    assert p["c0_ref_s"] == core.DEPTH_S == 10800.0
+    q = P(**V74)
+    assert q["rel_classes"] == (2,) and q["c0_contra"] is True and q["mk_target"] is True and q["mk_dyn"] is True
+    assert P(v7_mk_target=1.0)["mk_dyn"] is False and P(v7_mk_target=1.0)["mk_target"] is True
+    assert P(v7_rel_classes="none")["rel_classes"] == () and P(v7_rel_classes=" 2 ")["rel_classes"] == (2,)
+    for bad in ({"v7_rel_classes": "1"}, {"v7_rel_classes": "1,2"}, {"v7_rel_classes": 0.0},
+                {"v7_rel_classes": 2.0, "v7_maker_classes": "1,2"}, {"v7_c0_contra": 2}, {"v7_c0_contra": "on"},
+                {"v7_c0_kc": 0}, {"v7_c0_lc": 1.5}, {"v7_c0_ref_s": 0}, {"v7_rel_hl_s": 0}, {"v7_rel_rate_h": 0},
+                {"v7_rel_l": 0}, {"v7_rel_l": 1.1}, {"v7_rel_clip_notional": 0}, {"v7_step_thr_bp": -1},
+                {"v7_step_max_dt_s": 0}, {"v7_mk_dyn_hl_s": 0}, {"v7_mk_dyn_rate_h": 0}, {"v7_mk_target": 3}):
+        with pytest.raises(ValueError):
+            core.parse_params(bad)
+
+
+def test_v74_decide_takes_an_outside_target_and_an_added_term():
+    p = P()
+    rule = (0.0, 0.45, 1800.0)                                             # clip = 1,800 / 300 = 6 units; W = 50,000
+    args = (BI, BI, QI, BI, QI, 0.0003, p, GRID, None)
+    r = core.decide(299.99, 300.01, 310.0, *args, rule=rule, tfrac=0.04)   # the far f does not move the target
+    assert r[0] == "send" and r[1] == (core.SIDE_BUY, 6.0, 300.01) and r[2] == 0.0
+    assert abs(r[3] - 0.04 * w_at(300.0) / 300.0) < 1e-9
+    assert core.decide(299.99, 300.01, 310.0, *args, rule=rule, tfrac=0.03)[0] == "in_band"
+    r = core.decide(299.99, 300.01, 310.0, *args, rule=rule, tfrac=-0.04)
+    assert r[0] == "send" and r[1] == (core.SIDE_SELL, 6.0, 299.99)
+    # a sell stops at the free base (never a loan), and without free base there is no order
+    r = core.decide(299.99, 300.01, 310.0, BI, BI, QI, 2.0, QI, 0.0003, p, GRID, None, rule=rule, tfrac=-0.04)
+    assert r[1] == (core.SIDE_SELL, 2.0, 299.99)
+    assert core.decide(299.99, 300.01, 310.0, BI, BI, QI, 0.0, QI, 0.0003, p, GRID, None, rule=rule,
+                       tfrac=-0.04)[0] == "no_base"
+    # add_frac: the gap term (10 bp x 0.0035 = 0.035 W) plus the added term, inside the common limit
+    f10 = 300.0 * 1.001
+    legacy = core.decide(299.99, 300.01, f10, *args)
+    assert core.decide(299.99, 300.01, f10, *args, add_frac=0.0) == legacy and legacy[0] == "in_band"
+    r = core.decide(299.99, 300.01, f10, *args, add_frac=0.05)
+    assert r[0] == "send" and r[1] == (core.SIDE_BUY, 7.0, 300.01) and abs(r[3] - 0.085 * w_at(300.0) / 300.0) < 1e-9
+    assert core.decide(299.99, 300.01, f10, *args, add_frac=-0.035)[0] == "in_band"     # the two terms cancel
+    r = core.decide(299.99, 300.01, f10, *args, add_frac=-0.135)                        # net -0.10 W: sell
+    assert r[1] == (core.SIDE_SELL, 15.0, 299.99)
+    r = core.decide(299.99, 300.01, 300.0 * 1.02, *args, add_frac=0.3)                  # 0.55 + 0.3 -> the limit
+    assert abs(r[3] - 0.55 * w_at(300.0) / 300.0) < 1e-9
+    r = core.decide(299.99, 300.01, 300.0 * 0.98, *args, add_frac=0.3)                  # -0.55 + 0.3 = -0.25
+    assert abs(r[3] + 0.25 * w_at(300.0) / 300.0) < 1e-9
+
+
+def test_v74_c0_contra_seed_is_the_v73_decision_then_buys_what_fell():
+    c = core.TakerCore(UID, P(v7_k=0.005, v7_c0_contra=1.0))
+    base = core.TakerCore(UID, P(v7_k=0.005))
+    st = _c0_state(300.0)
+    a1, p1 = c.step(10 ** 9, "hk", *st, [], collect=True)
+    a0, p0 = base.step(10 ** 9, "hk", *st, [], collect=True)
+    rs = c.runs["hk"]
+    assert a1 == a0 == [] and p1 == p0 and c.c["c0_ref_seed"] == 128 and len(rs.c0_ref) == 128
+    assert rs.c0_ref[5] == [300.0, rs.clock] and not base.runs["hk"].c0_ref and base.c0_stats is None
+    assert c.c0_stats == {"books": 128, "refs": 128, "tc_abs_w_p50": 0.0, "tc_abs_w_max": 0.0, "tc_net_w": 0.0,
+                          "opposed": 0, "at_own_limit": 0}
+    # the mid falls 20 bp with f = mid (gap 0): the v7.3 taker has nothing to do, the term buys what fell
+    st = _c0_state(299.4)
+    a1, p1 = c.step(2 * 10 ** 9, "hk", *st, [], collect=True)
+    a0, _ = base.step(2 * 10 ** 9, "hk", *st, [])
+    ref = 300.0 + (1.0 - math.exp(-1.0 / 10800.0)) * (299.4 - 300.0)
+    assert abs(rs.c0_ref[5][0] - ref) < 1e-12 and rs.c0_ref[5][1] == rs.clock
+    tc = -0.005 * 1e4 * (299.4 - ref) / ref
+    w = QI + BI * 299.4
+    assert 0.0999 < tc < 0.1 and abs(p1[0][1] - tc * w / 299.4) < 1e-9
+    assert a0 == [] and sorted(x[1] for x in a1) == list(range(128))
+    assert all(x == (core.ACT_TAKE, x[1], core.SIDE_BUY, 15.0, 299.41) for x in a1)
+    assert abs(c.c0_stats["tc_abs_w_p50"] - tc) < 1e-12 and c.c0_stats["opposed"] == 0
+    assert abs(c.c0_stats["tc_net_w"] - 128 * tc) < 1e-9
+    # no order of any kind outside class 0, and the class-1 / class-2 state is untouched
+    assert not rs.step_st and not rs.mk_ref and c.rel_stats is None
+
+
+def test_v74_c0_contra_opposed_terms_cancel_and_the_limits_hold():
+    c = core.TakerCore(UID, P(v7_k=0.005, v7_c0_contra=1.0))
+    base = core.TakerCore(UID, P(v7_k=0.005))
+    for x in (c, base):
+        x.step(10 ** 9, "hk", *_c0_state(300.0), [])
+    # the mid rose 20 bp and f is 20 bp above it: gap term +0.10 W, contrarian term -0.10 W -> nothing to do
+    st = _c0_state(300.6, gap_bp=20.0)
+    a1, p1 = c.step(2 * 10 ** 9, "hk", *st, [], collect=True)
+    a0, _ = base.step(2 * 10 ** 9, "hk", *st, [])
+    assert a1 == [] and len(a0) == 128 and all(x[2] == core.SIDE_BUY and x[3] == 15.0 for x in a0)
+    assert abs(p1[0][1]) < 0.01 and c.c0_stats["opposed"] == 128 and c.c["in_band"] == 256
+    # the term's own limit: a 200 bp fall alone gives +0.45 W, not 1.0
+    c = core.TakerCore(UID, P(v7_k=0.005, v7_c0_contra=1.0))
+    c.step(10 ** 9, "hk", *_c0_state(300.0), [])
+    _, p1 = c.step(2 * 10 ** 9, "hk", *_c0_state(294.0), [], collect=True)
+    w = QI + BI * 294.0
+    assert abs(p1[0][1] - 0.45 * w / 294.0) < 1e-9 and c.c0_stats["at_own_limit"] == 128
+    # the common limit: gap term at +0.55 W plus the term at +0.45 W stays at 0.55 W
+    c = core.TakerCore(UID, P(v7_k=0.005, v7_c0_contra=1.0))
+    c.step(10 ** 9, "hk", *_c0_state(300.0), [])
+    _, p1 = c.step(2 * 10 ** 9, "hk", *_c0_state(294.0, gap_bp=200.0), [], collect=True)
+    assert abs(p1[0][1] - 0.55 * w / 294.0) < 1e-9
+    # ... and a gap term at -0.55 W with the term at +0.45 W nets -0.10 W
+    c = core.TakerCore(UID, P(v7_k=0.005, v7_c0_contra=1.0))
+    c.step(10 ** 9, "hk", *_c0_state(300.0), [])
+    _, p1 = c.step(2 * 10 ** 9, "hk", *_c0_state(294.0, gap_bp=-200.0), [], collect=True)
+    assert abs(p1[0][1] + 0.10 * w / 294.0) < 1e-9
+
+
+def test_v74_c0_contra_reference_follows_slowly_and_resets():
+    c = core.TakerCore(UID, P(v7_k=0.005, v7_c0_contra=1.0))
+    c.step(10 ** 9, "hk", *_c0_state(300.0), [])
+    rs = c.runs["hk"]
+    # one scoring lookback later at the new mid: the reference has moved 1 - 1/e of the way
+    _, p1 = c.step(10 ** 9 + 10800 * 10 ** 9, "hk", *_c0_state(299.4), [], collect=True)
+    ref = 300.0 + (1.0 - math.exp(-1.0)) * (299.4 - 300.0)
+    assert abs(rs.c0_ref[7][0] - ref) < 1e-12
+    assert abs(c.c0_stats["tc_abs_w_p50"] - 0.005 * 1e4 * (ref - 299.4) / ref) < 1e-12
+    # a book without a two-sided touch keeps its reference and gets no term
+    config, books, accounts = _c0_state(299.4)
+    books[7] = book(299.39, None, 299.4)
+    c.step(2 * 10 ** 9 + 10800 * 10 ** 9, "hk", config, books, accounts, [])
+    assert abs(rs.c0_ref[7][0] - ref) < 1e-12 and c.c["one_sided"] >= 1
+    # a new simulation clears the references: they re-seed at the mid found, the term is 0 again
+    n0 = c.c["c0_ref_seed"]
+    a1, p1 = c.step(3 * 10 ** 9, "hk", *_c0_state(299.4, sim="sim_b"), [], collect=True)
+    assert c.c["c0_ref_seed"] == n0 + 128 and rs.c0_ref[7][0] == 299.4 and c.c0_stats["tc_abs_w_max"] == 0.0
+    # a book-count change clears them too
+    c.step(4 * 10 ** 9, "hk", *_c0_state(299.4, n=128, sim="sim_b"), [])
+    assert len(rs.c0_ref) == 64 and c.c["pace_reset_layout"] == 1
+
+
+def test_v74_rel_first_state_seeds_flat_and_a_class_move_is_not_traded():
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    actions, _ = c.step(10 ** 9, "hk", *_rel_state(), [], collect=True)
+    rs = c.runs["hk"]
+    assert _c2(actions) == [] and c.c["rel_seed"] == 64 and sorted(rs.step_st) == list(range(192, 256))
+    assert rs.step_st[200] == [math.log(9.0), 0.0, 0.0, rs.clock, math.log(9.0)]
+    assert len([a for a in actions if a[0] == core.ACT_TAKE and a[1] < 128]) == 128      # class 0 still takes
+    assert not [a for a in actions if 128 <= a[1] < 192]                                 # class 1 is left alone
+    assert c.rel_stats["books"] == 64 and c.rel_stats["stepped"] == 64 and c.rel_stats["net_tgt_w"] == 0.0
+    assert c.rel_stats["corr_inv_target"] is None and c.rel_stats["at_limit"] == 0
+    # the whole class falls 111 bp together: no book moved against the class -> no step, no order
+    for i in range(1, 6):
+        actions, _ = c.step(10 ** 9 + i * S60, "hk", *_rel_state(mids={b: 8.90 for b in range(192, 256)}), [])
+        assert _c2(actions) == []
+    assert all(rs.step_st[b][2] == 0.0 and abs(rs.step_st[b][1]) < 1e-9 for b in range(192, 256))
+    assert c.c["rel_in_band"] == 6 * 64
+
+
+def test_v74_rel_buys_what_fell_against_its_class_one_clip_at_a_time():
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    rs = c.runs["hk"]
+    w = 25000.0 + C1_BI * 8.91
+    for i in range(1, 17):                                                 # book 200 is 100 bp below its class
+        actions, _ = c.step(10 ** 9 + i * S60, "hk", *_rel_state(mids={200: 8.91}), [], collect=(i == 16))
+        frac = rs.step_st[200][2]
+        assert abs(frac - i * REL_STEP) < 1e-12                            # one step of the rate per 60 sim-s
+        if frac * w < 1800.0:
+            assert _c2(actions) == [], i
+    assert i == 16 and 15 * REL_STEP * w < 1800.0 <= 16 * REL_STEP * w
+    assert _c2(actions) == [(core.ACT_TAKE, 200, core.SIDE_BUY, 202.0202, 8.92)]          # IOC clip at the ask
+    assert c.c["rel_send_buy"] == 1 and "rel_send_sell" not in c.c
+    # the other 63 books sit 1.6 bp above the class mean: inside the 3 bp threshold, no step
+    assert all(rs.step_st[b][2] == 0.0 for b in range(192, 256) if b != 200)
+    x200 = 1e4 * (math.log(8.91 / 9.0) * 63.0 / 64.0)
+    avg = x200 * (1.0 - 0.5 ** (16 * 60.0 / 2116.8))                       # sixteen equal EMA updates = one of 960 s
+    assert abs(rs.step_st[200][1] - avg) < 1e-9
+    assert c.rel_stats["books"] == 64 and abs(c.rel_stats["net_tgt_w"] - 16 * REL_STEP) < 1e-12
+    assert abs(c.rel_stats["tgt_abs_notional_max"] - 16 * REL_STEP * w) < 1e-6
+    # bought one clip: inside the band again until the target has moved another clip
+    inv = {200: 202.0202}
+    actions, _ = c.step(10 ** 9 + 17 * S60, "hk", *_rel_state(mids={200: 8.91}, inv=inv), [])
+    assert _c2(actions) == []
+    # the mirror: a book 100 bp above its class is sold, one clip at the bid
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    for i in range(1, 17):
+        actions, _ = c.step(10 ** 9 + i * S60, "hk", *_rel_state(mids={200: 9.09}), [])
+    w = 25000.0 + C1_BI * 9.09
+    assert 15 * REL_STEP * w < 1800.0 <= 16 * REL_STEP * w
+    assert _c2(actions) == [(core.ACT_TAKE, 200, core.SIDE_SELL, 198.0198, 9.08)]
+    assert abs(c.runs["hk"].step_st[200][2] + 16 * REL_STEP) < 1e-12
+
+
+def test_v74_rel_threshold_gap_cap_and_limit():
+    # inside 3 bp of its average nothing steps; beyond it the target moves
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    rs = c.runs["hk"]
+    c.step(10 ** 9 + S60, "hk", *_rel_state(mids={200: 8.9975}), [])       # -2.8 bp against the class
+    assert rs.step_st[200][2] == 0.0
+    c.step(10 ** 9 + 2 * S60, "hk", *_rel_state(mids={200: 8.9955}), [])   # -4.9 bp
+    assert abs(rs.step_st[200][2] - REL_STEP) < 1e-12
+    # a gap of 10,000 sim-s steps 60 s worth only (the average takes the whole gap)
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    rs = c.runs["hk"]
+    c.step(10 ** 9 + 10000 * 10 ** 9, "hk", *_rel_state(mids={200: 8.91}), [])
+    x200 = 1e4 * (math.log(8.91 / 9.0) * 63.0 / 64.0)
+    assert abs(rs.step_st[200][2] - REL_STEP) < 1e-12
+    assert abs(rs.step_st[200][1] - x200 * (1.0 - 0.5 ** (10000.0 / 2116.8))) < 1e-9
+    # the limit: a fast rate reaches +-0.45 W and stays there
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0, v7_rel_rate_h=5.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    rs = c.runs["hk"]
+    actions, _ = c.step(10 ** 9 + S60, "hk", *_rel_state(mids={200: 8.91, 201: 9.09}), [], collect=True)
+    assert rs.step_st[200][2] == 0.45 and rs.step_st[201][2] == -0.45 and c.rel_stats["at_limit"] == 2
+    assert abs(c.rel_stats["net_tgt_w"]) < 1e-12
+    got = {a[1]: a for a in _c2(actions)}
+    assert got[200][2] == core.SIDE_BUY and got[201][2] == core.SIDE_SELL and len(got) == 2
+    c.step(10 ** 9 + 2 * S60, "hk", *_rel_state(mids={200: 8.91, 201: 9.09}), [])
+    assert rs.step_st[200][2] == 0.45 and rs.step_st[201][2] == -0.45
+
+
+def test_v74_rel_seed_adopts_the_inventory_and_sells_stop_at_the_free_base():
+    # an inherited position inside the limit is adopted as the target: nothing to do
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    actions, _ = c.step(10 ** 9, "hk", *_rel_state(inv={200: 500.0, 201: -500.0}), [], collect=True)
+    rs = c.runs["hk"]
+    assert _c2(actions) == [] and abs(rs.step_st[200][2] - 0.09) < 1e-12 and abs(rs.step_st[201][2] + 0.09) < 1e-12
+    assert abs(c.rel_stats["corr_inv_target"] - 1.0) < 1e-9 and c.rel_stats["dev_abs_notional_max"] < 1e-6
+    # beyond the limit the target is the limit: the excess is sold down one clip at a time
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    actions, _ = c.step(10 ** 9, "hk", *_rel_state(inv={200: 3000.0}), [])
+    assert c.runs["hk"].step_st[200][2] == 0.45
+    assert _c2(actions) == [(core.ACT_TAKE, 200, core.SIDE_SELL, 200.0, 8.99)]
+    # a short target beyond the endowment: the sell stops at the free base, then there is no order (never a loan)
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0, v7_rel_rate_h=5.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    actions, _ = c.step(10 ** 9 + S60, "hk", *_rel_state(mids={201: 9.09}, inv={201: -2000.0}, free={201: 50.0}),
+                        [])
+    assert _c2(actions) == [(core.ACT_TAKE, 201, core.SIDE_SELL, 50.0, 9.08)]   # target -0.45 W = -2,488 units
+    actions, _ = c.step(10 ** 9 + 2 * S60, "hk", *_rel_state(mids={201: 9.09}, inv={201: -2050.0}, free={201: 0.0}),
+                        [])
+    assert _c2(actions) == [] and c.c["rel_no_base"] == 1
+
+
+def test_v74_rel_missing_book_cleanup_and_fail_closed():
+    # a book without a two-sided touch keeps its last value in the class mean: nobody else steps
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    c.step(10 ** 9, "hk", *_rel_state(mids={210: 8.80}), [])               # seeded 222 bp below the others
+    rs = c.runs["hk"]
+    for i in range(1, 4):
+        actions, _ = c.step(10 ** 9 + i * S60, "hk", *_rel_state(mids={210: None}), [])
+        assert _c2(actions) == []
+    assert c.c["rel_bad_book"] == 3 and all(rs.step_st[b][2] == 0.0 for b in range(192, 256))
+    assert rs.step_st[210][3] == 0 and rs.step_st[210][4] == math.log(8.80)      # not stepped since the seed
+    actions, _ = c.step(10 ** 9 + 4 * S60, "hk", *_rel_state(mids={210: 8.80}), [])
+    assert _c2(actions) == [] and all(rs.step_st[b][2] == 0.0 for b in range(192, 256))
+    # a class-2 book with resting orders gets the cleanup cancel and no take in that state; its target still steps
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0, v7_rel_rate_h=5.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    actions, _ = c.step(10 ** 9 + S60, "hk", *_rel_state(mids={200: 8.91},
+                                                         orders={200: [(31, 0, 8.90, 10.0)]}), [])
+    assert _c2(actions) == [(core.ACT_CANCEL, 200, [31])] and c.runs["hk"].step_st[200][2] == 0.45
+    actions, _ = c.step(10 ** 9 + 2 * S60, "hk", *_rel_state(mids={200: 8.91}), [])
+    assert _c2(actions) == [(core.ACT_TAKE, 200, core.SIDE_BUY, 202.0202, 8.92)]
+    # without the validator class list the leg is OFF (fail closed) and class 0 trades on
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0, v7_rel_rate_h=5.0))
+    for i in range(3):
+        actions, _ = c.step(10 ** 9 + i * S60, "hk", *_rel_state(mids={200: 8.91}, classes=False), [])
+        assert _c2(actions) == [] and len([a for a in actions if a[1] < 128]) == 128
+    assert c.c["rel_c2_off"] == 3 and not c.runs["hk"].step_st
+    # a new simulation clears the stepping state: targets restart from the inventory found
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0, v7_rel_rate_h=5.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    c.step(10 ** 9 + S60, "hk", *_rel_state(mids={200: 8.91}), [])
+    assert c.runs["hk"].step_st[200][2] == 0.45
+    c.step(2 * 10 ** 9, "hk", *_rel_state(mids={200: 8.91}, simulation_id="sim_b"), [])
+    assert c.runs["hk"].step_st[200][2] == 0.0 and c.c["rel_seed"] == 128
+
+
+def test_v74_rel_leaves_class0_and_class1_decisions_unchanged():
+    a = core.TakerCore(UID, P(**MKT, v7_k=0.005))
+    b = core.TakerCore(UID, P(**MKT, v7_k=0.005, v7_rel_classes=2.0, v7_rel_rate_h=5.0))
+    seen = 0
+    for i, mids in enumerate(({}, {200: 8.91}, {200: 8.91, 230: 9.12}, {}, {201: 9.05})):
+        st = _rel_state(mids=mids, bid=8.97 if i % 2 else 8.99, ask=8.99 if i % 2 else 9.01,
+                        f_c1=8.98 if i % 2 else 9.0)
+        xa, pa = a.step(10 ** 9 + i * S60, "hk", *st, [], collect=True)
+        xb, pb = b.step(10 ** 9 + i * S60, "hk", *st, [], collect=True)
+        assert [x for x in xb if x[1] < 192] == xa and pa == pb and a.mk_stats == b.mk_stats
+        assert all(x[0] == core.ACT_TAKE for x in _c2(xb)) and len({x[1] for x in _c2(xb)}) == len(_c2(xb))
+        seen += len(_c2(xb))
+    assert seen >= 3 and a.rel_stats is None and b.rel_stats["books"] == 64
+
+
+def test_v74_mk_dyn_target_steps_against_the_own_move():
+    c = core.TakerCore(UID, P(v7_maker_classes=1.0, v7_mk_target=2.0))
+    assert _q150(c, 10 ** 9, collect=True) == set()                        # seed: flat, target 0, in band
+    rs = c.runs["hk"]
+    assert c.c["mk_ref_seed"] == 64 and sorted(rs.step_st) == list(range(128, 192)) and not rs.mk_ref
+    assert c.mk_stats["target"] is True and c.mk_stats["dyn"] is True and c.mk_stats["refs"] == 64
+    w = 25000.0 + C1_BI * 8.98
+    for i in range(1, 12):                                                 # the mid sits 22 bp below its start
+        got = _q150(c, 10 ** 9 + i * S60, bid=8.97, ask=8.99, f_c1=8.98)
+        assert abs(rs.step_st[150][2] - i * DYN_STEP) < 1e-12
+        assert got == ({0} if i * DYN_STEP * w >= 1800.0 else set()), i    # ONE bid once a clip away, never an ask
+    assert 10 * DYN_STEP * w < 1800.0 <= 11 * DYN_STEP * w and c.c["mk_quote_bid"] == 64
+    assert "mk_quote_ask" not in c.c
+    avg = 1e4 * math.log(8.98 / 9.0) * (1.0 - 0.5 ** (11 * 60.0 / 1058.4))
+    assert abs(rs.step_st[150][1] - avg) < 1e-9
+    # bought up to the target: no quote; a clip above it: the ask
+    tgt_units = 11 * DYN_STEP * w / 8.98
+    assert _q150(c, 10 ** 9 + 11 * S60 + 1, bid=8.97, ask=8.99, f_c1=8.98, inv_c1=tgt_units) == set()
+    assert _q150(c, 10 ** 9 + 11 * S60 + 2, bid=8.97, ask=8.99, f_c1=8.98, inv_c1=tgt_units + 201.0) == {1}
+    # the mirror: the mid above its average -> the target steps down -> ONE ask
+    c = core.TakerCore(UID, P(v7_maker_classes=1.0, v7_mk_target=2.0))
+    _q150(c, 10 ** 9)
+    for i in range(1, 12):
+        got = _q150(c, 10 ** 9 + i * S60, bid=9.01, ask=9.03, f_c1=9.02)
+    assert got == {1} and abs(c.runs["hk"].step_st[150][2] + 11 * DYN_STEP) < 1e-12
+    # class 1 has no class mean: a move of every class-1 book together is still traded (own price)
+    assert c.c["mk_quote_ask"] == 64
+
+
+def test_v74_mk_dyn_seed_limit_guard_and_pull():
+    D = dict(v7_maker_classes=1.0, v7_mk_target=2.0)
+    c = core.TakerCore(UID, P(**D))
+    assert _q150(c, 10 ** 9, inv_c1=450.0) == set()                        # 4,050 notional long: adopted as target
+    assert abs(c.runs["hk"].step_st[150][2] - 450.0 * C1_MID / 50000.0) < 1e-12
+    c = core.TakerCore(UID, P(**D))
+    assert _q150(c, 10 ** 9, inv_c1=3000.0) == {1}                         # 0.54 W > 0.45 W: only the reducing side
+    assert c.runs["hk"].step_st[150][2] == 0.45
+    # a fast rate reaches the limit in one step and stays there
+    c = core.TakerCore(UID, P(**D, v7_mk_dyn_rate_h=5.0))
+    _q150(c, 10 ** 9)
+    assert _q150(c, 10 ** 9 + S60, collect=True, bid=8.97, ask=8.99, f_c1=8.98) == {0}
+    w = 25000.0 + C1_BI * 8.98
+    assert c.runs["hk"].step_st[150][2] == 0.45 and abs(c.mk_stats["tgt_abs_notional_max"] - 0.45 * w) < 1e-6
+    assert c.mk_stats["split"]["out_bid"] == 64                            # the 5.1 split reads the stepping target too
+    # the guard still withholds a bid priced more than 10 bp above f, the pull still clears the book
+    assert _q150(c, 10 ** 9 + 2 * S60, bid=8.97, ask=8.99, f_c1=8.952) == set() and c.c["mk_guard_bid"] == 64
+    pull_ts = 29 * 10 ** 9 + 4 * S60                                        # phase 29 of 30: the state before a step
+    assert core.step_phase(pull_ts, STEP_CFG) == (30, 29)
+    assert _q150(c, pull_ts, bid=8.97, ask=8.99, f_c1=8.98) == set() and c.c["mk_pull_states"] == 1
+    # v7_mk_target = 1 is still the v7.3 level target: the reference dict is used, the stepping state is not
+    c = core.TakerCore(UID, P(**MKT))
+    _q150(c, 10 ** 9)
+    assert _q150(c, 2 * 10 ** 9, collect=True, bid=8.97, ask=8.99, f_c1=8.98) == {0}
+    assert len(c.runs["hk"].mk_ref) == 64 and not c.runs["hk"].step_st and c.mk_stats["dyn"] is False
+
+
+def test_v74_all_legs_on_each_class_gets_its_own_kind_of_order():
+    c = core.TakerCore(UID, P(**V74, v7_rel_rate_h=5.0, v7_mk_dyn_rate_h=5.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    st = _rel_state(mids={200: 8.91, 201: 9.09}, bid=8.97, ask=8.99, f_c1=8.98)
+    actions, pairs = c.step(10 ** 9 + S60, "hk", *st, [], collect=True)
+    c0 = [a for a in actions if a[1] < 128]
+    c1 = [a for a in actions if 128 <= a[1] < 192]
+    c2 = _c2(actions)
+    assert len(c0) == 128 and all(a[0] == core.ACT_TAKE for a in c0)
+    assert len(c1) == 64 and all(a[0] == core.ACT_QUOTE and a[2] == core.SIDE_BUY and a[4] == 8.97 for a in c1)
+    assert sorted(a[1] for a in c2) == [200, 201] and all(a[0] == core.ACT_TAKE for a in c2)
+    assert len({a[1] for a in actions}) == len(actions)                    # one instruction per book in this state
+    assert len(pairs) == 128 and c.c0_stats["books"] == 128 and c.rel_stats["books"] == 64
+    assert c.mk_stats["dyn"] is True and c.mk_stats["books"] == 64
+    rs = c.runs["hk"]
+    assert len(rs.c0_ref) == 128 and sorted(rs.step_st) == list(range(128, 256)) and not rs.mk_ref
+
+
+def test_v74_agent_sends_ioc_takes_on_class2_and_logs_the_new_pictures(tmp_path):
+    real = _real_taos()
+    mod = _load_agent_class(stubbed=not real)
+    agent = _agent(mod, tmp_path, **V74, v7_rel_rate_h=5.0)
+    agent.handle(_st(*_rel_state()))
+    resp = agent.handle(_st(*_rel_state(mids={200: 8.91}), ts=10 ** 9 + S60))
+    if real:
+        from taos.im.protocol.models import TimeInForce
+        t2 = [i for i in resp.instructions if i.type == "PLACE_ORDER_LIMIT" and i.bookId >= 192]
+        assert len(t2) == 1 and t2[0].bookId == 200 and t2[0].postOnly is False and t2[0].price == 8.92
+        assert t2[0].timeInForce == TimeInForce.IOC and t2[0].leverage == 0.0 and t2[0].quantity == 202.0202
+    else:
+        t2 = [kw for kind, kw in resp.instructions if kind == "limit" and kw["book_id"] >= 192]
+        assert len(t2) == 1 and t2[0]["book_id"] == 200 and t2[0]["postOnly"] is False and t2[0]["price"] == 8.92
+        assert int(t2[0]["timeInForce"]) == 2 and int(t2[0]["direction"]) == 0 and t2[0]["quantity"] == 202.0202
+        assert t2[0]["leverage"] == 0.0 and int(t2[0]["settlement_option"]) == -2 and "expiryPeriod" not in t2[0]
+    assert agent._writer.flush()
+    lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
+    hp = lines[0]["params"]
+    assert lines[0]["version"] == "v7.4" and lines[0]["core"] == "taker_v7_core_6"
+    assert hp["rel_classes"] == [2] and hp["c0_contra"] is True and hp["mk_target"] is True and hp["mk_dyn"] is True
+    assert hp["rel_hl_s"] == 2116.8 and hp["c0_ref_s"] == 10800.0 and hp["mk_dyn_hl_s"] == 1058.4
+    lay = [x for x in lines if x["kind"] == "layout"][0]
+    assert lay["rel_classes"] == [2] and lay["maker_classes"] == [1] and lay["c2_ok"] is True
+    summ = [x for x in lines if x["kind"] == "summary"][0]
+    assert summ["errors"] == 0 and summ["rel"]["books"] == 64 and summ["rel"]["at_limit"] == 1
+    assert summ["rel"]["net_tgt_w"] == 0.45 and summ["counts"]["rel_send_buy"] == 1
+    assert summ["counts"]["rel_seed"] == 64 and summ["counts"]["c0_ref_seed"] == 128
+    assert summ["c0_contra"]["books"] == 128 and summ["c0_contra"]["refs"] == 128
+    assert summ["maker"]["dyn"] is True and "rel_c2_ledger_p50" in summ["pace"]
+    assert summ["fills"]["taker"] == 0
+
+
+def test_v74_handler_timing_with_every_leg():
+    fx, books, accounts = _recorded_state()
+    config = C1CFG()
+    config.update(STEP_CFG)
+    core_ = core.TakerCore(UID, P(**V74))
+    times = []
+    ts = fx["timestamp"]
+    for i in range(300):
+        t0 = time.perf_counter()
+        core_.step(ts + i * 10 ** 9, "hk", config, books, accounts, [], collect=(i % 60 == 59))
+        times.append((time.perf_counter() - t0) * 1000.0)
+    p50, p95 = core.pctl(times, 0.5), core.pctl(times, 0.95)
+    print(f"TIMING core.step 256 books (v7.4: 128 taker with the term + 64 maker stepping + 64 stepping taker): "
+          f"p50 {p50:.3f} ms p95 {p95:.3f} ms")
+    rs = core_.runs["hk"]
+    assert p95 < 50.0 and len(rs.c0_ref) == 128 and len(rs.step_st) == 128 and not rs.mk_ref
+
+
+# ---- v7.4 review fixes (independent review 11-13): the seed waits, f is not needed, finite guards, untested paths ----
+
+def test_v74_rel_seed_waits_until_the_inventory_can_be_read():
+    # the account of book 200 is absent on the first state: its price baseline is set, its target is NOT seeded
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    config, books, accounts = _rel_state(inv={200: 2000.0})
+    del accounts[UID][200]
+    actions, _ = c.step(10 ** 9, "hk", config, books, accounts, [], collect=True)
+    rs = c.runs["hk"]
+    assert _c2(actions) == [] and c.c["rel_seed_wait"] == 1 and c.c["rel_seed"] == 64
+    assert rs.step_st[200][:3] == [math.log(9.0), None, 0.0] and c.rel_stats["stepped"] == 63
+    # ... then the inventory found (2,000 units = 0.36 W) is adopted as the target: nothing is sold
+    actions, _ = c.step(10 ** 9 + S60, "hk", *_rel_state(inv={200: 2000.0}), [])
+    assert _c2(actions) == [] and abs(rs.step_st[200][2] - 0.36) < 1e-12 and rs.step_st[200][1] == 0.0
+    assert c.c["rel_seed_wait"] == 1
+    # no initial base, or no wealth figure at all: the same wait
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    config, books, accounts = _rel_state(inv={200: 2000.0})
+    accounts[UID][200]["bb"]["i"] = None
+    actions, _ = c.step(10 ** 9, "hk", config, books, accounts, [])
+    assert _c2(actions) == [] and c.c["rel_seed_wait"] == 1 and c.runs["hk"].step_st[200][1] is None
+    config, books, accounts = _rel_state(inv={200: 2000.0})
+    del config["miner_wealth"]
+    accounts[UID][200]["qb"]["i"] = None
+    actions, _ = c.step(10 ** 9 + S60, "hk", config, books, accounts, [])
+    assert _c2(actions) == [] and c.c["rel_seed_wait"] == 2 and c.runs["hk"].step_st[200][1] is None
+    actions, _ = c.step(10 ** 9 + 2 * S60, "hk", *_rel_state(inv={200: 2000.0}), [])
+    assert _c2(actions) == [] and abs(c.runs["hk"].step_st[200][2] - 0.36) < 1e-12
+    # a SEEDED book whose account is absent keeps stepping its target and sends nothing
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0, v7_rel_rate_h=5.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    config, books, accounts = _rel_state(mids={200: 8.91})
+    del accounts[UID][200]
+    actions, _ = c.step(10 ** 9 + S60, "hk", config, books, accounts, [])
+    assert 200 not in {a[1] for a in actions} and c.runs["hk"].step_st[200][2] == 0.45
+    assert c.c["rel_no_book_account"] == 1 and "rel_seed_wait" not in c.c
+
+
+def test_v74_rel_trades_without_a_fundamental():
+    p = P()
+    rule = (0.0, 0.45, 1800.0)
+    args = (BI, BI, QI, BI, QI, 0.0003, p, GRID, None)
+    want = core.decide(299.99, 300.01, 310.0, *args, rule=rule, tfrac=0.04)
+    assert want[0] == "send"
+    for f in (None, 0.0, -1.0, float("nan"), "x"):
+        assert core.decide(299.99, 300.01, f, *args, rule=rule, tfrac=0.04) == want       # f is not read
+        assert core.decide(299.99, 300.01, f, *args)[0] == "no_f"                         # the gap rule needs it
+        assert core.decide(299.99, 300.01, f, *args, add_frac=0.05)[0] == "no_f"
+    # the leg: class-2 books without a fundamental are stepped and taken like the others
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0, v7_rel_rate_h=5.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    config, books, accounts = _rel_state(mids={200: 8.91, 201: 8.91})
+    books[200]["f"] = None
+    books[201]["f"] = 0.0
+    actions, _ = c.step(10 ** 9 + S60, "hk", config, books, accounts, [])
+    got = {a[1]: a for a in _c2(actions)}
+    assert got[200] == (core.ACT_TAKE, 200, core.SIDE_BUY, 202.0202, 8.92)
+    assert got[201] == (core.ACT_TAKE, 201, core.SIDE_BUY, 202.0202, 8.92) and "rel_no_f" not in c.c
+
+
+def test_v74_rel_missing_book_keeps_its_last_move_in_the_class_mean():
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    rs = c.runs["hk"]
+    c.step(10 ** 9 + S60, "hk", *_rel_state(mids={210: 8.10}), [])         # book 210 falls 1,054 bp: mean -16.5 bp
+    x = -1e4 * math.log(8.10 / 9.0) / 64.0                                 # the other 63 books against that mean
+    q = 0.5 ** (60.0 / 2116.8)
+    assert abs(rs.step_st[200][1] - x * (1.0 - q)) < 1e-9 and abs(rs.step_st[200][2] + REL_STEP) < 1e-12
+    actions, _ = c.step(10 ** 9 + 2 * S60, "hk", *_rel_state(mids={210: None}), [])      # 210: no two-sided touch
+    assert rs.step_st[210][4] == math.log(8.10) and c.c["rel_bad_book"] == 1 and _c2(actions) == []
+    # its last move stays in the mean: the others are still 16.5 bp above it and step again (dropping the book
+    # would put them back on the mean: no second step, and the average falling back)
+    assert abs(rs.step_st[200][1] - x * (1.0 - q * q)) < 1e-9 and abs(rs.step_st[200][2] + 2 * REL_STEP) < 1e-12
+
+
+def test_v74_stepping_state_is_cleared_when_the_book_count_changes():
+    c = core.TakerCore(UID, P(**V74, v7_rel_rate_h=5.0, v7_mk_dyn_rate_h=5.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    c.step(10 ** 9 + S60, "hk", *_rel_state(mids={200: 8.91}, bid=8.97, ask=8.99, f_c1=8.98), [])
+    rs = c.runs["hk"]
+    assert rs.step_st[200][2] == 0.45 and rs.step_st[150][2] == 0.45 and len(rs.step_st) == 128
+    c.step(10 ** 9 + 2 * S60, "hk", *_c0_state(300.0, n=128), [])          # 128 books: the old ids mean other books
+    assert not rs.step_st and len(rs.c0_ref) == 64 and c.c["pace_reset_layout"] == 1
+    # back on 256 books every stepping book seeds again from the inventory found
+    n0 = c.c["rel_seed"]
+    c.step(10 ** 9 + 3 * S60, "hk", *_rel_state(mids={200: 8.91}), [])
+    assert c.c["rel_seed"] == n0 + 64 and rs.step_st[200][2] == 0.0 and rs.step_st[150][2] == 0.0
+
+
+def test_v74_rel_respects_the_pace_guard_and_the_free_quote():
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0, v7_rel_rate_h=5.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    config, books, accounts = _rel_state(mids={200: 8.91, 201: 8.91, 202: 8.91, 203: 8.91})
+    accounts[UID][200]["v"] = 499_000.0                                    # the validator's rolling volume: capped
+    accounts[UID][201]["qb"]["f"] = 900.0                                  # little free quote: the buy is clamped
+    accounts[UID][202]["qb"]["f"] = 0.0
+    actions, _ = c.step(10 ** 9 + S60, "hk", config, books, accounts, [])
+    got = {a[1]: a for a in _c2(actions)}
+    assert 200 not in got and c.c["rel_paced_ledger"] == 1
+    afford = core.floor_to(900.0 / (8.92 * (1.0 + 0.0003 + c.p["fee_margin"])), 4)
+    assert got[201] == (core.ACT_TAKE, 201, core.SIDE_BUY, afford, 8.92) and 0.0 < afford < 202.0202
+    assert 202 not in got and c.c["rel_no_quote"] == 1
+    assert got[203] == (core.ACT_TAKE, 203, core.SIDE_BUY, 202.0202, 8.92)
+    assert all(a[0] == core.ACT_TAKE for a in got.values())
+
+
+def test_v74_rel_quiet_time_inside_the_threshold_is_not_stepped_later():
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    c.step(10 ** 9, "hk", *_rel_state(), [])
+    rs = c.runs["hk"]
+    c.step(10 ** 9 + S60, "hk", *_rel_state(), [])                         # 60 sim-s on the class mean: no step
+    assert rs.step_st[200][2] == 0.0 and rs.step_st[200][3] == rs.clock
+    c.step(10 ** 9 + S60 + 10 * 10 ** 9, "hk", *_rel_state(mids={200: 8.91}), [])
+    assert abs(rs.step_st[200][2] - 0.0209 * 10.0 / 529.2) < 1e-12         # 10 sim-s of the rate, not 60
+
+
+def test_v74_mk_dyn_target_without_wealth_or_inventory_waits():
+    c = core.TakerCore(UID, P(v7_maker_classes=1.0, v7_mk_target=2.0))
+    config, books, accounts = _mk_state()
+    del config["miner_wealth"]
+    accounts[UID][150]["qb"]["i"] = None
+    actions, _ = c.step(10 ** 9, "hk", config, books, accounts, [])
+    rs = c.runs["hk"]
+    assert 150 not in rs.step_st and 151 in rs.step_st and c.c["mk_no_wealth"] == 1
+    assert not [a for a in actions if a[1] == 150]                         # target 0, flat: nothing to do
+    # no initial base: the inventory cannot be read, so the seed waits and the book is not quoted
+    config, books, accounts = _mk_state(inv_c1=450.0)
+    accounts[UID][150]["bb"]["i"] = None
+    actions, _ = c.step(10 ** 9 + S60, "hk", config, books, accounts, [])
+    assert 150 not in rs.step_st and c.c["mk_seed_wait"] == 1 and c.c["mk_no_initial"] == 1
+    assert not [a for a in actions if a[0] == core.ACT_QUOTE and a[1] == 150]
+    # readable again: the 450 units found (4,050 notional) are adopted as the target, nothing is quoted
+    assert _q150(c, 10 ** 9 + 2 * S60, inv_c1=450.0) == set()
+    assert abs(rs.step_st[150][2] - 450.0 * C1_MID / 50000.0) < 1e-12 and c.c["mk_seed_wait"] == 1
+
+
+def test_v74_huge_numbers_never_leave_a_broken_stepping_state():
+    c = core.TakerCore(UID, P(v7_rel_classes=2.0))
+    config, books, accounts = _rel_state()
+    accounts[UID][200]["qb"]["i"] = 1e308                                  # W of book 200 overflows on its seed state
+    accounts[UID][200]["bb"]["i"] = 1e308
+    books[201] = book(1e308, 1.5e308, 9.6)                                 # a mid that overflows
+    actions, _ = c.step(10 ** 9, "hk", config, books, accounts, [])
+    rs = c.runs["hk"]
+    assert _c2(actions) == [] and 201 not in rs.step_st and rs.step_st[200][1] is None
+    assert c.c["rel_seed_wait"] == 1 and c.c["rel_bad_book"] == 1
+    actions, _ = c.step(10 ** 9 + S60, "hk", *_rel_state(), [])
+    assert _c2(actions) == [] and len(rs.step_st) == 64
+    assert all(math.isfinite(x) for e in rs.step_st.values() for x in e)
+    # the helpers: an overflowing W or inventory is "cannot be read", never a NaN target
+    big = (2777.0, 2777.0, 1e308, 25000.0, 1e308, 0.0003, 0.0)
+    assert core.TakerCore._inv_frac(big, 9.0, 50000.0) is None
+    assert core.TakerCore._inv_frac((1e307, 0.0, 1e307, 0.0, 1.7e308, 0.0003, 0.0), 9.0, None) is None   # W = inf
+    assert core.TakerCore._inv_frac((1e308, 0.0, -1e308, 0.0, None, 0.0003, 0.0), 9.0, 50000.0) is None
+    assert core.TakerCore._inv_frac((2977.0, 0.0, 2777.0, 0.0, None, 0.0003, 0.0), 9.0, float("inf")) is None
+    assert abs(core.TakerCore._inv_frac((2977.0, 0.0, 2777.0, 0.0, None, 0.0003, 0.0), 9.0, 50000.0) - 0.036) < 1e-12
+    m = core.TakerCore(UID, P(v7_maker_classes=1.0, v7_mk_target=2.0))
+    st = {}
+    assert m._mk_dyn_target(st, 150, 9.0, big, 10 ** 9, 50000.0) == 0.0 and not st and m.c["mk_no_wealth"] == 1
+    assert m._mk_dyn_target(st, 150, 9.0, (1e308, 0.0, -1e308, 0.0, None, 0.0003, 0.0), 10 ** 9, 50000.0) == 0.0
+    assert not st and m.c["mk_seed_wait"] == 1
+    assert m._mk_dyn_target(st, 150, float("inf"), (2977.0, 0.0, 2777.0, 0.0, None, 0.0003, 0.0), 10 ** 9,
+                            50000.0) == 0.0 and not st
+
+
+def test_v74_switches_off_create_no_v74_state():
+    c = core.TakerCore(UID, P(**MKT, v7_k=0.005))
+    for i in range(3):
+        actions, _ = c.step(10 ** 9 + i * S60, "hk", *_rel_state(mids={200: 8.91}), [], collect=True)
+        assert _c2(actions) == []
+    rs = c.runs["hk"]
+    assert not rs.step_st and not rs.c0_ref and c.rel_stats is None and c.c0_stats is None
+    assert not [k for k in c.c if k.startswith("rel_") or k in ("c0_ref_seed", "mk_seed_wait")]
+    assert len(rs.mk_ref) == 64 and c.mk_stats["dyn"] is False
