@@ -134,6 +134,63 @@ sim-s (HOUR_SIM_S); the rules below run on the pace clock in sim-s.
             run and 2.5 x on the old run).  x = 1e4 x (ln mid - ln mid at the book's first state), no class mean;
             grid, guard, pull, follow, cap and the seed (target = the inventory found; it waits while the
             inventory cannot be read) as v7.3.  v7_mk_target = 1 is the v7.3 level target, 0 the v7.2 flat band.
+
+v7.5 (Round 28 C2 / C1; USER 11-14: "build 7.5"): the class-2 and class-1 picks of Round 28, each behind a switch (the
+code defaults are v7.4; the launcher turns them on).  Both picks use the BAND rule of Round 28 B: the 0.6.7 score counts
+only the time variation of the inventory inside the 10,800-s window (a constant position scores 0, Round 28 B1), so a
+target that sits at its bound and flips earns more than a slow ramp.  Every replay value is MODEL on one market state
+(SP/round28/c2/REPORT.md, c1/REPORT.md).  Per book:
+  band   : avg = exponential average of x with half-life hl; size = exponential average of |avg - x| with the same
+           half-life (updated after avg).  When |avg - x| > max(mult x size, 1 bp) the band side goes to +L (the book
+           below its average) or -L (above); otherwise the side is held (at-the-bound and the 1-bp floor STRUCTURAL,
+           mult 2.0 MODEL: Round 28 B / C).
+  warm   : for the first hl sim-s after the book's first state the target stays at the seed (the inventory found,
+           clipped to +-L: a new uid holds 0 = flat, as the replays do; a restart holds what it inherited) while avg,
+           size and side already run (STRUCTURAL warm-up).
+  bounds : never a loan: the target is kept at or above -(base share) of the book's initial endowment at this mid,
+           base share = base_init x mid / W with W = quote_init + base_init x mid (the replays' no-loan bound); the
+           class-1 target also at or below the quote share quote_init / W.
+  class 2 : v7_rel_form = "band" (Round 28 C2 pick B2a-w): x as v7.4 (the class-relative move), hl v7_rel_hl_s
+            (COPIED 2,116.8), mult v7_rel_band_mult (MODEL 2.0; 1.0 = B2c-w), L v7_rel_l (0.45), DE-MEANED across the
+            class's seeded books: target = clip(side - mean side, -min(L, base share), +L) (STRUCTURAL: a class-wide
+            constant position is stripped book by book).  Execution as v7.4 (IOC clip, clamps, pace, seed).
+            v7_rel_form = "t9" (Round 28 A2 two-term taker, COPIED fit): the v7.4 stepper (launcher: hl 529.2 sim-s,
+            rate 0.0321 W per "hour", clip 930), target = clip(stepper - v7_rel_mom x (avg - x), -min(L, base share),
+            +L), v7_rel_mom 0.0037 W per bp.  v7_rel_form = "step" (the code default) is the v7.4 rule.
+  class 1 : v7_mk_target = 3 (Round 28 C1 pick K2): the maker band centred on a band target on the book's OWN move (no
+            class mean, not de-meaned): hl v7_mk_dyn_hl_s (COPIED 2,116.8 from A1), mult v7_mk_band_mult (MODEL 2.0),
+            L v7_mk_l (COPIED 0.70), bounded on both sides by the endowment as above.  Quote, guard, pull, follow and
+            cap as v7.4; the launcher passes clip 1,500 and guard 0 bp (COPIED, A1).  2 = the v7.4 stepping target.
+
+v7.6 (Round 29 C, MAKING; USER 11-14: "maker order allow on class-0", "follow your recommendation", "after making,
+then lunch"): two-sided makers on part of the books, each behind a switch (the code defaults are v7.5; the launcher
+turns them on).  The 0.6.7 making share pays 2 x min(captured buy, captured sell) per book (debeta.py:735-754): a
+one-sided quote earns no making, a two-sided one does.  One inventory per book: a book is taken, made or stepped by
+ONE leg, so the makers take books from the other legs by parity (STRUCTURAL split, Round 29 C).  Values MODEL, one
+market state (SP/round29/c/REPORT.md, a/REPORT.md, b/REPORT.md).
+  class 0 : v7_c0_maker (0 | 1) = a FLAT two-sided maker on the ODD class-0 books; the class-0 taker (with its term)
+            keeps the even books (Round 29 C OBSERVED: a maker on a book the taker keeps loaded loses its making;
+            the class-0 making credit sits with flat pure makers).  Per book and state (COPIED from uid 23 5G3oVFjL
+            and uid 209 5HQqn3W9): ONE post-only bid and ONE post-only ask of v7_c0_mk_notional (1,000 = uid 23's
+            fill size p50), one tick inside the touch on each side when the spread is at least 3 ticks (never
+            locking our own quotes, STRUCTURAL), else at the touch; the adding side is withdrawn while the position
+            is beyond v7_c0_mk_band_w x W (0.10 W); never a take, no pull before fundamental steps, no fundamental
+            guard (as copied); an order is replaced only when it is off its wanted price (the v7.2 follow).
+  class 1 : v7_mk_depth (0 | 1) = a DEPTH-CONTROLLED two-sided maker on the ODD class-1 books; the class-1 target leg
+            (v7_mk_target, K2 at launch) keeps the even books (Round 29 B / C: the class-1 skill bar needs >= 10 kept
+            books).  Per book and state: ONE post-only bid at best bid x (1 - d) rounded down to the tick and ONE
+            post-only ask at best ask x (1 + d) rounded up, each v7_mk_notional; the bid is dropped while the
+            position is >= +1 clip, the ask while it is <= -1 clip (flat); guard, pull and life as the maker leg.
+            d per book starts at v7_mkd_start_bp (2 bp) and every v7_mkd_every_s (600 sim-s) moves +0.25 bp when
+            our maker notional filled on the book reached 0.9 of the pace line (cap / 86,400 per sim-s), -0.25 bp
+            below 0.6, within 0.5-6 bp (form STRUCTURAL, thresholds MODEL: Round 29 B, fills collapse past about
+            4 bp in the replay).
+  Both makers spend the same per-book pace ledger as every other leg (one cap per book).
+  prices : both makers price off the best bid / ask of the OTHER orders in the book (others_touch: a level whose
+           whole quantity is our own resting order is skipped), because the visible book includes our own quotes and
+           quoting off them walked our quote one tick a state (review 11-14).  A side where only our order rests keeps
+           that order; a price that rounds to 0 is never quoted; our bid is never at or above our ask.  The depth
+           maker quotes nothing on a book without a fundamental (as K2).
 """
 from __future__ import annotations
 
@@ -141,8 +198,8 @@ import math
 from collections import deque
 from typing import Any
 
-V7_VERSION = "v7.4"
-CORE_VERSION = "taker_v7_core_6"   # v7.4 = v7.3 (core_5.1) + class-2 stepping taker, class-0 contrarian term, class-1 stepping target
+V7_VERSION = "v7.6"
+CORE_VERSION = "taker_v7_core_8"   # v7.6 = v7.5 (core_7) + class-0 flat maker, class-1 depth maker
 
 # ---- COPIED constants (Round 21 P REPORT.md section 2; R6 arm_p.py) ----------------------------------------------
 K_DEFAULT = 0.0035        # target slope per bp of (f - mid) / mid
@@ -179,6 +236,23 @@ C0_LC_DEFAULT = MK_L_DEFAULT     # COPIED: the contrarian term's own limit as a 
 C0_REF_S_DEFAULT = 10_800.0      # STRUCTURAL: the reference's time constant = the 10,800 sim-s scoring lookback
 MK_DYN_HL_S_DEFAULT = 2.0 * HOUR_SIM_S   # COPIED: half-life of the class-1 own-price average, 2 "hours" = 1,058.4 sim-s
 MK_DYN_RATE_H_DEFAULT = 0.03     # COPIED: W per "hour" the class-1 stepping target moves (5CFFZ7SE, Round 25 S)
+
+# ---- v7.5 constants (Round 28 C1 / C2; labels in the module docstring) ------------------------------------------------
+BAND_MULT_DEFAULT = 2.0          # MODEL: the band opens at 2 x the average size of |avg - x| (Round 28 B / C)
+BAND_FLOOR_BP = 1.0              # STRUCTURAL: the band never opens inside 1 bp
+REL_MOM_DEFAULT = 0.0037         # COPIED: the two-term (T9) momentum coefficient, W per bp of (avg - x) (Round 28 A2)
+REL_FORMS = ("step", "band", "t9")   # the class-2 forms: v7.4 stepper, band (B2a-w), two-term (T9)
+
+# ---- v7.6 constants (Round 29 C; labels in the module docstring) ------------------------------------------------------
+C0_MK_NOTIONAL_DEFAULT = 1000.0  # COPIED: uid 23 (5G3oVFjL) class-0 fill size p50, quote notional per order
+C0_MK_BAND_W_DEFAULT = 0.10      # COPIED: the flat class-0 makers' position bound (uid 23 |posW| median 0.078)
+MKD_START_BP_DEFAULT = 2.0       # MODEL: the depth maker's first distance from the touch (Round 29 B)
+MKD_EVERY_S_DEFAULT = 600.0      # MODEL: the depth controller's period in sim-s
+MKD_STEP_BP = 0.25               # MODEL: one controller step
+MKD_MIN_BP = 0.5                 # MODEL: controller bounds (fills collapse past about 4 bp in the replay)
+MKD_MAX_BP = 6.0
+MKD_HI = 0.9                     # MODEL: filled notional / pace line at or above which the distance moves out
+MKD_LO = 0.6                     # MODEL: ... below which it moves in
 
 # ---- STRUCTURAL constants (validator / simulator) -----------------------------------------------------------------
 CAP_DEFAULT = 500_000.0               # capital_turnover_cap 10 x miner_wealth 50,000 (config :813-817, query.py:505)
@@ -245,7 +319,10 @@ PARAM_KEYS = ("v7_k", "v7_l", "v7_clip", "v7_big", "v7_classes", "v7_pace", "v7_
               "v7_mk_expiry_s", "v7_mk_target", "v7_mk_k", "v7_mk_l", "v7_mk_ref_s",
               "v7_mk_dyn_hl_s", "v7_mk_dyn_rate_h", "v7_rel_classes", "v7_rel_hl_s", "v7_rel_rate_h", "v7_rel_l",
               "v7_rel_clip_notional", "v7_step_thr_bp", "v7_step_max_dt_s",
-              "v7_c0_contra", "v7_c0_kc", "v7_c0_lc", "v7_c0_ref_s")
+              "v7_c0_contra", "v7_c0_kc", "v7_c0_lc", "v7_c0_ref_s",
+              "v7_rel_form", "v7_rel_band_mult", "v7_rel_mom", "v7_mk_band_mult",
+              "v7_c0_maker", "v7_c0_mk_notional", "v7_c0_mk_band_w", "v7_mk_depth", "v7_mkd_start_bp",
+              "v7_mkd_every_s")
 
 
 def parse_params(config: Any) -> dict:
@@ -326,18 +403,21 @@ def parse_params(config: Any) -> dict:
     if plv not in (0.0, 1.0):
         raise ValueError(f"v7_mk_pull={pull!r} must be 0 or 1")
     p["mk_pull"] = bool(plv)
-    # v7.3 contrarian target of the maker leg: 0 (default, = the v7.2 flat band) or 1; v7.4: 2 = the stepping target
+    # v7.3 contrarian target of the maker leg: 0 (default, = the v7.2 flat band) or 1; v7.4: 2 = the stepping target;
+    # v7.5: 3 = the band target (Round 28 C1 K2)
     tg = raw("v7_mk_target", 0)
     tgv = _num(tg)
-    if tgv not in (0.0, 1.0, 2.0):
-        raise ValueError(f"v7_mk_target={tg!r} must be 0, 1 or 2")
+    if tgv not in (0.0, 1.0, 2.0, 3.0):
+        raise ValueError(f"v7_mk_target={tg!r} must be 0, 1, 2 or 3")
     p["mk_target"] = bool(tgv)
     p["mk_dyn"] = tgv == 2.0                               # v7.4: the band follows the stepping target
+    p["mk_band"] = tgv == 3.0                              # v7.5: the band follows the band target
     p["mk_k"] = num("v7_mk_k", MK_K_DEFAULT, 0.0, 1.0, lo_open=True)
     p["mk_l"] = num("v7_mk_l", MK_L_DEFAULT, 0.0, 1.0, lo_open=True)
     p["mk_ref_s"] = num("v7_mk_ref_s", MK_REF_S_DEFAULT, 1.0, 1e7)
     p["mk_dyn_hl_s"] = num("v7_mk_dyn_hl_s", MK_DYN_HL_S_DEFAULT, 1.0, 1e7)
     p["mk_dyn_rate_h"] = num("v7_mk_dyn_rate_h", MK_DYN_RATE_H_DEFAULT, 0.0, 10.0, lo_open=True)
+    p["mk_band_mult"] = num("v7_mk_band_mult", BAND_MULT_DEFAULT, 0.0, 100.0, lo_open=True)
     # v7.4 class-relative stepping taker: "none" (default, = v7.3) or "2"; ParseKwargs turns "2" into 2.0
     rl = raw("v7_rel_classes", "none")
     rv = _num(rl)
@@ -358,6 +438,14 @@ def parse_params(config: Any) -> dict:
     p["rel_clip_notional"] = num("v7_rel_clip_notional", REL_CLIP_NOTIONAL_DEFAULT, 0.0, 1e6, lo_open=True)
     p["step_thr_bp"] = num("v7_step_thr_bp", STEP_THR_BP_DEFAULT, 0.0, 1e4)
     p["step_max_dt_s"] = num("v7_step_max_dt_s", STEP_MAX_DT_S_DEFAULT, 1.0, 86_400.0)
+    # v7.5 form of the class-2 leg: "step" (default, = v7.4), "band" (Round 28 C2 B2a-w) or "t9" (Round 28 A2)
+    rf = raw("v7_rel_form", "step")
+    rfs = str(rf).strip().lower()
+    if isinstance(rf, bool) or rfs not in REL_FORMS:
+        raise ValueError(f"v7_rel_form={rf!r} must be one of {', '.join(REL_FORMS)}")
+    p["rel_form"] = rfs
+    p["rel_band_mult"] = num("v7_rel_band_mult", BAND_MULT_DEFAULT, 0.0, 100.0, lo_open=True)
+    p["rel_mom"] = num("v7_rel_mom", REL_MOM_DEFAULT, 0.0, 1.0)
     # v7.4 contrarian term inside the class-0 taker target: 0 (default, = v7.3) or 1
     cc = raw("v7_c0_contra", 0)
     ccv = _num(cc)
@@ -367,6 +455,19 @@ def parse_params(config: Any) -> dict:
     p["c0_kc"] = num("v7_c0_kc", C0_KC_DEFAULT, 0.0, 1.0, lo_open=True)
     p["c0_lc"] = num("v7_c0_lc", C0_LC_DEFAULT, 0.0, 1.0, lo_open=True)
     p["c0_ref_s"] = num("v7_c0_ref_s", C0_REF_S_DEFAULT, 1.0, 1e7)
+    # v7.6 makers (Round 29 C): the class-0 flat maker on the odd class-0 books, the class-1 depth maker on the odd
+    # class-1 books; 0 (default) = v7.5
+    for key, name in (("v7_c0_maker", "c0_maker"), ("v7_mk_depth", "mk_depth")):
+        sv = raw(key, 0)
+        if _num(sv) not in (0.0, 1.0):
+            raise ValueError(f"{key}={sv!r} must be 0 or 1")
+        p[name] = _num(sv) == 1.0
+    if p["mk_depth"] and 1 not in p["maker_classes"]:
+        raise ValueError("v7_mk_depth=1 needs the maker leg on class 1 (v7_maker_classes=1)")
+    p["c0_mk_notional"] = num("v7_c0_mk_notional", C0_MK_NOTIONAL_DEFAULT, 0.0, 1e6, lo_open=True)
+    p["c0_mk_band_w"] = num("v7_c0_mk_band_w", C0_MK_BAND_W_DEFAULT, 0.0, 1.0, lo_open=True)
+    p["mkd_start_bp"] = num("v7_mkd_start_bp", MKD_START_BP_DEFAULT, MKD_MIN_BP, MKD_MAX_BP)
+    p["mkd_every_s"] = num("v7_mkd_every_s", MKD_EVERY_S_DEFAULT, 1.0, 86_400.0)
     return p
 
 
@@ -692,7 +793,8 @@ class Pace:
 class RunState:
     """What one validator's stream needs: the pace clock across simulation seams, the pace guard and seen trades."""
 
-    __slots__ = ("clock", "last_ts", "sim_id", "pace", "seen", "seen_q", "states", "mk_ref", "c0_ref", "step_st")
+    __slots__ = ("clock", "last_ts", "sim_id", "pace", "seen", "seen_q", "states", "mk_ref", "c0_ref", "step_st",
+                 "mk_depth", "mk_filled")
 
     def __init__(self, cap: float):
         self.clock = 0
@@ -706,6 +808,9 @@ class RunState:
         self.c0_ref: dict = {}          # v7.4: class-0 book -> [reference price, pace clock of its last update]
         self.step_st: dict = {}         # v7.4: stepping book -> [ln mid at its first state, average of x (bp),
         #                                 target (fraction of W), pace clock of its last step, last ln mid]
+        self.mk_depth: dict = {}        # v7.6: depth-maker book -> [distance bp, pace clock of the last move,
+        #                                 our maker notional filled on the book at that clock]
+        self.mk_filled: dict = {}       # v7.6: book -> our maker notional filled (all of the stream)
 
     def advance(self, ts: Any, sim_id: Any) -> None:
         """The pace clock: + (ts - last ts); one step on a backward jump (a new simulation: the validator's volume
@@ -722,6 +827,7 @@ class RunState:
             self.mk_ref.clear()                             # v7.3: fresh endowments, the references re-seed
             self.c0_ref.clear()                             # v7.4: the same for the class-0 references ...
             self.step_st.clear()                            # ... and the stepping targets
+            self.mk_depth.clear()                           # v7.6: the depth controller starts again
         self.last_ts = t
         self.sim_id = sim_id
         self.states += 1
@@ -781,6 +887,40 @@ def touch(book: Any) -> tuple:
         return bid, ask, f
     except Exception:
         return None, None, None
+
+
+def others_touch(book: Any, orders: list, half_tick: float) -> tuple:
+    """v7.6: (best bid, best ask) of the book WITHOUT our own resting orders (``orders`` = account_orders of the book):
+    a level whose whole quantity is ours is skipped.  None for a side with no other order or an unreadable book.
+    Levels are read as touch() reads them."""
+    try:
+        if not isinstance(book, dict):
+            raw = getattr(book, "_raw", None)
+            if isinstance(raw, dict):
+                book = raw
+        bids = (_get(book, "b") or _get(book, "bids") or []) if book is not None else []
+        asks = (_get(book, "a") or _get(book, "asks") or []) if book is not None else []
+        own = {SIDE_BUY: [], SIDE_SELL: []}
+        for _, s, px, q in orders:
+            if s in own and px is not None and q is not None:
+                own[s].append((px, q))
+
+        def first(levels: Any, side: int) -> float | None:
+            for lv in levels:
+                p_ = _get(lv, "p")
+                p_ = _num(p_ if p_ is not None else _get(lv, "price"))
+                if p_ is None:
+                    continue
+                q_ = _get(lv, "q")
+                q_ = _num(q_ if q_ is not None else _get(lv, "quantity"))
+                mine = sum(oq for opx, oq in own[side] if abs(opx - p_) < half_tick)
+                if q_ is None or q_ > mine * (1.0 + 1e-9) + 1e-12:
+                    return p_
+            return None
+
+        return first(bids, SIDE_BUY), first(asks, SIDE_SELL)
+    except Exception:
+        return None, None
 
 
 def account_view(acc: Any) -> tuple:
@@ -935,6 +1075,7 @@ class TakerCore:
                     self.fills_taker += 1
                 else:
                     self.fills_maker += 1
+                    rs.mk_filled[b] = rs.mk_filled.get(b, 0.0) + notional   # v7.6: the depth controller's ledger
                     if buy:
                         self.mk_buy_notional += notional
                     else:
@@ -976,6 +1117,8 @@ class TakerCore:
                     r.mk_ref.clear()                        # v7.3: the references are keyed by the old ids too
                     r.c0_ref.clear()                        # v7.4
                     r.step_st.clear()
+                    r.mk_depth.clear()                      # v7.6
+                    r.mk_filled.clear()
                 self._count("pace_reset_layout")
             self._book_count = n
         key = layout_key(config, n)
@@ -1016,6 +1159,13 @@ class TakerCore:
                 g_i = lay[f"c{ci}_grid"]
                 for b in sorted(lay[f"c{ci}"]):
                     mk_books[b] = g_i
+        if self.p["c0_maker"] and lay and lay["ok"] and rb is not None:
+            # v7.6: the odd class-0 books are made (class 0's grid is the layout's own); the taker keeps the even ones
+            g0 = {"price_decimals": lay["price_decimals"], "volume_decimals": lay["volume_decimals"],
+                  "min_order": lay["min_order"]}
+            for b in sorted(lay["c0"]):
+                if b % 2 == 1:
+                    mk_books[b] = g0
         # cleanup: one cancel for every book that shows resting orders (all classes), no take there this state
         busy = set()
         try:
@@ -1052,7 +1202,7 @@ class TakerCore:
         c0_ref = rs.c0_ref if p["c0_contra"] else None       # v7.4: the contrarian term's references (None = off)
         tcs = [] if collect and c0_ref is not None else None
         for b in lay["c0"]:
-            if b in busy:
+            if b in busy or b in mk_books:                  # v7.6: a made class-0 book is not taken
                 continue
             v = views.get(b)
             if v is None:
@@ -1204,6 +1354,52 @@ class TakerCore:
             e[3] = clock
         return e[2]
 
+    def _band(self, e: list, x: float, clock: int, hl_s: float, mult: float, lim: float,
+              seed: float | None) -> None:
+        """v7.5: advance one book's band state e = [ln mid at its first state, average of x, held target (the seed),
+        clock of the last update, last ln mid, average size of |average - x|, band side, clock of the first state]
+        with this state's x (bp) (module docstring: v7.5 band / warm).  First state: average = x, size 0, side 0, held
+        target = seed (clipped to +-lim; None = 0).  After that the average, then the size, move with half-life hl_s;
+        when |average - x| > max(mult x size, BAND_FLOOR_BP) the side goes to +lim (x below its average) or -lim."""
+        if e[1] is None:
+            e[1] = x
+            f0 = seed if seed is not None else 0.0
+            e[2] = lim if f0 > lim else (-lim if f0 < -lim else f0)
+            e[3] = clock
+            e[5] = 0.0
+            e[6] = 0.0
+            e[7] = clock
+            return
+        dt = (clock - e[3]) / 1e9
+        if dt > 0.0:
+            a = 1.0 - 0.5 ** (dt / hl_s)
+            e[1] += a * (x - e[1])
+            d = e[1] - x
+            e[5] += a * (abs(d) - e[5])
+            thr = mult * e[5]
+            if thr < BAND_FLOOR_BP:
+                thr = BAND_FLOOR_BP
+            if abs(d) > thr:
+                e[6] = lim if d > 0.0 else -lim
+            e[3] = clock
+
+    @staticmethod
+    def _bounded(t: float, lim: float, v: Any, mid: float, long_cap: bool) -> float:
+        """v7.5: t clipped to +-lim and to the no-loan bounds of the book's initial endowment at this mid (module
+        docstring: v7.5 bounds): at least -(base share), with long_cap also at most the quote share.  Without readable
+        initial balances only +-lim."""
+        lo, hi = -lim, lim
+        bi, qi = (_num(v[2]), _num(v[4])) if v is not None else (None, None)
+        if bi is not None and qi is not None and bi >= 0.0 and qi >= 0.0:
+            w = qi + bi * mid
+            if 0.0 < w < math.inf:
+                bs = bi * mid / w
+                if -bs > lo:
+                    lo = -bs
+                if long_cap and qi / w < hi:
+                    hi = qi / w
+        return lo if t < lo else (hi if t > hi else t)
+
     def _rel(self, rs: RunState, rb: Any, views: dict, busy: set, lay: dict, wealth: Any, actions: list,
              collect: bool) -> None:
         """v7.4 class-relative stepping taker (module docstring: class 2 x / avg / target / order / seed).  Appends
@@ -1213,9 +1409,11 @@ class TakerCore:
         clock = rs.clock
         st = rs.step_st
         hl, rate, lim = p["rel_hl_s"], p["rel_rate_h"], p["rel_l"]
+        form = p["rel_form"]                                # v7.5: "step" (v7.4), "band" or "t9"
         rule = (0.0, lim, p["rel_clip_notional"])
         rpairs = [] if collect else None
         fracs = [] if collect else None
+        nwarm = 0
         for ci in p["rel_classes"]:
             if not lay.get(f"c{ci}_ok"):
                 self._count(f"rel_c{ci}_off")
@@ -1238,7 +1436,8 @@ class TakerCore:
                         mid = 0.5 * (fb + fa)
                         lm = math.log(mid)
                         if e is None:
-                            e = st[b] = [lm, None, 0.0, clock, lm]
+                            e = st[b] = ([lm, None, 0.0, clock, lm] if form != "band"
+                                         else [lm, None, 0.0, clock, lm, 0.0, 0.0, clock])
                             self._count("rel_seed")
                         else:
                             e[4] = lm
@@ -1250,7 +1449,8 @@ class TakerCore:
                 self._count("rel_no_books")
                 continue
             mean = s / n
-            for b in ids:                                   # pass 2: step the target, then the taker's decision
+            todo = []
+            for b in ids:                                   # pass 2: advance each book's target state
                 tch = seen.get(b)
                 if tch is None:
                     self._count("rel_bad_book")
@@ -1264,7 +1464,26 @@ class TakerCore:
                     if seed is None:                        # found, so it waits until that can be read
                         self._count("rel_seed_wait")
                         continue
-                frac = self._stepper(e, 1e4 * (e[4] - e[0] - mean), clock, hl, rate, lim, seed)
+                x = 1e4 * (e[4] - e[0] - mean)
+                if form == "band":
+                    self._band(e, x, clock, hl, p["rel_band_mult"], lim, seed)
+                    frac = 0.0                              # set below, once every side of the class is known
+                else:
+                    frac = self._stepper(e, x, clock, hl, rate, lim, seed)
+                    if form == "t9":                        # v7.5: the two-term target (stepper minus momentum)
+                        frac = self._bounded(frac - p["rel_mom"] * (e[1] - x), lim, v, mid, False)
+                todo.append((b, bid, ask, f, mid, e, v, frac))
+            if form == "band":                              # v7.5: de-mean the band sides across the class
+                sides = [st[b][6] for b in ids if b in st and st[b][1] is not None]
+                ms = sum(sides) / len(sides) if sides else 0.0
+                for i, (b, bid, ask, f, mid, e, v, _) in enumerate(todo):
+                    if clock - e[7] < hl * 1e9:             # warm-up: hold the seed
+                        nwarm += 1
+                        t = e[2]
+                    else:
+                        t = self._bounded(e[6] - ms, lim, v, mid, False)
+                    todo[i] = (b, bid, ask, f, mid, e, v, t)
+            for b, bid, ask, f, mid, e, v, frac in todo:    # pass 3: the taker's decision on that target
                 if fracs is not None:
                     fracs.append(frac)
                 if v is None:
@@ -1295,7 +1514,8 @@ class TakerCore:
                               "dev_abs_notional_max": max(dv) if dv else None,
                               "tgt_abs_notional_p50": pctl(ta, 0.5), "tgt_abs_notional_max": max(ta) if ta else None,
                               "net_tgt_w": sum(fracs), "net_inv_notional": sum(i for i, _ in rpairs),
-                              "at_limit": sum(1 for x in fracs if abs(x) >= lim - 1e-12)}
+                              "at_limit": sum(1 for x in fracs if abs(x) >= lim - 1e-12),
+                              "form": form, "warm": nwarm}
 
     def _maker(self, rs: RunState, rb: Any, views: dict, mk_accs: dict, mk_books: dict, ts: Any, config: Any,
                actions: list, collect: bool) -> None:
@@ -1321,9 +1541,14 @@ class TakerCore:
         gaps = [] if collect else None
         target_on = p["mk_target"]                     # v7.3: the band is centred on the contrarian target
         dyn = p["mk_dyn"]                              # v7.4: ... on the stepping target instead of the level target
+        band_t = p["mk_band"]                          # v7.5: ... on the band target (Round 28 C1 K2)
         tpairs = [] if collect and target_on else None
         tcodes = [] if tpairs is not None else None    # core 5.1 logging only: one MK_CODE_* per pair (mk_split)
         wealth = _num(_get(config, "miner_wealth")) if target_on else None
+        lay = self.layout
+        c0set = lay["c0"] if lay else frozenset()
+        c1set = lay["c1"] if lay and p["mk_depth"] else frozenset()
+        two = {"c0": [0, 0, []], "depth": [0, 0, []]} if collect else None   # v7.6: books, two-sided, |pos| / d
         for b, g in mk_books.items():
             v = views.get(b)
             if v is None:
@@ -1340,12 +1565,17 @@ class TakerCore:
             want: dict = {}
             mid = None
             tgt_n = 0.0
-            if target_on and fb is not None and fa is not None and 0.0 < fb < fa:
+            mode = "c0" if b in c0set else ("depth" if b in c1set and b % 2 == 1 else None)   # v7.6
+            if mode is None and target_on and fb is not None and fa is not None and 0.0 < fb < fa:
                 if dyn:
                     tgt_n = self._mk_dyn_target(rs.step_st, b, 0.5 * (fb + fa), v, clock, wealth)
+                elif band_t:
+                    tgt_n = self._mk_band_target(rs.step_st, b, 0.5 * (fb + fa), v, clock, wealth)
                 else:
                     tgt_n = self._mk_target(rs.mk_ref, b, 0.5 * (fb + fa), v, clock, wealth)
-            if pull:
+            if mode is not None:                           # v7.6: the two-sided makers
+                mid = self._mk_two(rs, b, mode, want, fb, fa, ff, v, pd, clock, pull, two, book, orders)
+            elif pull:
                 pass
             elif ff is None or ff <= 0.0 or fb is None or fa is None or fb <= 0.0 or fa <= 0.0 or fb >= fa:
                 self._count("mk_bad_book")
@@ -1418,7 +1648,7 @@ class TakerCore:
             for s, price in want.items():
                 if s in keep:
                     continue
-                qty = notional / mid
+                qty = (p["c0_mk_notional"] if mode == "c0" else notional) / mid
                 if s == SIDE_BUY:
                     qf = _num(v[3])
                     if qf is None or qf <= 0.0:
@@ -1455,16 +1685,133 @@ class TakerCore:
                              "inv_abs_notional_max": max(invs) if invs else None,
                              "gap_bp_p50": pctl(gaps, 0.5),
                              "gap_abs_bp_p50": pctl([abs(x) for x in gaps], 0.5)}
+            if two is not None and (p["c0_maker"] or p["mk_depth"]):
+                for k_, (nb, n2, xs) in two.items():          # v7.6: the two-sided makers' picture
+                    self.mk_stats[k_ + "_books"] = nb
+                    self.mk_stats[k_ + "_two_sided"] = n2
+                    self.mk_stats[k_ + ("_pos_w_p50" if k_ == "c0" else "_d_bp_p50")] = pctl(xs, 0.5)
+                    self.mk_stats[k_ + ("_pos_w_max" if k_ == "c0" else "_d_bp_max")] = max(xs) if xs else None
             if tpairs is not None:
                 self.mk_stats.update({
-                    "target": True, "dyn": dyn,
-                    "refs": sum(1 for b_ in mk_books if b_ in rs.step_st) if dyn else len(rs.mk_ref),
+                    "target": True, "dyn": dyn, "band": band_t,
+                    "refs": sum(1 for b_ in mk_books if b_ in rs.step_st) if dyn or band_t else len(rs.mk_ref),
                     "tgt_abs_notional_p50": pctl([abs(t) for _, t in tpairs], 0.5),
                     "tgt_abs_notional_max": max((abs(t) for _, t in tpairs), default=None),
                     "dev_abs_notional_p50": pctl([abs(i - t) for i, t in tpairs], 0.5),
                     "dev_abs_notional_max": max((abs(i - t) for i, t in tpairs), default=None),
                     "corr_inv_target": corr(tpairs),
                     "split": mk_split(tpairs, tcodes)})
+                if band_t:
+                    hl_ns = p["mk_dyn_hl_s"] * 1e9
+                    self.mk_stats["warm"] = sum(1 for b_ in mk_books if b_ in rs.step_st and len(rs.step_st[b_]) > 7
+                                                and rs.step_st[b_][1] is not None
+                                                and clock - rs.step_st[b_][7] < hl_ns)
+
+    def _mk_two(self, rs: RunState, b: int, mode: str, want: dict, fb: Any, fa: Any, ff: Any, v: tuple, pd: int,
+                clock: int, pull: bool, two: Any, book: Any, orders: list) -> float | None:
+        """v7.6: the wanted quotes of one two-sided maker book (module docstring: v7.6 class 0 / class 1 / prices);
+        fills ``want`` (side -> price) and returns the mid that sizes the orders, None without a usable book or
+        account.  Never raises on bad numbers."""
+        p = self.p
+        if fb is None or fa is None or not 0.0 < fb < fa or not fa < math.inf:
+            self._count("mk2_bad_book")
+            return None
+        bt_, bi_, qi = _num(v[0]), _num(v[2]), _num(v[4])
+        if bt_ is None or bi_ is None:
+            self._count("mk2_no_initial")
+            return None
+        mid = 0.5 * (fb + fa)
+        inv_n = (bt_ - bi_) * mid
+        tick = 10.0 ** (-pd)
+        half = 0.5 * tick
+        ob, oa = others_touch(book, orders, half)            # the book without our own resting orders
+        own_b = max((px for _, s, px, _q in orders if s == SIDE_BUY and px is not None), default=None)
+        own_a = min((px for _, s, px, _q in orders if s == SIDE_SELL and px is not None), default=None)
+        if ob is None:
+            self._count("mk2_only_ours_bid")
+        if oa is None:
+            self._count("mk2_only_ours_ask")
+        if mode == "c0":                                    # the flat class-0 maker
+            w = qi + bi_ * mid if qi is not None else None
+            if w is None or not 0.0 < w < math.inf or not math.isfinite(inv_n):
+                self._count("c0mk_no_wealth")
+                return None
+            band = p["c0_mk_band_w"] * w
+            inside = ob is not None and oa is not None and oa - ob > 2.5 * tick   # at least 3 ticks wide
+            if inside:
+                self._count("c0mk_inside")
+            bpx = (round(ob + tick, pd) if inside else round(ob, pd)) if ob is not None else own_b
+            apx = (round(oa - tick, pd) if inside else round(oa, pd)) if oa is not None else own_a
+        else:                                               # the class-1 depth maker
+            d = self._mk_depth_step(rs, b, clock)
+            if two is not None:
+                two["depth"][2].append(d)
+            if pull:                                        # as the maker leg: nothing on the state before a step
+                if two is not None:
+                    two["depth"][0] += 1
+                return mid
+            if ff is None or not 0.0 < ff < math.inf:       # as K2: no fundamental, no quote
+                self._count("mkd_no_f")
+                if two is not None:
+                    two["depth"][0] += 1
+                return mid
+            if not math.isfinite(inv_n):
+                self._count("mkd_bad_inventory")
+                return None
+            band = p["mk_band_clips"] * p["mk_notional"]
+            bpx = (round(math.floor(ob * (1.0 - d / 1e4) / tick + 1e-9) * tick, pd) if ob is not None else own_b)
+            apx = (round(math.ceil(oa * (1.0 + d / 1e4) / tick - 1e-9) * tick, pd) if oa is not None else own_a)
+        if bpx is not None and apx is not None and bpx >= apx - half:   # never lock or cross our own quotes
+            self._count("mk2_locked")
+            bpx = apx = None
+        pre = "c0mk" if mode == "c0" else "mkd"
+        guard = None if mode == "c0" else p["mk_guard_bp"]
+        if inv_n >= band:
+            self._count(pre + "_band_bid")
+        elif bpx is None or not 0.0 < bpx < math.inf:
+            self._count(pre + "_no_bid")
+        elif guard is not None and 1e4 * (bpx - ff) / ff > guard:
+            self._count("mkd_guard_bid")
+        else:
+            want[SIDE_BUY] = bpx
+        if inv_n <= -band:
+            self._count(pre + "_band_ask")
+        elif apx is None or not 0.0 < apx < math.inf:
+            self._count(pre + "_no_ask")
+        elif guard is not None and 1e4 * (ff - apx) / ff > guard:
+            self._count("mkd_guard_ask")
+        else:
+            want[SIDE_SELL] = apx
+        if two is not None:
+            t_ = two["c0" if mode == "c0" else "depth"]
+            t_[0] += 1
+            t_[1] += len(want) == 2
+            if mode == "c0":
+                t_[2].append(abs(inv_n) / w)
+        return mid
+
+    def _mk_depth_step(self, rs: RunState, b: int, clock: int) -> float:
+        """v7.6: the depth controller of one depth-maker book (module docstring: v7.6 class 1): the distance in bp,
+        moved once per v7_mkd_every_s by our maker notional filled against the pace line."""
+        p = self.p
+        st = rs.mk_depth.get(b)
+        if st is None:
+            st = rs.mk_depth[b] = [p["mkd_start_bp"], clock, rs.mk_filled.get(b, 0.0)]
+            return st[0]
+        el = (clock - st[1]) / 1e9
+        if el >= p["mkd_every_s"]:
+            filled = rs.mk_filled.get(b, 0.0) - st[2]
+            line = rs.pace.cap / 86_400.0 * el
+            r = filled / line if line > 0.0 else 0.0
+            if r >= MKD_HI:
+                st[0] = min(MKD_MAX_BP, st[0] + MKD_STEP_BP)
+                self._count("mkd_out")
+            elif r < MKD_LO:
+                st[0] = max(MKD_MIN_BP, st[0] - MKD_STEP_BP)
+                self._count("mkd_in")
+            st[1] = clock
+            st[2] = rs.mk_filled.get(b, 0.0)
+        return st[0]
 
     def _mk_target(self, refs: dict, b: int, mid: float, v: tuple, clock: int, wealth: Any) -> float:
         """v7.3: the contrarian target of one maker book in quote notional (module docstring: ref / target / seed /
@@ -1520,6 +1867,35 @@ class TakerCore:
         else:
             e[4] = lm
         frac = self._stepper(e, 1e4 * (lm - e[0]), clock, p["mk_dyn_hl_s"], p["mk_dyn_rate_h"], p["mk_l"], seed)
+        return frac * w
+
+    def _mk_band_target(self, st: dict, b: int, mid: float, v: tuple, clock: int, wealth: Any) -> float:
+        """v7.5: the band target of one maker book in quote notional (module docstring: v7.5 band / warm / bounds /
+        class 1).  x is the book's own move since its first state; the seed adopts the inventory found and waits
+        while that cannot be read; for the first v7_mk_dyn_hl_s sim-s the target is that seed.  Without a (finite)
+        wealth figure the target is 0 and counted, as v7.4.  Never raises on bad numbers."""
+        p = self.p
+        bt_, bi_, qi = _num(v[0]), _num(v[2]), _num(v[4])
+        w = qi + bi_ * mid if qi is not None and bi_ is not None else wealth
+        if w is None or not 0.0 < w < math.inf or not mid < math.inf:
+            self._count("mk_no_wealth")
+            return 0.0
+        lm = math.log(mid)
+        e = st.get(b)
+        seed = None
+        if e is None:
+            if bt_ is not None and bi_ is not None:
+                seed = (bt_ - bi_) * mid / w
+            if seed is None or not math.isfinite(seed):
+                self._count("mk_seed_wait")
+                return 0.0
+            e = st[b] = [lm, None, 0.0, clock, lm, 0.0, 0.0, clock]
+            self._count("mk_ref_seed")
+        else:
+            e[4] = lm
+        hl, lim = p["mk_dyn_hl_s"], p["mk_l"]
+        self._band(e, 1e4 * (lm - e[0]), clock, hl, p["mk_band_mult"], lim, seed)
+        frac = e[2] if clock - e[7] < hl * 1e9 else self._bounded(e[6], lim, v, mid, True)
         return frac * w
 
 

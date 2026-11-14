@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-# v7.4 TakerV7 launcher (agents/strategy/TakerV7.py + taker_v7_core.py): class 0 = the taker core (slope 0.005) with
-# a second, contrarian term inside its target; class 1 = the maker leg (post-only quotes at the touch, band centred on
-# a stepping target against the book's own move); class 2 = the class-relative stepping taker.
-# Defaults: V7_CLASSES=0, V7_MAKER_CLASSES=1, V7_MK_TARGET=2, V7_REL_CLASSES=2, V7_C0_CONTRA=1.
-# Each v7.4 leg has its own switch:  V7_REL_CLASSES=none turns the class-2 leg off;  V7_C0_CONTRA=0 is the v7.3
-# class-0 taker;  V7_MK_TARGET=1 is the v7.3 level target of the maker leg, =0 the v7.2 flat band.
+# v7.6 TakerV7 launcher (agents/strategy/TakerV7.py + taker_v7_core.py): class 0 = the taker core (slope 0.005) with
+# a second, contrarian term inside its target on the EVEN class-0 books and a flat two-sided maker on the ODD ones;
+# class 1 = the maker leg (post-only quotes at the touch, band centred on a band target on the book's own move, Round
+# 28 C1 K2) on the EVEN class-1 books and a depth-controlled two-sided maker on the ODD ones; class 2 = the
+# class-relative band taker (Round 28 C2 B2a-w).
+# Defaults: V7_CLASSES=0, V7_MAKER_CLASSES=1, V7_MK_TARGET=3, V7_REL_CLASSES=2, V7_REL_FORM=band, V7_C0_CONTRA=1,
+# V7_C0_MAKER=1, V7_MK_DEPTH=1.  v7.6 switches (Round 29 C): V7_C0_MAKER=0 gives every class-0 book back to the taker;
+# V7_MK_DEPTH=0 gives every class-1 book back to the target leg.  (V7_C0_MAKER=0 V7_MK_DEPTH=0 runs exactly v7.5.)
+# v7.5 switches:  V7_REL_FORM=t9 is the two-term class-2 taker (Round 28 A2 T9: half-life 529.2, rate 0.0321, clip
+# 930), =step the v7.4 class-2 stepping taker;  V7_MK_TARGET=2 is the v7.4 class-1 stepping target (half-life 1,058.4,
+# limit 0.45, clip 1,800, guard 10 bp).  (V7_REL_FORM=step V7_MK_TARGET=2 runs exactly v7.4.)
+# The v7.4 switches stay:  V7_REL_CLASSES=none turns the class-2 leg off;  V7_C0_CONTRA=0 is the v7.3 class-0 taker;
+# V7_MK_TARGET=1 is the v7.3 level target of the maker leg, =0 the v7.2 flat band.
 # (V7_REL_CLASSES=none V7_C0_CONTRA=0 V7_MK_TARGET=1 runs exactly v7.3.)
 # V7_MAKER_CLASSES=1,2 is accepted only with V7_MK_TARGET=0 and V7_REL_CLASSES=none: a class is made OR stepped, and
 # the target leg's fundamental guard would block every ask on class 2.
@@ -40,8 +47,11 @@ HISTORY_ANCHOR_SOURCE="default"
 HISTORY_ANCHOR="${HISTORY_ANCHOR:-auto}"
 V7_CLASSES="${V7_CLASSES:-0}"
 V7_MAKER_CLASSES="${V7_MAKER_CLASSES:-1}"
-V7_MK_TARGET="${V7_MK_TARGET:-2}"
+V7_MK_TARGET="${V7_MK_TARGET:-3}"
 V7_REL_CLASSES="${V7_REL_CLASSES:-2}"
+V7_REL_FORM="${V7_REL_FORM:-band}"
+V7_C0_MAKER="${V7_C0_MAKER:-1}"
+V7_MK_DEPTH="${V7_MK_DEPTH:-1}"
 V7_C0_CONTRA="${V7_C0_CONTRA:-1}"
 EXTRA=()
 
@@ -95,9 +105,25 @@ case "$V7_MAKER_CLASSES" in
   *) echo "ERROR: V7_MAKER_CLASSES must be none, 1 or 1,2 (got ${V7_MAKER_CLASSES})" >&2; exit 2 ;;
 esac
 case "$V7_MK_TARGET" in
-  0|1|2) ;;
-  *) echo "ERROR: V7_MK_TARGET must be 0, 1 or 2 (got ${V7_MK_TARGET})" >&2; exit 2 ;;
+  0|1|2|3) ;;
+  *) echo "ERROR: V7_MK_TARGET must be 0, 1, 2 or 3 (got ${V7_MK_TARGET})" >&2; exit 2 ;;
 esac
+case "$V7_REL_FORM" in
+  step|band|t9) ;;
+  *) echo "ERROR: V7_REL_FORM must be step, band or t9 (got ${V7_REL_FORM})" >&2; exit 2 ;;
+esac
+case "$V7_C0_MAKER" in
+  0|1) ;;
+  *) echo "ERROR: V7_C0_MAKER must be 0 or 1 (got ${V7_C0_MAKER})" >&2; exit 2 ;;
+esac
+case "$V7_MK_DEPTH" in
+  0|1) ;;
+  *) echo "ERROR: V7_MK_DEPTH must be 0 or 1 (got ${V7_MK_DEPTH})" >&2; exit 2 ;;
+esac
+if [[ "$V7_MK_DEPTH" == "1" && "$V7_MAKER_CLASSES" == "none" ]]; then
+  echo "ERROR: V7_MK_DEPTH=1 makes class-1 books, so V7_MAKER_CLASSES must include class 1 (or set V7_MK_DEPTH=0)." >&2
+  exit 2
+fi
 case "$V7_REL_CLASSES" in
   none|2) ;;
   *) echo "ERROR: V7_REL_CLASSES must be none or 2 (got ${V7_REL_CLASSES})" >&2; exit 2 ;;
@@ -146,29 +172,49 @@ fi
 # mk_dyn_rate_h 0.03 W per "hour" COPIED from 5CFFZ7SE; rel_hl_s 2,116.8 (4 "hours"), rel_rate_h 0.0209 W per "hour",
 # rel_l 0.45 W COPIED from the 5GCSdbyd fit, rel_clip_notional 1,800 the replayed clip; step_thr_bp 3 and
 # step_max_dt_s 60 MODEL; c0_kc 0.005 and c0_lc 0.45 COPIED (the maker constants), c0_ref_s 10,800 STRUCTURAL.
+# v7.5 (Round 28 C2 / C1): the values of each form are set here, so a switch is all a launch needs.
+#   class 2 band (B2a-w): rel_hl_s 2,116.8 COPIED, rel_band_mult 2.0 MODEL, rel_l 0.45, clip 1,800 (as v7.4);
+#   class 2 t9: rel_hl_s 529.2 (1 "hour"), rel_rate_h 0.0321 W per "hour", rel_mom 0.0037 W per bp, clip 930 COPIED
+#     (Round 28 A2 fit of 5GCSdbyd);  class 2 step: the v7.4 values;
+#   class 1 band (K2, V7_MK_TARGET=3): mk_dyn_hl_s 2,116.8, mk_l 0.70, mk_notional 1,500, mk_guard_bp 0 COPIED (Round 28
+#     A1 from 5CAXJT4t), mk_band_mult 2.0 MODEL;  any other V7_MK_TARGET: the v7.4 values (1,058.4 / 0.45 / 1,800 / 10).
+# v7.6 (Round 29 C): class-0 maker c0_mk_notional 1,000 and c0_mk_band_w 0.10 COPIED (uid 23 / uid 209); class-1 depth
+#   maker (uses mk_notional and mk_guard_bp above) mkd_start_bp 2 and mkd_every_s 600 MODEL (Round 29 B).
+case "$V7_REL_FORM" in
+  t9) REL_HL=529.2; REL_RATE=0.0321; REL_CLIP=930 ;;
+  *)  REL_HL=2116.8; REL_RATE=0.0209; REL_CLIP=1800 ;;
+esac
+if [[ "$V7_MK_TARGET" == "3" ]]; then
+  MK_HL=2116.8; MK_L=0.70; MK_NOTIONAL=1500; MK_GUARD=0
+else
+  MK_HL=1058.4; MK_L=0.45; MK_NOTIONAL=1800; MK_GUARD=10
+fi
 PARAMS="lazy_load=1 history_len=0 \
 v7_k=0.005 v7_l=0.55 v7_clip=7 v7_big=15 v7_classes=${V7_CLASSES} \
 v7_c1_k=0.036 v7_c1_l=0.50 v7_c1_clip_notional=3500 \
-v7_maker_classes=${V7_MAKER_CLASSES} v7_mk_notional=1800 v7_mk_guard_bp=10 v7_mk_band_clips=1 v7_mk_pull=1 v7_mk_expiry_s=60 \
-v7_mk_target=${V7_MK_TARGET} v7_mk_k=0.005 v7_mk_l=0.45 v7_mk_ref_s=10800 \
-v7_mk_dyn_hl_s=1058.4 v7_mk_dyn_rate_h=0.03 \
-v7_rel_classes=${V7_REL_CLASSES} v7_rel_hl_s=2116.8 v7_rel_rate_h=0.0209 v7_rel_l=0.45 v7_rel_clip_notional=1800 \
+v7_maker_classes=${V7_MAKER_CLASSES} v7_mk_notional=${MK_NOTIONAL} v7_mk_guard_bp=${MK_GUARD} v7_mk_band_clips=1 v7_mk_pull=1 v7_mk_expiry_s=60 \
+v7_mk_target=${V7_MK_TARGET} v7_mk_k=0.005 v7_mk_l=${MK_L} v7_mk_ref_s=10800 \
+v7_mk_dyn_hl_s=${MK_HL} v7_mk_dyn_rate_h=0.03 v7_mk_band_mult=2 \
+v7_rel_classes=${V7_REL_CLASSES} v7_rel_form=${V7_REL_FORM} v7_rel_hl_s=${REL_HL} v7_rel_rate_h=${REL_RATE} v7_rel_l=0.45 \
+v7_rel_clip_notional=${REL_CLIP} v7_rel_band_mult=2 v7_rel_mom=0.0037 \
+v7_c0_maker=${V7_C0_MAKER} v7_c0_mk_notional=1000 v7_c0_mk_band_w=0.10 \
+v7_mk_depth=${V7_MK_DEPTH} v7_mkd_start_bp=2 v7_mkd_every_s=600 \
 v7_step_thr_bp=3 v7_step_max_dt_s=60 \
 v7_c0_contra=${V7_C0_CONTRA} v7_c0_kc=0.005 v7_c0_lc=0.45 v7_c0_ref_s=10800 \
 v7_pace=1 v7_cap=0 v7_cap_mult=10 v7_fee_margin=0.001 \
 v7_log_every=60 v7_gc_every=30 v7_log_dir=${LOG_DIR} v7_history_anchor=${HISTORY_ANCHOR}"
 
 _sha16() { sha256sum "$1" | cut -c1-16; }
-echo "[TakerV7] version=v7.4 TakerV7.py=$(_sha16 "$AGENT_PATH/TakerV7.py") taker_v7_core.py=$(_sha16 "$AGENT_PATH/taker_v7_core.py") test_taker_v7.py=$(_sha16 "$SCRIPT_DIR/tests/test_taker_v7.py")"
+echo "[TakerV7] version=v7.6 TakerV7.py=$(_sha16 "$AGENT_PATH/TakerV7.py") taker_v7_core.py=$(_sha16 "$AGENT_PATH/taker_v7_core.py") test_taker_v7.py=$(_sha16 "$SCRIPT_DIR/tests/test_taker_v7.py")"
 
 # ---- preflight: the v7 tests must pass -------------------------------------------------------------------------------
-echo "[preflight] v7.4: ${PYTHON} tests/run_tests.py tests/test_taker_v7.py"
+echo "[preflight] v7.6: ${PYTHON} tests/run_tests.py tests/test_taker_v7.py"
 if ! V7_LAUNCH_PARAMS="$PARAMS" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     "$PYTHON" "$SCRIPT_DIR/tests/run_tests.py" tests/test_taker_v7.py; then
-  echo "ERROR: v7.4 preflight FAILED: tests/test_taker_v7.py did not pass; nothing was launched." >&2
+  echo "ERROR: v7.6 preflight FAILED: tests/test_taker_v7.py did not pass; nothing was launched." >&2
   exit 1
 fi
-echo "[preflight] v7.4 PASS"
+echo "[preflight] v7.6 PASS"
 if [[ "${V7_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   exit 0
 fi
