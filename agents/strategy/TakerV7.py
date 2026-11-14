@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""v7.6 TakerV7: the taker core on the mainnet winners' target-inventory rule (Round 21; USER GO 11-12 02:4x JST); v7.1
+"""v7.7 TakerV7: the taker core on the mainnet winners' target-inventory rule (Round 21; USER GO 11-12 02:4x JST); v7.1
 added class 1 = Round 22 option A behind v7_classes ("0" = v7.0.1 behaviour, "0,1" = classes 0 and 1); v7.2 (Round 24,
 USER 11-13) adds the maker leg behind v7_maker_classes ("none" = v7.1 behaviour, "1" or "1,2"): flat two-sided post-only
 quotes on the maker classes' books, built here as postOnly GTT limit orders; v7.3 (Round 25 track S, USER 11-13)
@@ -12,7 +12,9 @@ adds the class-2 band and two-term forms (v7_rel_form) and the class-1 band targ
 the core, the orders are the same IOC takes and post-only quotes, the pictures gain "form" / "warm" / "band" keys;
 v7.6 (Round 29 C, USER 11-14) adds the two-sided makers (v7_c0_maker on the odd class-0 books, v7_mk_depth on the odd
 class-1 books): all of it is in the core, the orders are the same post-only GTT quotes as the maker leg's, the maker
-picture gains "c0_*" / "depth_*" keys.
+picture gains "c0_*" / "depth_*" keys; v7.7 (Round 31, USER 11-15) adds the class-0 maker offset trial (v7_c0_mk_trial:
+four groups of odd class-0 books quote inside / at / one / two ticks behind the others' touch): all of it is in the
+core, the orders are the same post-only GTT quotes, the maker picture gains the "c0_trial" key.
 
 The agent class only.  The rule, the class map, the clamps and the pace guard live in taker_v7_core.py (stdlib only;
 see its docstring for every label and source).  This class:

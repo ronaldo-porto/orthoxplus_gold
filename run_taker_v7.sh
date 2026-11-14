@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# v7.6 TakerV7 launcher (agents/strategy/TakerV7.py + taker_v7_core.py): class 0 = the taker core (slope 0.005) with
-# a second, contrarian term inside its target on the EVEN class-0 books and a flat two-sided maker on the ODD ones;
-# class 1 = the maker leg (post-only quotes at the touch, band centred on a band target on the book's own move, Round
-# 28 C1 K2) on the EVEN class-1 books and a depth-controlled two-sided maker on the ODD ones; class 2 = the
-# class-relative band taker (Round 28 C2 B2a-w).
+# v7.7 TakerV7 launcher (agents/strategy/TakerV7.py + taker_v7_core.py): class 0 = the taker core (slope 0.005) with
+# a second, contrarian term inside its target on the EVEN class-0 books and a flat two-sided maker on the ODD ones,
+# whose quote offset is the Round 31 TRIAL (four groups of 16 books: the v7.6 rule / at the others' touch / one / two
+# ticks behind it); class 1 = the maker leg (post-only quotes at the touch, band centred on a band target on the book's
+# own move, Round 28 C1 K2) on EVERY class-1 book (the depth maker is off by default); class 2 = the class-relative
+# band taker (Round 28 C2 B2a-w).
 # Defaults: V7_CLASSES=0, V7_MAKER_CLASSES=1, V7_MK_TARGET=3, V7_REL_CLASSES=2, V7_REL_FORM=band, V7_C0_CONTRA=1,
-# V7_C0_MAKER=1, V7_MK_DEPTH=1.  v7.6 switches (Round 29 C): V7_C0_MAKER=0 gives every class-0 book back to the taker;
-# V7_MK_DEPTH=0 gives every class-1 book back to the target leg.  (V7_C0_MAKER=0 V7_MK_DEPTH=0 runs exactly v7.5.)
+# V7_C0_MAKER=1, V7_C0_MK_TRIAL=1, V7_MK_DEPTH=0.  v7.7 switch (Round 31): V7_C0_MK_TRIAL=0 quotes every class-0 maker
+# book by the v7.6 rule.  (V7_C0_MK_TRIAL=0 V7_MK_DEPTH=1 runs exactly v7.6.)
+# v7.6 switches (Round 29 C): V7_C0_MAKER=0 gives every class-0 book back to the taker; V7_MK_DEPTH=1 puts the
+# depth-controlled two-sided maker back on the ODD class-1 books.  (V7_C0_MAKER=0 V7_MK_DEPTH=0 runs exactly v7.5.)
 # v7.5 switches:  V7_REL_FORM=t9 is the two-term class-2 taker (Round 28 A2 T9: half-life 529.2, rate 0.0321, clip
 # 930), =step the v7.4 class-2 stepping taker;  V7_MK_TARGET=2 is the v7.4 class-1 stepping target (half-life 1,058.4,
 # limit 0.45, clip 1,800, guard 10 bp).  (V7_REL_FORM=step V7_MK_TARGET=2 runs exactly v7.4.)
@@ -51,7 +54,8 @@ V7_MK_TARGET="${V7_MK_TARGET:-3}"
 V7_REL_CLASSES="${V7_REL_CLASSES:-2}"
 V7_REL_FORM="${V7_REL_FORM:-band}"
 V7_C0_MAKER="${V7_C0_MAKER:-1}"
-V7_MK_DEPTH="${V7_MK_DEPTH:-1}"
+V7_C0_MK_TRIAL="${V7_C0_MK_TRIAL:-1}"
+V7_MK_DEPTH="${V7_MK_DEPTH:-0}"
 V7_C0_CONTRA="${V7_C0_CONTRA:-1}"
 EXTRA=()
 
@@ -115,6 +119,10 @@ esac
 case "$V7_C0_MAKER" in
   0|1) ;;
   *) echo "ERROR: V7_C0_MAKER must be 0 or 1 (got ${V7_C0_MAKER})" >&2; exit 2 ;;
+esac
+case "$V7_C0_MK_TRIAL" in
+  0|1) ;;
+  *) echo "ERROR: V7_C0_MK_TRIAL must be 0 or 1 (got ${V7_C0_MK_TRIAL})" >&2; exit 2 ;;
 esac
 case "$V7_MK_DEPTH" in
   0|1) ;;
@@ -180,6 +188,7 @@ fi
 #     A1 from 5CAXJT4t), mk_band_mult 2.0 MODEL;  any other V7_MK_TARGET: the v7.4 values (1,058.4 / 0.45 / 1,800 / 10).
 # v7.6 (Round 29 C): class-0 maker c0_mk_notional 1,000 and c0_mk_band_w 0.10 COPIED (uid 23 / uid 209); class-1 depth
 #   maker (uses mk_notional and mk_guard_bp above) mkd_start_bp 2 and mkd_every_s 600 MODEL (Round 29 B).
+# v7.7 (Round 31 B.3): the class-0 maker offset trial needs no value: its groups and offsets are STRUCTURAL (core).
 case "$V7_REL_FORM" in
   t9) REL_HL=529.2; REL_RATE=0.0321; REL_CLIP=930 ;;
   *)  REL_HL=2116.8; REL_RATE=0.0209; REL_CLIP=1800 ;;
@@ -197,7 +206,7 @@ v7_mk_target=${V7_MK_TARGET} v7_mk_k=0.005 v7_mk_l=${MK_L} v7_mk_ref_s=10800 \
 v7_mk_dyn_hl_s=${MK_HL} v7_mk_dyn_rate_h=0.03 v7_mk_band_mult=2 \
 v7_rel_classes=${V7_REL_CLASSES} v7_rel_form=${V7_REL_FORM} v7_rel_hl_s=${REL_HL} v7_rel_rate_h=${REL_RATE} v7_rel_l=0.45 \
 v7_rel_clip_notional=${REL_CLIP} v7_rel_band_mult=2 v7_rel_mom=0.0037 \
-v7_c0_maker=${V7_C0_MAKER} v7_c0_mk_notional=1000 v7_c0_mk_band_w=0.10 \
+v7_c0_maker=${V7_C0_MAKER} v7_c0_mk_notional=1000 v7_c0_mk_band_w=0.10 v7_c0_mk_trial=${V7_C0_MK_TRIAL} \
 v7_mk_depth=${V7_MK_DEPTH} v7_mkd_start_bp=2 v7_mkd_every_s=600 \
 v7_step_thr_bp=3 v7_step_max_dt_s=60 \
 v7_c0_contra=${V7_C0_CONTRA} v7_c0_kc=0.005 v7_c0_lc=0.45 v7_c0_ref_s=10800 \
@@ -205,16 +214,16 @@ v7_pace=1 v7_cap=0 v7_cap_mult=10 v7_fee_margin=0.001 \
 v7_log_every=60 v7_gc_every=30 v7_log_dir=${LOG_DIR} v7_history_anchor=${HISTORY_ANCHOR}"
 
 _sha16() { sha256sum "$1" | cut -c1-16; }
-echo "[TakerV7] version=v7.6 TakerV7.py=$(_sha16 "$AGENT_PATH/TakerV7.py") taker_v7_core.py=$(_sha16 "$AGENT_PATH/taker_v7_core.py") test_taker_v7.py=$(_sha16 "$SCRIPT_DIR/tests/test_taker_v7.py")"
+echo "[TakerV7] version=v7.7 TakerV7.py=$(_sha16 "$AGENT_PATH/TakerV7.py") taker_v7_core.py=$(_sha16 "$AGENT_PATH/taker_v7_core.py") test_taker_v7.py=$(_sha16 "$SCRIPT_DIR/tests/test_taker_v7.py")"
 
 # ---- preflight: the v7 tests must pass -------------------------------------------------------------------------------
-echo "[preflight] v7.6: ${PYTHON} tests/run_tests.py tests/test_taker_v7.py"
+echo "[preflight] v7.7: ${PYTHON} tests/run_tests.py tests/test_taker_v7.py"
 if ! V7_LAUNCH_PARAMS="$PARAMS" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     "$PYTHON" "$SCRIPT_DIR/tests/run_tests.py" tests/test_taker_v7.py; then
-  echo "ERROR: v7.6 preflight FAILED: tests/test_taker_v7.py did not pass; nothing was launched." >&2
+  echo "ERROR: v7.7 preflight FAILED: tests/test_taker_v7.py did not pass; nothing was launched." >&2
   exit 1
 fi
-echo "[preflight] v7.6 PASS"
+echo "[preflight] v7.7 PASS"
 if [[ "${V7_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   exit 0
 fi

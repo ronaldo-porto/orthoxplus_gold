@@ -191,6 +191,23 @@ market state (SP/round29/c/REPORT.md, a/REPORT.md, b/REPORT.md).
            quoting off them walked our quote one tick a state (review 11-14).  A side where only our order rests keeps
            that order; a price that rounds to 0 is never quoted; our bid is never at or above our ask.  The depth
            maker quotes nothing on a book without a fundamental (as K2).
+
+v7.7 (Round 31, CLASS-0 MAKER FILL QUALITY; USER 11-15: "keep v7.6", "Start to new research on class-0 maker fill
+quality", "yes build v7.7"): a within-agent TRIAL of the class-0 maker's quote offset, behind a switch (the code default
+is v7.6; the launcher turns it on).  Round 31 A / B (OBSERVED, UID 99 since 11-14 18:00): our class-0 maker fills
+earn a forward markout of +0.27 bp against +1.13 bp for the fast flat field makers in every position cell, below the
+0.505 bp fee charge; across 223 field makers the share of fills behind the touch goes with a higher markout and the
+share at the touch with a lower one; no observational rule certifies a fix, so only a within-agent trial identifies
+the lever (Round 31 B.3, STRUCTURAL design).
+  class 0 : v7_c0_mk_trial (0 | 1) = each ODD class-0 maker book b is in trial group g = (b // 2) % 4 (16 books each,
+            alternating along the book ids so every group spans the class): g0 quotes the v7.6 rule (one tick inside
+            the others' touch on a spread of at least 3 ticks, else at it), g1 AT the others' best bid / ask, g2 ONE
+            tick behind them (bid one tick below the others' best bid, ask one tick above their best ask), g3 TWO
+            ticks behind.  Size, inventory band, follow, life, pace and the absent guard / pull are v7.6's in every
+            group, so the groups differ by the offset only.  The summary logs maker.c0_trial: per group the offset,
+            the books, the two-sided books and our cumulative maker fill notional on its books.
+  The launcher also turns the class-1 depth maker OFF by default (V7_MK_DEPTH=0: K2 on every class-1 book; Round 30
+  C2: the depth leg filled 0.12 x the field and earned no making).
 """
 from __future__ import annotations
 
@@ -198,8 +215,8 @@ import math
 from collections import deque
 from typing import Any
 
-V7_VERSION = "v7.6"
-CORE_VERSION = "taker_v7_core_8"   # v7.6 = v7.5 (core_7) + class-0 flat maker, class-1 depth maker
+V7_VERSION = "v7.7"
+CORE_VERSION = "taker_v7_core_9"   # v7.7 = v7.6 (core_8) + the class-0 maker offset trial
 
 # ---- COPIED constants (Round 21 P REPORT.md section 2; R6 arm_p.py) ----------------------------------------------
 K_DEFAULT = 0.0035        # target slope per bp of (f - mid) / mid
@@ -253,6 +270,15 @@ MKD_MIN_BP = 0.5                 # MODEL: controller bounds (fills collapse past
 MKD_MAX_BP = 6.0
 MKD_HI = 0.9                     # MODEL: filled notional / pace line at or above which the distance moves out
 MKD_LO = 0.6                     # MODEL: ... below which it moves in
+
+# ---- v7.7 constants (Round 31 B.3 trial design; labels in the module docstring) ---------------------------------------
+C0_MK_TRIAL_OFFSETS = (None, 0, 1, 2)   # STRUCTURAL: per trial group, ticks behind the others' touch (None = v7.6 rule)
+
+
+def c0_mk_group(b: int) -> int:
+    """v7.7: the trial group of a class-0 maker book: (b // 2) % 4, so the odd books 1, 3, 5, 7, 9, ... fall in groups
+    0, 1, 2, 3, 0, ... (16 of the 64 each, every group spread over the whole class)."""
+    return (int(b) // 2) % 4
 
 # ---- STRUCTURAL constants (validator / simulator) -----------------------------------------------------------------
 CAP_DEFAULT = 500_000.0               # capital_turnover_cap 10 x miner_wealth 50,000 (config :813-817, query.py:505)
@@ -322,7 +348,7 @@ PARAM_KEYS = ("v7_k", "v7_l", "v7_clip", "v7_big", "v7_classes", "v7_pace", "v7_
               "v7_c0_contra", "v7_c0_kc", "v7_c0_lc", "v7_c0_ref_s",
               "v7_rel_form", "v7_rel_band_mult", "v7_rel_mom", "v7_mk_band_mult",
               "v7_c0_maker", "v7_c0_mk_notional", "v7_c0_mk_band_w", "v7_mk_depth", "v7_mkd_start_bp",
-              "v7_mkd_every_s")
+              "v7_mkd_every_s", "v7_c0_mk_trial")
 
 
 def parse_params(config: Any) -> dict:
@@ -468,6 +494,11 @@ def parse_params(config: Any) -> dict:
     p["c0_mk_band_w"] = num("v7_c0_mk_band_w", C0_MK_BAND_W_DEFAULT, 0.0, 1.0, lo_open=True)
     p["mkd_start_bp"] = num("v7_mkd_start_bp", MKD_START_BP_DEFAULT, MKD_MIN_BP, MKD_MAX_BP)
     p["mkd_every_s"] = num("v7_mkd_every_s", MKD_EVERY_S_DEFAULT, 1.0, 86_400.0)
+    # v7.7 class-0 maker offset trial (Round 31): 0 (default) = v7.6, 1 = the four offset groups
+    tv = raw("v7_c0_mk_trial", 0)
+    if isinstance(tv, bool) or _num(tv) not in (0.0, 1.0):
+        raise ValueError(f"v7_c0_mk_trial={tv!r} must be 0 or 1")
+    p["c0_mk_trial"] = _num(tv) == 1.0
     return p
 
 
@@ -1005,6 +1036,7 @@ class TakerCore:
         self.mk_stats: dict | None = None     # v7.2: the maker leg's picture on summary states
         self.rel_stats: dict | None = None    # v7.4: the stepping taker's picture on summary states
         self.c0_stats: dict | None = None     # v7.4: the class-0 contrarian term's picture on summary states
+        self._c0g: list | None = None         # v7.7: per trial group [books, two-sided, fill notional] on summary states
         self._book_count = None               # v7.1: the pace state is reset when the book count changes
         self.reset_counters()
 
@@ -1549,6 +1581,8 @@ class TakerCore:
         c0set = lay["c0"] if lay else frozenset()
         c1set = lay["c1"] if lay and p["mk_depth"] else frozenset()
         two = {"c0": [0, 0, []], "depth": [0, 0, []]} if collect else None   # v7.6: books, two-sided, |pos| / d
+        self._c0g = ([[0, 0, 0.0] for _ in C0_MK_TRIAL_OFFSETS]                   # v7.7: only with the maker on
+                     if collect and p["c0_mk_trial"] and p["c0_maker"] else None)
         for b, g in mk_books.items():
             v = views.get(b)
             if v is None:
@@ -1691,6 +1725,15 @@ class TakerCore:
                     self.mk_stats[k_ + "_two_sided"] = n2
                     self.mk_stats[k_ + ("_pos_w_p50" if k_ == "c0" else "_d_bp_p50")] = pctl(xs, 0.5)
                     self.mk_stats[k_ + ("_pos_w_max" if k_ == "c0" else "_d_bp_max")] = max(xs) if xs else None
+            if self._c0g is not None:                       # v7.7: the class-0 maker offset trial, per group
+                for b_ in mk_books:                         # books and fills from the ledger, whatever the book state
+                    if b_ in c0set:
+                        g_ = self._c0g[c0_mk_group(b_)]
+                        g_[0] += 1
+                        g_[2] += rs.mk_filled.get(b_, 0.0)
+                self.mk_stats["c0_trial"] = [{"group": i, "off_ticks": C0_MK_TRIAL_OFFSETS[i], "books": g_[0],
+                                              "two_sided": g_[1], "fill_notional": round(g_[2], 2)}
+                                             for i, g_ in enumerate(self._c0g)]
             if tpairs is not None:
                 self.mk_stats.update({
                     "target": True, "dyn": dyn, "band": band_t,
@@ -1737,11 +1780,18 @@ class TakerCore:
                 self._count("c0mk_no_wealth")
                 return None
             band = p["c0_mk_band_w"] * w
-            inside = ob is not None and oa is not None and oa - ob > 2.5 * tick   # at least 3 ticks wide
-            if inside:
-                self._count("c0mk_inside")
-            bpx = (round(ob + tick, pd) if inside else round(ob, pd)) if ob is not None else own_b
-            apx = (round(oa - tick, pd) if inside else round(oa, pd)) if oa is not None else own_a
+            grp = c0_mk_group(b) if p["c0_mk_trial"] else 0     # v7.7: the trial group (0 = the v7.6 rule)
+            off = C0_MK_TRIAL_OFFSETS[grp]
+            if off is None:                                 # the v7.6 rule
+                inside = ob is not None and oa is not None and oa - ob > 2.5 * tick   # at least 3 ticks wide
+                if inside:
+                    self._count("c0mk_inside")
+                bpx = (round(ob + tick, pd) if inside else round(ob, pd)) if ob is not None else own_b
+                apx = (round(oa - tick, pd) if inside else round(oa, pd)) if oa is not None else own_a
+            else:                                           # v7.7 trial: at the others' touch or off ticks behind it
+                self._count("c0mk_off%d" % off)
+                bpx = round(ob - off * tick, pd) if ob is not None else own_b
+                apx = round(oa + off * tick, pd) if oa is not None else own_a
         else:                                               # the class-1 depth maker
             d = self._mk_depth_step(rs, b, clock)
             if two is not None:
@@ -1788,6 +1838,8 @@ class TakerCore:
             t_[1] += len(want) == 2
             if mode == "c0":
                 t_[2].append(abs(inv_n) / w)
+                if self._c0g is not None:                   # v7.7: the two-sided books of this book's group
+                    self._c0g[grp][1] += len(want) == 2
         return mid
 
     def _mk_depth_step(self, rs: RunState, b: int, clock: int) -> float:
