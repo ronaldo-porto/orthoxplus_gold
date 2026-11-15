@@ -208,6 +208,12 @@ the lever (Round 31 B.3, STRUCTURAL design).
             the books, the two-sided books and our cumulative maker fill notional on its books.
   The launcher also turns the class-1 depth maker OFF by default (V7_MK_DEPTH=0: K2 on every class-1 book; Round 30
   C2: the depth leg filled 0.12 x the field and earned no making).
+
+v7.8 (Round 33 C, S1 q probe; USER 11-15 JST: "for the 8 decision, I'll accept your recommendation" = run S1
+before any ladder build): NO core change (core_9).  The launcher turns the class-0 maker and its offset trial OFF
+by default (V7_C0_MAKER=0, V7_C0_MK_TRIAL=0): every class-0 book is the taker's again and K2 is the only maker,
+exactly v7.5 (the v7.6 / v7.7 equivalence runs).  Why: the uid-wide making q is 0 and the class-0 maker fills hold
+it there (Round 32 trial, OBSERVED: q 0 in every offset group); with them gone q measures K2 alone.
 """
 from __future__ import annotations
 
@@ -215,8 +221,8 @@ import math
 from collections import deque
 from typing import Any
 
-V7_VERSION = "v7.7"
-CORE_VERSION = "taker_v7_core_9"   # v7.7 = v7.6 (core_8) + the class-0 maker offset trial
+V7_VERSION = "v7.8"
+CORE_VERSION = "taker_v7_core_9"   # v7.7 = v7.6 (core_8) + the class-0 maker offset trial; v7.8 = the same core
 
 # ---- COPIED constants (Round 21 P REPORT.md section 2; R6 arm_p.py) ----------------------------------------------
 K_DEFAULT = 0.0035        # target slope per bp of (f - mid) / mid
