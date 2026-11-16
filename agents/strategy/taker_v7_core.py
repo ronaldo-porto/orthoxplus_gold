@@ -214,15 +214,39 @@ before any ladder build): NO core change (core_9).  The launcher turns the class
 by default (V7_C0_MAKER=0, V7_C0_MK_TRIAL=0): every class-0 book is the taker's again and K2 is the only maker,
 exactly v7.5 (the v7.6 / v7.7 equivalence runs).  Why: the uid-wide making q is 0 and the class-0 maker fills hold
 it there (Round 32 trial, OBSERVED: q 0 in every offset group); with them gone q measures K2 alone.
+
+v7.9 (Round 35 / 36; USER 11-16 JST: "accept your recommendation for option 1"): the TOUCH IDENTITY of a second uid,
+behind v7_touch_id (0 = v7.8, the code default; the launcher passes 1).  UID 99 stays on v7.8; a uid launched on v7.9
+differs from it at the class-1 touch.  Standing USER rule (10-16): every uid acts as a different agent at the touch;
+the identity is a value hashed from the uid's OWN number x book, with no list of our uids, no reading of another
+agent, no coordination, no runtime randomness and no concealment.
+  draw   : E1T of the PRE-REGISTERED Round 35 profile (SP/round35/spec/profile_v2.py, sha256 ea5d0a9e951b33b6...,
+           frozen 11-16 21:44 JST before any replay output):
+             ticks = (0, 1)[ int(SHA-256('orthox-profile-v2|E1T|' + str(uid) + '|' + str(book)).hexdigest()[:8], 16)
+                             mod 2 ]
+           drawn once per book from this process's own uid; never redrawn.  A negative uid draws nothing (every book 0).
+  rule   : on a class-1 book of the TARGET maker leg (v7_mk_target 1 / 2 / 3; K2 at launch) whose draw is 1, the one
+           quoted side is priced ONE TICK BEHIND the others' best order on that side (bid = others' best bid - 1 tick,
+           ask = others' best ask + 1 tick; others_touch, so our own resting quote is never the reference and a quote
+           never walks); a side with no other order keeps our own resting price (none -> no quote).  Draw 0: the v7.8
+           price at the visible touch, unchanged.  Size, side choice, band, guard (on the quoted price), pull, follow,
+           life and pace are v7.8's; class 0, class 2 and every other leg are untouched.
+  why    : Round 35 B (MODEL): a v7.8 copy rests at the same book-side and price as R 0.43-0.44 of its resting time;
+           E1T cuts that by 0.71-0.74 at a class-1 cost between 0.09-0.19 (optimistic fill) and 0.50 (conservative
+           fill).  Round 36 B (OBSERVED): the #1 operator's third uid (5G3oVFjL u23) quotes one tick behind on class 1
+           at rank #6.
+  log    : the summary's maker picture carries touch_id = {books, behind, digest}; digest = sha16 of
+           "\\n".join(["orthox-profile-v2|uid=<uid>|E1T"] + ["<book>|E1T=<ticks>" for each class-1 book ascending]).
 """
 from __future__ import annotations
 
+import hashlib
 import math
 from collections import deque
 from typing import Any
 
-V7_VERSION = "v7.8"
-CORE_VERSION = "taker_v7_core_9"   # v7.7 = v7.6 (core_8) + the class-0 maker offset trial; v7.8 = the same core
+V7_VERSION = "v7.9"
+CORE_VERSION = "taker_v7_core_10"  # v7.7 = v7.6 (core_8) + the class-0 maker offset trial; v7.8 = core_9; v7.9 = + E1T
 
 # ---- COPIED constants (Round 21 P REPORT.md section 2; R6 arm_p.py) ----------------------------------------------
 K_DEFAULT = 0.0035        # target slope per bp of (f - mid) / mid
@@ -279,6 +303,28 @@ MKD_LO = 0.6                     # MODEL: ... below which it moves in
 
 # ---- v7.7 constants (Round 31 B.3 trial design; labels in the module docstring) ---------------------------------------
 C0_MK_TRIAL_OFFSETS = (None, 0, 1, 2)   # STRUCTURAL: per trial group, ticks behind the others' touch (None = v7.6 rule)
+
+# ---- v7.9 touch identity (Round 35 PRE-REGISTERED profile_v2, dimension E1T; frozen: a change is a new version) ------
+TOUCH_ID_PROFILE = "orthox-profile-v2"
+TOUCH_ID_DIM = "E1T"
+TOUCH_ID_TICKS = (0, 1)                  # index 0 = v7.8 behaviour; 1 = one tick behind the others' best order
+
+
+def touch_id_draw(uid: int, book: int) -> int:
+    """The pre-registered E1T draw: ticks behind = (0, 1)[int(SHA-256('orthox-profile-v2|E1T|uid|book')[:8], 16) mod 2].
+    A negative uid draws nothing (0)."""
+    u, b = int(uid), int(book)
+    if u < 0:
+        return 0
+    h = hashlib.sha256(f"{TOUCH_ID_PROFILE}|{TOUCH_ID_DIM}|{u}|{b}".encode()).hexdigest()
+    return TOUCH_ID_TICKS[int(h[:8], 16) % len(TOUCH_ID_TICKS)]
+
+
+def touch_id_digest(uid: int, books: Any) -> str:
+    """sha16 of the table text: "orthox-profile-v2|uid=<uid>|E1T" then "<book>|E1T=<ticks>" per book ascending."""
+    lines = [f"{TOUCH_ID_PROFILE}|uid={int(uid)}|{TOUCH_ID_DIM}"]
+    lines += [f"{int(b)}|{TOUCH_ID_DIM}={touch_id_draw(uid, b)}" for b in sorted(int(x) for x in books)]
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
 
 
 def c0_mk_group(b: int) -> int:
@@ -354,7 +400,7 @@ PARAM_KEYS = ("v7_k", "v7_l", "v7_clip", "v7_big", "v7_classes", "v7_pace", "v7_
               "v7_c0_contra", "v7_c0_kc", "v7_c0_lc", "v7_c0_ref_s",
               "v7_rel_form", "v7_rel_band_mult", "v7_rel_mom", "v7_mk_band_mult",
               "v7_c0_maker", "v7_c0_mk_notional", "v7_c0_mk_band_w", "v7_mk_depth", "v7_mkd_start_bp",
-              "v7_mkd_every_s", "v7_c0_mk_trial")
+              "v7_mkd_every_s", "v7_c0_mk_trial", "v7_touch_id")
 
 
 def parse_params(config: Any) -> dict:
@@ -505,6 +551,11 @@ def parse_params(config: Any) -> dict:
     if isinstance(tv, bool) or _num(tv) not in (0.0, 1.0):
         raise ValueError(f"v7_c0_mk_trial={tv!r} must be 0 or 1")
     p["c0_mk_trial"] = _num(tv) == 1.0
+    # v7.9 touch identity (Round 35 E1T): 0 (default) = v7.8, 1 = drawn class-1 target-maker books one tick behind
+    ti = raw("v7_touch_id", 0)
+    if isinstance(ti, bool) or _num(ti) not in (0.0, 1.0):
+        raise ValueError(f"v7_touch_id={ti!r} must be 0 or 1")
+    p["touch_id"] = _num(ti) == 1.0
     return p
 
 
@@ -1043,6 +1094,7 @@ class TakerCore:
         self.rel_stats: dict | None = None    # v7.4: the stepping taker's picture on summary states
         self.c0_stats: dict | None = None     # v7.4: the class-0 contrarian term's picture on summary states
         self._c0g: list | None = None         # v7.7: per trial group [books, two-sided, fill notional] on summary states
+        self._tid: dict = {}                  # v7.9: book -> E1T ticks behind, drawn once from this process's uid
         self._book_count = None               # v7.1: the pace state is reset when the book count changes
         self.reset_counters()
 
@@ -1589,6 +1641,8 @@ class TakerCore:
         two = {"c0": [0, 0, []], "depth": [0, 0, []]} if collect else None   # v7.6: books, two-sided, |pos| / d
         self._c0g = ([[0, 0, 0.0] for _ in C0_MK_TRIAL_OFFSETS]                   # v7.7: only with the maker on
                      if collect and p["c0_mk_trial"] and p["c0_maker"] else None)
+        tid_on = p["touch_id"] and target_on                   # v7.9: E1T on the class-1 books of the target leg
+        c1all = lay["c1"] if lay else frozenset()
         for b, g in mk_books.items():
             v = views.get(b)
             if v is None:
@@ -1635,20 +1689,30 @@ class TakerCore:
                         # v7.3 grid: only the side that closes the deviation, once it is one band wide
                         dev = inv_n - tgt_n
                         code = MK_CODE_IN_BAND                     # core 5.1: logging only, no decision reads it
+                        # v7.9: a drawn class-1 book quotes one tick behind the others' best order (E1T)
+                        ticks = self._tid_ticks(b) if tid_on and b in c1all else 0
                         if dev <= -band:
-                            if 1e4 * (fb - ff) / ff > guard:
+                            bpx = self._tid_price(SIDE_BUY, book, orders, pd, ticks) if ticks else fb
+                            if bpx is None:
+                                self._count("mk_tid_no_bid")
+                                code = MK_CODE_BLOCKED_BID
+                            elif 1e4 * (bpx - ff) / ff > guard:
                                 self._count("mk_guard_bid")
                                 code = MK_CODE_BLOCKED_BID
                             else:
-                                want[SIDE_BUY] = round(fb, pd)
+                                want[SIDE_BUY] = round(bpx, pd)
                                 self._count("mk_out_bid")
                                 code = MK_CODE_OUT_BID
                         elif dev >= band:
-                            if 1e4 * (ff - fa) / ff > guard:
+                            apx = self._tid_price(SIDE_SELL, book, orders, pd, ticks) if ticks else fa
+                            if apx is None:
+                                self._count("mk_tid_no_ask")
+                                code = MK_CODE_BLOCKED_ASK
+                            elif 1e4 * (ff - apx) / ff > guard:
                                 self._count("mk_guard_ask")
                                 code = MK_CODE_BLOCKED_ASK
                             else:
-                                want[SIDE_SELL] = round(fa, pd)
+                                want[SIDE_SELL] = round(apx, pd)
                                 self._count("mk_out_ask")
                                 code = MK_CODE_OUT_ASK
                         else:
@@ -1740,6 +1804,10 @@ class TakerCore:
                 self.mk_stats["c0_trial"] = [{"group": i, "off_ticks": C0_MK_TRIAL_OFFSETS[i], "books": g_[0],
                                               "two_sided": g_[1], "fill_notional": round(g_[2], 2)}
                                              for i, g_ in enumerate(self._c0g)]
+            if tid_on:                                      # v7.9: the touch identity of this uid on class 1
+                c1b = [b_ for b_ in mk_books if b_ in c1all]
+                self.mk_stats["touch_id"] = {"books": len(c1b), "behind": sum(self._tid_ticks(b_) for b_ in c1b),
+                                             "digest": touch_id_digest(self.uid, c1b)}
             if tpairs is not None:
                 self.mk_stats.update({
                     "target": True, "dyn": dyn, "band": band_t,
@@ -1755,6 +1823,31 @@ class TakerCore:
                     self.mk_stats["warm"] = sum(1 for b_ in mk_books if b_ in rs.step_st and len(rs.step_st[b_]) > 7
                                                 and rs.step_st[b_][1] is not None
                                                 and clock - rs.step_st[b_][7] < hl_ns)
+
+    def _tid_ticks(self, b: int) -> int:
+        """v7.9: the E1T ticks of book b for this process's own uid, drawn once and never redrawn."""
+        t = self._tid.get(b)
+        if t is None:
+            t = self._tid[b] = touch_id_draw(self.uid, b)
+        return t
+
+    def _tid_price(self, side: int, book: Any, orders: list, pd: int, ticks: int) -> float | None:
+        """v7.9: ``ticks`` behind the others' best order on ``side`` (others_touch: our own resting orders are not the
+        reference, so a quote never walks); no other order on that side -> our own resting price; none -> None."""
+        tick = 10.0 ** (-pd)
+        ob, oa = others_touch(book, orders, 0.5 * tick)
+        if side == SIDE_BUY:
+            px = round(ob - ticks * tick, pd) if ob is not None else max(
+                (px_ for _, s, px_, _q in orders if s == SIDE_BUY and px_ is not None), default=None)
+        else:
+            px = round(oa + ticks * tick, pd) if oa is not None else min(
+                (px_ for _, s, px_, _q in orders if s == SIDE_SELL and px_ is not None), default=None)
+        if px is None or not 0.0 < px < math.inf:
+            return None
+        self._count("mk_tid_bid" if side == SIDE_BUY else "mk_tid_ask")
+        if (ob if side == SIDE_BUY else oa) is None:
+            self._count("mk_tid_own_bid" if side == SIDE_BUY else "mk_tid_own_ask")
+        return px
 
     def _mk_two(self, rs: RunState, b: int, mode: str, want: dict, fb: Any, fa: Any, ff: Any, v: tuple, pd: int,
                 clock: int, pull: bool, two: Any, book: Any, orders: list) -> float | None:
