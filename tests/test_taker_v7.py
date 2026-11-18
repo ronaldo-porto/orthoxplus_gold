@@ -106,7 +106,7 @@ def _launcher_params():
             .replace("${REL_HL}", "2116.8").replace("${REL_RATE}", "0.0209").replace("${REL_CLIP}", "1800")
             .replace("${MK_HL}", "2116.8").replace("${MK_L}", "0.70").replace("${MK_NOTIONAL}", "1500")
             .replace("${MK_GUARD}", "0").replace("${V7_C0_MAKER}", "0").replace("${V7_MK_DEPTH}", "0")
-            .replace("${V7_C0_MK_TRIAL}", "0").replace("${V7_TOUCH_ID}", "1"))
+            .replace("${V7_C0_MK_TRIAL}", "0").replace("${V7_TOUCH_ID}", "0").replace("${V7_SIZE_ID}", "1"))
 
 
 def test_params_from_the_launcher_parse_to_the_defaults():
@@ -145,7 +145,8 @@ def test_params_from_the_launcher_parse_to_the_defaults():
         assert p["c0_maker"] is (False if text is not env else p["c0_maker"])
         assert p["mk_depth"] is (False if text is not env else p["mk_depth"])
         assert p["c0_mk_trial"] is (False if text is not env else p["c0_mk_trial"])
-        assert p["touch_id"] is (True if text is not env else p["touch_id"])          # v7.9: E1T on
+        assert p["touch_id"] is (False if text is not env else p["touch_id"])         # v7.9.1: E1T off
+        assert p["size_id"] is (True if text is not env else p["size_id"])            # v7.9.1: K1Z on
         assert p["c0_mk_notional"] == 1000.0 and p["c0_mk_band_w"] == 0.10
         assert p["mkd_start_bp"] == 2.0 and p["mkd_every_s"] == 600.0
         assert not p["mk_depth"] or 1 in p["maker_classes"]
@@ -1151,7 +1152,7 @@ def test_v72_agent_builds_post_only_gtt_quotes_and_logs_the_maker_leg(tmp_path):
     agent.handle(_st(config, books, accounts, ts=2 * 10 ** 9))
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
-    assert lines[0]["version"] == "v7.9" and lines[0]["params"]["maker_classes"] == [1]
+    assert lines[0]["version"] == "v7.9.1" and lines[0]["params"]["maker_classes"] == [1]
     assert lines[0]["params"]["mk_target"] is False                       # the code default: the v7.2 flat band
     assert lines[0]["params"]["k"] == 0.005
     lay = [x for x in lines if x["kind"] == "layout"][0]
@@ -1195,7 +1196,7 @@ def _q150(core_, ts, collect=False, **kw):
 def test_v73_params_target_and_bounds():
     import pytest
     p = P()
-    assert core.V7_VERSION == "v7.9"
+    assert core.V7_VERSION == "v7.9.1"
     assert p["mk_target"] is False and p["mk_k"] == 0.005 and p["mk_l"] == 0.45 and p["mk_ref_s"] == 10800.0
     assert P(v7_mk_target=1.0)["mk_target"] is True and P(v7_mk_target=0.0)["mk_target"] is False
     assert core.MK_REF_S_DEFAULT == core.DEPTH_S                           # the scoring lookback
@@ -1395,7 +1396,7 @@ def test_v73_agent_logs_the_target_picture(tmp_path):
                                          for kw in quotes)
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == core.CORE_VERSION
+    assert lines[0]["version"] == "v7.9.1" and lines[0]["core"] == core.CORE_VERSION
     assert lines[0]["params"]["mk_target"] is True and lines[0]["params"]["mk_k"] == 0.005
     assert lines[0]["params"]["mk_l"] == 0.45 and lines[0]["params"]["mk_ref_s"] == 10800.0
     summ = [x for x in lines if x["kind"] == "summary"][0]
@@ -1411,7 +1412,7 @@ def test_v73_agent_logs_the_target_picture(tmp_path):
 
 
 def test_v73_core51_split_by_the_guard_is_logging_only():
-    assert core.CORE_VERSION == "taker_v7_core_10" and core.V7_VERSION == "v7.9"
+    assert core.CORE_VERSION == "taker_v7_core_12" and core.V7_VERSION == "v7.9.1"
     keys = {"in_band", "out_bid", "out_ask", "blocked_bid", "blocked_ask", "free", "blocked"}
     # seed flat: everything in band and free
     core_ = core.TakerCore(UID, P(**MKT))
@@ -1521,7 +1522,7 @@ def _c2(actions):
 def test_v74_params_switches_bounds_and_conflicts():
     import pytest
     p = P()
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.9.1" and core.CORE_VERSION == "taker_v7_core_12"
     # the code defaults are v7.3: every v7.4 leg off
     assert p["rel_classes"] == () and p["c0_contra"] is False and p["mk_target"] is False and p["mk_dyn"] is False
     assert p["rel_hl_s"] == 4 * 529.2 == 2116.8 and p["rel_rate_h"] == 0.0209 and p["rel_l"] == 0.45
@@ -1902,7 +1903,7 @@ def test_v74_agent_sends_ioc_takes_on_class2_and_logs_the_new_pictures(tmp_path)
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
     hp = lines[0]["params"]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == "taker_v7_core_10"
+    assert lines[0]["version"] == "v7.9.1" and lines[0]["core"] == "taker_v7_core_12"
     assert hp["rel_classes"] == [2] and hp["c0_contra"] is True and hp["mk_target"] is True and hp["mk_dyn"] is True
     assert hp["rel_hl_s"] == 2116.8 and hp["c0_ref_s"] == 10800.0 and hp["mk_dyn_hl_s"] == 1058.4
     lay = [x for x in lines if x["kind"] == "layout"][0]
@@ -2136,7 +2137,7 @@ def _band_ref(xs, hl, mult=2.0, lim=0.45, dt=60.0):
 
 def test_v75_params_forms_bounds_and_defaults():
     import pytest
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.9.1" and core.CORE_VERSION == "taker_v7_core_12"
     p = P()
     assert p["rel_form"] == "step" and p["mk_band"] is False                      # the code defaults are v7.4
     assert p["rel_band_mult"] == 2.0 == p["mk_band_mult"] and p["rel_mom"] == 0.0037 and core.BAND_FLOOR_BP == 1.0
@@ -2330,7 +2331,7 @@ def test_v75_agent_logs_the_forms(tmp_path):
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
     hp = lines[0]["params"]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == "taker_v7_core_10"
+    assert lines[0]["version"] == "v7.9.1" and lines[0]["core"] == "taker_v7_core_12"
     assert hp["rel_form"] == "band" and hp["mk_band"] is True and hp["mk_l"] == 0.70 and hp["mk_guard_bp"] == 0.0
     summ = [x for x in lines if x["kind"] == "summary"][0]
     assert summ["errors"] == 0 and summ["rel"]["form"] == "band" and summ["rel"]["warm"] == 64
@@ -2521,7 +2522,7 @@ def _fill(i, b, q, px, side=0):
 
 def test_v76_params_switches_and_bounds():
     import pytest
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.9.1" and core.CORE_VERSION == "taker_v7_core_12"
     p = P()
     assert p["c0_maker"] is False and p["mk_depth"] is False                # the code defaults are v7.5
     assert p["c0_mk_notional"] == 1000.0 and p["c0_mk_band_w"] == 0.10 and p["mkd_start_bp"] == 2.0
@@ -2660,7 +2661,7 @@ def test_v76_agent_logs_the_makers(tmp_path):
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
     hp = lines[0]["params"]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == "taker_v7_core_10"
+    assert lines[0]["version"] == "v7.9.1" and lines[0]["core"] == "taker_v7_core_12"
     assert hp["c0_maker"] is True and hp["mk_depth"] is True and hp["c0_mk_notional"] == 1000.0
     summ = [x for x in lines if x["kind"] == "summary"][0]
     assert summ["errors"] == 0 and summ["maker"]["c0_books"] == 64 and summ["maker"]["depth_books"] == 32
@@ -2844,7 +2845,7 @@ TRIAL = dict(v7_k=0.005, v7_c0_maker=1.0, v7_c0_mk_trial=1.0)
 
 def test_v77_params_trial_switch_and_versions():
     import pytest
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.9.1" and core.CORE_VERSION == "taker_v7_core_12"
     assert P()["c0_mk_trial"] is False                                       # the code default is v7.6
     assert P(v7_c0_mk_trial=1.0)["c0_mk_trial"] is True and P(v7_c0_mk_trial="1")["c0_mk_trial"] is True
     assert P(v7_c0_mk_trial=0.0)["c0_mk_trial"] is False and "v7_c0_mk_trial" in core.PARAM_KEYS
@@ -2971,7 +2972,7 @@ def test_v77_behind_price_at_or_below_zero_is_never_quoted():
 def test_v77_launcher_defaults_trial_on_depth_off_and_refuses_bad_values():
     text = (ROOT / "run_taker_v7.sh").read_text()
     for key in ('V7_C0_MK_TRIAL="${V7_C0_MK_TRIAL:-0}"', 'V7_MK_DEPTH="${V7_MK_DEPTH:-0}"',
-                "v7_c0_mk_trial=${V7_C0_MK_TRIAL} ", 'echo "[TakerV7] version=v7.9 '):
+                "v7_c0_mk_trial=${V7_C0_MK_TRIAL} ", 'echo "[TakerV7] version=v7.9.1 '):
         assert key in text, key
     assert re.search(r'case "\$V7_C0_MK_TRIAL" in\n  0\|1\) ;;\n  \*\) echo "ERROR: V7_C0_MK_TRIAL must be 0 or 1', text)
     p = core.parse_params(_parse_kwargs_like(_launcher_params()))
@@ -2987,7 +2988,7 @@ def test_v77_agent_logs_the_trial(tmp_path):
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
     hp = lines[0]["params"]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == "taker_v7_core_10"
+    assert lines[0]["version"] == "v7.9.1" and lines[0]["core"] == "taker_v7_core_12"
     assert hp["c0_mk_trial"] is True and hp["mk_depth"] is False and hp["c0_maker"] is True
     summ = [x for x in lines if x["kind"] == "summary"][0]
     assert summ["errors"] == 0 and summ["maker"]["c0_books"] == 64 and summ["maker"]["depth_books"] == 0
@@ -3028,9 +3029,9 @@ def test_v78_launch_defaults_are_s1_and_quote_no_class0_book():
     # on any class-0 book while the v7.7 defaults do (so the test bites).
     text = (ROOT / "run_taker_v7.sh").read_text()
     for key in ('V7_C0_MAKER="${V7_C0_MAKER:-0}"', 'V7_C0_MK_TRIAL="${V7_C0_MK_TRIAL:-0}"',
-                'V7_MK_DEPTH="${V7_MK_DEPTH:-0}"', 'echo "[TakerV7] version=v7.9 '):
+                'V7_MK_DEPTH="${V7_MK_DEPTH:-0}"', 'echo "[TakerV7] version=v7.9.1 '):
         assert key in text, key
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.9.1" and core.CORE_VERSION == "taker_v7_core_12"
     s78 = _launcher_params()
     assert " v7_c0_maker=0 " in s78 and " v7_c0_mk_trial=0 " in s78
     s77 = s78.replace(" v7_c0_maker=0 ", " v7_c0_maker=1 ").replace(" v7_c0_mk_trial=0 ", " v7_c0_mk_trial=1 ")
@@ -3062,7 +3063,7 @@ def _c1_quotes(actions):
 
 def test_v79_params_switch_versions_and_launcher_default():
     import pytest
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.9.1" and core.CORE_VERSION == "taker_v7_core_12"
     assert P()["touch_id"] is False and "v7_touch_id" in core.PARAM_KEYS          # the code default is v7.8
     assert P(v7_touch_id=1.0)["touch_id"] is True and P(v7_touch_id="1")["touch_id"] is True
     assert P(v7_touch_id=0.0)["touch_id"] is False
@@ -3070,11 +3071,12 @@ def test_v79_params_switch_versions_and_launcher_default():
         with pytest.raises(ValueError):
             core.parse_params({"v7_touch_id": bad})
     text = (ROOT / "run_taker_v7.sh").read_text()
-    for key in ('V7_TOUCH_ID="${V7_TOUCH_ID:-1}"', "\nv7_touch_id=${V7_TOUCH_ID} \\\n", 'echo "[TakerV7] version=v7.9 ',
-                'echo "[preflight] v7.9 PASS"'):
+    for key in ('V7_TOUCH_ID="${V7_TOUCH_ID:-0}"', "\nv7_touch_id=${V7_TOUCH_ID} v7_size_id=${V7_SIZE_ID} \\\n",
+                'echo "[TakerV7] version=v7.9.1 ',
+                'echo "[preflight] v7.9.1 PASS"'):
         assert key in text, key
     assert re.search(r'case "\$V7_TOUCH_ID" in\n  0\|1\) ;;\n  \*\) echo "ERROR: V7_TOUCH_ID must be 0 or 1', text)
-    assert core.parse_params(_parse_kwargs_like(_launcher_params()))["touch_id"] is True
+    assert core.parse_params(_parse_kwargs_like(_launcher_params()))["touch_id"] is False      # v7.9.1: E1T off
 
 
 def test_v79_draw_is_the_preregistered_profile_v2_e1t():
@@ -3191,7 +3193,7 @@ def test_v79_agent_logs_the_touch_identity(tmp_path):
     agent.handle(_st(*_rel_state(mids={200: 8.91}), ts=10 ** 9 + S60))
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == "taker_v7_core_10"
+    assert lines[0]["version"] == "v7.9.1" and lines[0]["core"] == "taker_v7_core_12"
     assert lines[0]["params"]["touch_id"] is True and lines[0]["uid"] == UID
     summ = [x for x in lines if x["kind"] == "summary"][0]
     assert summ["errors"] == 0
@@ -3209,3 +3211,198 @@ def test_v79_guard_judges_the_quoted_price():
     q = _c1_quotes(acts)
     assert q == {b: (core.SIDE_BUY, 8.96) for b in E1T_68}
     assert c.c["mk_guard_bid"] == 64 - len(E1T_68)
+
+
+# ---- v7.9.1: the class-1 ORDER-SIZE identity K1Z (Round 42; USER 11-19 04:4x "accept your recommendation option") ----
+MKZ = dict(MKT, v7_size_id=1.0)
+K1Z_68 = tuple(b for b in range(128, 192) if core.size_id_draw(UID, b) == 2.0)
+K1Z_68_N = 37                                    # OBSERVED here: drawn 2.0 books of uid 68 on 128..191
+
+
+def _c1_orders(actions):
+    return {a[1]: (a[2], a[3], a[4]) for a in actions if a[0] == core.ACT_QUOTE and 128 <= a[1] < 192}
+
+
+def _flat_step(core_, inv_c1=0.0, mutate=None, bid=8.99, ask=9.01, f=9.0, seed_ts=10 ** 9, ts=2 * 10 ** 9):
+    """Seed at the mid (flat reference), then one state at the same mid with class-1 inventory ``inv_c1`` base units:
+    the level target is 0, so the deviation is the inventory x mid."""
+    config, books, accounts = _mk_state()
+    core_.step(seed_ts, "hk", config, books, accounts, [])
+    config, books, accounts = _mk_state(bid=bid, ask=ask, f_c1=f, inv_c1=inv_c1)
+    if mutate:
+        mutate(accounts)
+    return core_.step(ts, "hk", config, books, accounts, [], collect=True)[0]
+
+
+def test_v791_versions_switch_and_launcher_defaults():
+    import pytest
+    assert core.V7_VERSION == "v7.9.1" and core.CORE_VERSION == "taker_v7_core_12"
+    assert P()["size_id"] is False and "v7_size_id" in core.PARAM_KEYS and P()["touch_id"] is False   # code default off
+    assert P(v7_size_id=1.0)["size_id"] is True and P(v7_size_id="1")["size_id"] is True
+    assert P(v7_size_id=0.0)["size_id"] is False
+    for bad in (2, "on", -1, 0.5, True):
+        with pytest.raises(ValueError):
+            core.parse_params({"v7_size_id": bad})
+    text = (ROOT / "run_taker_v7.sh").read_text()
+    for key in ('V7_SIZE_ID="${V7_SIZE_ID:-1}"', 'V7_TOUCH_ID="${V7_TOUCH_ID:-0}"', " v7_size_id=${V7_SIZE_ID} ",
+                'echo "[preflight] v7.9.1 PASS"'):
+        assert key in text, key
+    assert re.search(r'case "\$V7_SIZE_ID" in\n  0\|1\) ;;\n  \*\) echo "ERROR: V7_SIZE_ID must be 0 or 1', text)
+    assert re.search(r'if \[\[ "\$V7_SIZE_ID" == "1" && "\$V7_TOUCH_ID" == "1" \]\]; then\n  echo "ERROR:[^\n]*\n  exit 2\nfi',
+                     text)
+    p = core.parse_params(_parse_kwargs_like(_launcher_params()))
+    assert p["size_id"] is True and p["touch_id"] is False and p["mk_notional"] == 1500.0 and p["mk_band_clips"] == 1.0
+
+
+def test_v791_draw_digest_and_negative_uid_are_the_preregistered_k1z():
+    import hashlib
+    assert (core.SIZE_ID_PROFILE, core.SIZE_ID_DIM, core.SIZE_ID_MULTS) == ("orthox-profile-v3", "K1Z", (1.0, 2.0))
+    assert core.size_id_digest(235, range(128, 192)) == "eaf96ef1c9384f03"
+    assert sum(core.size_id_draw(235, b) == 2.0 for b in range(128, 192)) == 38
+    assert core.size_id_digest(99, range(128, 192)) == "7d2b8fce981b81d4"
+    assert sum(core.size_id_draw(99, b) == 2.0 for b in range(128, 192)) == 31
+    assert core.size_id_digest(UID, reversed(range(128, 192))) == core.size_id_digest(UID, range(128, 192))
+    assert core.size_id_digest(UID, range(128, 192)) == "b81f3eacfa105a0a" and len(K1Z_68) == K1Z_68_N
+    assert all(core.size_id_draw(-1, b) == 1.0 and type(core.size_id_draw(-1, b)) is float for b in range(256))
+    assert core.size_id_digest(-1, range(128, 130)) == hashlib.sha256(
+        "orthox-profile-v3|uid=-1|K1Z\n128|K1Z=1.0\n129|K1Z=1.0".encode()).hexdigest()[:16]
+    for b in (128, 129, 150, 191):                                            # the formula itself
+        h = hashlib.sha256(f"orthox-profile-v3|K1Z|235|{b}".encode()).hexdigest()
+        assert core.size_id_draw(235, b) == (1.0, 2.0)[int(h[:8], 16) % 2]
+    diff = sum(core.size_id_draw(235, b) != core.size_id_draw(99, b) for b in range(128, 192))
+    assert 16 <= diff <= 48                                                   # each uid draws its own table
+    assert core.size_id_draw(UID, 128) == 2.0 and core.size_id_draw(UID, 133) == 1.0
+
+
+def test_v791_only_drawn_class1_target_books_change_size_not_price():
+    on = core.TakerCore(UID, P(**MKZ))
+    off = core.TakerCore(UID, P(**MKT))
+    ao = _flat_step(on, inv_c1=-450.0)           # dev = -4050 notional: past both bands, every class-1 book bids
+    af = _flat_step(off, inv_c1=-450.0)
+    assert [a for a in ao if not 128 <= a[1] < 192] == [a for a in af if not 128 <= a[1] < 192]   # c0 / c2 / c1 others
+    qo, qf = _c1_orders(ao), _c1_orders(af)
+    assert set(qo) == set(qf) and len(qo) == 64
+    for b in range(128, 192):
+        so, sf = qo[b], qf[b]
+        assert so[0] == sf[0] == core.SIDE_BUY and so[2] == sf[2] == 8.99, b          # side and PRICE unchanged
+        if b in K1Z_68:
+            assert so[1] == core.floor_to(2.0 * 1800.0 / 9.0, 4) and abs(so[1] / sf[1] - 2.0) < 1e-3, b
+        else:
+            assert so[1] == sf[1], b
+    assert on.c["mk_quote_bid"] == off.c["mk_quote_bid"] and not [k for k in on.c if k.startswith("mk_tid")]
+    # the other side too
+    on2, off2 = core.TakerCore(UID, P(**MKZ)), core.TakerCore(UID, P(**MKT))
+    qo, qf = _c1_orders(_flat_step(on2, inv_c1=450.0)), _c1_orders(_flat_step(off2, inv_c1=450.0))
+    for b in range(128, 192):
+        assert qo[b][0] == qf[b][0] == core.SIDE_SELL and qo[b][2] == qf[b][2] == 9.01
+        assert abs(qo[b][1] / qf[b][1] - (2.0 if b in K1Z_68 else 1.0)) < 1e-3, b
+
+
+def test_v791_band_follows_the_per_book_clip():
+    # dev = -2250 notional: past one clip (1,800, undrawn) but inside the drawn book's band (3,600)
+    on, off = core.TakerCore(UID, P(**MKZ)), core.TakerCore(UID, P(**MKT))
+    qo, qf = _c1_orders(_flat_step(on, inv_c1=-250.0)), _c1_orders(_flat_step(off, inv_c1=-250.0))
+    assert set(qf) == set(range(128, 192))                                   # v7.8 quotes every class-1 book
+    assert set(qo) == set(range(128, 192)) - set(K1Z_68)                     # drawn books are still in band
+    assert on.c["mk_in_band"] == 64 + K1Z_68_N and on.c["mk_out_bid"] == 64 - K1Z_68_N      # the seed state is in band on all 64
+    # the ask side: dev = +2250 -> undrawn books ask, drawn books stay in band; +4050 -> every book asks
+    on = core.TakerCore(UID, P(**MKZ))
+    qa = _c1_orders(_flat_step(on, inv_c1=250.0))
+    assert set(qa) == set(range(128, 192)) - set(K1Z_68) and all(v[0] == core.SIDE_SELL for v in qa.values())
+    on = core.TakerCore(UID, P(**MKZ))
+    assert set(_c1_orders(_flat_step(on, inv_c1=450.0))) == set(range(128, 192))
+    # dev = -4050: past the drawn band as well, every book quotes
+    on = core.TakerCore(UID, P(**MKZ))
+    assert set(_c1_orders(_flat_step(on, inv_c1=-450.0))) == set(range(128, 192))
+    # a wider band multiple moves both thresholds together (band = band_clips x per-book clip)
+    on, off = core.TakerCore(UID, P(**dict(MKZ, v7_mk_band_clips=2.0))), core.TakerCore(UID, P(**dict(MKT, v7_mk_band_clips=2.0)))
+    assert set(_c1_orders(_flat_step(on, inv_c1=-450.0))) == set(range(128, 192)) - set(K1Z_68)       # 4050 < 7200
+    assert set(_c1_orders(_flat_step(off, inv_c1=-450.0))) == set(range(128, 192))                      # 4050 > 3600
+
+
+def test_v791_clamps_follow_the_bigger_clip():
+    b_big, b_small = K1Z_68[0], 133
+    assert core.size_id_draw(UID, b_big) == 2.0 and core.size_id_draw(UID, b_small) == 1.0
+
+    def poor_quote(accounts):                    # quote_free 3,000: affords 2 x 1,800 only after the margin cut
+        for b in (b_big, b_small):
+            accounts[UID][b]["qb"]["f"] = 3000.0
+    on = core.TakerCore(UID, P(**MKZ))
+    q = _c1_orders(_flat_step(on, inv_c1=-450.0, mutate=poor_quote))
+    afford = 3000.0 / (8.99 * (1.0 + 0.001))
+    assert q[b_big][1] == core.floor_to(afford, 4) and q[b_big][1] < 2.0 * 1800.0 / 9.0
+    assert q[b_small][1] == core.floor_to(1800.0 / 9.0, 4)                  # 1 x clip still affordable: not clamped
+
+    def poor_base(accounts):
+        for b in (b_big, b_small):
+            accounts[UID][b]["bb"]["f"] = 100.0
+    on = core.TakerCore(UID, P(**MKZ))
+    q = _c1_orders(_flat_step(on, inv_c1=450.0, mutate=poor_base))
+    assert q[b_big][1] == 100.0 and q[b_small][1] == 100.0                  # base bound binds both (400 / 200 wanted)
+
+    def tiny(accounts):                          # afford below the min order on the drawn book: no quote
+        accounts[UID][b_big]["qb"]["f"] = 20.0
+    on = core.TakerCore(UID, P(**MKZ))
+    q = _c1_orders(_flat_step(on, inv_c1=-450.0, mutate=tiny))
+    assert b_big not in q and b_small in q and on.c["mk_below_min"] == 1
+
+
+def test_v791_size_id_only_with_the_target_leg_and_depth_books_keep_the_clip():
+    # no target leg: no K1Z (flat v7.2 band) and no summary field
+    for legs in (dict(v7_maker_classes=1.0), dict(v7_k=0.005)):
+        on, off = core.TakerCore(UID, P(**legs, v7_size_id=1.0)), core.TakerCore(UID, P(**legs))
+        for i, (bid, ask, f) in enumerate(((8.99, 9.01, 9.0), (8.97, 8.99, 8.98))):
+            config, books, accounts = _mk_state(bid=bid, ask=ask, f_c1=f)
+            xa, _ = on.step((i + 1) * 10 ** 9, "hk", config, books, accounts, [], collect=True)
+            config, books, accounts = _mk_state(bid=bid, ask=ask, f_c1=f)
+            xb, _ = off.step((i + 1) * 10 ** 9, "hk", config, books, accounts, [], collect=True)
+            assert xa == xb
+        assert "size_id" not in (on.mk_stats or {})
+    # the depth maker on: its odd class-1 books keep the plain clip, even books are K2 and follow the draw
+    legs = dict(MKT, v7_mk_depth=1.0)
+    on, off = core.TakerCore(UID, P(**legs, v7_size_id=1.0)), core.TakerCore(UID, P(**legs))
+    qo, qf = _c1_orders(_flat_step(on, inv_c1=-450.0)), _c1_orders(_flat_step(off, inv_c1=-450.0))
+    for b in range(128, 192):
+        if b in qo and b in qf:
+            assert abs(qo[b][1] / qf[b][1] - (2.0 if b % 2 == 0 and b in K1Z_68 else 1.0)) < 1e-3, b
+    odd = [b for b in range(129, 192, 2) if b in qo and b in qf]
+    assert odd and all(qo[b] == qf[b] for b in odd)
+    assert on.mk_stats["size_id"]["books"] == 32 and on.mk_stats["size_id"]["big"] == sum(b % 2 == 0 for b in K1Z_68)
+
+
+def test_v791_equal_to_v79_with_both_switches_off_and_with_e1t_only():
+    # K1Z off = the v7.9 code path: identical actions, with E1T off (v7.8) and on (v7.9)
+    for touch in (0.0, 1.0):
+        a = core.TakerCore(UID, P(**dict(MKT, v7_touch_id=touch)))
+        b_ = core.TakerCore(UID, P(**dict(MKT, v7_touch_id=touch, v7_size_id=0.0)))
+        for i, (bid, ask, f, inv) in enumerate(((8.99, 9.01, 9.0, 0.0), (8.97, 8.99, 8.98, -300.0),
+                                                (9.03, 9.05, 9.04, 300.0), (8.99, 9.01, 9.0, 0.0))):
+            xa = _flat_step(a, inv_c1=inv, bid=bid, ask=ask, f=f, seed_ts=(2 * i + 1) * 10 ** 9, ts=(2 * i + 2) * 10 ** 9)
+            xb = _flat_step(b_, inv_c1=inv, bid=bid, ask=ask, f=f, seed_ts=(2 * i + 1) * 10 ** 9, ts=(2 * i + 2) * 10 ** 9)
+            assert xa == xb
+        assert "size_id" not in a.mk_stats and "size_id" not in b_.mk_stats
+
+
+def test_v791_summary_carries_size_id_beside_touch_id():
+    on = core.TakerCore(UID, P(**MKZ))
+    _flat_step(on, inv_c1=-450.0)
+    assert on.mk_stats["size_id"] == {"books": 64, "big": K1Z_68_N, "digest": "b81f3eacfa105a0a"}
+    assert "touch_id" not in on.mk_stats and "dev_abs_notional_p50" in on.mk_stats        # every existing field stays
+    off = core.TakerCore(UID, P(**MKT))
+    _flat_step(off)
+    assert "size_id" not in off.mk_stats
+
+
+def test_v791_agent_logs_the_size_identity(tmp_path):
+    real = _real_taos()
+    mod = _load_agent_class(stubbed=not real)
+    agent = _agent(mod, tmp_path, **dict(V75, v7_size_id=1.0))
+    agent.handle(_st(*_rel_state()))
+    agent.handle(_st(*_rel_state(mids={200: 8.91}), ts=10 ** 9 + S60))
+    assert agent._writer.flush()
+    lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
+    assert lines[0]["version"] == "v7.9.1" and lines[0]["core"] == "taker_v7_core_12"
+    assert lines[0]["params"]["size_id"] is True and lines[0]["params"]["touch_id"] is False
+    summ = [x for x in lines if x["kind"] == "summary"][0]
+    assert summ["errors"] == 0
+    assert summ["maker"]["size_id"] == {"books": 64, "big": K1Z_68_N, "digest": "b81f3eacfa105a0a"}
