@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v7.9 TakerV7 launcher (agents/strategy/TakerV7.py + taker_v7_core.py): class 0 = the taker core (slope 0.005) with
+# v7.9.2 TakerV7 launcher (agents/strategy/TakerV7.py + taker_v7_core.py): class 0 = the taker core (slope per profile, see below) with
 # a second, contrarian term inside its target on the EVEN class-0 books and a flat two-sided maker on the ODD ones,
 # whose quote offset is the Round 31 TRIAL (four groups of 16 books: the v7.6 rule / at the others' touch / one / two
 # ticks behind it); class 1 = the maker leg (post-only quotes at the touch, band centred on a band target on the book's
@@ -8,11 +8,21 @@
 # v7.8 (Round 33 C, S1 q probe, USER 11-15): the class-0 maker and its offset trial are OFF by default
 # (V7_C0_MAKER=0 V7_C0_MK_TRIAL=0): the taker has every class-0 book and K2 is the only maker = exactly v7.5.
 # V7_C0_MAKER=1 V7_C0_MK_TRIAL=1 runs exactly v7.7 (the lines above and below describe the v7.7 legs).
-# v7.9 (Round 35 / 36, USER 11-16 option 1): the touch identity is ON by default (V7_TOUCH_ID=1): on the class-1
-# books whose pre-registered E1T draw for THIS uid is 1 (hash of own uid x book, about half), K2 quotes one tick
-# behind the others' best order; every other book and leg is v7.8.  V7_TOUCH_ID=0 runs exactly v7.8.
+# v7.9 (Round 35 / 36, USER 11-16 option 1): V7_TOUCH_ID=1 is the touch identity E1T: on the class-1 books whose
+# pre-registered E1T draw for THIS uid is 1 (hash of own uid x book, about half), K2 quotes one tick behind the
+# others' best order; every other book and leg is v7.8.  V7_TOUCH_ID=0 (the v7.9.1 default) = no E1T.
+# v7.9.1 (Round 42, USER 11-19 04:4x JST "accept your recommendation option"): the class-1 ORDER-SIZE identity K1Z is
+# ON by default (V7_SIZE_ID=1) and E1T is OFF by default (V7_TOUCH_ID=0): on the class-1 K2 books whose pre-registered
+# K1Z draw for THIS uid (hash of own uid x book, about half) is 2.0, the K2 clip is 3,000 instead of 1,500 (order size
+# and band follow it); the quote price is the v7.8 price.  V7_SIZE_ID=0 V7_TOUCH_ID=0 runs exactly v7.8;
+# V7_SIZE_ID=0 V7_TOUCH_ID=1 runs exactly v7.9.  V7_SIZE_ID=1 with V7_TOUCH_ID=1 is REFUSED (untested combination).
+# v7.9.2 (Round 43 B + C, USER 11-19 05:3x JST "build v7.92, v7.9.3"): ONE logic with v7.9.1, a different PARAMETER profile
+# set here as defaults (every value MODEL, a replay pick; the core is taker_v7_core_13, v7.9.1 = core_12 profile):
+#   class 1 K1Z size pair V7_SIZE_PAIR=1.5,2.5 (Round 43 B S2: the drawn books quote 1.5 x / 2.5 x the 1,500 clip);
+#   class 0 taker slope V7_C0_K=0.0035 (Round 43 C T2: slope x 0.7; v7.9.1 0.005), V7_C0_TGT_OFF=0 (T0);
+#   class 2 band half-life V7_REL_HL_BAND=4233.6 (Round 43 C B4: 8 "hours"; v7.9.1 2,116.8), V7_REL_L=0.45 (as v7.9.1).
 # Defaults: V7_CLASSES=0, V7_MAKER_CLASSES=1, V7_MK_TARGET=3, V7_REL_CLASSES=2, V7_REL_FORM=band, V7_C0_CONTRA=1,
-# V7_C0_MAKER=0, V7_C0_MK_TRIAL=0, V7_MK_DEPTH=0, V7_TOUCH_ID=1 (v7.9).  v7.7 switch (Round 31): V7_C0_MK_TRIAL=0 quotes every class-0 maker
+# V7_C0_MAKER=0, V7_C0_MK_TRIAL=0, V7_MK_DEPTH=0, V7_TOUCH_ID=0, V7_SIZE_ID=1 (v7.9.2), V7_SIZE_PAIR=1.5,2.5, V7_C0_K=0.0035, V7_C0_TGT_OFF=0.0, V7_REL_HL_BAND=4233.6, V7_REL_L=0.45.  v7.7 switch (Round 31): V7_C0_MK_TRIAL=0 quotes every class-0 maker
 # book by the v7.6 rule.  (V7_C0_MK_TRIAL=0 V7_MK_DEPTH=1 runs exactly v7.6.)
 # v7.6 switches (Round 29 C): V7_C0_MAKER=0 gives every class-0 book back to the taker; V7_MK_DEPTH=1 puts the
 # depth-controlled two-sided maker back on the ODD class-1 books.  (V7_C0_MAKER=0 V7_MK_DEPTH=0 runs exactly v7.5.)
@@ -62,8 +72,15 @@ V7_REL_FORM="${V7_REL_FORM:-band}"
 V7_C0_MAKER="${V7_C0_MAKER:-0}"
 V7_C0_MK_TRIAL="${V7_C0_MK_TRIAL:-0}"
 V7_MK_DEPTH="${V7_MK_DEPTH:-0}"
-V7_TOUCH_ID="${V7_TOUCH_ID:-1}"
+V7_TOUCH_ID="${V7_TOUCH_ID:-0}"
+V7_SIZE_ID="${V7_SIZE_ID:-1}"
 V7_C0_CONTRA="${V7_C0_CONTRA:-1}"
+# v7.9.2 profile (Round 43, all MODEL picks; the profile IS the default, no env prefix is needed):
+V7_SIZE_PAIR="${V7_SIZE_PAIR:-1.5,2.5}"
+V7_C0_K="${V7_C0_K:-0.0035}"
+V7_C0_TGT_OFF="${V7_C0_TGT_OFF:-0.0}"
+V7_REL_HL_BAND="${V7_REL_HL_BAND:-4233.6}"
+V7_REL_L="${V7_REL_L:-0.45}"
 EXTRA=()
 
 _normalized_args=()
@@ -139,6 +156,21 @@ case "$V7_TOUCH_ID" in
   0|1) ;;
   *) echo "ERROR: V7_TOUCH_ID must be 0 or 1 (got ${V7_TOUCH_ID})" >&2; exit 2 ;;
 esac
+case "$V7_SIZE_ID" in
+  0|1) ;;
+  *) echo "ERROR: V7_SIZE_ID must be 0 or 1 (got ${V7_SIZE_ID})" >&2; exit 2 ;;
+esac
+_num_re='^[0-9]+(\.[0-9]+)?$'
+_snum_re='^-?[0-9]+(\.[0-9]+)?$'
+[[ "$V7_SIZE_PAIR" =~ ^[0-9]+(\.[0-9]+)?,[0-9]+(\.[0-9]+)?$ ]] || { echo "ERROR: V7_SIZE_PAIR must be two positive numbers a,b (got ${V7_SIZE_PAIR})" >&2; exit 2; }
+[[ "$V7_C0_K" =~ $_num_re ]] || { echo "ERROR: V7_C0_K must be a positive number (got ${V7_C0_K})" >&2; exit 2; }
+[[ "$V7_C0_TGT_OFF" =~ $_snum_re ]] || { echo "ERROR: V7_C0_TGT_OFF must be a number in clips (got ${V7_C0_TGT_OFF})" >&2; exit 2; }
+[[ "$V7_REL_HL_BAND" =~ $_num_re ]] || { echo "ERROR: V7_REL_HL_BAND must be a positive number of sim-s (got ${V7_REL_HL_BAND})" >&2; exit 2; }
+[[ "$V7_REL_L" =~ $_num_re ]] || { echo "ERROR: V7_REL_L must be a positive number (got ${V7_REL_L})" >&2; exit 2; }
+if [[ "$V7_SIZE_ID" == "1" && "$V7_TOUCH_ID" == "1" ]]; then
+  echo "ERROR: V7_SIZE_ID=1 with V7_TOUCH_ID=1 is an untested combination; set one of them to 0." >&2
+  exit 2
+fi
 if [[ "$V7_MK_DEPTH" == "1" && "$V7_MAKER_CLASSES" == "none" ]]; then
   echo "ERROR: V7_MK_DEPTH=1 makes class-1 books, so V7_MAKER_CLASSES must include class 1 (or set V7_MK_DEPTH=0)." >&2
   exit 2
@@ -201,8 +233,9 @@ fi
 #   maker (uses mk_notional and mk_guard_bp above) mkd_start_bp 2 and mkd_every_s 600 MODEL (Round 29 B).
 # v7.7 (Round 31 B.3): the class-0 maker offset trial needs no value: its groups and offsets are STRUCTURAL (core).
 case "$V7_REL_FORM" in
-  t9) REL_HL=529.2; REL_RATE=0.0321; REL_CLIP=930 ;;
-  *)  REL_HL=2116.8; REL_RATE=0.0209; REL_CLIP=1800 ;;
+  t9)   REL_HL=529.2; REL_RATE=0.0321; REL_CLIP=930 ;;
+  band) REL_HL=${V7_REL_HL_BAND}; REL_RATE=0.0209; REL_CLIP=1800 ;;
+  *)    REL_HL=2116.8; REL_RATE=0.0209; REL_CLIP=1800 ;;
 esac
 if [[ "$V7_MK_TARGET" == "3" ]]; then
   MK_HL=2116.8; MK_L=0.70; MK_NOTIONAL=1500; MK_GUARD=0
@@ -210,32 +243,32 @@ else
   MK_HL=1058.4; MK_L=0.45; MK_NOTIONAL=1800; MK_GUARD=10
 fi
 PARAMS="lazy_load=1 history_len=0 \
-v7_k=0.005 v7_l=0.55 v7_clip=7 v7_big=15 v7_classes=${V7_CLASSES} \
+v7_k=${V7_C0_K} v7_l=0.55 v7_clip=7 v7_big=15 v7_classes=${V7_CLASSES} \
 v7_c1_k=0.036 v7_c1_l=0.50 v7_c1_clip_notional=3500 \
 v7_maker_classes=${V7_MAKER_CLASSES} v7_mk_notional=${MK_NOTIONAL} v7_mk_guard_bp=${MK_GUARD} v7_mk_band_clips=1 v7_mk_pull=1 v7_mk_expiry_s=60 \
 v7_mk_target=${V7_MK_TARGET} v7_mk_k=0.005 v7_mk_l=${MK_L} v7_mk_ref_s=10800 \
 v7_mk_dyn_hl_s=${MK_HL} v7_mk_dyn_rate_h=0.03 v7_mk_band_mult=2 \
-v7_rel_classes=${V7_REL_CLASSES} v7_rel_form=${V7_REL_FORM} v7_rel_hl_s=${REL_HL} v7_rel_rate_h=${REL_RATE} v7_rel_l=0.45 \
+v7_rel_classes=${V7_REL_CLASSES} v7_rel_form=${V7_REL_FORM} v7_rel_hl_s=${REL_HL} v7_rel_rate_h=${REL_RATE} v7_rel_l=${V7_REL_L} \
 v7_rel_clip_notional=${REL_CLIP} v7_rel_band_mult=2 v7_rel_mom=0.0037 \
 v7_c0_maker=${V7_C0_MAKER} v7_c0_mk_notional=1000 v7_c0_mk_band_w=0.10 v7_c0_mk_trial=${V7_C0_MK_TRIAL} \
 v7_mk_depth=${V7_MK_DEPTH} v7_mkd_start_bp=2 v7_mkd_every_s=600 \
 v7_step_thr_bp=3 v7_step_max_dt_s=60 \
 v7_c0_contra=${V7_C0_CONTRA} v7_c0_kc=0.005 v7_c0_lc=0.45 v7_c0_ref_s=10800 \
-v7_touch_id=${V7_TOUCH_ID} \
+v7_touch_id=${V7_TOUCH_ID} v7_size_id=${V7_SIZE_ID} v7_size_pair=${V7_SIZE_PAIR} v7_c0_tgt_off_clips=${V7_C0_TGT_OFF} \
 v7_pace=1 v7_cap=0 v7_cap_mult=10 v7_fee_margin=0.001 \
 v7_log_every=60 v7_gc_every=30 v7_log_dir=${LOG_DIR} v7_history_anchor=${HISTORY_ANCHOR}"
 
 _sha16() { sha256sum "$1" | cut -c1-16; }
-echo "[TakerV7] version=v7.9 TakerV7.py=$(_sha16 "$AGENT_PATH/TakerV7.py") taker_v7_core.py=$(_sha16 "$AGENT_PATH/taker_v7_core.py") test_taker_v7.py=$(_sha16 "$SCRIPT_DIR/tests/test_taker_v7.py")"
+echo "[TakerV7] version=v7.9.2 TakerV7.py=$(_sha16 "$AGENT_PATH/TakerV7.py") taker_v7_core.py=$(_sha16 "$AGENT_PATH/taker_v7_core.py") test_taker_v7.py=$(_sha16 "$SCRIPT_DIR/tests/test_taker_v7.py")"
 
 # ---- preflight: the v7 tests must pass -------------------------------------------------------------------------------
-echo "[preflight] v7.9: ${PYTHON} tests/run_tests.py tests/test_taker_v7.py"
+echo "[preflight] v7.9.2: ${PYTHON} tests/run_tests.py tests/test_taker_v7.py"
 if ! V7_LAUNCH_PARAMS="$PARAMS" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     "$PYTHON" "$SCRIPT_DIR/tests/run_tests.py" tests/test_taker_v7.py; then
-  echo "ERROR: v7.9 preflight FAILED: tests/test_taker_v7.py did not pass; nothing was launched." >&2
+  echo "ERROR: v7.9.2 preflight FAILED: tests/test_taker_v7.py did not pass; nothing was launched." >&2
   exit 1
 fi
-echo "[preflight] v7.9 PASS"
+echo "[preflight] v7.9.2 PASS"
 if [[ "${V7_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   exit 0
 fi
