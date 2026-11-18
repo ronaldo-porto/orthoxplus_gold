@@ -237,6 +237,40 @@ agent, no coordination, no runtime randomness and no concealment.
            at rank #6.
   log    : the summary's maker picture carries touch_id = {books, behind, digest}; digest = sha16 of
            "\\n".join(["orthox-profile-v2|uid=<uid>|E1T"] + ["<book>|E1T=<ticks>" for each class-1 book ascending]).
+
+v7.10 (Round 39; USER 11-18 JST: "accept your recommendation for option 1, and UID 235", then "Build both legs
+(Recommended)"): two new rule forms, each behind its own switch (the code defaults are v7.9; the launcher turns both on).
+E1T, class 1 (K2) and every other leg are unchanged.  Every constant below is COPIED from the Round 39 reads of the
+mainnet operator 5EA8Kgeh (OBSERVED in sample, class 0 also forward) unless labelled.
+  class 0 : v7_c0_form = "dev" (default "gap" = the v7.4 .. v7.9 gap + contrarian rule).  Per class-0 book and state:
+              gap = 1e4 (f - mid) / mid;  e = exponential average of the gap with time constant v7_c0_dev_tau_s (COPIED
+              300 sim-s), weight 1 - exp(-dt / tau) on the pace clock, seeded at the first gap (D starts at 0), updated
+              before D is read;  D = gap - e.
+            One IOC of v7_c0_dev_qty units (COPIED 10) at the OPPOSITE touch in sign(D) (D > 0 buys), sent only when
+            |D| >= v7_c0_dev_thr_bp (COPIED 2.0 bp), at least v7_c0_dev_cool_s (COPIED 300 sim-s) have passed since this
+            leg's last send on the book, and the inventory after the order (the quantity left by the clamps) stays within
+            +-v7_l x W / mid (the class-0 limit, W as the taker reads it).  Clamps (never a loan: a sell stops at the
+            free base; a buy at free quote with the fee margin), the grid's floor and minimum order, one instruction per
+            book and the pace guard are the taker's.  The contrarian term and the f level are not used in this form.  A
+            book without f or with a one-sided / crossed touch does not trade and keeps e; a new simulation or a
+            book-count change clears the state.
+  class 2 : v7_rel_form = "block" (the other forms stay).  One state per class: the ln mid of each two-sided book of
+            the class in this state, kept in a ring of (pace clock, {book: ln mid}).  r1 = the block move = the mean,
+            over the books two-sided both now and at t', of ln mid(now) - ln mid(t'), t' = the latest ring entry at or
+            before now - v7_blk_r1_s (COPIED 30 sim-s); no entry that old, or no book common to both, = no signal.
+            (STRUCTURAL, coordinator 11-18: a mean of per-book changes, so a book entering or leaving the two-sided
+            set never moves r1; a difference of mean levels would jump by about 8 bp per such book on mainnet, where
+            the class-2 books' ln mids spread about 180 bp and a real 30-s block move is about 0.4 bp.)  S starts at 0;
+            when 1e4 |r1| >= v7_blk_thr_bp (COPIED 0.0 bp: the observed rule has no threshold) and r1 != 0, S = sign(r1),
+            else S keeps its value.  Per book: target = S x v7_blk_l (COPIED 0.5) x W / mid, inside the v7.5 no-loan
+            bounds (not below -(base share)); while S = 0 the target is the inventory found at the book's first state
+            (an inherited position is never worked toward 0).  One IOC of min(v7_blk_qty (COPIED 20), |target - inv|)
+            units toward the target at the opposite touch, sent only when that quantity is at or above the class's
+            minimum order and at least v7_blk_cool_s (COPIED 90 sim-s) have passed since this leg's last send on the
+            book.  Clamps, one instruction per book and the pace guard as the taker's; never a resting order.  A new
+            simulation or a book-count change clears the state and the ring.
+  summary : "c0dev" = {books_sending, sends, mean_abs_D_bp, ...} and "blk" = {S, r1_bp, switches_total,
+            books_at_target, sends, ...}; every v7.9 field is kept.
 """
 from __future__ import annotations
 
@@ -245,8 +279,9 @@ import math
 from collections import deque
 from typing import Any
 
-V7_VERSION = "v7.9"
-CORE_VERSION = "taker_v7_core_10"  # v7.7 = v7.6 (core_8) + the class-0 maker offset trial; v7.8 = core_9; v7.9 = + E1T
+V7_VERSION = "v7.10"
+CORE_VERSION = "taker_v7_core_11"  # v7.7 = v7.6 (core_8) + the class-0 maker offset trial; v7.8 = core_9; v7.9 = core_10 (+ E1T);
+#                                    v7.10 = core_11 (+ class-0 dev form, class-2 block form)
 
 # ---- COPIED constants (Round 21 P REPORT.md section 2; R6 arm_p.py) ----------------------------------------------
 K_DEFAULT = 0.0035        # target slope per bp of (f - mid) / mid
@@ -288,7 +323,7 @@ MK_DYN_RATE_H_DEFAULT = 0.03     # COPIED: W per "hour" the class-1 stepping tar
 BAND_MULT_DEFAULT = 2.0          # MODEL: the band opens at 2 x the average size of |avg - x| (Round 28 B / C)
 BAND_FLOOR_BP = 1.0              # STRUCTURAL: the band never opens inside 1 bp
 REL_MOM_DEFAULT = 0.0037         # COPIED: the two-term (T9) momentum coefficient, W per bp of (avg - x) (Round 28 A2)
-REL_FORMS = ("step", "band", "t9")   # the class-2 forms: v7.4 stepper, band (B2a-w), two-term (T9)
+REL_FORMS = ("step", "band", "t9", "block")   # the class-2 forms: v7.4 stepper, band (B2a-w), two-term (T9), v7.10 block
 
 # ---- v7.6 constants (Round 29 C; labels in the module docstring) ------------------------------------------------------
 C0_MK_NOTIONAL_DEFAULT = 1000.0  # COPIED: uid 23 (5G3oVFjL) class-0 fill size p50, quote notional per order
@@ -303,6 +338,18 @@ MKD_LO = 0.6                     # MODEL: ... below which it moves in
 
 # ---- v7.7 constants (Round 31 B.3 trial design; labels in the module docstring) ---------------------------------------
 C0_MK_TRIAL_OFFSETS = (None, 0, 1, 2)   # STRUCTURAL: per trial group, ticks behind the others' touch (None = v7.6 rule)
+
+# ---- v7.10 constants (Round 39; labels in the module docstring) -----------------------------------------------------
+C0_FORMS = ("gap", "dev")        # the class-0 forms: the gap + contrarian taker (v7.4 .. v7.9), the v7.10 moving-average deviation
+C0_DEV_TAU_S_DEFAULT = 300.0     # COPIED (5EA8Kgeh, Round 39 B): time constant of the gap average, sim-s
+C0_DEV_THR_BP_DEFAULT = 2.0      # COPIED: no send below |gap - average| of 2 bp (0.970 side match at 2 bp or more)
+C0_DEV_COOL_S_DEFAULT = 300.0    # COPIED: sim-s between this leg's sends on one book
+C0_DEV_QTY_DEFAULT = 10.0        # COPIED: the order size in units (1,202 of 1,263 forward orders were exactly 10)
+BLK_R1_S_DEFAULT = 30.0          # COPIED (5EA8Kgeh class 2, Round 39 A R3_BLK_MOM_30): the block-move lookback, sim-s
+BLK_THR_BP_DEFAULT = 0.0         # COPIED: the observed rule has no threshold (0.994-0.996 of 3,406 takes)
+BLK_L_DEFAULT = 0.5              # COPIED: the block target as a fraction of W (takes run until |posW| is about 0.5)
+BLK_QTY_DEFAULT = 20.0           # COPIED: the order size in units (20-unit IOCs)
+BLK_COOL_S_DEFAULT = 90.0        # COPIED: sim-s between this leg's sends on one book (median gap 80-128 sim-s)
 
 # ---- v7.9 touch identity (Round 35 PRE-REGISTERED profile_v2, dimension E1T; frozen: a change is a new version) ------
 TOUCH_ID_PROFILE = "orthox-profile-v2"
@@ -400,7 +447,9 @@ PARAM_KEYS = ("v7_k", "v7_l", "v7_clip", "v7_big", "v7_classes", "v7_pace", "v7_
               "v7_c0_contra", "v7_c0_kc", "v7_c0_lc", "v7_c0_ref_s",
               "v7_rel_form", "v7_rel_band_mult", "v7_rel_mom", "v7_mk_band_mult",
               "v7_c0_maker", "v7_c0_mk_notional", "v7_c0_mk_band_w", "v7_mk_depth", "v7_mkd_start_bp",
-              "v7_mkd_every_s", "v7_c0_mk_trial", "v7_touch_id")
+              "v7_mkd_every_s", "v7_c0_mk_trial", "v7_touch_id",
+              "v7_c0_form", "v7_c0_dev_tau_s", "v7_c0_dev_thr_bp", "v7_c0_dev_cool_s", "v7_c0_dev_qty",
+              "v7_blk_r1_s", "v7_blk_thr_bp", "v7_blk_l", "v7_blk_qty", "v7_blk_cool_s")
 
 
 def parse_params(config: Any) -> dict:
@@ -556,6 +605,22 @@ def parse_params(config: Any) -> dict:
     if isinstance(ti, bool) or _num(ti) not in (0.0, 1.0):
         raise ValueError(f"v7_touch_id={ti!r} must be 0 or 1")
     p["touch_id"] = _num(ti) == 1.0
+    # v7.10 class-0 form (Round 39 B): "gap" (default, = v7.9) or "dev"
+    cf = raw("v7_c0_form", "gap")
+    cfs = str(cf).strip().lower()
+    if isinstance(cf, bool) or cfs not in C0_FORMS:
+        raise ValueError(f"v7_c0_form={cf!r} must be one of {', '.join(C0_FORMS)}")
+    p["c0_form"] = cfs
+    p["c0_dev_tau_s"] = num("v7_c0_dev_tau_s", C0_DEV_TAU_S_DEFAULT, 1.0, 1e7)
+    p["c0_dev_thr_bp"] = num("v7_c0_dev_thr_bp", C0_DEV_THR_BP_DEFAULT, 0.0, 1e4)
+    p["c0_dev_cool_s"] = num("v7_c0_dev_cool_s", C0_DEV_COOL_S_DEFAULT, 0.0, 86_400.0)
+    p["c0_dev_qty"] = num("v7_c0_dev_qty", C0_DEV_QTY_DEFAULT, 0.0, 1e6, lo_open=True)
+    # v7.10 class-2 block form (Round 39 A; selected by v7_rel_form = "block")
+    p["blk_r1_s"] = num("v7_blk_r1_s", BLK_R1_S_DEFAULT, 1.0, 86_400.0)
+    p["blk_thr_bp"] = num("v7_blk_thr_bp", BLK_THR_BP_DEFAULT, 0.0, 1e4)
+    p["blk_l"] = num("v7_blk_l", BLK_L_DEFAULT, 0.0, 1.0, lo_open=True)
+    p["blk_qty"] = num("v7_blk_qty", BLK_QTY_DEFAULT, 0.0, 1e6, lo_open=True)
+    p["blk_cool_s"] = num("v7_blk_cool_s", BLK_COOL_S_DEFAULT, 0.0, 86_400.0)
     return p
 
 
@@ -806,6 +871,47 @@ def decide(bid: Any, ask: Any, f: Any, base_total: Any, base_init: Any, quote_in
     return "send", (side, qty, round(price, pd)), inv, t
 
 
+def inv_and_w(base_total: Any, base_init: Any, quote_init: Any, mid: float, miner_wealth: Any) -> tuple:
+    """v7.10: (inventory units, W) of one book as decide() reads them, else (None, reason)."""
+    bt_, bi = _num(base_total), _num(base_init)
+    if bt_ is None or bi is None:
+        return None, "no_initial"
+    qi = _num(quote_init)
+    w = qi + bi * mid if qi is not None else _num(miner_wealth)
+    if w is None or not 0.0 < w < math.inf:
+        return None, "no_wealth"
+    return bt_ - bi, w
+
+
+def clamp_take(side: int, qty: float, fb: float, fa: float, base_free: Any, quote_free: Any, taker_fee: Any,
+               fee_margin: float, grid: dict) -> tuple:
+    """v7.10: the taker's clamps on one IOC at the opposite touch, as decide() applies them (never a loan: a buy to what
+    free quote pays at the ask with the fee and rounding margin, a sell to free base; floor to the volume decimals;
+    below the minimum order -> none).  Returns (reason, (side, qty, price) | None)."""
+    vd, pd = grid["volume_decimals"], grid["price_decimals"]
+    if side == SIDE_BUY:
+        price = fa
+        qf = _num(quote_free)
+        if qf is None or qf <= 0.0:
+            return "no_quote", None
+        fee = _num(taker_fee) or 0.0
+        afford = qf / (fa * (1.0 + max(fee, 0.0) + fee_margin))
+        if afford < qty:
+            qty = afford
+    else:
+        price = fb
+        bf = _num(base_free)
+        if bf is None or bf <= 0.0:
+            return "no_base", None
+        if bf < qty:
+            qty = bf
+    qty = floor_to(qty, vd)
+    mo = grid.get("min_order") or 0.0
+    if qty <= 0.0 or qty < mo:
+        return "below_min", None
+    return "send", (side, qty, round(price, pd))
+
+
 # ======================================================================================================================
 # pace guard
 # ======================================================================================================================
@@ -882,7 +988,7 @@ class RunState:
     """What one validator's stream needs: the pace clock across simulation seams, the pace guard and seen trades."""
 
     __slots__ = ("clock", "last_ts", "sim_id", "pace", "seen", "seen_q", "states", "mk_ref", "c0_ref", "step_st",
-                 "mk_depth", "mk_filled")
+                 "mk_depth", "mk_filled", "c0dev", "blk")
 
     def __init__(self, cap: float):
         self.clock = 0
@@ -899,6 +1005,10 @@ class RunState:
         self.mk_depth: dict = {}        # v7.6: depth-maker book -> [distance bp, pace clock of the last move,
         #                                 our maker notional filled on the book at that clock]
         self.mk_filled: dict = {}       # v7.6: book -> our maker notional filled (all of the stream)
+        self.c0dev: dict = {}           # v7.10: class-0 dev book -> [average of the gap (bp), pace clock of its last
+        #                                 update, pace clock of this leg's last send (None = none)]
+        self.blk: dict = {}             # v7.10: class -> {"ring": deque of (clock, blk), "S": 0 / +-1, "switches": int,
+        #                                 "r1_bp": last r1 in bp or None, "books": {book: [seed fraction, last send clock]}}
 
     def advance(self, ts: Any, sim_id: Any) -> None:
         """The pace clock: + (ts - last ts); one step on a backward jump (a new simulation: the validator's volume
@@ -916,6 +1026,8 @@ class RunState:
             self.c0_ref.clear()                             # v7.4: the same for the class-0 references ...
             self.step_st.clear()                            # ... and the stepping targets
             self.mk_depth.clear()                           # v7.6: the depth controller starts again
+            self.c0dev.clear()                              # v7.10: the class-0 dev state and the class-2 block state
+            self.blk.clear()
         self.last_ts = t
         self.sim_id = sim_id
         self.states += 1
@@ -1093,6 +1205,8 @@ class TakerCore:
         self.mk_stats: dict | None = None     # v7.2: the maker leg's picture on summary states
         self.rel_stats: dict | None = None    # v7.4: the stepping taker's picture on summary states
         self.c0_stats: dict | None = None     # v7.4: the class-0 contrarian term's picture on summary states
+        self.c0dev_stats: dict | None = None  # v7.10: the class-0 dev form's picture on summary states
+        self.blk_stats: dict | None = None    # v7.10: the class-2 block form's picture on summary states
         self._c0g: list | None = None         # v7.7: per trial group [books, two-sided, fill notional] on summary states
         self._tid: dict = {}                  # v7.9: book -> E1T ticks behind, drawn once from this process's uid
         self._book_count = None               # v7.1: the pace state is reset when the book count changes
@@ -1108,6 +1222,8 @@ class TakerCore:
         self.fills_maker = 0
         self.mk_buy_notional = 0.0            # v7.2: our maker fills by side (making = 2 x min(buy, sell) per book)
         self.mk_sell_notional = 0.0
+        self.c0dev_sends = 0                  # v7.10: sends of the dev form / the block form since the last summary
+        self.blk_sends = 0
 
     def _count(self, key: str, n: int = 1) -> None:
         self.c[key] = self.c.get(key, 0) + n
@@ -1209,6 +1325,8 @@ class TakerCore:
                     r.step_st.clear()
                     r.mk_depth.clear()                      # v7.6
                     r.mk_filled.clear()
+                    r.c0dev.clear()                         # v7.10
+                    r.blk.clear()
                 self._count("pace_reset_layout")
             self._book_count = n
         key = layout_key(config, n)
@@ -1232,6 +1350,8 @@ class TakerCore:
             self.mk_stats = None
             self.rel_stats = None
             self.c0_stats = None
+            self.c0dev_stats = None
+            self.blk_stats = None
         accs = raw_accounts(accounts, self.uid)
         if accs is None:
             self._count("no_account")
@@ -1289,8 +1409,10 @@ class TakerCore:
         pace = rs.pace if p["pace"] else None
         clock = rs.clock
         wealth = _get(config, "miner_wealth")
-        c0_ref = rs.c0_ref if p["c0_contra"] else None       # v7.4: the contrarian term's references (None = off)
+        dev = p["c0_form"] == "dev"                          # v7.10: the class-0 deviation form
+        c0_ref = rs.c0_ref if p["c0_contra"] and not dev else None   # v7.4: the contrarian term's references (None = off)
         tcs = [] if collect and c0_ref is not None else None
+        devs = {"n": 0, "abs": 0.0, "sending": 0} if collect and dev else None
         for b in lay["c0"]:
             if b in busy or b in mk_books:                  # v7.6: a made class-0 book is not taken
                 continue
@@ -1306,6 +1428,9 @@ class TakerCore:
                 self._count("no_book")
                 continue
             bid, ask, f = touch(book)
+            if dev:
+                self._c0_dev(rs, b, v, bid, ask, f, lay, wealth, pace, clock, actions, devs)
+                continue
             if c0_ref is None:
                 reason, order, inv, t = decide(bid, ask, f, v[0], v[2], v[4], v[1], v[3], v[5], p, lay, wealth)
             else:
@@ -1341,6 +1466,10 @@ class TakerCore:
                              "tc_abs_w_max": max(ab) if ab else None, "tc_net_w": sum(a for a, _ in tcs),
                              "opposed": sum(1 for a, g_ in tcs if a * g_ < 0.0),
                              "at_own_limit": sum(1 for a in ab if a >= p["c0_lc"] - 1e-12)}
+        if devs is not None:
+            self.c0dev_stats = {"form": "dev", "books": len(rs.c0dev), "books_sending": devs["sending"],
+                                "sends": self.c0dev_sends,
+                                "mean_abs_D_bp": devs["abs"] / devs["n"] if devs["n"] else None}
         if 1 in p["classes"]:
             # v7.1 class 1 = option A (COPIED rule, its own grid, notional clips); one instruction per book still holds
             # (class-1 ids are disjoint from class 0; cleanup books are skipped as in class 0)
@@ -1380,10 +1509,187 @@ class TakerCore:
                     actions.append((ACT_TAKE, b, side, qty, price))
                     self._count("c1_send_buy" if side == SIDE_BUY else "c1_send_sell")
         if p["rel_classes"]:
-            self._rel(rs, rb, views, busy, lay, wealth, actions, collect)
+            if p["rel_form"] == "block":
+                self._blk(rs, rb, views, busy, lay, wealth, actions, collect)
+            else:
+                self._rel(rs, rb, views, busy, lay, wealth, actions, collect)
         if mk_books:
             self._maker(rs, rb, views, mk_accs, mk_books, ts, config, actions, collect)
         return actions, pairs
+
+    def _c0_dev(self, rs: RunState, b: int, v: tuple, bid: Any, ask: Any, f: Any, lay: dict, wealth: Any,
+                pace: Any, clock: int, actions: list, devs: dict | None) -> None:
+        """v7.10 class-0 deviation form (module docstring: class 0 dev).  Updates the book's gap average and appends at
+        most one (ACT_TAKE, ...).  Never raises on bad numbers."""
+        p = self.p
+        fb, fa, ff = _num(bid), _num(ask), _num(f)
+        if ff is None or ff <= 0.0:
+            self._count("c0dev_no_f")
+            return
+        if fb is None or fa is None or fb <= 0.0 or fa <= 0.0:
+            self._count("c0dev_one_sided")
+            return
+        if fb >= fa:
+            self._count("c0dev_crossed")
+            return
+        mid = 0.5 * (fb + fa)
+        gap = 1e4 * (ff - mid) / mid
+        st = rs.c0dev.get(b)
+        if st is None:
+            rs.c0dev[b] = [gap, clock, None]                # seeded at the first gap: D starts at 0
+            self._count("c0dev_seed")
+            return
+        dt = clock - st[1]
+        if dt > 0:
+            st[0] += (1.0 - math.exp(-dt / (p["c0_dev_tau_s"] * 1e9))) * (gap - st[0])
+            st[1] = clock
+        d = gap - st[0]
+        if devs is not None:
+            devs["n"] += 1
+            devs["abs"] += abs(d)
+        if abs(d) < p["c0_dev_thr_bp"] or d == 0.0:
+            self._count("c0dev_below_thr")
+            return
+        if st[2] is not None and clock - st[2] < p["c0_dev_cool_s"] * 1e9:
+            self._count("c0dev_cool")
+            return
+        inv, w = inv_and_w(v[0], v[2], v[4], mid, wealth)
+        if inv is None:
+            self._count("c0dev_" + w)
+            return
+        side = SIDE_BUY if d > 0.0 else SIDE_SELL
+        reason, order = clamp_take(side, p["c0_dev_qty"], fb, fa, v[1], v[3], v[5], p["fee_margin"], lay)
+        if order is None:
+            self._count("c0dev_" + reason)
+            return
+        _, qty, price = order
+        lim = p["l"] * w / mid                              # the class-0 limit in units
+        if (side == SIDE_BUY and inv + qty > lim + 1e-9) or (side == SIDE_SELL and inv - qty < -lim - 1e-9):
+            self._count("c0dev_limit")                      # the inventory after the order must stay inside +-lim
+            return
+        if pace is not None:
+            ok = pace.allow(b, qty * price, clock, v[6])
+            if ok != "ok":
+                self._count("c0dev_paced_" + ok)
+                return
+        st[2] = clock
+        actions.append((ACT_TAKE, b, side, qty, price))
+        self._count("send_buy" if side == SIDE_BUY else "send_sell")
+        self._count("c0dev_send")
+        self.c0dev_sends += 1
+        if devs is not None:
+            devs["sending"] += 1
+
+    def _blk(self, rs: RunState, rb: Any, views: dict, busy: set, lay: dict, wealth: Any, actions: list,
+             collect: bool) -> None:
+        """v7.10 class-2 block form (module docstring: class 2 block).  Appends (ACT_TAKE, ...) only; never raises on
+        bad numbers."""
+        p = self.p
+        pace = rs.pace if p["pace"] else None
+        clock = rs.clock
+        lim = p["blk_l"]
+        nsend = 0
+        for ci in p["rel_classes"]:
+            if not lay.get(f"c{ci}_ok"):
+                self._count(f"rel_c{ci}_off")
+                continue
+            g = lay[f"c{ci}_grid"]
+            seen: dict = {}
+            lnm: dict = {}
+            for b in sorted(lay[f"c{ci}"]):                 # this state's two-sided books and their ln mids
+                try:
+                    book = rb[b]
+                except Exception:
+                    book = None
+                if book is None:
+                    continue
+                bid, ask, f = touch(book)
+                fb, fa = _num(bid), _num(ask)
+                if fb is not None and fa is not None and 0.0 < fb < fa and fb + fa < math.inf:
+                    mid = 0.5 * (fb + fa)
+                    lnm[b] = math.log(mid)
+                    seen[b] = (fb, fa, mid)
+            if not seen:
+                self._count("blk_no_books")
+                continue
+            cs = rs.blk.get(ci)
+            if cs is None:
+                cs = rs.blk[ci] = {"ring": deque(), "S": 0, "switches": 0, "r1_bp": None, "books": {}}
+            ring = cs["ring"]
+            cutoff = clock - int(p["blk_r1_s"] * 1e9)
+            while len(ring) >= 2 and ring[1][0] <= cutoff:  # keep the latest entry at or before the cutoff
+                ring.popleft()
+            old = ring[0][1] if ring and ring[0][0] <= cutoff else None
+            com = [b for b in lnm if b in old] if old is not None else []
+            if com:
+                # the block move = the mean over the books two-sided at BOTH times of their own ln mid change
+                # (STRUCTURAL: a book entering or leaving the two-sided set never moves it; COPIED Round 39 A form)
+                r1 = sum(lnm[b] - old[b] for b in com) / len(com)
+                cs["r1_bp"] = 1e4 * r1
+                if r1 != 0.0 and 1e4 * abs(r1) >= p["blk_thr_bp"]:
+                    new_s = 1 if r1 > 0.0 else -1
+                    if cs["S"] != 0 and new_s != cs["S"]:
+                        cs["switches"] += 1
+                        self._count("blk_switch")
+                    cs["S"] = new_s
+            else:
+                cs["r1_bp"] = None
+                self._count("blk_no_signal")
+            ring.append((clock, lnm))
+            S = cs["S"]
+            at_target = 0
+            nbooks = 0
+            for b, (fb, fa, mid) in seen.items():
+                v = views.get(b)
+                if v is None:
+                    self._count("rel_no_book_account")
+                    continue
+                inv, w = inv_and_w(v[0], v[2], v[4], mid, wealth)
+                bs = cs["books"].get(b)
+                if bs is None:
+                    bs = cs["books"][b] = [None, None]
+                if inv is None:
+                    self._count("rel_seed_wait")
+                    continue
+                if bs[0] is None:
+                    bs[0] = inv * mid / w                   # the inventory found, as a fraction of W
+                nbooks += 1
+                if S == 0:                                  # no signal yet: hold what was found (never work it to 0)
+                    tfrac = lim if bs[0] > lim else (-lim if bs[0] < -lim else bs[0])
+                else:
+                    tfrac = self._bounded(S * lim, lim, v, mid, False)
+                d = tfrac * w / mid - inv
+                if abs(d) < (g.get("min_order") or 0.0) or d == 0.0:
+                    at_target += 1
+                    continue
+                if b in busy:
+                    continue
+                if bs[1] is not None and clock - bs[1] < p["blk_cool_s"] * 1e9:
+                    self._count("blk_cool")
+                    continue
+                side = SIDE_BUY if d > 0.0 else SIDE_SELL
+                reason, order = clamp_take(side, min(p["blk_qty"], abs(d)), fb, fa, v[1], v[3], v[5],
+                                           p["fee_margin"], g)
+                if order is None:
+                    self._count("blk_" + reason)
+                    continue
+                _, qty, price = order
+                if pace is not None:
+                    ok = pace.allow(b, qty * price, clock, v[6])
+                    if ok != "ok":
+                        self._count("blk_paced_" + ok)
+                        continue
+                bs[1] = clock
+                actions.append((ACT_TAKE, b, side, qty, price))
+                self._count("rel_send_buy" if side == SIDE_BUY else "rel_send_sell")
+                self._count("blk_send")
+                nsend += 1
+            if collect:
+                self.blk_stats = {"form": "block", "S": S, "r1_bp": cs["r1_bp"], "switches_total": cs["switches"],
+                                  "books_at_target": at_target, "sends": self.blk_sends + nsend,
+                                  "books": nbooks, "two_sided": len(seen), "ring": len(ring)}
+                self.rel_stats = {"form": "block", "books": nbooks}
+        self.blk_sends += nsend
 
     def _c0_term(self, refs: dict, b: int, bid: Any, ask: Any, clock: int) -> float:
         """v7.4: the contrarian fraction of W of one class-0 book (module docstring: class 0 ref / target).  Updates

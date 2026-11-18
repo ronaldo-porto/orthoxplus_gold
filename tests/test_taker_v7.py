@@ -101,7 +101,7 @@ def _launcher_params():
     s = m.group(1).replace("\\\n", " ")
     return (s.replace("${LOG_DIR}", "/tmp/x").replace("${HISTORY_ANCHOR}", "established")
             .replace("${V7_CLASSES}", "0").replace("${V7_MAKER_CLASSES}", "1").replace("${V7_MK_TARGET}", "3")
-            .replace("${V7_REL_CLASSES}", "2").replace("${V7_C0_CONTRA}", "1").replace("${V7_REL_FORM}", "band")
+            .replace("${V7_REL_CLASSES}", "2").replace("${V7_C0_CONTRA}", "1").replace("${V7_REL_FORM}", "block").replace("${V7_C0_FORM}", "dev")
             # v7.5: the values the launcher sets for the default forms (V7_REL_FORM=band, V7_MK_TARGET=3)
             .replace("${REL_HL}", "2116.8").replace("${REL_RATE}", "0.0209").replace("${REL_CLIP}", "1800")
             .replace("${MK_HL}", "2116.8").replace("${MK_L}", "0.70").replace("${MK_NOTIONAL}", "1500")
@@ -123,7 +123,12 @@ def test_params_from_the_launcher_parse_to_the_defaults():
         assert p["mk_k"] == 0.005 and p["mk_ref_s"] == 10800.0
         # v7.5 launch defaults: class-1 band target (K2), class-2 band form (B2a-w), the class-0 term on
         assert p["mk_band"] is (True if text is not env else p["mk_band"]) and not (p["mk_band"] and p["mk_dyn"])
-        assert p["rel_form"] == ("band" if text is not env else p["rel_form"]) and p["rel_form"] in core.REL_FORMS
+        assert p["rel_form"] == ("block" if text is not env else p["rel_form"]) and p["rel_form"] in core.REL_FORMS
+        assert p["c0_form"] == ("dev" if text is not env else p["c0_form"]) and p["c0_form"] in core.C0_FORMS   # v7.10
+        # v7.10 COPIED values of the two new forms (5EA8Kgeh, Round 39): the launcher passes them whatever the switches
+        assert p["c0_dev_tau_s"] == 300.0 and p["c0_dev_thr_bp"] == 2.0 and p["c0_dev_cool_s"] == 300.0
+        assert p["c0_dev_qty"] == 10.0 and p["blk_r1_s"] == 30.0 and p["blk_thr_bp"] == 0.0 and p["blk_l"] == 0.5
+        assert p["blk_qty"] == 20.0 and p["blk_cool_s"] == 90.0
         assert p["rel_classes"] == ((2,) if text is not env else p["rel_classes"]) and p["rel_classes"] in ((), (2,))
         assert p["c0_contra"] is (True if text is not env else p["c0_contra"])
         # each form carries the values it was replayed with (the launcher sets them from the switches)
@@ -1151,7 +1156,7 @@ def test_v72_agent_builds_post_only_gtt_quotes_and_logs_the_maker_leg(tmp_path):
     agent.handle(_st(config, books, accounts, ts=2 * 10 ** 9))
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
-    assert lines[0]["version"] == "v7.9" and lines[0]["params"]["maker_classes"] == [1]
+    assert lines[0]["version"] == "v7.10" and lines[0]["params"]["maker_classes"] == [1]
     assert lines[0]["params"]["mk_target"] is False                       # the code default: the v7.2 flat band
     assert lines[0]["params"]["k"] == 0.005
     lay = [x for x in lines if x["kind"] == "layout"][0]
@@ -1195,7 +1200,7 @@ def _q150(core_, ts, collect=False, **kw):
 def test_v73_params_target_and_bounds():
     import pytest
     p = P()
-    assert core.V7_VERSION == "v7.9"
+    assert core.V7_VERSION == "v7.10"
     assert p["mk_target"] is False and p["mk_k"] == 0.005 and p["mk_l"] == 0.45 and p["mk_ref_s"] == 10800.0
     assert P(v7_mk_target=1.0)["mk_target"] is True and P(v7_mk_target=0.0)["mk_target"] is False
     assert core.MK_REF_S_DEFAULT == core.DEPTH_S                           # the scoring lookback
@@ -1395,7 +1400,7 @@ def test_v73_agent_logs_the_target_picture(tmp_path):
                                          for kw in quotes)
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == core.CORE_VERSION
+    assert lines[0]["version"] == "v7.10" and lines[0]["core"] == core.CORE_VERSION
     assert lines[0]["params"]["mk_target"] is True and lines[0]["params"]["mk_k"] == 0.005
     assert lines[0]["params"]["mk_l"] == 0.45 and lines[0]["params"]["mk_ref_s"] == 10800.0
     summ = [x for x in lines if x["kind"] == "summary"][0]
@@ -1411,7 +1416,7 @@ def test_v73_agent_logs_the_target_picture(tmp_path):
 
 
 def test_v73_core51_split_by_the_guard_is_logging_only():
-    assert core.CORE_VERSION == "taker_v7_core_10" and core.V7_VERSION == "v7.9"
+    assert core.CORE_VERSION == "taker_v7_core_11" and core.V7_VERSION == "v7.10"
     keys = {"in_band", "out_bid", "out_ask", "blocked_bid", "blocked_ask", "free", "blocked"}
     # seed flat: everything in band and free
     core_ = core.TakerCore(UID, P(**MKT))
@@ -1521,7 +1526,7 @@ def _c2(actions):
 def test_v74_params_switches_bounds_and_conflicts():
     import pytest
     p = P()
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.10" and core.CORE_VERSION == "taker_v7_core_11"
     # the code defaults are v7.3: every v7.4 leg off
     assert p["rel_classes"] == () and p["c0_contra"] is False and p["mk_target"] is False and p["mk_dyn"] is False
     assert p["rel_hl_s"] == 4 * 529.2 == 2116.8 and p["rel_rate_h"] == 0.0209 and p["rel_l"] == 0.45
@@ -1902,7 +1907,7 @@ def test_v74_agent_sends_ioc_takes_on_class2_and_logs_the_new_pictures(tmp_path)
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
     hp = lines[0]["params"]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == "taker_v7_core_10"
+    assert lines[0]["version"] == "v7.10" and lines[0]["core"] == "taker_v7_core_11"
     assert hp["rel_classes"] == [2] and hp["c0_contra"] is True and hp["mk_target"] is True and hp["mk_dyn"] is True
     assert hp["rel_hl_s"] == 2116.8 and hp["c0_ref_s"] == 10800.0 and hp["mk_dyn_hl_s"] == 1058.4
     lay = [x for x in lines if x["kind"] == "layout"][0]
@@ -2136,7 +2141,7 @@ def _band_ref(xs, hl, mult=2.0, lim=0.45, dt=60.0):
 
 def test_v75_params_forms_bounds_and_defaults():
     import pytest
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.10" and core.CORE_VERSION == "taker_v7_core_11"
     p = P()
     assert p["rel_form"] == "step" and p["mk_band"] is False                      # the code defaults are v7.4
     assert p["rel_band_mult"] == 2.0 == p["mk_band_mult"] and p["rel_mom"] == 0.0037 and core.BAND_FLOOR_BP == 1.0
@@ -2330,7 +2335,7 @@ def test_v75_agent_logs_the_forms(tmp_path):
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
     hp = lines[0]["params"]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == "taker_v7_core_10"
+    assert lines[0]["version"] == "v7.10" and lines[0]["core"] == "taker_v7_core_11"
     assert hp["rel_form"] == "band" and hp["mk_band"] is True and hp["mk_l"] == 0.70 and hp["mk_guard_bp"] == 0.0
     summ = [x for x in lines if x["kind"] == "summary"][0]
     assert summ["errors"] == 0 and summ["rel"]["form"] == "band" and summ["rel"]["warm"] == 64
@@ -2521,7 +2526,7 @@ def _fill(i, b, q, px, side=0):
 
 def test_v76_params_switches_and_bounds():
     import pytest
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.10" and core.CORE_VERSION == "taker_v7_core_11"
     p = P()
     assert p["c0_maker"] is False and p["mk_depth"] is False                # the code defaults are v7.5
     assert p["c0_mk_notional"] == 1000.0 and p["c0_mk_band_w"] == 0.10 and p["mkd_start_bp"] == 2.0
@@ -2660,7 +2665,7 @@ def test_v76_agent_logs_the_makers(tmp_path):
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
     hp = lines[0]["params"]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == "taker_v7_core_10"
+    assert lines[0]["version"] == "v7.10" and lines[0]["core"] == "taker_v7_core_11"
     assert hp["c0_maker"] is True and hp["mk_depth"] is True and hp["c0_mk_notional"] == 1000.0
     summ = [x for x in lines if x["kind"] == "summary"][0]
     assert summ["errors"] == 0 and summ["maker"]["c0_books"] == 64 and summ["maker"]["depth_books"] == 32
@@ -2844,7 +2849,7 @@ TRIAL = dict(v7_k=0.005, v7_c0_maker=1.0, v7_c0_mk_trial=1.0)
 
 def test_v77_params_trial_switch_and_versions():
     import pytest
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.10" and core.CORE_VERSION == "taker_v7_core_11"
     assert P()["c0_mk_trial"] is False                                       # the code default is v7.6
     assert P(v7_c0_mk_trial=1.0)["c0_mk_trial"] is True and P(v7_c0_mk_trial="1")["c0_mk_trial"] is True
     assert P(v7_c0_mk_trial=0.0)["c0_mk_trial"] is False and "v7_c0_mk_trial" in core.PARAM_KEYS
@@ -2971,7 +2976,7 @@ def test_v77_behind_price_at_or_below_zero_is_never_quoted():
 def test_v77_launcher_defaults_trial_on_depth_off_and_refuses_bad_values():
     text = (ROOT / "run_taker_v7.sh").read_text()
     for key in ('V7_C0_MK_TRIAL="${V7_C0_MK_TRIAL:-0}"', 'V7_MK_DEPTH="${V7_MK_DEPTH:-0}"',
-                "v7_c0_mk_trial=${V7_C0_MK_TRIAL} ", 'echo "[TakerV7] version=v7.9 '):
+                "v7_c0_mk_trial=${V7_C0_MK_TRIAL} ", 'echo "[TakerV7] version=v7.10 '):
         assert key in text, key
     assert re.search(r'case "\$V7_C0_MK_TRIAL" in\n  0\|1\) ;;\n  \*\) echo "ERROR: V7_C0_MK_TRIAL must be 0 or 1', text)
     p = core.parse_params(_parse_kwargs_like(_launcher_params()))
@@ -2987,7 +2992,7 @@ def test_v77_agent_logs_the_trial(tmp_path):
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
     hp = lines[0]["params"]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == "taker_v7_core_10"
+    assert lines[0]["version"] == "v7.10" and lines[0]["core"] == "taker_v7_core_11"
     assert hp["c0_mk_trial"] is True and hp["mk_depth"] is False and hp["c0_maker"] is True
     summ = [x for x in lines if x["kind"] == "summary"][0]
     assert summ["errors"] == 0 and summ["maker"]["c0_books"] == 64 and summ["maker"]["depth_books"] == 0
@@ -3028,9 +3033,9 @@ def test_v78_launch_defaults_are_s1_and_quote_no_class0_book():
     # on any class-0 book while the v7.7 defaults do (so the test bites).
     text = (ROOT / "run_taker_v7.sh").read_text()
     for key in ('V7_C0_MAKER="${V7_C0_MAKER:-0}"', 'V7_C0_MK_TRIAL="${V7_C0_MK_TRIAL:-0}"',
-                'V7_MK_DEPTH="${V7_MK_DEPTH:-0}"', 'echo "[TakerV7] version=v7.9 '):
+                'V7_MK_DEPTH="${V7_MK_DEPTH:-0}"', 'echo "[TakerV7] version=v7.10 '):
         assert key in text, key
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.10" and core.CORE_VERSION == "taker_v7_core_11"
     s78 = _launcher_params()
     assert " v7_c0_maker=0 " in s78 and " v7_c0_mk_trial=0 " in s78
     s77 = s78.replace(" v7_c0_maker=0 ", " v7_c0_maker=1 ").replace(" v7_c0_mk_trial=0 ", " v7_c0_mk_trial=1 ")
@@ -3062,7 +3067,7 @@ def _c1_quotes(actions):
 
 def test_v79_params_switch_versions_and_launcher_default():
     import pytest
-    assert core.V7_VERSION == "v7.9" and core.CORE_VERSION == "taker_v7_core_10"
+    assert core.V7_VERSION == "v7.10" and core.CORE_VERSION == "taker_v7_core_11"
     assert P()["touch_id"] is False and "v7_touch_id" in core.PARAM_KEYS          # the code default is v7.8
     assert P(v7_touch_id=1.0)["touch_id"] is True and P(v7_touch_id="1")["touch_id"] is True
     assert P(v7_touch_id=0.0)["touch_id"] is False
@@ -3070,8 +3075,8 @@ def test_v79_params_switch_versions_and_launcher_default():
         with pytest.raises(ValueError):
             core.parse_params({"v7_touch_id": bad})
     text = (ROOT / "run_taker_v7.sh").read_text()
-    for key in ('V7_TOUCH_ID="${V7_TOUCH_ID:-1}"', "\nv7_touch_id=${V7_TOUCH_ID} \\\n", 'echo "[TakerV7] version=v7.9 ',
-                'echo "[preflight] v7.9 PASS"'):
+    for key in ('V7_TOUCH_ID="${V7_TOUCH_ID:-1}"', "\nv7_touch_id=${V7_TOUCH_ID} \\\n", 'echo "[TakerV7] version=v7.10 ',
+                'echo "[preflight] v7.10 PASS"'):
         assert key in text, key
     assert re.search(r'case "\$V7_TOUCH_ID" in\n  0\|1\) ;;\n  \*\) echo "ERROR: V7_TOUCH_ID must be 0 or 1', text)
     assert core.parse_params(_parse_kwargs_like(_launcher_params()))["touch_id"] is True
@@ -3191,7 +3196,7 @@ def test_v79_agent_logs_the_touch_identity(tmp_path):
     agent.handle(_st(*_rel_state(mids={200: 8.91}), ts=10 ** 9 + S60))
     assert agent._writer.flush()
     lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
-    assert lines[0]["version"] == "v7.9" and lines[0]["core"] == "taker_v7_core_10"
+    assert lines[0]["version"] == "v7.10" and lines[0]["core"] == "taker_v7_core_11"
     assert lines[0]["params"]["touch_id"] is True and lines[0]["uid"] == UID
     summ = [x for x in lines if x["kind"] == "summary"][0]
     assert summ["errors"] == 0
@@ -3209,3 +3214,564 @@ def test_v79_guard_judges_the_quoted_price():
     q = _c1_quotes(acts)
     assert q == {b: (core.SIDE_BUY, 8.96) for b in E1T_68}
     assert c.c["mk_guard_bid"] == 64 - len(E1T_68)
+
+
+# ---- v7.10: the class-0 deviation form and the class-2 block form (Round 39; USER 11-18 "Build both legs") ----------
+DEV = dict(v7_c0_form="dev")
+BLK = dict(v7_rel_classes=2.0, v7_rel_form="block")
+SEC = 10 ** 9
+
+
+def _dev_state(gaps=None, inv=None, n=256, mid=300.0, free=None, sim="sim_a", **kw):
+    """Class-0 books at ``mid`` +-0.01 with f = mid x (1 + gap / 1e4); ``gaps`` / ``inv`` / ``free`` = {book: value};
+    inv in units of base (account base total = BI + inv)."""
+    gaps, inv, free = gaps or {}, inv or {}, free or {}
+    config, books, accounts = _state(n, classes=MKCLS() if n == 256 else None, mid=mid)
+    config["simulation_id"] = sim
+    config.update(kw)
+    for b in range(128 if n == 256 else 64):
+        books[b] = book(mid - 0.01, mid + 0.01, mid * (1.0 + gaps.get(b, 0.0) / 1e4))
+        a = accounts[UID][b]
+        a["bb"]["t"] = BI + inv.get(b, 0.0)
+        a["bb"]["f"] = BI + inv.get(b, 0.0) if b not in free else free[b]
+    return config, books, accounts
+
+
+def _c0acts(actions):
+    return [a for a in actions if a[1] < 128 and a[0] == core.ACT_TAKE]
+
+
+def _dev_core(**kw):
+    return core.TakerCore(UID, P(**dict(DEV, **kw)))
+
+
+def test_v710_dev_params_switch_values_and_refusals():
+    import pytest
+    p = P()
+    assert p["c0_form"] == "gap" and p["rel_form"] == "step" and "v7_c0_form" in core.PARAM_KEYS     # code default = v7.9
+    assert core.C0_FORMS == ("gap", "dev") and core.REL_FORMS == ("step", "band", "t9", "block")
+    assert core.V7_VERSION == "v7.10" and core.CORE_VERSION == "taker_v7_core_11"
+    assert (p["c0_dev_tau_s"], p["c0_dev_thr_bp"], p["c0_dev_cool_s"], p["c0_dev_qty"]) == (300.0, 2.0, 300.0, 10.0)
+    assert (p["blk_r1_s"], p["blk_thr_bp"], p["blk_l"], p["blk_qty"], p["blk_cool_s"]) == (30.0, 0.0, 0.5, 20.0, 90.0)
+    assert P(v7_c0_form="dev")["c0_form"] == "dev" and P(v7_c0_form=" DEV ")["c0_form"] == "dev"
+    assert P(v7_c0_form="gap")["c0_form"] == "gap" and P(v7_rel_form="block")["rel_form"] == "block"
+    for bad in ({"v7_c0_form": "devv"}, {"v7_c0_form": 1.0}, {"v7_c0_form": True}, {"v7_c0_form": ""},
+                {"v7_rel_form": "blk"}, {"v7_c0_dev_tau_s": 0}, {"v7_c0_dev_thr_bp": -1}, {"v7_c0_dev_cool_s": -1},
+                {"v7_c0_dev_qty": 0}, {"v7_blk_r1_s": 0}, {"v7_blk_thr_bp": -0.1}, {"v7_blk_l": 0}, {"v7_blk_l": 1.1},
+                {"v7_blk_qty": 0}, {"v7_blk_cool_s": -1}, {"v7_c0_dev_qty": "x"}):
+        with pytest.raises(ValueError):
+            core.parse_params(bad)
+
+
+def test_v710_dev_ema_is_seeded_at_the_first_gap_and_weighted_by_sim_time():
+    c = _dev_core()
+    acts, _ = c.step(SEC, "hk", *_dev_state({5: 25.0}), [])                 # first state: seed, D = 0, no send at 25 bp
+    assert _c0acts(acts) == [] and c.c["c0dev_seed"] == 128 and c.runs["hk"].c0dev[5][0] == 25.0
+    # 300 sim-s later the gap is 10 bp: e = 25 + (1 - exp(-1)) (10 - 25), D = 10 - e = 15 exp(-1) - 5 ... checked exactly
+    c.step(SEC + 300 * SEC, "hk", *_dev_state({5: 10.0}), [])
+    e = 25.0 + (1.0 - math.exp(-1.0)) * (10.0 - 25.0)
+    assert math.isclose(c.runs["hk"].c0dev[5][0], e, rel_tol=1e-9)
+    # 30 sim-s: weight 1 - exp(-0.1)
+    c2 = _dev_core()
+    c2.step(SEC, "hk", *_dev_state(), [])
+    c2.step(SEC + 30 * SEC, "hk", *_dev_state({7: 8.0}), [])
+    assert math.isclose(c2.runs["hk"].c0dev[7][0], 8.0 * (1.0 - math.exp(-0.1)), rel_tol=1e-9)
+    # the pace clock decides the weight: the state timestamp gap, not the state count
+    c3 = _dev_core()
+    c3.step(SEC, "hk", *_dev_state(), [])
+    c3.step(2 * SEC, "hk", *_dev_state({7: 8.0}), [])
+    assert math.isclose(c3.runs["hk"].c0dev[7][0], 8.0 * (1.0 - math.exp(-1 / 300)), rel_tol=1e-9)
+
+
+def test_v710_dev_sign_threshold_and_order_form():
+    c = _dev_core()
+    c.step(SEC, "hk", *_dev_state(), [])
+    # one tick after the seed (dt 1 s: weight 1 - exp(-1/300)): gap g -> D = g exp(-1/300) ... use D computed by the leg
+    w1 = 1.0 - math.exp(-1 / 300)
+    g_hi, g_lo = 2.0 / (1.0 - w1) + 0.01, 2.0 / (1.0 - w1) - 0.01          # D = g (1 - w1): just above / below 2 bp
+    acts, _ = c.step(2 * SEC, "hk", *_dev_state({1: g_hi, 2: g_lo, 3: -g_hi, 4: -g_lo, 5: 0.0}), [])
+    t = {a[1]: a for a in _c0acts(acts)}
+    assert sorted(t) == [1, 3] and c.c["c0dev_below_thr"] == 126 and c.c["c0dev_send"] == 2
+    assert t[1] == (core.ACT_TAKE, 1, core.SIDE_BUY, 10.0, 300.01)          # D > 0: buy, 10 units, at the ask
+    assert t[3] == (core.ACT_TAKE, 3, core.SIDE_SELL, 10.0, 299.99)         # D < 0: sell at the bid
+    assert c.c["send_buy"] == 1 and c.c["send_sell"] == 1
+    assert len({a[1] for a in acts}) == len(acts)                           # one instruction per book
+    assert not [a for a in acts if a[0] == core.ACT_QUOTE]
+
+
+def test_v710_dev_cooldown_counts_from_this_legs_last_send():
+    c = _dev_core()
+    c.step(SEC, "hk", *_dev_state(), [])
+    a1, _ = c.step(11 * SEC, "hk", *_dev_state({9: 20.0}), [])             # first send at pace clock 10 s
+    assert [a[1] for a in _c0acts(a1)] == [9]
+    a2, _ = c.step(11 * SEC + 299 * SEC, "hk", *_dev_state({9: 20.0}), [])  # 299 s later: D is still >= 2 bp, cooling
+    assert _c0acts(a2) == [] and c.c["c0dev_cool"] == 1
+    a3, _ = c.step(11 * SEC + 300 * SEC, "hk", *_dev_state({9: 20.0}), [])  # exactly 300 s after the send: allowed
+    assert [a[1] for a in _c0acts(a3)] == [9]
+    a4, _ = c.step(11 * SEC + 301 * SEC, "hk", *_dev_state({9: 20.0}), [])
+    assert _c0acts(a4) == []
+    # a refused send (pace) does not start the cooldown: only a sent order does
+    d = _dev_core(v7_cap=1000.0)                                            # cap 1,000 < the 3,000 notional of 10 units
+    d.step(SEC, "hk", *_dev_state(), [])
+    r, _ = d.step(11 * SEC, "hk", *_dev_state({9: 20.0}), [])
+    assert _c0acts(r) == [] and d.c["c0dev_paced_ledger"] == 1 and d.runs["hk"].c0dev[9][2] is None
+
+
+def test_v710_dev_class0_limit_bounds_the_inventory_after_the_order():
+    big = 20.0
+    # W = 50,000, mid 300: the limit 0.55 W is 91.67 units; the order must leave the inventory at or inside it
+    for inv, expect in ((80.0, [9]), (81.6, [9]), (81.7, [])):
+        c = _dev_core()
+        c.step(SEC, "hk", *_dev_state({}, {9: inv}), [])
+        acts, _ = c.step(11 * SEC, "hk", *_dev_state({9: big}, {9: inv}), [])
+        assert [a[1] for a in _c0acts(acts)] == expect, inv                 # 81.6 + 10 = 91.6 <= 91.667 < 81.7 + 10
+        assert (c.c.get("c0dev_limit") == 1) == (not expect)
+
+
+def test_v710_dev_limit_checks_the_side_it_adds_to_and_never_blocks_a_reduction():
+    # a position already beyond the limit may still be reduced: the SELL is judged against -limit, not +limit
+    c = _dev_core()
+    c.step(SEC, "hk", *_dev_state({}, {9: 95.0}), [])                       # inventory above the 91.67 limit (inherited)
+    acts, _ = c.step(11 * SEC, "hk", *_dev_state({9: -20.0}, {9: 95.0}), [])
+    t = _c0acts(acts)
+    assert [(a[1], a[2], a[3]) for a in t] == [(9, core.SIDE_SELL, 10.0)] and "c0dev_limit" not in c.c
+    # the short side: limit 0.1 W = 16.67 units: inventory -12 then a 10-unit sell would end at -22 (refused), -5 allowed
+    for inv, expect in ((-5.0, [9]), (-6.5, [9]), (-7.0, [])):
+        c = _dev_core(v7_l=0.1)
+        c.step(SEC, "hk", *_dev_state({}, {9: inv}), [])
+        acts, _ = c.step(11 * SEC, "hk", *_dev_state({9: -20.0}, {9: inv}), [])
+        assert [a[1] for a in _c0acts(acts)] == expect, inv
+    c = _dev_core()                                                         # beyond the limit by 18 units: a sell to 100 is still a sell
+    c.step(SEC, "hk", *_dev_state({}, {9: 110.0}), [])
+    acts, _ = c.step(11 * SEC, "hk", *_dev_state({9: -20.0}, {9: 110.0}), [])
+    assert [(a[1], a[2]) for a in _c0acts(acts)] == [(9, core.SIDE_SELL)] and "c0dev_limit" not in c.c
+    c = _dev_core(v7_l=0.1)                                                 # and a buy from -12 moves toward the limit
+    c.step(SEC, "hk", *_dev_state({}, {9: -12.0}), [])
+    acts, _ = c.step(11 * SEC, "hk", *_dev_state({9: 20.0}, {9: -12.0}), [])
+    assert [(a[1], a[2]) for a in _c0acts(acts)] == [(9, core.SIDE_BUY)]
+
+
+def test_v710_dev_clamps_never_a_loan_and_the_minimum_order():
+    c = _dev_core()
+    c.step(SEC, "hk", *_dev_state(), [])
+    acts, _ = c.step(11 * SEC, "hk", *_dev_state({9: -20.0, 10: -20.0, 11: -20.0, 12: 20.0}, free={9: 2.56789, 10: 0.1, 11: 0.0}), [])
+    t = {a[1]: a for a in _c0acts(acts)}
+    assert t[9][2:] == (core.SIDE_SELL, 2.5678, 299.99)                     # a sell stops at the free base, floored
+    assert 10 not in t and c.c["c0dev_below_min"] == 1                       # 0.1 < the 0.25 minimum
+    assert 11 not in t and c.c["c0dev_no_base"] == 1                         # no free base: no order
+    assert t[12][2] == core.SIDE_BUY
+    # a buy stops at what free quote pays at the ask with the fee margin
+    st = _dev_state({9: 20.0})
+    st[2][UID][9]["qb"]["f"] = 3.33339 * 300.01 * (1 + 0.0003 + 0.001)
+    c = _dev_core()
+    c.step(SEC, "hk", *_dev_state(), [])
+    acts, _ = c.step(11 * SEC, "hk", *st, [])
+    assert [a[1:4] for a in _c0acts(acts) if a[1] == 9] == [(9, core.SIDE_BUY, 3.3333)]
+
+
+def test_v710_dev_a_book_without_f_or_one_sided_keeps_e_and_does_not_trade():
+    c = _dev_core()
+    c.step(SEC, "hk", *_dev_state({5: 10.0, 6: 10.0, 7: 10.0}), [])
+    e0 = [c.runs["hk"].c0dev[b][:2] for b in (5, 6, 7)]
+    cfg_, books, accounts = _dev_state({5: 40.0, 6: 40.0, 7: 40.0})
+    books[5] = book(299.99, 300.01, None)                                   # no f
+    books[6] = book(299.99, None, 340.0)                                    # one-sided
+    books[7] = book(300.02, 300.01, 340.0)                                  # crossed
+    acts, _ = c.step(11 * SEC, "hk", cfg_, books, accounts, [])
+    assert not [a for a in _c0acts(acts) if a[1] in (5, 6, 7)]
+    assert [c.runs["hk"].c0dev[b][:2] for b in (5, 6, 7)] == e0              # e and its clock untouched
+    assert c.c["c0dev_no_f"] == 1 and c.c["c0dev_one_sided"] == 1 and c.c["c0dev_crossed"] == 1
+    # the next good state weighs the whole gap since e's last update (10 s)
+    c.step(21 * SEC, "hk", *_dev_state({5: 40.0}), [])
+    assert math.isclose(c.runs["hk"].c0dev[5][0], 10.0 + (1.0 - math.exp(-20 / 300)) * 30.0, rel_tol=1e-9)
+
+
+def test_v710_dev_state_clears_on_a_new_simulation_and_on_a_book_count_change():
+    c = _dev_core()
+    c.step(SEC, "hk", *_dev_state(), [])
+    c.step(11 * SEC, "hk", *_dev_state({9: 20.0}), [])
+    assert c.runs["hk"].c0dev[9][2] is not None
+    acts, _ = c.step(12 * SEC, "hk", *_dev_state({9: 20.0}, sim="sim_b"), [])   # a new simulation: seed again, no send
+    st9 = c.runs["hk"].c0dev[9]
+    assert _c0acts(acts) == [] and math.isclose(st9[0], 20.0, rel_tol=1e-6) and st9[1:] == [c.runs["hk"].clock, None]
+    assert c.c["c0dev_seed"] == 128 * 2
+    c.step(13 * SEC, "hk", *_dev_state({9: 20.0}, sim="sim_b"), [])
+    assert c.runs["hk"].c0dev[9][2] is None and len(c.runs["hk"].c0dev) == 128   # D ~ 0 now: nothing sent
+    acts, _ = c.step(14 * SEC, "hk", *_dev_state({9: 20.0}, n=128, sim="sim_b"), [])   # 128 books: cleared, re-seeded
+    assert _c0acts(acts) == [] and len(c.runs["hk"].c0dev) == 64 and c.c["pace_reset_layout"] == 1
+
+
+def test_v710_dev_ignores_the_f_level_and_the_contrarian_term():
+    # a constant, large (f - mid) gap makes D -> 0: the gap rule would hold a big target, the dev form sends nothing
+    c = _dev_core(v7_c0_contra=1.0, v7_k=0.005)
+    for i in range(1, 6):
+        acts, _ = c.step(i * 60 * SEC, "hk", *_dev_state({b: 80.0 for b in range(128)}), [])
+        assert _c0acts(acts) == [], i
+    g = core.TakerCore(UID, P(v7_c0_contra=1.0, v7_k=0.005))                # the same states in the gap form do trade
+    acts, _ = g.step(SEC, "hk", *_dev_state({b: 80.0 for b in range(128)}), [])
+    assert len(_c0acts(acts)) == 128
+    # the contrarian switch changes nothing in the dev form, and creates no contrarian reference
+    a = _dev_core(v7_c0_contra=1.0)
+    b_ = _dev_core(v7_c0_contra=0.0)
+    for i, gp in enumerate((0.0, 9.0, -9.0, 30.0)):
+        ra, _ = a.step((i + 1) * 40 * SEC, "hk", *_dev_state({3: gp}), [], collect=True)
+        rb, _ = b_.step((i + 1) * 40 * SEC, "hk", *_dev_state({3: gp}), [], collect=True)
+        assert ra == rb
+    assert not a.runs["hk"].c0_ref and a.c0_stats is None
+
+
+def test_v710_dev_takes_only_class0_and_keeps_the_cleanup_and_the_maker_books():
+    c = core.TakerCore(UID, P(**dict(DEV, **K2, v7_c0_maker=1.0, v7_touch_id=1.0)))
+    c.step(SEC, "hk", *_dev_state(), [])
+    acts, _ = c.step(11 * SEC, "hk", *_dev_state({b: 20.0 for b in range(128)}), [])
+    assert sorted(a[1] for a in _c0acts(acts)) == [b for b in range(0, 128, 2)]   # odd books are made, not taken
+    assert not [a for a in acts if a[0] == core.ACT_TAKE and a[1] >= 128]
+    # a class-0 book showing resting orders gets its cancel and no take
+    d = _dev_core()
+    d.step(SEC, "hk", *_dev_state(), [])
+    st = _dev_state({9: 20.0, 10: 20.0})
+    st[2][UID][9]["o"] = [{"y": "o", "i": 77, "c": None, "t": 1, "q": 1.0, "s": 0, "p": 299.0, "l": 0.0}]
+    acts, _ = d.step(11 * SEC, "hk", *st, [])
+    assert [a for a in acts if a[1] == 9] == [(core.ACT_CANCEL, 9, [77])] and [a[1] for a in _c0acts(acts)] == [10]
+
+
+def test_v710_dev_summary_picture():
+    c = _dev_core()
+    c.step(SEC, "hk", *_dev_state(), [], collect=True)
+    assert c.c0dev_stats == {"form": "dev", "books": 128, "books_sending": 0, "sends": 0, "mean_abs_D_bp": None}
+    c.step(11 * SEC, "hk", *_dev_state({9: 20.0, 10: -20.0}), [], collect=True)
+    s = c.c0dev_stats
+    d = 20.0 * (1.0 - (1.0 - math.exp(-10 / 300)))
+    assert s["books_sending"] == 2 and s["sends"] == 2 and s["books"] == 128
+    assert math.isclose(s["mean_abs_D_bp"], 2 * d / 128, rel_tol=1e-9)
+    c.step(12 * SEC, "hk", *_dev_state(), [], collect=False)
+    assert c.c0dev_stats is not None                                           # only a collect state replaces it
+    c.step(13 * SEC, "hk", *_dev_state(), [], collect=True)
+    assert c.c0dev_stats["books_sending"] == 0 and c.c0dev_stats["sends"] == 2
+    c.reset_counters()
+    assert c.c0dev_sends == 0
+
+
+# ---- class 2: block form ---------------------------------------------------------------------------------------------
+
+def _blk_state(level=C1_MID, inv=None, free=None, mids=None, sim=None, **kw):
+    """Class-2 books all at ``level`` (or ``mids`` per book), class-0 books as _rel_state's."""
+    m = {b: level for b in range(192, 256)}
+    m.update(mids or {})
+    config, books, accounts = _rel_state(mids=m, inv=inv, free=free, **kw)
+    if sim is not None:
+        config["simulation_id"] = sim
+    return config, books, accounts
+
+
+def _blk_core(**kw):
+    return core.TakerCore(UID, P(**dict(BLK, **kw)))
+
+
+def _c2t(actions):
+    return {a[1]: a for a in actions if 192 <= a[1] < 256 and a[0] == core.ACT_TAKE}
+
+
+def test_v710_blk_mean_is_over_the_two_sided_books_only():
+    c = _blk_core()
+    mids = {b: 9.0 + 0.01 * (b - 192) for b in range(192, 256)}
+    cfg_, books, accounts = _blk_state(mids=mids)
+    books[200] = book(8.99, None, 9.6)                                       # one-sided
+    books[201] = book(9.2, 9.1, 9.6)                                         # crossed
+    c.step(SEC, "hk", cfg_, books, accounts, [])
+    ring = c.runs["hk"].blk[2]["ring"]
+    two = [b for b in range(192, 256) if b not in (200, 201)]
+    want = {b: math.log(0.5 * (round(mids[b] - 0.01, 4) + round(mids[b] + 0.01, 4))) for b in two}
+    assert len(ring) == 1 and ring[0][0] == 0 and sorted(ring[0][1]) == two
+    assert all(math.isclose(ring[0][1][b], want[b], rel_tol=1e-12) for b in two)
+    # a state with no two-sided class-2 book adds nothing to the ring
+    cfg_, books, accounts = _blk_state()
+    for b in range(192, 256):
+        books[b] = book(8.99, None, 9.6)
+    c.step(2 * SEC, "hk", cfg_, books, accounts, [])
+    assert len(c.runs["hk"].blk[2]["ring"]) == 1 and c.c["blk_no_books"] == 1
+
+
+def test_v710_blk_r1_needs_an_entry_at_least_30_sim_s_old_and_takes_the_latest_such_entry():
+    c = _blk_core()
+    c.step(SEC, "hk", *_blk_state(9.00), [])                                 # clock 0
+    c.step(5 * SEC, "hk", *_blk_state(9.10), [])                             # clock 4
+    st = c.runs["hk"].blk[2]
+    assert st["r1_bp"] is None and st["S"] == 0 and c.c["blk_no_signal"] == 2   # nothing 30 s old yet
+    c.step(30 * SEC, "hk", *_blk_state(9.20), [])                            # clock 29: still none (cutoff -1)
+    assert st["r1_bp"] is None and st["S"] == 0
+    c.step(31 * SEC, "hk", *_blk_state(9.30), [])                            # clock 30: entry at clock 0 qualifies
+    assert math.isclose(st["r1_bp"], 1e4 * (math.log(9.30) - math.log(9.00)), rel_tol=1e-6) and st["S"] == 1
+    # clock 40: cutoff 10: the latest entry at or before it is the one at clock 4 (not the one at clock 0)
+    c.step(41 * SEC, "hk", *_blk_state(9.05), [])
+    assert math.isclose(st["r1_bp"], 1e4 * (math.log(9.05) - math.log(9.10)), rel_tol=1e-6) and st["S"] == -1
+    assert [e[0] for e in st["ring"]][0] <= 10 * SEC
+
+
+def test_v710_blk_r1_is_the_mean_per_book_change_so_a_book_leaving_or_joining_never_moves_it():
+    # books spread over levels 9.00 .. 9.63 (ln mids about 180 bp apart, as on mainnet); nothing moves
+    mids = {b: 9.0 + 0.01 * (b - 192) for b in range(192, 256)}
+    c = _blk_core()
+    c.step(SEC, "hk", *_blk_state(mids=mids), [])                             # clock 0, all 64 two-sided
+    cfg_, books, accounts = _blk_state(mids=mids)
+    books[255] = book(9.62, None, 9.6)                                       # the highest book goes one-sided
+    c.step(31 * SEC, "hk", cfg_, books, accounts, [])                        # clock 30: 63 books common
+    st = c.runs["hk"].blk[2]
+    assert st["r1_bp"] == 0.0 and st["S"] == 0                               # a mean of levels would read about -5 bp
+    c.step(61 * SEC, "hk", *_blk_state(mids=mids), [])                       # the book is back: still no move
+    assert st["r1_bp"] == 0.0 and st["S"] == 0
+    # a real move of +5 bp on every book reads +5 bp even with a book missing at one end
+    up = {b: m * (1 + 5e-4) for b, m in mids.items()}
+    cfg_, books, accounts = _blk_state(mids=up)
+    books[192] = book(8.99, None, 9.6)
+    c.step(91 * SEC, "hk", cfg_, books, accounts, [])
+
+    def lnmid(m):                                                            # the mid the state's touch carries
+        return math.log(0.5 * (round(m - 0.01, 4) + round(m + 0.01, 4)))
+    com = range(193, 256)                                                    # 192 is one-sided now: not common
+    want = 1e4 * sum(lnmid(up[b]) - lnmid(mids[b]) for b in com) / len(com)
+    assert math.isclose(want, 5.0, rel_tol=0.05)
+    assert math.isclose(st["r1_bp"], want, rel_tol=1e-9) and st["S"] == 1
+    # no book common to both times: no signal, S held
+    d = _blk_core()
+    cfg_, books, accounts = _blk_state(mids=mids)
+    for b in range(224, 256):
+        books[b] = book(8.99, None, 9.6)                                     # only 192 .. 223 two-sided
+    d.step(SEC, "hk", cfg_, books, accounts, [])
+    cfg_, books, accounts = _blk_state(mids={b: m * 1.01 for b, m in mids.items()})
+    for b in range(192, 224):
+        books[b] = book(8.99, None, 9.6)                                     # only 224 .. 255 two-sided
+    n0 = d.c["blk_no_signal"]
+    d.step(31 * SEC, "hk", cfg_, books, accounts, [])
+    assert d.runs["hk"].blk[2]["r1_bp"] is None and d.runs["hk"].blk[2]["S"] == 0 and d.c["blk_no_signal"] == n0 + 1
+
+
+def test_v710_blk_s_follows_the_sign_and_is_held_at_zero_move_or_below_threshold():
+    c = _blk_core()
+    c.step(SEC, "hk", *_blk_state(9.00), [])
+    c.step(31 * SEC, "hk", *_blk_state(9.00), [])                            # r1 == 0 with S == 0: stays 0
+    st = c.runs["hk"].blk[2]
+    assert st["r1_bp"] == 0.0 and st["S"] == 0 and st["switches"] == 0
+    c.step(61 * SEC, "hk", *_blk_state(9.01), [])                            # up: S = +1 (threshold 0 bp)
+    assert st["S"] == 1 and st["switches"] == 0                              # the first set is not a switch
+    c.step(91 * SEC, "hk", *_blk_state(9.01), [])                            # r1 == 0: S held
+    assert st["r1_bp"] == 0.0 and st["S"] == 1
+    c.step(121 * SEC, "hk", *_blk_state(9.00), [])                           # down: flip
+    assert st["S"] == -1 and st["switches"] == 1
+    c.step(151 * SEC, "hk", *_blk_state(9.00), [])
+    assert st["S"] == -1 and st["switches"] == 1
+    d = _blk_core(v7_blk_thr_bp=5.0)                                         # a threshold: 3 bp moves do not set S
+    d.step(SEC, "hk", *_blk_state(9.000), [])
+    d.step(31 * SEC, "hk", *_blk_state(9.0027), [])                          # +3.0 bp
+    assert d.runs["hk"].blk[2]["S"] == 0
+    d.step(61 * SEC, "hk", *_blk_state(9.0027 * (1 - 0.0008)), [])           # -8 bp
+    assert d.runs["hk"].blk[2]["S"] == -1
+    d.step(91 * SEC, "hk", *_blk_state(9.0027 * (1 - 0.0008) * (1 + 0.0002)), [])   # +2 bp: below the threshold, held
+    assert d.runs["hk"].blk[2]["S"] == -1
+
+
+def test_v710_blk_orders_follow_s_20_units_at_the_opposite_touch():
+    c = _blk_core()
+    c.step(SEC, "hk", *_blk_state(9.00), [])
+    acts, _ = c.step(31 * SEC, "hk", *_blk_state(9.10), [])                  # block up: S = +1, long to +0.5 W
+    t = _c2t(acts)
+    assert sorted(t) == list(range(192, 256))
+    assert all(a[2:] == (core.SIDE_BUY, 20.0, 9.11) for a in t.values())     # 20 units at the ask (mid 9.10 + 0.01)
+    assert not [a for a in acts if a[0] == core.ACT_QUOTE]
+    d = _blk_core()
+    d.step(SEC, "hk", *_blk_state(9.00), [])
+    acts, _ = d.step(31 * SEC, "hk", *_blk_state(8.90), [])                  # block down: S = -1, to the no-loan bound
+    t = _c2t(acts)
+    assert sorted(t) == list(range(192, 256))
+    assert all(a[2:] == (core.SIDE_SELL, 20.0, 8.89) for a in t.values())    # 20 units at the bid
+
+
+def test_v710_blk_s_zero_holds_the_inventory_found():
+    c = _blk_core()
+    inv = {200: 500.0, 201: -300.0}
+    for i in range(4):                                                       # no 30-s entry yet / no move: S stays 0
+        acts, _ = c.step((1 + 10 * i) * SEC, "hk", *_blk_state(9.00, inv=inv), [])
+        assert _c2t(acts) == {}, i
+    assert c.runs["hk"].blk[2]["S"] == 0
+    acts, _ = c.step(61 * SEC, "hk", *_blk_state(9.00, inv=inv), [])         # still flat: S = 0, nothing sent
+    assert _c2t(acts) == {} and c.runs["hk"].blk[2]["S"] == 0
+    # the seed is the inventory at the book's FIRST state: later inventory is not adopted as a new target while S = 0
+    assert math.isclose(c.runs["hk"].blk[2]["books"][200][0], 500.0 * 9.0 / 50000.0, rel_tol=1e-9)
+    # an unreadable inventory (no initial balance) waits and never trades
+    d = _blk_core()
+    cfg_, books, accounts = _blk_state(9.00)
+    accounts[UID][210]["bb"]["i"] = None
+    d.step(SEC, "hk", cfg_, books, accounts, [])
+    cfg_, books, accounts = _blk_state(9.20)
+    accounts[UID][210]["bb"]["i"] = None
+    acts, _ = d.step(31 * SEC, "hk", cfg_, books, accounts, [])
+    assert 210 not in _c2t(acts) and d.c["rel_seed_wait"] == 2 and len(_c2t(acts)) == 63
+
+
+def test_v710_blk_clip_is_the_smaller_of_20_and_the_gap_and_respects_the_minimum_order():
+    tgt = 0.5 * (25000.0 / 9.05 + C1_BI)                                     # 0.5 W / mid at the mid 9.05 of the orders
+    c = _blk_core()
+    inv = {200: tgt - 5.0, 201: tgt - 0.1, 202: tgt - 19.0, 203: tgt - 21.0}
+    c.step(SEC, "hk", *_blk_state(9.00, inv=inv), [])
+    acts, _ = c.step(31 * SEC, "hk", *_blk_state(9.00, inv=inv), [])        # no move yet
+    acts, _ = c.step(61 * SEC, "hk", *_blk_state(9.05, inv=inv), [])
+    t = _c2t(acts)
+    assert math.isclose(t[202][3], 19.0, abs_tol=1e-3)                            # d = 19 < 20 -> d
+    assert math.isclose(t[200][3], 5.0, abs_tol=1e-3) and t[203][3] == 20.0       # min(20, d): 5 units, 20 units
+    assert 201 not in t                                                           # d = 0.1 < the 0.2396 minimum order
+    # a gap below the class minimum order sends nothing and counts as at target
+    d = _blk_core()
+    mo = 0.2396
+    inv2 = {200: 0.5 * (25000.0 / 9.0001 + C1_BI) + 0.1}                  # 0.1 unit above the target at mid 9.0001
+    d = _blk_core()
+    d.step(SEC, "hk", *_blk_state(9.00, inv=inv2), [], collect=True)
+    d.step(31 * SEC, "hk", *_blk_state(9.00, inv=inv2), [], collect=True)
+    acts, _ = d.step(61 * SEC, "hk", *_blk_state(9.0001, inv=inv2), [], collect=True)   # S = +1 (up 1.1 bp)
+    assert d.blk_stats["S"] == 1 and 200 not in _c2t(acts) and len(_c2t(acts)) == 63
+    assert d.blk_stats["books_at_target"] == 1 and d.c["blk_send"] == 63     # 0.1 < the 0.2396 minimum: at target
+
+
+def test_v710_blk_cooldown_90_sim_s_per_book():
+    c = _blk_core()
+    c.step(SEC, "hk", *_blk_state(9.00), [])
+    a1, _ = c.step(31 * SEC, "hk", *_blk_state(9.10), [])                    # first send at clock 30
+    assert len(_c2t(a1)) == 64
+    seen = []
+    for dt in (10, 60, 89, 90, 91, 119, 120):
+        a, _ = c.step((31 + dt) * SEC, "hk", *_blk_state(9.10), [])         # S held at +1 (r1 = 0 from clock 60 on)
+        seen.append((dt, len(_c2t(a))))
+    assert seen[:3] == [(10, 0), (60, 0), (89, 0)]
+    assert seen[3] == (90, 64) and seen[4] == (91, 0) and seen[5] == (119, 0) and seen[6] == (120, 0)
+    a, _ = c.step((31 + 180) * SEC, "hk", *_blk_state(9.10), [])
+    assert len(_c2t(a)) == 64                                                # 90 s after the send at 31 + 90 = 121
+    # a book that did not send (paced) keeps no cooldown clock
+    d = _blk_core(v7_cap=100.0)                                              # the 20-unit order (180) exceeds the cap
+    d.step(SEC, "hk", *_blk_state(9.00), [])
+    a, _ = d.step(31 * SEC, "hk", *_blk_state(9.10), [])
+    assert _c2t(a) == {} and d.c["blk_paced_ledger"] == 64
+    assert all(bs[1] is None for bs in d.runs["hk"].blk[2]["books"].values())
+
+
+def test_v710_blk_no_loan_bound_at_the_target_and_the_free_base_clamp():
+    c = _blk_core()
+    bs_units = C1_BI                                                         # the whole base endowment (0.5 W at mid 9)
+    inv = {200: -bs_units + 50.0, 201: -bs_units + 0.05, 202: -bs_units + 10.0}
+    free = {202: 3.3456}
+    c.step(SEC, "hk", *_blk_state(9.00, inv=inv, free=free), [])
+    acts, _ = c.step(31 * SEC, "hk", *_blk_state(8.90, inv=inv, free=free), [])    # S = -1: target = -(base share)
+    t = _c2t(acts)
+    assert t[200][2:] == (core.SIDE_SELL, 20.0, 8.89)
+    assert 201 not in t                                                      # 0.05 above the bound < the minimum order
+    assert t[202][3] == 3.3456 or t[202][3] == core.floor_to(3.3456, 4)       # a sell stops at the free base
+    # the target of a short never goes below -(base share) (all of the base endowment): a book AT that bound is at target
+    # (at mid 8.90 the bound is 0.4972 W, the unbounded -0.5 W would ask 15.6 units more)
+    d = _blk_core()
+    inv = {200: -bs_units}
+    d.step(SEC, "hk", *_blk_state(9.00, inv=inv), [], collect=True)
+    acts, _ = d.step(31 * SEC, "hk", *_blk_state(8.90, inv=inv), [], collect=True)
+    assert 200 not in _c2t(acts) and d.blk_stats["books_at_target"] == 1 and d.blk_stats["S"] == -1
+
+
+def test_v710_blk_state_clears_on_a_new_simulation_and_on_a_book_count_change():
+    c = _blk_core()
+    c.step(SEC, "hk", *_blk_state(9.00), [])
+    c.step(31 * SEC, "hk", *_blk_state(9.10), [])
+    assert c.runs["hk"].blk[2]["S"] == 1 and len(c.runs["hk"].blk[2]["ring"]) >= 1
+    acts, _ = c.step(32 * SEC, "hk", *_blk_state(9.10, sim="sim_b"), [])     # a new simulation: ring and S restart
+    st = c.runs["hk"].blk[2]
+    assert _c2t(acts) == {} and st["S"] == 0 and len(st["ring"]) == 1 and st["switches"] == 0
+    c.step(33 * SEC, "hk", *_blk_state(9.20, sim="sim_b"), [])
+    assert c.runs["hk"].blk[2]["S"] == 0                                      # no entry 30 s old yet
+    c.step(63 * SEC, "hk", *_blk_state(9.30, sim="sim_b"), [])
+    assert c.runs["hk"].blk[2]["S"] == 1
+    cfg_, books, accounts = _state(128)
+    cfg_["simulation_id"] = "sim_b"                                           # the same simulation: only the count changes
+    c.step(64 * SEC, "hk", cfg_, books, accounts, [])                         # a book-count change clears the state
+    assert c.c["pace_reset_layout"] == 1 and (2 not in c.runs["hk"].blk or c.runs["hk"].blk[2]["S"] == 0)
+
+
+def test_v710_blk_never_places_a_resting_class2_order_and_one_instruction_per_book():
+    rng = random.Random(710)
+    c = core.TakerCore(UID, P(**dict(BLK, **K2, v7_touch_id=1.0, v7_c0_maker=1.0)))
+    lvl, n_take = 9.0, 0
+    for i in range(240):
+        lvl *= 1.0 + rng.gauss(0.0, 0.002)
+        mids = {b: lvl * (1.0 + rng.gauss(0.0, 0.0005)) for b in range(192, 256)}
+        acts, _ = c.step((1 + 10 * i) * SEC, "hk", *_rel_state(mids=mids), [], collect=(i % 7 == 0))
+        assert not [a for a in acts if 192 <= a[1] < 256 and a[0] != core.ACT_TAKE], i
+        for b in range(192, 256):
+            assert len([a for a in acts if a[1] == b]) <= 1
+        n_take += len(_c2t(acts))
+    assert n_take > 100
+
+
+def test_v710_blk_summary_picture_and_the_other_forms_are_not_touched():
+    c = _blk_core()
+    c.step(SEC, "hk", *_blk_state(9.00), [], collect=True)
+    assert c.blk_stats["S"] == 0 and c.blk_stats["r1_bp"] is None and c.blk_stats["sends"] == 0
+    c.step(31 * SEC, "hk", *_blk_state(9.10), [], collect=True)
+    s = c.blk_stats
+    assert s["S"] == 1 and s["switches_total"] == 0 and s["sends"] == 64 and s["books_at_target"] == 0
+    assert math.isclose(s["r1_bp"], 1e4 * (math.log(9.10) - math.log(9.00)), rel_tol=1e-6) and s["form"] == "block"
+    assert c.rel_stats == {"form": "block", "books": 64}
+    c.step(61 * SEC, "hk", *_blk_state(9.00), [], collect=True)               # flips to -1; the 90-s cooldown holds the sends
+    assert c.blk_stats["S"] == -1 and c.blk_stats["switches_total"] == 1 and c.blk_stats["sends"] == 64
+    c.step(121 * SEC, "hk", *_blk_state(9.00), [], collect=True)             # 90 s after the first send: the sells go out
+    assert c.blk_stats["S"] == -1 and c.blk_stats["sends"] == 128
+    # band / step / t9 build neither the block state nor its picture
+    for kw in (BAND, T9, dict(v7_rel_classes=2.0)):
+        d = core.TakerCore(UID, P(**kw))
+        d.step(SEC, "hk", *_blk_state(9.00), [], collect=True)
+        assert not d.runs["hk"].blk and d.blk_stats is None and d.c0dev_stats is None and not d.runs["hk"].c0dev
+
+
+def test_v710_new_forms_leave_class1_k2_and_e1t_untouched():
+    legs = dict(v7_k=0.005, v7_c0_contra=1.0, **K2, v7_touch_id=1.0)
+    new = core.TakerCore(UID, P(**dict(legs, **DEV, **BLK)))
+    old = core.TakerCore(UID, P(**dict(legs, **BAND)))
+    for i, (bid, ask, f) in enumerate(((8.99, 9.01, 9.0), (8.97, 8.99, 8.98), (8.96, 8.98, 8.97), (9.01, 9.03, 9.02))):
+        xs = []
+        for c in (new, old):
+            cfg_, books, accounts = _mk_state(bid=bid, ask=ask, f_c1=f)
+            acts, _ = c.step((i + 1) * 40 * SEC, "hk", cfg_, books, accounts, [], collect=True)
+            xs.append(acts)
+        assert [a for a in xs[0] if 128 <= a[1] < 192] == [a for a in xs[1] if 128 <= a[1] < 192], i
+    assert new.mk_stats["touch_id"] == old.mk_stats["touch_id"] == {"books": 64, "behind": 31, "digest": "dcfec944ececf39f"}
+
+
+def test_v710_launcher_switches_defaults_and_refusals():
+    text = (ROOT / "run_taker_v7.sh").read_text()
+    for key in ('V7_REL_FORM="${V7_REL_FORM:-block}"', 'V7_C0_FORM="${V7_C0_FORM:-dev}"',
+                "v7_c0_form=${V7_C0_FORM} ", "v7_blk_cool_s=90 ", 'echo "[preflight] v7.10 PASS"'):
+        assert key in text, key
+    assert re.search(r'case "\$V7_C0_FORM" in\n  gap\|dev\) ;;\n  \*\) echo "ERROR: V7_C0_FORM must be gap or dev', text)
+    assert re.search(r'case "\$V7_REL_FORM" in\n  step\|band\|t9\|block\) ;;\n  \*\) echo "ERROR: V7_REL_FORM must be', text)
+    p = core.parse_params(_parse_kwargs_like(_launcher_params()))
+    assert p["c0_form"] == "dev" and p["rel_form"] == "block" and p["touch_id"] is True and p["mk_band"] is True
+    assert p["rel_classes"] == (2,) and p["classes"] == (0,) and p["c0_contra"] is True
+    # gap + band = the v7.9 switches: the parsed launch params differ from the v7.10 ones in the two forms only
+    old = _launcher_params().replace("v7_c0_form=dev", "v7_c0_form=gap").replace("v7_rel_form=block", "v7_rel_form=band")
+    q = core.parse_params(_parse_kwargs_like(old))
+    assert q["c0_form"] == "gap" and q["rel_form"] == "band"
+    assert {k: v for k, v in p.items() if k not in ("c0_form", "rel_form")} == \
+        {k: v for k, v in q.items() if k not in ("c0_form", "rel_form")}
+
+
+def test_v710_agent_logs_both_forms(tmp_path):
+    real = _real_taos()
+    mod = _load_agent_class(stubbed=not real)
+    agent = _agent(mod, tmp_path, **dict(V75, v7_touch_id=1.0, **DEV, **BLK))
+    agent.handle(_st(*_blk_state(9.00)))
+    agent.handle(_st(*_blk_state(9.10), ts=SEC + 60 * SEC))
+    assert agent._writer.flush()
+    lines = [json.loads(x) for x in Path(agent.log_path).read_text().splitlines() if x.strip()]
+    assert lines[0]["version"] == "v7.10" and lines[0]["core"] == "taker_v7_core_11"
+    assert lines[0]["params"]["c0_form"] == "dev" and lines[0]["params"]["rel_form"] == "block"
+    summ = [x for x in lines if x["kind"] == "summary"][0]
+    assert summ["errors"] == 0
+    assert summ["c0dev"]["form"] == "dev" and summ["c0dev"]["books"] == 128 and "mean_abs_D_bp" in summ["c0dev"]
+    assert summ["blk"]["form"] == "block" and summ["blk"]["S"] == 1 and summ["blk"]["sends"] == 64
+    assert set(summ["blk"]) >= {"S", "r1_bp", "switches_total", "books_at_target", "sends"}
+    assert set(summ["c0dev"]) >= {"books_sending", "sends", "mean_abs_D_bp"}
+    assert summ["maker"]["touch_id"] == {"books": 64, "behind": 31, "digest": "dcfec944ececf39f"}
+    assert "rel" in summ and "c0_contra" in summ                             # every v7.9 key is still there

@@ -14,7 +14,9 @@ v7.6 (Round 29 C, USER 11-14) adds the two-sided makers (v7_c0_maker on the odd 
 class-1 books): all of it is in the core, the orders are the same post-only GTT quotes as the maker leg's, the maker
 picture gains "c0_*" / "depth_*" keys; v7.7 (Round 31, USER 11-15) adds the class-0 maker offset trial (v7_c0_mk_trial:
 four groups of odd class-0 books quote inside / at / one / two ticks behind the others' touch): all of it is in the
-core, the orders are the same post-only GTT quotes, the maker picture gains the "c0_trial" key.
+core, the orders are the same post-only GTT quotes, the maker picture gains the "c0_trial" key; v7.10 (Round 39, USER
+11-18) adds the class-0 deviation form (v7_c0_form = dev) and the class-2 block form (v7_rel_form = block): all of it is
+in the core, the orders are the same IOC takes, the summary gains the "c0dev" and "blk" keys.
 
 The agent class only.  The rule, the class map, the clamps and the pace guard live in taker_v7_core.py (stdlib only;
 see its docstring for every label and source).  This class:
@@ -205,6 +207,8 @@ class TakerV7(FinanceSimulationAgent):
             self._mk_stats = self.core.mk_stats           # v7.2: the maker leg's picture
             self._rel_stats = self.core.rel_stats         # v7.4: the stepping taker's picture
             self._c0_stats = self.core.c0_stats           # v7.4: the class-0 contrarian term's picture
+            self._c0dev_stats = self.core.c0dev_stats     # v7.10: the class-0 deviation form's picture
+            self._blk_stats = self.core.blk_stats         # v7.10: the class-2 block form's picture
         response = FinanceAgentResponse(agent_id=self.uid)
         expiry = int(self.v7["mk_expiry_s"] * 1e9)
         for a in actions:
@@ -265,6 +269,10 @@ class TakerV7(FinanceSimulationAgent):
         self._rel_stats = None
         c0_stats = getattr(self, "_c0_stats", None)
         self._c0_stats = None
+        c0dev_stats = getattr(self, "_c0dev_stats", None)
+        self._c0dev_stats = None
+        blk_stats = getattr(self, "_blk_stats", None)
+        self._blk_stats = None
         try:
             split = core.split_pairs(pairs, flags) if pairs else None   # v7.0.1 diagnostic, never raises here
         except Exception as exc:
@@ -304,7 +312,7 @@ class TakerV7(FinanceSimulationAgent):
             "c0_abs_dev_p50": core.pctl(d, 0.5), "c0_split": split,
             "c1_corr_inv_target": core.corr(p1) if p1 else None, "c1_books": len(p1),
             "c1_abs_dev_p50": core.pctl(d1, 0.5), "pace": pace, "errors": self._errors,
-            "rel": rel_stats, "c0_contra": c0_stats,
+            "rel": rel_stats, "c0_contra": c0_stats, "c0dev": c0dev_stats, "blk": blk_stats,
             "maker": mk_stats, "maker_fills": {"buy_notional": round(c.mk_buy_notional, 2),
                                                "sell_notional": round(c.mk_sell_notional, 2)},
             "gc_idle_ms_p50": core.pctl(self._gc_ms, 0.5), "gc_idle_n": len(self._gc_ms),
