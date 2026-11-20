@@ -32,6 +32,15 @@
 # V7_MAKER_CLASSES=none turns the maker leg off; =1,2 adds class 2.  V7_CLASSES=0,1 (the v7.1 class-1 taker, option A)
 # is accepted only with V7_MAKER_CLASSES=none.
 #
+# v7.11.1 (Round 53 SOLUTION, implement stage; USER 11-20 "Allow maker leg (Recommended)"): the v7.9.1 legs and profile
+# UNCHANGED, plus maker legs COPIED from the Top-10 (RFORM6 flash (C3): 5G3oVFjL u200 u133, 5FLbhrTC u231 u177 u59, 5F4QZ4iP u222; constants from SP/round53/a/out/s7_forms.txt) on the
+# ODD class-0 and ODD class-2 books and a hashed maker PLACEMENT identity (core taker_v7_core_14; the class-0 and class-2 takers
+# keep the EVEN books; class 1 stays K2 on every class-1 book).  Defaults, no env prefix needed:
+#   V7_C0_MAKER=1 V7_C0_MK_NOTIONAL=640 (fill q50 643, COPIED) V7_C0_MK_BAND_W=0.16 (posW p90, COPIED)
+#   V7_C2_MAKER=1 V7_C2_MK_NOTIONAL=720 V7_C2_MK_BAND_W=0.20 (COPIED)   V7_MK_PLACE_ID=1 (STRUCTURAL: hashed uid x book)
+# V7_C0_MAKER=0 V7_C2_MAKER=0 V7_MK_PLACE_ID=0 runs exactly v7.9.1 (EQUIV a / b).  V7_MK_PLACE_ID=1 needs a maker on and V7_C0_MK_TRIAL=0.
+# V7_C2_MAKER=1 is refused with V7_MAKER_CLASSES=1,2 (one leg per class-2 book).
+#
 # Same flag interface as run_strategy1_research_simple_multi.sh:
 #   -w <wallet name> -h <hotkey name> -u <netuid> -a <axon port> -e <endpoint> [-p <wallet path>]
 #   -i <pm2 name> | --pm2_name <pm2 name> | --pm2_name=<pm2 name>
@@ -64,8 +73,15 @@ V7_MAKER_CLASSES="${V7_MAKER_CLASSES:-1}"
 V7_MK_TARGET="${V7_MK_TARGET:-3}"
 V7_REL_CLASSES="${V7_REL_CLASSES:-2}"
 V7_REL_FORM="${V7_REL_FORM:-band}"
-V7_C0_MAKER="${V7_C0_MAKER:-0}"
+V7_C0_MAKER="${V7_C0_MAKER:-1}"
 V7_C0_MK_TRIAL="${V7_C0_MK_TRIAL:-0}"
+# v7.11.1 maker profile (RFORM6 flash (C3), COPIED; the profile IS the default, no env prefix is needed):
+V7_C0_MK_NOTIONAL="${V7_C0_MK_NOTIONAL:-640}"
+V7_C0_MK_BAND_W="${V7_C0_MK_BAND_W:-0.16}"
+V7_C2_MAKER="${V7_C2_MAKER:-1}"
+V7_C2_MK_NOTIONAL="${V7_C2_MK_NOTIONAL:-720}"
+V7_C2_MK_BAND_W="${V7_C2_MK_BAND_W:-0.20}"
+V7_MK_PLACE_ID="${V7_MK_PLACE_ID:-1}"
 V7_MK_DEPTH="${V7_MK_DEPTH:-0}"
 V7_TOUCH_ID="${V7_TOUCH_ID:-0}"
 V7_SIZE_ID="${V7_SIZE_ID:-1}"
@@ -149,6 +165,30 @@ case "$V7_SIZE_ID" in
   0|1) ;;
   *) echo "ERROR: V7_SIZE_ID must be 0 or 1 (got ${V7_SIZE_ID})" >&2; exit 2 ;;
 esac
+case "$V7_C2_MAKER" in
+  0|1) ;;
+  *) echo "ERROR: V7_C2_MAKER must be 0 or 1 (got ${V7_C2_MAKER})" >&2; exit 2 ;;
+esac
+case "$V7_MK_PLACE_ID" in
+  0|1) ;;
+  *) echo "ERROR: V7_MK_PLACE_ID must be 0 or 1 (got ${V7_MK_PLACE_ID})" >&2; exit 2 ;;
+esac
+_num_re='^[0-9]+(\.[0-9]+)?$'
+for _v in V7_C0_MK_NOTIONAL V7_C0_MK_BAND_W V7_C2_MK_NOTIONAL V7_C2_MK_BAND_W; do
+  [[ "${!_v}" =~ $_num_re ]] || { echo "ERROR: ${_v} must be a positive number (got ${!_v})" >&2; exit 2; }
+done
+if [[ "$V7_MK_PLACE_ID" == "1" && "$V7_C0_MAKER" != "1" && "$V7_C2_MAKER" != "1" ]]; then
+  echo "ERROR: V7_MK_PLACE_ID=1 places the class-0 / class-2 maker quotes, so V7_C0_MAKER=1 or V7_C2_MAKER=1 is needed." >&2
+  exit 2
+fi
+if [[ "$V7_MK_PLACE_ID" == "1" && "$V7_C0_MK_TRIAL" == "1" ]]; then
+  echo "ERROR: V7_MK_PLACE_ID=1 and V7_C0_MK_TRIAL=1 both set the class-0 maker placement; set one of them to 0." >&2
+  exit 2
+fi
+if [[ "$V7_C2_MAKER" == "1" && "$V7_MAKER_CLASSES" == "1,2" ]]; then
+  echo "ERROR: V7_C2_MAKER=1 makes the odd class-2 books, so V7_MAKER_CLASSES must not include class 2 (use V7_MAKER_CLASSES=1)." >&2
+  exit 2
+fi
 if [[ "$V7_SIZE_ID" == "1" && "$V7_TOUCH_ID" == "1" ]]; then
   echo "ERROR: V7_SIZE_ID=1 with V7_TOUCH_ID=1 is an untested combination; set one of them to 0." >&2
   exit 2
@@ -231,7 +271,8 @@ v7_mk_target=${V7_MK_TARGET} v7_mk_k=0.005 v7_mk_l=${MK_L} v7_mk_ref_s=10800 \
 v7_mk_dyn_hl_s=${MK_HL} v7_mk_dyn_rate_h=0.03 v7_mk_band_mult=2 \
 v7_rel_classes=${V7_REL_CLASSES} v7_rel_form=${V7_REL_FORM} v7_rel_hl_s=${REL_HL} v7_rel_rate_h=${REL_RATE} v7_rel_l=0.45 \
 v7_rel_clip_notional=${REL_CLIP} v7_rel_band_mult=2 v7_rel_mom=0.0037 \
-v7_c0_maker=${V7_C0_MAKER} v7_c0_mk_notional=1000 v7_c0_mk_band_w=0.10 v7_c0_mk_trial=${V7_C0_MK_TRIAL} \
+v7_c0_maker=${V7_C0_MAKER} v7_c0_mk_notional=${V7_C0_MK_NOTIONAL} v7_c0_mk_band_w=${V7_C0_MK_BAND_W} v7_c0_mk_trial=${V7_C0_MK_TRIAL} \
+v7_c2_maker=${V7_C2_MAKER} v7_c2_mk_notional=${V7_C2_MK_NOTIONAL} v7_c2_mk_band_w=${V7_C2_MK_BAND_W} v7_mk_place_id=${V7_MK_PLACE_ID} \
 v7_mk_depth=${V7_MK_DEPTH} v7_mkd_start_bp=2 v7_mkd_every_s=600 \
 v7_step_thr_bp=3 v7_step_max_dt_s=60 \
 v7_c0_contra=${V7_C0_CONTRA} v7_c0_kc=0.005 v7_c0_lc=0.45 v7_c0_ref_s=10800 \
@@ -240,16 +281,16 @@ v7_pace=1 v7_cap=0 v7_cap_mult=10 v7_fee_margin=0.001 \
 v7_log_every=60 v7_gc_every=30 v7_log_dir=${LOG_DIR} v7_history_anchor=${HISTORY_ANCHOR}"
 
 _sha16() { sha256sum "$1" | cut -c1-16; }
-echo "[TakerV7] version=v7.9.1 TakerV7.py=$(_sha16 "$AGENT_PATH/TakerV7.py") taker_v7_core.py=$(_sha16 "$AGENT_PATH/taker_v7_core.py") test_taker_v7.py=$(_sha16 "$SCRIPT_DIR/tests/test_taker_v7.py")"
+echo "[TakerV7] version=v7.11.1 TakerV7.py=$(_sha16 "$AGENT_PATH/TakerV7.py") taker_v7_core.py=$(_sha16 "$AGENT_PATH/taker_v7_core.py") test_taker_v7.py=$(_sha16 "$SCRIPT_DIR/tests/test_taker_v7.py")"
 
 # ---- preflight: the v7 tests must pass -------------------------------------------------------------------------------
-echo "[preflight] v7.9.1: ${PYTHON} tests/run_tests.py tests/test_taker_v7.py"
+echo "[preflight] v7.11.1: ${PYTHON} tests/run_tests.py tests/test_taker_v7.py"
 if ! V7_LAUNCH_PARAMS="$PARAMS" PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$AGENT_PATH:$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     "$PYTHON" "$SCRIPT_DIR/tests/run_tests.py" tests/test_taker_v7.py; then
-  echo "ERROR: v7.9.1 preflight FAILED: tests/test_taker_v7.py did not pass; nothing was launched." >&2
+  echo "ERROR: v7.11.1 preflight FAILED: tests/test_taker_v7.py did not pass; nothing was launched." >&2
   exit 1
 fi
-echo "[preflight] v7.9.1 PASS"
+echo "[preflight] v7.11.1 PASS"
 if [[ "${V7_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   exit 0
 fi
