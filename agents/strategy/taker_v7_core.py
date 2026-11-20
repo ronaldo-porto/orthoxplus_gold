@@ -214,15 +214,112 @@ before any ladder build): NO core change (core_9).  The launcher turns the class
 by default (V7_C0_MAKER=0, V7_C0_MK_TRIAL=0): every class-0 book is the taker's again and K2 is the only maker,
 exactly v7.5 (the v7.6 / v7.7 equivalence runs).  Why: the uid-wide making q is 0 and the class-0 maker fills hold
 it there (Round 32 trial, OBSERVED: q 0 in every offset group); with them gone q measures K2 alone.
+
+v7.9 (Round 35 / 36; USER 11-16 JST: "accept your recommendation for option 1"): the TOUCH IDENTITY of a second uid,
+behind v7_touch_id (0 = v7.8, the code default; the launcher passes 1).  UID 99 stays on v7.8; a uid launched on v7.9
+differs from it at the class-1 touch.  Standing USER rule (10-16): every uid acts as a different agent at the touch;
+the identity is a value hashed from the uid's OWN number x book, with no list of our uids, no reading of another
+agent, no coordination, no runtime randomness and no concealment.
+  draw   : E1T of the PRE-REGISTERED Round 35 profile (SP/round35/spec/profile_v2.py, sha256 ea5d0a9e951b33b6...,
+           frozen 11-16 21:44 JST before any replay output):
+             ticks = (0, 1)[ int(SHA-256('orthox-profile-v2|E1T|' + str(uid) + '|' + str(book)).hexdigest()[:8], 16)
+                             mod 2 ]
+           drawn once per book from this process's own uid; never redrawn.  A negative uid draws nothing (every book 0).
+  rule   : on a class-1 book of the TARGET maker leg (v7_mk_target 1 / 2 / 3; K2 at launch) whose draw is 1, the one
+           quoted side is priced ONE TICK BEHIND the others' best order on that side (bid = others' best bid - 1 tick,
+           ask = others' best ask + 1 tick; others_touch, so our own resting quote is never the reference and a quote
+           never walks); a side with no other order keeps our own resting price (none -> no quote).  Draw 0: the v7.8
+           price at the visible touch, unchanged.  Size, side choice, band, guard (on the quoted price), pull, follow,
+           life and pace are v7.8's; class 0, class 2 and every other leg are untouched.
+  why    : Round 35 B (MODEL): a v7.8 copy rests at the same book-side and price as R 0.43-0.44 of its resting time;
+           E1T cuts that by 0.71-0.74 at a class-1 cost between 0.09-0.19 (optimistic fill) and 0.50 (conservative
+           fill).  Round 36 B (OBSERVED): the #1 operator's third uid (5G3oVFjL u23) quotes one tick behind on class 1
+           at rank #6.
+  log    : the summary's maker picture carries touch_id = {books, behind, digest}; digest = sha16 of
+           "\\n".join(["orthox-profile-v2|uid=<uid>|E1T"] + ["<book>|E1T=<ticks>" for each class-1 book ascending]).
+
+v7.9.1 (Round 42; USER 11-19 04:4x JST: "ok, accept your recommendation option" = Round 42 option 2): the class-1 ORDER-SIZE
+identity K1Z replaces the one-tick-behind identity E1T for a 2nd mainnet uid, behind v7_size_id (0 = off, the code
+default; the launcher passes 1 and passes v7_touch_id 0).  E1T stays in the code unchanged (v7_touch_id).  Why
+(OBSERVED live): E1T drawn books were idle, maker volume about 0.01 of UID 99's on the same books; (OBSERVED field): 95 pct
+of class-1 maker notional fills at the touch and the same-price one-sided makers of one coldkey each keep fills; fleets
+differ by size.  The USER thereby accepts order size as a valid difference at the touch for class 1.
+  draw   : K1Z of the PRE-REGISTERED Round 42 profile (frozen: a change is a new version):
+             mult = (1.0, 2.0)[ int(SHA-256('orthox-profile-v3|K1Z|' + str(uid) + '|' + str(book)).hexdigest()[:8], 16)
+                                mod 2 ]
+           drawn once per book from this process's own uid, never redrawn; a negative uid draws 1.0.
+  rule   : on a class-1 book of the TARGET maker leg (the exact book set E1T acts on: target_on and b in lay c1, and
+           not a depth-maker book) the K2 clip notional is mult x v7_mk_notional (1,500 -> 3,000 where mult 2.0).  Every
+           quantity derived from the clip on that book follows the per-book value: the order size (notional / mid, then
+           the afford / base clamps, the min order and pace on that size) and the one-clip band (the deviation
+           threshold the side choice reads = v7_mk_band_clips x the per-book clip).  The quote PRICE is the v7.8 price
+           (the others' best); guard, clamps, one instruction per book, post-only, GTT, pull, pace and every other
+           leg / class are unchanged.  (MODEL: matches the Round 42 B replay K1Z, where one scalar clip is both the
+           order size and the band / trigger on a book.)
+  log    : the summary's maker picture carries size_id = {books, big, digest}; digest = sha16 of
+           "\\n".join(["orthox-profile-v3|uid=<uid>|K1Z"] + ["<book>|K1Z=<mult>" for each class-1 book ascending])
+           with the mult printed as a Python float ("1.0" / "2.0").
+
+v7.9.2 / v7.9.3 (Round 43 profiles; USER 11-19 05:3x JST "ok, accept your recommendation, build v7.92, v7.9.3"): ONE logic,
+three parameter profiles.  core_13 = core_12 plus two params whose CODE defaults reproduce core_12 (v7.9.1) exactly; each
+version's launcher carries its profile as defaults, so no env prefix is needed.  The two cores are byte-identical except
+the V7_VERSION line.
+  v7_size_pair       : the K1Z mults (index 0, index 1) as "a,b" (or a 2-sequence), each > 0 and <= 10 (STRUCTURAL guard);
+                       code default (1.0, 2.0).  The draw (SHA-256 value mod 2 = the index) is unchanged; the summary's big =
+                       books drawn index 1; the digest prints each book's mult as a Python float.  v7.9.2 = 1.5,2.5 (Round 43
+                       B, S2, MODEL); v7.9.3 = 1.25,1.75 (S5, MODEL).  A negative uid draws index 0.
+  v7_c0_tgt_off_clips: a constant added to the class-0 taker's gap target in units: target += off x v7_clip (clip units), code
+                       default 0.0, |off| <= 5 (STRUCTURAL guard).  Added to the final target of the class-0 taker (after the
+                       gap term, the contrarian term and the common limit, in units) as Round 43 C c0_lib A0.want (tG = TG x W /
+                       mid + off, TG already limit-clipped, off = 0.5 x CLIPU) and Round 35 A a_engine run().  v7.9.3 = +0.5
+                       (T4, MODEL).  Only the class-0 taker (rule None, no tfrac); class 1 / class 2 takers never read it.
+  existing params    : v7_k (class-0 slope; v7.9.2 0.0035 = T2, MODEL), v7_rel_hl_s (class-2 band half-life; v7.9.2 4,233.6 =
+                       B4), v7_rel_l (class-2 limit; v7.9.3 0.30 = B3).  In the band form hl is the half-life of the average, of
+                       the size and of the warm-up, L the common limit (Round 43 C c2_lib OPTS hl / L); v7_rel_rate_h is read
+                       only by the step / t9 forms.
+
+v7.11 / v7.11.1 (Round 53 SOLUTION C6 FORM4 / C3 RFORM6, implement stage; USER 11-20 "Allow maker leg (Recommended)"): core_14 =
+core_13 plus a class-2 flat maker and a maker placement identity, each behind a switch whose CODE DEFAULT reproduces core_13
+exactly (EQUIV a-d).  The v7.6 class-0 maker (v7_c0_maker) is reused as written.  The two cores are byte-identical except the
+V7_VERSION line ("v7.11" / "v7.11.1").  Constants are launcher profile values COPIED from the Top-10 maker forms (Round 53 track
+A, s7_forms.txt); the logic is STRUCTURAL.
+  v7_c2_maker (0 | 1), default 0 : a FLAT two-sided maker on the ODD class-2 books, the same rules as the class-0 maker (STRUCTURAL,
+                       one inventory per book): ONE post-only bid and ONE post-only ask per book and state of v7_c2_mk_notional,
+                       priced off the OTHERS' touch (others_touch; never off our own quote), never at or through our own opposite
+                       quote, never a take, the adding side withdrawn while |position| >= v7_c2_mk_band_w x W (W = quote initial
+                       + base initial x mid, as class 0), replaced only when off its wanted price, the same per-book pace ledger
+                       and cap as every leg, the class-2 grid / decimals / min order from the layout; no pull, no fundamental guard.
+                       With it ON the class-2 band taker (v7_rel_classes=2) keeps only the EVEN class-2 books for its DECISIONS and
+                       summary pairs; its state, class mean and band de-mean still cover the whole class (STRUCTURAL: the class common
+                       move is measured on all class-2 books, so an even book decides exactly as on core_13; EQUIV c).  The exclusivity check is unchanged: this maker is NOT part of
+                       v7_maker_classes, so rel_classes=2 may coexist with it, while v7_maker_classes including 2 together with
+                       v7_c2_maker=1 refuses to start (one leg per class-2 book).
+  v7_c2_mk_notional, v7_c2_mk_band_w : the order notional (> 0, <= 1e6) and the band in W (> 0, <= 1); code defaults 840 / 0.47
+                       (COPIED: FORM4 class-2 fill notional q50 843, |posW| p90 0.47; the launcher passes the profile values).
+  v7_mk_place_id (0 | 1), default 0 : the maker PLACEMENT identity (STRUCTURAL; USER standing rule: every uid acts as a different
+                       agent at the touch).  Each (uid, book) on the class-0 and class-2 maker books takes a placement from the
+                       hashed draw idx = int(SHA-256("orthox-profile-v3|MKP|<uid>|<book>").hexdigest(), 16) mod 3 (the whole digest
+                       as an integer; a negative uid draws 0; no fleet list, no reading of siblings, no run-time randomness):
+                       0 = the v7.6 rule (one tick inside the others' touch when the spread is at least 3 ticks, else at it),
+                       1 = AT the others' best bid / ask, 2 = ONE tick behind them: the v7.7 offsets (None, 0, 1), the same code
+                       path (C0_MK_TRIAL_OFFSETS[idx]).  Placements COPIED from the field fill distribution (RFORM6 / FORM4
+                       class-0 fills inside 0.36-0.38, at 0.18, one behind 0.09-0.12).  It needs a maker (v7_c0_maker=1 or
+                       v7_c2_maker=1) and refuses v7_c0_mk_trial=1 (one placement rule per book).  The summary's maker picture
+                       carries place_id = {books, per_placement [idx0, idx1, idx2], digest}; digest = place_id_digest(uid, books) =
+                       sha16 of "\\n".join(["orthox-profile-v3|uid=<uid>|MKP"] + ["<book>|MKP=<idx>" for each maker book ascending]).
+  profiles (launcher defaults, no env prefix): v7.11 = the v7.9.2 profile + FORM4 makers (c0 notional 600 / band 0.53, c2 notional
+                       840 / band 0.47, place id on); v7.11.1 = the v7.9.1 profile + RFORM6 makers (c0 640 / 0.16, c2 720 / 0.20,
+                       place id on).  Class 1 stays K2 on every class-1 book.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 from collections import deque
 from typing import Any
 
-V7_VERSION = "v7.8"
-CORE_VERSION = "taker_v7_core_9"   # v7.7 = v7.6 (core_8) + the class-0 maker offset trial; v7.8 = the same core
+V7_VERSION = "v7.11.2"
+CORE_VERSION = "taker_v7_core_14"  # v7.11 / v7.11.1 = core_14 (+ v7_c2_maker, v7_mk_place_id); v7.7 = core_8 + class-0 trial; v7.8 = core_9; v7.9 = core_10 (+ E1T); core_11 = held v7.10; v7.9.1 = core_12 (+ K1Z); v7.9.2 / v7.9.3 = core_13 (+ v7_size_pair, v7_c0_tgt_off_clips)
 
 # ---- COPIED constants (Round 21 P REPORT.md section 2; R6 arm_p.py) ----------------------------------------------
 K_DEFAULT = 0.0035        # target slope per bp of (f - mid) / mid
@@ -279,6 +376,82 @@ MKD_LO = 0.6                     # MODEL: ... below which it moves in
 
 # ---- v7.7 constants (Round 31 B.3 trial design; labels in the module docstring) ---------------------------------------
 C0_MK_TRIAL_OFFSETS = (None, 0, 1, 2)   # STRUCTURAL: per trial group, ticks behind the others' touch (None = v7.6 rule)
+
+# ---- v7.11 class-2 maker and maker placement identity (Round 53 C6 / C3; labels in the module docstring) --------------
+C2_MK_NOTIONAL_DEFAULT = 840.0   # COPIED: FORM4 class-2 fill notional q50 843 (SP/round53/a/out/s7_forms.txt)
+C2_MK_BAND_W_DEFAULT = 0.47      # COPIED: FORM4 class-2 |posW| p90
+MK_PLACE_PROFILE = "orthox-profile-v3"
+MK_PLACE_DIM = "MKP"
+MK_PLACE_MOD = 3                 # STRUCTURAL: three placements (0 = v7.6 rule, 1 = at the touch, 2 = one tick behind)
+
+# ---- v7.9 touch identity (Round 35 PRE-REGISTERED profile_v2, dimension E1T; frozen: a change is a new version) ------
+TOUCH_ID_PROFILE = "orthox-profile-v2"
+TOUCH_ID_DIM = "E1T"
+TOUCH_ID_TICKS = (0, 1)                  # index 0 = v7.8 behaviour; 1 = one tick behind the others' best order
+
+
+def touch_id_draw(uid: int, book: int) -> int:
+    """The pre-registered E1T draw: ticks behind = (0, 1)[int(SHA-256('orthox-profile-v2|E1T|uid|book')[:8], 16) mod 2].
+    A negative uid draws nothing (0)."""
+    u, b = int(uid), int(book)
+    if u < 0:
+        return 0
+    h = hashlib.sha256(f"{TOUCH_ID_PROFILE}|{TOUCH_ID_DIM}|{u}|{b}".encode()).hexdigest()
+    return TOUCH_ID_TICKS[int(h[:8], 16) % len(TOUCH_ID_TICKS)]
+
+
+def touch_id_digest(uid: int, books: Any) -> str:
+    """sha16 of the table text: "orthox-profile-v2|uid=<uid>|E1T" then "<book>|E1T=<ticks>" per book ascending."""
+    lines = [f"{TOUCH_ID_PROFILE}|uid={int(uid)}|{TOUCH_ID_DIM}"]
+    lines += [f"{int(b)}|{TOUCH_ID_DIM}={touch_id_draw(uid, b)}" for b in sorted(int(x) for x in books)]
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
+
+
+# ---- v7.9.1 order-size identity (Round 42 PRE-REGISTERED, dimension K1Z; frozen: a change is a new version) ----------
+SIZE_ID_PROFILE = "orthox-profile-v3"
+SIZE_ID_DIM = "K1Z"
+SIZE_ID_MULTS = (1.0, 2.0)               # index 0 = v7.8 clip; 1 = twice the K2 clip (3,000 for 1,500), same price (v7.9.1)
+SIZE_PAIR_MAX = 10.0                     # STRUCTURAL guard: a K1Z mult above this refuses to start
+C0_TGT_OFF_MAX = 5.0                     # STRUCTURAL guard: |class-0 target offset| in clips above this refuses to start
+
+
+def size_id_index(uid: int, book: int) -> int:
+    """The pre-registered K1Z draw index: int(SHA-256('orthox-profile-v3|K1Z|uid|book')[:8], 16) mod 2.  A negative uid
+    draws index 0."""
+    u, b = int(uid), int(book)
+    if u < 0:
+        return 0
+    h = hashlib.sha256(f"{SIZE_ID_PROFILE}|{SIZE_ID_DIM}|{u}|{b}".encode()).hexdigest()
+    return int(h[:8], 16) % len(SIZE_ID_MULTS)
+
+
+def size_id_draw(uid: int, book: int, mults: Any = SIZE_ID_MULTS) -> float:
+    """The K1Z clip mult of (uid, book): mults[size_id_index] (v7.9.1 = (1.0, 2.0); v7.9.2 / v7.9.3 pass their pair)."""
+    return mults[size_id_index(uid, book)]
+
+
+def size_id_digest(uid: int, books: Any, mults: Any = SIZE_ID_MULTS) -> str:
+    """sha16 of the table text: "orthox-profile-v3|uid=<uid>|K1Z" then "<book>|K1Z=<mult>" per book ascending."""
+    lines = [f"{SIZE_ID_PROFILE}|uid={int(uid)}|{SIZE_ID_DIM}"]
+    lines += [f"{int(b)}|{SIZE_ID_DIM}={size_id_draw(uid, b, mults)}" for b in sorted(int(x) for x in books)]
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
+
+
+def place_id_index(uid: int, book: int) -> int:
+    """The maker placement draw: int(SHA-256('orthox-profile-v3|MKP|uid|book').hexdigest(), 16) mod 3 (the whole digest as an
+    integer, STRUCTURAL).  A negative uid draws index 0 (the v7.6 rule)."""
+    u, b = int(uid), int(book)
+    if u < 0:
+        return 0
+    h = hashlib.sha256(f"{MK_PLACE_PROFILE}|{MK_PLACE_DIM}|{u}|{b}".encode()).hexdigest()
+    return int(h, 16) % MK_PLACE_MOD
+
+
+def place_id_digest(uid: int, books: Any) -> str:
+    """sha16 of the table text: "orthox-profile-v3|uid=<uid>|MKP" then "<book>|MKP=<idx>" per book ascending."""
+    lines = [f"{MK_PLACE_PROFILE}|uid={int(uid)}|{MK_PLACE_DIM}"]
+    lines += [f"{int(b)}|{MK_PLACE_DIM}={place_id_index(uid, b)}" for b in sorted(int(x) for x in books)]
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
 
 
 def c0_mk_group(b: int) -> int:
@@ -354,7 +527,8 @@ PARAM_KEYS = ("v7_k", "v7_l", "v7_clip", "v7_big", "v7_classes", "v7_pace", "v7_
               "v7_c0_contra", "v7_c0_kc", "v7_c0_lc", "v7_c0_ref_s",
               "v7_rel_form", "v7_rel_band_mult", "v7_rel_mom", "v7_mk_band_mult",
               "v7_c0_maker", "v7_c0_mk_notional", "v7_c0_mk_band_w", "v7_mk_depth", "v7_mkd_start_bp",
-              "v7_mkd_every_s", "v7_c0_mk_trial")
+              "v7_mkd_every_s", "v7_c0_mk_trial", "v7_touch_id", "v7_size_id", "v7_size_pair", "v7_c0_tgt_off_clips",
+              "v7_c2_maker", "v7_c2_mk_notional", "v7_c2_mk_band_w", "v7_mk_place_id")
 
 
 def parse_params(config: Any) -> dict:
@@ -505,6 +679,48 @@ def parse_params(config: Any) -> dict:
     if isinstance(tv, bool) or _num(tv) not in (0.0, 1.0):
         raise ValueError(f"v7_c0_mk_trial={tv!r} must be 0 or 1")
     p["c0_mk_trial"] = _num(tv) == 1.0
+    # v7.9 touch identity (Round 35 E1T): 0 (default) = v7.8, 1 = drawn class-1 target-maker books one tick behind
+    ti = raw("v7_touch_id", 0)
+    if isinstance(ti, bool) or _num(ti) not in (0.0, 1.0):
+        raise ValueError(f"v7_touch_id={ti!r} must be 0 or 1")
+    p["touch_id"] = _num(ti) == 1.0
+    # v7.9.1 order-size identity (Round 42 K1Z): 0 (default) = off, 1 = drawn class-1 target-maker books quote 2 x the clip
+    si = raw("v7_size_id", 0)
+    if isinstance(si, bool) or _num(si) not in (0.0, 1.0):
+        raise ValueError(f"v7_size_id={si!r} must be 0 or 1")
+    p["size_id"] = _num(si) == 1.0
+    # v7.9.2 / v7.9.3: the K1Z mults (index 0, index 1); the code default (1.0, 2.0) is v7.9.1.  taos ParseKwargs delivers
+    # "1.5,2.5" as a string; a 2-sequence is accepted too.  Each > 0 and <= SIZE_PAIR_MAX (STRUCTURAL guard).
+    sp = raw("v7_size_pair", SIZE_ID_MULTS)
+    if isinstance(sp, str):
+        parts = sp.strip().split(",")
+    elif isinstance(sp, (tuple, list)):
+        parts = list(sp)
+    else:
+        parts = []
+    pair = tuple(_num(x) for x in parts)
+    if len(pair) != 2 or any(x is None or not 0.0 < x <= SIZE_PAIR_MAX for x in pair):
+        raise ValueError(f"v7_size_pair={sp!r} must be two numbers 'a,b', each above 0 and at most {SIZE_PAIR_MAX}")
+    p["size_pair"] = (float(pair[0]), float(pair[1]))
+    # v7.9.3: a constant added to the class-0 taker's target, in clips (units = off x v7_clip); code default 0.0 = v7.9.1
+    p["c0_tgt_off"] = num("v7_c0_tgt_off_clips", 0.0, -C0_TGT_OFF_MAX, C0_TGT_OFF_MAX)
+    # v7.11: the class-2 flat maker on the odd class-2 books (0 = core_13) and the maker placement identity (0 = the v7.6 rule)
+    c2m = raw("v7_c2_maker", 0)
+    if isinstance(c2m, bool) or _num(c2m) not in (0.0, 1.0):
+        raise ValueError(f"v7_c2_maker={c2m!r} must be 0 or 1")
+    p["c2_maker"] = _num(c2m) == 1.0
+    if p["c2_maker"] and 2 in p["maker_classes"]:
+        raise ValueError("v7_c2_maker=1 and v7_maker_classes including class 2 share class 2: one leg per class-2 book")
+    p["c2_mk_notional"] = num("v7_c2_mk_notional", C2_MK_NOTIONAL_DEFAULT, 0.0, 1e6, lo_open=True)
+    p["c2_mk_band_w"] = num("v7_c2_mk_band_w", C2_MK_BAND_W_DEFAULT, 0.0, 1.0, lo_open=True)
+    pid = raw("v7_mk_place_id", 0)
+    if isinstance(pid, bool) or _num(pid) not in (0.0, 1.0):
+        raise ValueError(f"v7_mk_place_id={pid!r} must be 0 or 1")
+    p["place_id"] = _num(pid) == 1.0
+    if p["place_id"] and not (p["c0_maker"] or p["c2_maker"]):
+        raise ValueError("v7_mk_place_id=1 needs a flat maker (v7_c0_maker=1 or v7_c2_maker=1)")
+    if p["place_id"] and p["c0_mk_trial"]:
+        raise ValueError("v7_mk_place_id=1 and v7_c0_mk_trial=1 both set the class-0 maker placement: one rule per book")
     return p
 
 
@@ -725,6 +941,10 @@ def decide(bid: Any, ask: Any, f: Any, base_total: Any, base_init: Any, quote_in
             t = frac * w / mid
         else:
             t = target_units(gap_bp, w, mid, k_, l_)
+        if rule is None:                                    # v7.9.3: class-0 taker only; units = off x clip, after the limit
+            off = p.get("c0_tgt_off", 0.0)
+            if off:
+                t += off * clip_
     d = t - inv
     ad = abs(d)
     if ad < clip_:
@@ -1043,6 +1263,9 @@ class TakerCore:
         self.rel_stats: dict | None = None    # v7.4: the stepping taker's picture on summary states
         self.c0_stats: dict | None = None     # v7.4: the class-0 contrarian term's picture on summary states
         self._c0g: list | None = None         # v7.7: per trial group [books, two-sided, fill notional] on summary states
+        self._tid: dict = {}                  # v7.9: book -> E1T ticks behind, drawn once from this process's uid
+        self._sid: dict = {}                  # v7.9.1: book -> K1Z clip mult, drawn once from this process's uid
+        self._pid: dict = {}                  # v7.11: book -> MKP placement index, drawn once from this process's uid
         self._book_count = None               # v7.1: the pace state is reset when the book count changes
         self.reset_counters()
 
@@ -1204,6 +1427,15 @@ class TakerCore:
             for b in sorted(lay["c0"]):
                 if b % 2 == 1:
                     mk_books[b] = g0
+        if self.p["c2_maker"] and lay and lay["ok"] and rb is not None:
+            # v7.11: the odd class-2 books are made (class 2's own grid); the class-2 taker keeps the even ones
+            if lay.get("c2_ok"):
+                g2 = lay["c2_grid"]
+                for b in sorted(lay["c2"]):
+                    if b % 2 == 1:
+                        mk_books[b] = g2
+            else:
+                self._count("mk_c2m_off")
         # cleanup: one cancel for every book that shows resting orders (all classes), no take there this state
         busy = set()
         try:
@@ -1458,6 +1690,7 @@ class TakerCore:
                 continue
             g = lay[f"c{ci}_grid"]
             ids = sorted(lay[f"c{ci}"])
+            c2m = ci == 2 and p["c2_maker"]                  # v7.11: the odd class-2 books are the maker's (no decision here)
             seen: dict = {}
             n = 0
             s = 0.0
@@ -1522,6 +1755,8 @@ class TakerCore:
                         t = self._bounded(e[6] - ms, lim, v, mid, False)
                     todo[i] = (b, bid, ask, f, mid, e, v, t)
             for b, bid, ask, f, mid, e, v, frac in todo:    # pass 3: the taker's decision on that target
+                if c2m and b % 2 == 1:                      # v7.11: state and class mean cover the whole class; decisions the even books'
+                    continue
                 if fracs is not None:
                     fracs.append(frac)
                 if v is None:
@@ -1586,9 +1821,15 @@ class TakerCore:
         lay = self.layout
         c0set = lay["c0"] if lay else frozenset()
         c1set = lay["c1"] if lay and p["mk_depth"] else frozenset()
+        c2set = lay["c2"] if lay and p["c2_maker"] else frozenset()       # v7.11: the odd books of it are in mk_books
         two = {"c0": [0, 0, []], "depth": [0, 0, []]} if collect else None   # v7.6: books, two-sided, |pos| / d
+        if two is not None and p["c2_maker"]:
+            two["c2"] = [0, 0, []]
         self._c0g = ([[0, 0, 0.0] for _ in C0_MK_TRIAL_OFFSETS]                   # v7.7: only with the maker on
                      if collect and p["c0_mk_trial"] and p["c0_maker"] else None)
+        tid_on = p["touch_id"] and target_on                   # v7.9: E1T on the class-1 books of the target leg
+        sid_on = p["size_id"] and target_on                    # v7.9.1: K1Z on the same class-1 target-leg books
+        c1all = lay["c1"] if lay else frozenset()
         for b, g in mk_books.items():
             v = views.get(b)
             if v is None:
@@ -1605,7 +1846,11 @@ class TakerCore:
             want: dict = {}
             mid = None
             tgt_n = 0.0
-            mode = "c0" if b in c0set else ("depth" if b in c1set and b % 2 == 1 else None)   # v7.6
+            mode = ("c0" if b in c0set else ("c2" if b in c2set else ("depth" if b in c1set and b % 2 == 1 else None)))   # v7.6 / v7.11
+            # v7.9.1: a drawn class-1 target-leg book (mode None) runs 2 x the clip: order size AND band follow it
+            mult = self._sid_mult(b) if sid_on and mode is None and b in c1all else 1.0
+            bnotional = notional * mult
+            bband = p["mk_band_clips"] * bnotional
             if mode is None and target_on and fb is not None and fa is not None and 0.0 < fb < fa:
                 if dyn:
                     tgt_n = self._mk_dyn_target(rs.step_st, b, 0.5 * (fb + fa), v, clock, wealth)
@@ -1635,27 +1880,37 @@ class TakerCore:
                         # v7.3 grid: only the side that closes the deviation, once it is one band wide
                         dev = inv_n - tgt_n
                         code = MK_CODE_IN_BAND                     # core 5.1: logging only, no decision reads it
-                        if dev <= -band:
-                            if 1e4 * (fb - ff) / ff > guard:
+                        # v7.9: a drawn class-1 book quotes one tick behind the others' best order (E1T)
+                        ticks = self._tid_ticks(b) if tid_on and b in c1all else 0
+                        if dev <= -bband:
+                            bpx = self._tid_price(SIDE_BUY, book, orders, pd, ticks) if ticks else fb
+                            if bpx is None:
+                                self._count("mk_tid_no_bid")
+                                code = MK_CODE_BLOCKED_BID
+                            elif 1e4 * (bpx - ff) / ff > guard:
                                 self._count("mk_guard_bid")
                                 code = MK_CODE_BLOCKED_BID
                             else:
-                                want[SIDE_BUY] = round(fb, pd)
+                                want[SIDE_BUY] = round(bpx, pd)
                                 self._count("mk_out_bid")
                                 code = MK_CODE_OUT_BID
-                        elif dev >= band:
-                            if 1e4 * (ff - fa) / ff > guard:
+                        elif dev >= bband:
+                            apx = self._tid_price(SIDE_SELL, book, orders, pd, ticks) if ticks else fa
+                            if apx is None:
+                                self._count("mk_tid_no_ask")
+                                code = MK_CODE_BLOCKED_ASK
+                            elif 1e4 * (ff - apx) / ff > guard:
                                 self._count("mk_guard_ask")
                                 code = MK_CODE_BLOCKED_ASK
                             else:
-                                want[SIDE_SELL] = round(fa, pd)
+                                want[SIDE_SELL] = round(apx, pd)
                                 self._count("mk_out_ask")
                                 code = MK_CODE_OUT_ASK
                         else:
                             self._count("mk_in_band")
                         if tcodes is not None:
                             tcodes.append(code)
-                    elif inv_n >= band:
+                    elif inv_n >= bband:
                         self._count("mk_band_bid")
                     elif 1e4 * (fb - ff) / ff > guard:
                         self._count("mk_guard_bid")
@@ -1663,7 +1918,7 @@ class TakerCore:
                         want[SIDE_BUY] = round(fb, pd)
                     if target_on:
                         pass
-                    elif inv_n <= -band:
+                    elif inv_n <= -bband:
                         self._count("mk_band_ask")
                     elif 1e4 * (ff - fa) / ff > guard:
                         self._count("mk_guard_ask")
@@ -1688,7 +1943,7 @@ class TakerCore:
             for s, price in want.items():
                 if s in keep:
                     continue
-                qty = (p["c0_mk_notional"] if mode == "c0" else notional) / mid
+                qty = (p["c0_mk_notional"] if mode == "c0" else (p["c2_mk_notional"] if mode == "c2" else bnotional)) / mid
                 if s == SIDE_BUY:
                     qf = _num(v[3])
                     if qf is None or qf <= 0.0:
@@ -1725,12 +1980,12 @@ class TakerCore:
                              "inv_abs_notional_max": max(invs) if invs else None,
                              "gap_bp_p50": pctl(gaps, 0.5),
                              "gap_abs_bp_p50": pctl([abs(x) for x in gaps], 0.5)}
-            if two is not None and (p["c0_maker"] or p["mk_depth"]):
-                for k_, (nb, n2, xs) in two.items():          # v7.6: the two-sided makers' picture
+            if two is not None and (p["c0_maker"] or p["mk_depth"] or p["c2_maker"]):
+                for k_, (nb, n2, xs) in two.items():          # v7.6: the two-sided makers' picture (v7.11: + c2)
                     self.mk_stats[k_ + "_books"] = nb
                     self.mk_stats[k_ + "_two_sided"] = n2
-                    self.mk_stats[k_ + ("_pos_w_p50" if k_ == "c0" else "_d_bp_p50")] = pctl(xs, 0.5)
-                    self.mk_stats[k_ + ("_pos_w_max" if k_ == "c0" else "_d_bp_max")] = max(xs) if xs else None
+                    self.mk_stats[k_ + ("_pos_w_p50" if k_ != "depth" else "_d_bp_p50")] = pctl(xs, 0.5)
+                    self.mk_stats[k_ + ("_pos_w_max" if k_ != "depth" else "_d_bp_max")] = max(xs) if xs else None
             if self._c0g is not None:                       # v7.7: the class-0 maker offset trial, per group
                 for b_ in mk_books:                         # books and fills from the ledger, whatever the book state
                     if b_ in c0set:
@@ -1740,6 +1995,20 @@ class TakerCore:
                 self.mk_stats["c0_trial"] = [{"group": i, "off_ticks": C0_MK_TRIAL_OFFSETS[i], "books": g_[0],
                                               "two_sided": g_[1], "fill_notional": round(g_[2], 2)}
                                              for i, g_ in enumerate(self._c0g)]
+            if p["place_id"]:                               # v7.11: the placement identity of this uid on the maker books
+                pb = [b_ for b_ in mk_books if b_ in c0set or b_ in c2set]
+                pc = [0, 0, 0]
+                for b_ in pb:
+                    pc[self._pid_idx(b_)] += 1
+                self.mk_stats["place_id"] = {"books": len(pb), "per_placement": pc, "digest": place_id_digest(self.uid, pb)}
+            if tid_on:                                      # v7.9: the touch identity of this uid on class 1
+                c1b = [b_ for b_ in mk_books if b_ in c1all]
+                self.mk_stats["touch_id"] = {"books": len(c1b), "behind": sum(self._tid_ticks(b_) for b_ in c1b),
+                                             "digest": touch_id_digest(self.uid, c1b)}
+            if sid_on:                                      # v7.9.1: the order-size identity of this uid on class 1
+                c1s = [b_ for b_ in mk_books if b_ in c1all and not (b_ in c1set and b_ % 2 == 1)]   # not the depth-maker books
+                self.mk_stats["size_id"] = {"books": len(c1s), "big": sum(1 for b_ in c1s if size_id_index(self.uid, b_) == 1),
+                                            "digest": size_id_digest(self.uid, c1s, p["size_pair"])}
             if tpairs is not None:
                 self.mk_stats.update({
                     "target": True, "dyn": dyn, "band": band_t,
@@ -1755,6 +2024,45 @@ class TakerCore:
                     self.mk_stats["warm"] = sum(1 for b_ in mk_books if b_ in rs.step_st and len(rs.step_st[b_]) > 7
                                                 and rs.step_st[b_][1] is not None
                                                 and clock - rs.step_st[b_][7] < hl_ns)
+
+    def _tid_ticks(self, b: int) -> int:
+        """v7.9: the E1T ticks of book b for this process's own uid, drawn once and never redrawn."""
+        t = self._tid.get(b)
+        if t is None:
+            t = self._tid[b] = touch_id_draw(self.uid, b)
+        return t
+
+    def _pid_idx(self, b: int) -> int:
+        """v7.11: the MKP placement index of book b for this process's own uid, drawn once and never redrawn."""
+        i = self._pid.get(b)
+        if i is None:
+            i = self._pid[b] = place_id_index(self.uid, b)
+        return i
+
+    def _sid_mult(self, b: int) -> float:
+        """v7.9.1: the K1Z clip mult of book b for this process's own uid, drawn once and never redrawn."""
+        m = self._sid.get(b)
+        if m is None:
+            m = self._sid[b] = size_id_draw(self.uid, b, self.p["size_pair"])
+        return m
+
+    def _tid_price(self, side: int, book: Any, orders: list, pd: int, ticks: int) -> float | None:
+        """v7.9: ``ticks`` behind the others' best order on ``side`` (others_touch: our own resting orders are not the
+        reference, so a quote never walks); no other order on that side -> our own resting price; none -> None."""
+        tick = 10.0 ** (-pd)
+        ob, oa = others_touch(book, orders, 0.5 * tick)
+        if side == SIDE_BUY:
+            px = round(ob - ticks * tick, pd) if ob is not None else max(
+                (px_ for _, s, px_, _q in orders if s == SIDE_BUY and px_ is not None), default=None)
+        else:
+            px = round(oa + ticks * tick, pd) if oa is not None else min(
+                (px_ for _, s, px_, _q in orders if s == SIDE_SELL and px_ is not None), default=None)
+        if px is None or not 0.0 < px < math.inf:
+            return None
+        self._count("mk_tid_bid" if side == SIDE_BUY else "mk_tid_ask")
+        if (ob if side == SIDE_BUY else oa) is None:
+            self._count("mk_tid_own_bid" if side == SIDE_BUY else "mk_tid_own_ask")
+        return px
 
     def _mk_two(self, rs: RunState, b: int, mode: str, want: dict, fb: Any, fa: Any, ff: Any, v: tuple, pd: int,
                 clock: int, pull: bool, two: Any, book: Any, orders: list) -> float | None:
@@ -1780,22 +2088,28 @@ class TakerCore:
             self._count("mk2_only_ours_bid")
         if oa is None:
             self._count("mk2_only_ours_ask")
-        if mode == "c0":                                    # the flat class-0 maker
+        grp = 0
+        if mode in ("c0", "c2"):                            # the flat class-0 / class-2 makers (v7.11: c2 = the same rules)
             w = qi + bi_ * mid if qi is not None else None
+            fpre = "c0mk" if mode == "c0" else "c2mk"
             if w is None or not 0.0 < w < math.inf or not math.isfinite(inv_n):
-                self._count("c0mk_no_wealth")
+                self._count(fpre + "_no_wealth")
                 return None
-            band = p["c0_mk_band_w"] * w
-            grp = c0_mk_group(b) if p["c0_mk_trial"] else 0     # v7.7: the trial group (0 = the v7.6 rule)
-            off = C0_MK_TRIAL_OFFSETS[grp]
+            band = (p["c0_mk_band_w"] if mode == "c0" else p["c2_mk_band_w"]) * w
+            if p["place_id"]:                               # v7.11: the hashed placement of this (uid, book): the v7.7 offsets
+                off = C0_MK_TRIAL_OFFSETS[self._pid_idx(b)]
+                self._count("mk_pid%d" % self._pid_idx(b))
+            else:
+                grp = c0_mk_group(b) if p["c0_mk_trial"] and mode == "c0" else 0     # v7.7: the trial group (0 = the v7.6 rule)
+                off = C0_MK_TRIAL_OFFSETS[grp]
             if off is None:                                 # the v7.6 rule
                 inside = ob is not None and oa is not None and oa - ob > 2.5 * tick   # at least 3 ticks wide
                 if inside:
-                    self._count("c0mk_inside")
+                    self._count(fpre + "_inside")
                 bpx = (round(ob + tick, pd) if inside else round(ob, pd)) if ob is not None else own_b
                 apx = (round(oa - tick, pd) if inside else round(oa, pd)) if oa is not None else own_a
             else:                                           # v7.7 trial: at the others' touch or off ticks behind it
-                self._count("c0mk_off%d" % off)
+                self._count(fpre + "_off%d" % off)
                 bpx = round(ob - off * tick, pd) if ob is not None else own_b
                 apx = round(oa + off * tick, pd) if oa is not None else own_a
         else:                                               # the class-1 depth maker
@@ -1820,8 +2134,8 @@ class TakerCore:
         if bpx is not None and apx is not None and bpx >= apx - half:   # never lock or cross our own quotes
             self._count("mk2_locked")
             bpx = apx = None
-        pre = "c0mk" if mode == "c0" else "mkd"
-        guard = None if mode == "c0" else p["mk_guard_bp"]
+        pre = "c0mk" if mode == "c0" else ("c2mk" if mode == "c2" else "mkd")
+        guard = None if mode in ("c0", "c2") else p["mk_guard_bp"]
         if inv_n >= band:
             self._count(pre + "_band_bid")
         elif bpx is None or not 0.0 < bpx < math.inf:
@@ -1839,11 +2153,12 @@ class TakerCore:
         else:
             want[SIDE_SELL] = apx
         if two is not None:
-            t_ = two["c0" if mode == "c0" else "depth"]
+            t_ = two[mode if mode in ("c0", "c2") else "depth"]
             t_[0] += 1
             t_[1] += len(want) == 2
-            if mode == "c0":
+            if mode in ("c0", "c2"):
                 t_[2].append(abs(inv_n) / w)
+            if mode == "c0":
                 if self._c0g is not None:                   # v7.7: the two-sided books of this book's group
                     self._c0g[grp][1] += len(want) == 2
         return mid
